@@ -6,6 +6,7 @@ using MoudianMiddleware.DataLayer.Context;
 using MoudianMiddleware.DataLayer.Context.Interceptors;
 using MoudianMiddleware.DataLayer.Repositories;
 using MoudianMiddleware.DataLayer.Seed;
+using UnitOfWorkService = MoudianMiddleware.DataLayer.UnitOfWork.UnitOfWork;
 using MoudianMiddleware.DataLayer.UnitOfWork;
 
 namespace MoudianMiddleware.DataLayer;
@@ -27,6 +28,9 @@ public static class DependencyInjection
     /// <exception cref="InvalidOperationException">اگر رشته‌ی اتصال تنظیم نشده باشد.</exception>
     public static IServiceCollection AddDataLayer(this IServiceCollection services, IConfiguration configuration)
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
         var connectionString = configuration.GetConnectionString(ConnectionStringName);
 
         if (string.IsNullOrWhiteSpace(connectionString))
@@ -52,7 +56,7 @@ public static class DependencyInjection
                 serviceProvider.GetRequiredService<TenantStampInterceptor>());
         });
 
-        services.AddScoped<IUnitOfWork, UnitOfWork>();
+        services.AddScoped<IUnitOfWork, UnitOfWorkService>();
         services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
         services.AddScoped<IInvoiceRepository, InvoiceRepository>();
         services.AddScoped<IInvoiceSubmissionRepository, InvoiceSubmissionRepository>();

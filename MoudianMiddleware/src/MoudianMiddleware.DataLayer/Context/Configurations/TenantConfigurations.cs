@@ -12,6 +12,8 @@ public sealed class TenantConfiguration : IEntityTypeConfiguration<Tenant>
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<Tenant> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Name).HasMaxLength(200).IsRequired();
         builder.Property(x => x.LegalName).HasMaxLength(300);
         builder.HasIndex(x => x.Name);
@@ -26,6 +28,8 @@ public sealed class MoadianSettingConfiguration : IEntityTypeConfiguration<Moadi
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<MoadianSetting> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.MemoryId).HasMaxLength(20).IsRequired();
         builder.Property(x => x.EconomicCode).HasMaxLength(20).IsRequired();
         builder.Property(x => x.NationalId).HasMaxLength(20);
@@ -52,6 +56,8 @@ public sealed class MoadianCredentialConfiguration : IEntityTypeConfiguration<Mo
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<MoadianCredential> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.CertificateBase64).HasMaxLength(8000);
         builder.Property(x => x.CertificateThumbprint).HasMaxLength(100);
         builder.Property(x => x.CertificateSubject).HasMaxLength(500);

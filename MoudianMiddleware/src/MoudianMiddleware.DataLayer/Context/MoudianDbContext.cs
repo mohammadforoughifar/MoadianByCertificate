@@ -111,6 +111,8 @@ public class MoudianDbContext : DbContext
     /// <param name="modelBuilder">سازنده‌ی مدل EF.</param>
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        ArgumentNullException.ThrowIfNull(modelBuilder);
+
         base.OnModelCreating(modelBuilder);
 
         // همه‌ی IEntityTypeConfigurationهای این اسمبلی (Context/Configurations) اعمال می‌شوند.

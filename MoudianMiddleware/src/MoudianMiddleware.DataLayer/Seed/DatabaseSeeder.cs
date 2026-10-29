@@ -35,6 +35,11 @@ public sealed class DatabaseSeeder : IDatabaseSeeder
         IOptions<DatabaseSeedOptions> options,
         ILogger<DatabaseSeeder> logger)
     {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(passwordHasher);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(logger);
+
         _context = context;
         _passwordHasher = passwordHasher;
         _options = options.Value;

@@ -12,6 +12,8 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<User> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.UserName).HasMaxLength(100).IsRequired();
         builder.Property(x => x.NormalizedUserName).HasMaxLength(100).IsRequired();
         builder.Property(x => x.FullName).HasMaxLength(200).IsRequired();
@@ -31,6 +33,8 @@ public sealed class RoleConfiguration : IEntityTypeConfiguration<Role>
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<Role> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Name).HasMaxLength(100).IsRequired();
         builder.Property(x => x.NormalizedName).HasMaxLength(100).IsRequired();
         builder.Property(x => x.Description).HasMaxLength(300);
@@ -47,6 +51,8 @@ public sealed class RolePermissionConfiguration : IEntityTypeConfiguration<RoleP
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<RolePermission> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Permission).HasMaxLength(100).IsRequired();
         builder.HasIndex(x => new { x.RoleId, x.Permission }).IsUnique();
 
@@ -65,6 +71,8 @@ public sealed class UserTenantConfiguration : IEntityTypeConfiguration<UserTenan
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<UserTenant> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.HasIndex(x => new { x.UserId, x.TenantId, x.RoleId }).IsUnique();
         builder.HasIndex(x => new { x.TenantId, x.UserId });
 
@@ -93,6 +101,8 @@ public sealed class RefreshTokenConfiguration : IEntityTypeConfiguration<Refresh
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<RefreshToken> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.TokenHash).HasMaxLength(200).IsRequired();
         builder.Property(x => x.ReplacedByTokenHash).HasMaxLength(200);
         builder.Property(x => x.CreatedByIp).HasMaxLength(60);
