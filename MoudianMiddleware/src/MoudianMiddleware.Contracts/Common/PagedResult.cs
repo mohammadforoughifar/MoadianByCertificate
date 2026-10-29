@@ -33,17 +33,26 @@ public sealed class PagedResult<T>
     /// <param name="query">پارامترهای صفحه‌بندی.</param>
     /// <returns>نتیجه‌ی صفحه‌بندی‌شده.</returns>
     public static PagedResult<T> Create(IReadOnlyList<T> items, int totalCount, PaginationQuery query)
-        => new()
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        ArgumentNullException.ThrowIfNull(query);
+
+        return new()
         {
             Items = items,
             TotalCount = totalCount,
             PageNumber = query.PageNumber,
             PageSize = query.PageSize
         };
+    }
 
     /// <summary>ساخت نتیجه‌ی خالی.</summary>
     /// <param name="query">پارامترهای صفحه‌بندی.</param>
     /// <returns>نتیجه‌ی خالی.</returns>
     public static PagedResult<T> Empty(PaginationQuery query)
-        => new() { Items = Array.Empty<T>(), TotalCount = 0, PageNumber = query.PageNumber, PageSize = query.PageSize };
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        return new() { Items = Array.Empty<T>(), TotalCount = 0, PageNumber = query.PageNumber, PageSize = query.PageSize };
+    }
 }
