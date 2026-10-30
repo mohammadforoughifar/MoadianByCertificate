@@ -1,0 +1,933 @@
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Controllers/StoreOpening/StoreOpeningController.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Controllers/StoreOpening/StoreOpeningController.cs
+new file mode 100644
+index 00000000..449c6984
+--- /dev/null
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Controllers/StoreOpening/StoreOpeningController.cs
+@@ -0,0 +1,38 @@
++using Inventory.Api.Infrastructure;
++using Inventory.Api.Services.StoreOpening;
++using Inventory.Shared;
++using Inventory.Shared.Dtos;
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++
++namespace Inventory.Api.Controllers.StoreOpening;
++
++/// <summary>اول دوره‌ی فروشگاه (موجودی و طرف‌حساب). مجوز: ماژول StoreOpening (Read/Update).</summary>
++[ApiController]
++[Authorize]
++[ModulePermission("StoreOpening")]
++[Route("api/store-opening")]
++public class StoreOpeningController : ControllerBase
++{
++    private readonly IStoreOpeningService _service;
++
++    public StoreOpeningController(IStoreOpeningService service) => _service = service;
++
++    [HttpGet("stock")]
++    public async Task<ActionResult<StoreOpeningStockDto>> GetStock([FromQuery] int warehouseId)
++        => Ok(await _service.GetStockAsync(warehouseId));
++
++    [HttpPut("stock")]
++    public async Task<ActionResult<StoreOpeningStockDto>> SaveStock([FromBody] StoreOpeningStockDto dto)
++        => Ok(await _service.SaveStockAsync(dto, CurrentUser()));
++
++    [HttpGet("parties")]
++    public async Task<ActionResult<List<StoreOpeningPartyDto>>> GetParties([FromQuery] PartyType? type = null)
++        => Ok(await _service.GetPartiesAsync(type));
++
++    [HttpPut("parties/{partyId:int}")]
++    public async Task<ActionResult<StoreOpeningPartyDto>> SaveParty(int partyId, [FromBody] StoreOpeningPartyDto dto)
++        => Ok(await _service.SavePartyAsync(partyId, dto, CurrentUser()));
++
++    private string? CurrentUser() => User.Identity?.Name;
++}
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/AppDbContext.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/AppDbContext.cs
+index ff6615d8..8478818f 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/AppDbContext.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/AppDbContext.cs
+@@ -135,6 +135,8 @@ public class AppDbContext : DbContext
+     public DbSet<Product> Products => Set<Product>();
+     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
+     public DbSet<Party> Parties => Set<Party>();
++    public DbSet<StoreOpeningStock> StoreOpeningStocks => Set<StoreOpeningStock>();
++    public DbSet<StoreOpeningParty> StoreOpeningParties => Set<StoreOpeningParty>();
+     public DbSet<Stock> Stocks => Set<Stock>();
+     public DbSet<Transaction> Transactions => Set<Transaction>();
+     public DbSet<TransactionLine> TransactionLines => Set<TransactionLine>();
+@@ -1612,6 +1614,13 @@ public class AppDbContext : DbContext
+         mb.Entity<MeasureUnit>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
+         mb.Entity<Warehouse>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
+         mb.Entity<Party>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
++        mb.Entity<StoreOpeningStock>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
++        mb.Entity<StoreOpeningStock>().HasIndex(x => new { x.CompanyId, x.WarehouseId, x.ProductId }).IsUnique();
++        mb.Entity<StoreOpeningStock>().Property(x => x.Quantity).HasPrecision(18, 2);
++        mb.Entity<StoreOpeningStock>().Property(x => x.UnitCost).HasPrecision(18, 2);
++        mb.Entity<StoreOpeningParty>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
++        mb.Entity<StoreOpeningParty>().HasIndex(x => new { x.CompanyId, x.PartyId }).IsUnique();
++        mb.Entity<StoreOpeningParty>().Property(x => x.Amount).HasPrecision(18, 2);
+         mb.Entity<Referrer>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
+         mb.Entity<ReferrerPayment>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
+         mb.Entity<Stock>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/DbInitializer.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/DbInitializer.cs
+index 4f485a78..0cd178c3 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/DbInitializer.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/DbInitializer.cs
+@@ -135,6 +135,7 @@ public static class DbInitializer
+                 await PushDeliverySchema.EnsureAsync(db);
+                 // مدت نمایش اعلان‌ها/پیام‌ها (سراسری، مدیر سامانه) — ستون‌های AppSettings
+                 await AppSettingsSchemaV1.EnsureAsync(db);
++                await StoreOpeningSchemaV1.EnsureAsync(db);
+                 await MeetingMinutesSchemaV1.EnsureAsync(db);
+                 await CompanyAccessSchemaV1.EnsureAsync(db);
+                 await AiSchemaV1.EnsureAsync(db);
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/RbacSeeder.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/RbacSeeder.cs
+index 8c8d83da..542dc177 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/RbacSeeder.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/RbacSeeder.cs
+@@ -79,6 +79,8 @@ public static class RbacSeeder
+         // تنظیمات شخصی کاربر: مشاهده صفحه، تغییر رمز و مدیریت گروه‌های شخصی گیرندگان نامه
+         ["PersonalSettings"] = new[] { "Read", "ChangePassword", "ManageLetterGroups" },
+         ["Warehouses"] = CrudActions,
++        // اول دوره فروشگاه (موجودی و طرف‌حساب) — ماژول مستقل از ERP
++        ["StoreOpening"] = CrudActions,
+         // ================== ماژول انبارداری ==================
+         // InvDocs: اسناد رسید و حواله — Confirm: قطعی‌سازی | Cancel: ابطال
+         ["InvDocs"] = new[] { "Create", "Read", "Update", "Delete", "Export", "Confirm", "Cancel" },
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/StoreOpeningSchemaV1.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/StoreOpeningSchemaV1.cs
+new file mode 100644
+index 00000000..d7fcd470
+--- /dev/null
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/StoreOpeningSchemaV1.cs
+@@ -0,0 +1,94 @@
++using Microsoft.EntityFrameworkCore;
++
++namespace Inventory.Api.Data;
++
++// خودتعمیرِ جدول‌های «اول دوره فروشگاه» (idempotent برای SQLite و SQL Server)
++public static class StoreOpeningSchemaV1
++{
++    public static Task EnsureAsync(AppDbContext db) =>
++        db.Database.IsSqlite() ? EnsureSqliteAsync(db) : EnsureSqlServerAsync(db);
++
++    private static async Task EnsureSqlServerAsync(AppDbContext db)
++    {
++        await SafeAsync(db, @"
++IF OBJECT_ID(N'dbo.StoreOpeningStocks', N'U') IS NULL
++CREATE TABLE dbo.StoreOpeningStocks (
++    Id          int IDENTITY(1,1) NOT NULL CONSTRAINT PK_StoreOpeningStocks PRIMARY KEY,
++    CompanyId   int NULL,
++    WarehouseId int NOT NULL,
++    ProductId   int NOT NULL,
++    AsOfDate    datetime2 NOT NULL,
++    Quantity    decimal(18,2) NOT NULL CONSTRAINT DF_StoreOpeningStocks_Qty DEFAULT(0),
++    UnitCost    decimal(18,2) NOT NULL CONSTRAINT DF_StoreOpeningStocks_Cost DEFAULT(0),
++    Note        nvarchar(500) NULL,
++    UpdatedBy   nvarchar(80) NULL,
++    UpdatedAt   datetime2 NOT NULL CONSTRAINT DF_StoreOpeningStocks_UpdatedAt DEFAULT(GETDATE())
++);");
++        await SafeAsync(db, @"
++IF OBJECT_ID(N'dbo.StoreOpeningStocks', N'U') IS NOT NULL
++   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_StoreOpeningStocks_Company_Wh_Product')
++CREATE UNIQUE INDEX IX_StoreOpeningStocks_Company_Wh_Product ON dbo.StoreOpeningStocks (CompanyId, WarehouseId, ProductId);");
++
++        await SafeAsync(db, @"
++IF OBJECT_ID(N'dbo.StoreOpeningParties', N'U') IS NULL
++CREATE TABLE dbo.StoreOpeningParties (
++    Id          int IDENTITY(1,1) NOT NULL CONSTRAINT PK_StoreOpeningParties PRIMARY KEY,
++    CompanyId   int NULL,
++    PartyId     int NOT NULL,
++    AsOfDate    datetime2 NOT NULL,
++    Amount      decimal(18,2) NOT NULL CONSTRAINT DF_StoreOpeningParties_Amount DEFAULT(0),
++    Note        nvarchar(500) NULL,
++    UpdatedBy   nvarchar(80) NULL,
++    UpdatedAt   datetime2 NOT NULL CONSTRAINT DF_StoreOpeningParties_UpdatedAt DEFAULT(GETDATE())
++);");
++        await SafeAsync(db, @"
++IF OBJECT_ID(N'dbo.StoreOpeningParties', N'U') IS NOT NULL
++   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_StoreOpeningParties_Company_Party')
++CREATE UNIQUE INDEX IX_StoreOpeningParties_Company_Party ON dbo.StoreOpeningParties (CompanyId, PartyId);");
++    }
++
++    private static async Task EnsureSqliteAsync(AppDbContext db)
++    {
++        await SafeAsync(db, @"
++CREATE TABLE IF NOT EXISTS StoreOpeningStocks (
++    Id          INTEGER PRIMARY KEY AUTOINCREMENT,
++    CompanyId   INTEGER NULL,
++    WarehouseId INTEGER NOT NULL,
++    ProductId   INTEGER NOT NULL,
++    AsOfDate    TEXT NOT NULL,
++    Quantity    TEXT NOT NULL DEFAULT '0',
++    UnitCost    TEXT NOT NULL DEFAULT '0',
++    Note        TEXT NULL,
++    UpdatedBy   TEXT NULL,
++    UpdatedAt   TEXT NOT NULL
++);");
++        await SafeAsync(db,
++            "CREATE UNIQUE INDEX IF NOT EXISTS IX_StoreOpeningStocks_Company_Wh_Product ON StoreOpeningStocks (CompanyId, WarehouseId, ProductId);");
++
++        await SafeAsync(db, @"
++CREATE TABLE IF NOT EXISTS StoreOpeningParties (
++    Id        INTEGER PRIMARY KEY AUTOINCREMENT,
++    CompanyId INTEGER NULL,
++    PartyId   INTEGER NOT NULL,
++    AsOfDate  TEXT NOT NULL,
++    Amount    TEXT NOT NULL DEFAULT '0',
++    Note      TEXT NULL,
++    UpdatedBy TEXT NULL,
++    UpdatedAt TEXT NOT NULL
++);");
++        await SafeAsync(db,
++            "CREATE UNIQUE INDEX IF NOT EXISTS IX_StoreOpeningParties_Company_Party ON StoreOpeningParties (CompanyId, PartyId);");
++    }
++
++    private static async Task SafeAsync(AppDbContext db, string sql)
++    {
++        try { await db.Database.ExecuteSqlRawAsync(sql); }
++        catch (Exception ex)
++        {
++            var m = ex.Message ?? "";
++            if (!m.Contains("duplicate", StringComparison.OrdinalIgnoreCase) &&
++                !m.Contains("already exists", StringComparison.OrdinalIgnoreCase))
++                Console.WriteLine($"[DB] StoreOpeningSchemaV1: {m}");
++        }
++    }
++}
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Entities/StoreOpening/StoreOpeningEntities.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Entities/StoreOpening/StoreOpeningEntities.cs
+new file mode 100644
+index 00000000..a6aeb235
+--- /dev/null
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Entities/StoreOpening/StoreOpeningEntities.cs
+@@ -0,0 +1,57 @@
++using System.ComponentModel.DataAnnotations;
++namespace Inventory.Api.Data;
++
++// ============================================================
++//  ماژول «اول دوره فروشگاه» — جدول‌های مستقل از انبارداری (ERP)
++//  هیچ ارتباطی با InvDocs / InvStocks / InvLedger ندارد.
++// ============================================================
++
++/// <summary>
++/// موجودی اول دوره‌ی فروشگاه به تفکیک شرکت، انبار و کالا.
++/// مبنای محاسبه‌ی موجودی فروشگاه (Stocks) است: بازمحاسبه از این مقدار شروع می‌شود.
++/// </summary>
++public class StoreOpeningStock : ICompanyOwned
++{
++    public int Id { get; set; }
++    public int? CompanyId { get; set; }
++    public int WarehouseId { get; set; }
++    public int ProductId { get; set; }
++
++    /// <summary>تاریخ شروع دوره.</summary>
++    public DateTime AsOfDate { get; set; }
++
++    /// <summary>مقدار اول دوره.</summary>
++    public decimal Quantity { get; set; }
++
++    /// <summary>بهای واحد اول دوره.</summary>
++    public decimal UnitCost { get; set; }
++
++    [MaxLength(500)]
++    public string? Note { get; set; }
++
++    [MaxLength(80)]
++    public string? UpdatedBy { get; set; }
++
++    public DateTime UpdatedAt { get; set; } = DateTime.Now;
++}
++
++/// <summary>
++/// مانده اول دوره‌ی طرف‌حساب فروشگاه (مثبت = بدهکار، منفی = بستانکار).
++/// جداست از سوابق سند فروشگاه (Transactions) و به مانده‌ی طرف‌حساب اضافه می‌شود.
++/// </summary>
++public class StoreOpeningParty : ICompanyOwned
++{
++    public int Id { get; set; }
++    public int? CompanyId { get; set; }
++    public int PartyId { get; set; }
++    public DateTime AsOfDate { get; set; }
++    public decimal Amount { get; set; }
++
++    [MaxLength(500)]
++    public string? Note { get; set; }
++
++    [MaxLength(80)]
++    public string? UpdatedBy { get; set; }
++
++    public DateTime UpdatedAt { get; set; } = DateTime.Now;
++}
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Program.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Program.cs
+index 6c7c9eae..70bc55c7 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Program.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Program.cs
+@@ -163,6 +163,7 @@ builder.Services.AddRadisHrModule(builder.Configuration, provider, connectionStr
+ 
+ // ثبت سرویس‌ها با اینترفیس (اصل وارونگی وابستگی — DIP)
+ builder.Services.AddScoped<IInventoryService, InventoryService>();
++builder.Services.AddScoped<Inventory.Api.Services.StoreOpening.IStoreOpeningService, Inventory.Api.Services.StoreOpening.StoreOpeningService>();
+ builder.Services.AddScoped<Inventory.Api.Services.Reports.IOperationsReportsService, Inventory.Api.Services.Reports.OperationsReportsService>(); // گزارش‌های بخش عملیات
+ builder.Services.AddScoped<Inventory.Api.Services.Catalog.IGoodsIssueService, Inventory.Api.Services.Catalog.GoodsIssueService>(); // حواله تحویل کالا (بدون قیمت)
+ builder.Services.AddScoped<Inventory.Api.Services.SalesVisit.IVisOrderService, Inventory.Api.Services.SalesVisit.VisOrderService>(); // ماژول ویزیتوری (پیش‌سند فروش)
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/IInventoryService.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/IInventoryService.cs
+index ff353276..4302136a 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/IInventoryService.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/IInventoryService.cs
+@@ -62,6 +62,8 @@ public interface IInventoryService
+     // ---------------- موجودی ----------------
+     Task<PagedResult<StockItem>> GetStockAsync(int? warehouseId, string? search, bool belowOnly, int page, int pageSize);
+     Task AdjustStockAsync(AdjustmentCommand cmd);
++    /// <summary>بازمحاسبه‌ی موجودی فروشگاه یک کالا در یک انبار (برای ماژول اول دوره‌ی فروشگاه).</summary>
++    Task RebuildStockAsync(int warehouseId, int productId);
+ 
+     // ---------------- خرید و فروش ----------------
+     Task<Order> CreateOrderAsync(OrderCommand cmd);
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs
+index 2618f0c3..77ee16bd 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs
+@@ -1144,6 +1144,10 @@ public class InventoryService : IInventoryService
+         var ids = list.Select(p => p.Id).ToList();
+         var txns = await _db.Transactions.Where(t => t.PartyId != null && ids.Contains(t.PartyId.Value)).ToListAsync();
+         var refNames = await _db.Referrers.ToDictionaryAsync(r => r.Id, r => r.Name);
++        // مانده اول دوره‌ی طرف‌حساب فروشگاه (ماژول StoreOpening) — جدا از جدول Parties
++        var openings = (await _db.StoreOpeningParties.AsNoTracking().Where(o => ids.Contains(o.PartyId)).ToListAsync())
++            .GroupBy(o => o.PartyId)
++            .ToDictionary(g => g.Key, g => g.Sum(x => x.Amount));
+         return list.Select(p => new Party
+         {
+             Id = p.Id,
+@@ -1167,6 +1171,7 @@ public class InventoryService : IInventoryService
+             RegisteredAt = p.RegisteredAt,
+             Balance = txns.Where(t => t.PartyId == p.Id)
+                           .Sum(t => t.Type == TransactionType.Sale ? t.Amount : -t.Amount)
++                          + (openings.TryGetValue(p.Id, out var opening) ? opening : 0)
+         }).ToList();
+     }
+ 
+@@ -2193,6 +2198,8 @@ public class InventoryService : IInventoryService
+     }
+ 
+     /// <summary>بازسازی موجودی و قیمت میانگین یک کالا در یک انبار بر اساس کل اسناد (فقط در حافظه؛ ذخیره توسط فراخواننده).</summary>
++    public Task RebuildStockAsync(int warehouseId, int productId) => RecalcStockAsync(warehouseId, productId);
++
+     private async Task RecalcStockAsync(int warehouseId, int productId)
+     {
+         var txns = await _db.Transactions.Include(t => t.Lines)
+@@ -2204,6 +2211,15 @@ public class InventoryService : IInventoryService
+         var product = await _db.Products.FindAsync(productId);
+         var defaultCost = product?.PurchasePrice ?? 0;
+ 
++        // اول دوره‌ی فروشگاه (ماژول StoreOpening): نقطه‌ی شروع محاسبه، پیش از همه‌ی سوابق
++        var storeOpening = await _db.StoreOpeningStocks.AsNoTracking()
++            .FirstOrDefaultAsync(o => o.WarehouseId == warehouseId && o.ProductId == productId);
++        if (storeOpening is not null)
++        {
++            qty = storeOpening.Quantity;
++            cost = storeOpening.UnitCost;
++        }
++
+         foreach (var t in txns)
+         {
+             foreach (var l in t.Lines.Where(l => l.ProductId == productId))
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/StoreOpening/StoreOpeningService.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/StoreOpening/StoreOpeningService.cs
+new file mode 100644
+index 00000000..fd1b8b65
+--- /dev/null
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/StoreOpening/StoreOpeningService.cs
+@@ -0,0 +1,149 @@
++using Db = Inventory.Api.Data;
++using Inventory.Shared;
++using Inventory.Shared.Dtos;
++using Microsoft.EntityFrameworkCore;
++
++namespace Inventory.Api.Services.StoreOpening;
++
++/// <summary>سرویس «اول دوره فروشگاه» — فقط جدول‌های StoreOpening* را می‌نویسد؛
++/// بازمحاسبه‌ی موجودی فروشگاه از طریق IInventoryService انجام می‌شود.</summary>
++public interface IStoreOpeningService
++{
++    Task<StoreOpeningStockDto> GetStockAsync(int warehouseId);
++    Task<StoreOpeningStockDto> SaveStockAsync(StoreOpeningStockDto dto, string? user);
++    Task<List<StoreOpeningPartyDto>> GetPartiesAsync(PartyType? type);
++    Task<StoreOpeningPartyDto> SavePartyAsync(int partyId, StoreOpeningPartyDto dto, string? user);
++}
++
++public class StoreOpeningService : IStoreOpeningService
++{
++    private readonly Db.AppDbContext _db;
++    private readonly IInventoryService _inventory;
++
++    public StoreOpeningService(Db.AppDbContext db, IInventoryService inventory)
++    {
++        _db = db;
++        _inventory = inventory;
++    }
++
++    public async Task<StoreOpeningStockDto> GetStockAsync(int warehouseId)
++    {
++        var lines = await (from o in _db.StoreOpeningStocks.AsNoTracking()
++                           join p in _db.Products.AsNoTracking() on o.ProductId equals p.Id
++                           where o.WarehouseId == warehouseId
++                           orderby p.Name
++                           select new StoreOpeningStockLineDto
++                           {
++                               ProductId = p.Id,
++                               ProductName = p.Name,
++                               Quantity = o.Quantity,
++                               UnitCost = o.UnitCost,
++                           }).ToListAsync();
++
++        var asOf = await _db.StoreOpeningStocks.AsNoTracking()
++            .Where(o => o.WarehouseId == warehouseId)
++            .Select(o => (DateTime?)o.AsOfDate)
++            .FirstOrDefaultAsync();
++
++        return new StoreOpeningStockDto { WarehouseId = warehouseId, AsOfDate = asOf, Lines = lines };
++    }
++
++    public async Task<StoreOpeningStockDto> SaveStockAsync(StoreOpeningStockDto dto, string? user)
++    {
++        if (dto.WarehouseId <= 0 || !await _db.Warehouses.AnyAsync(w => w.Id == dto.WarehouseId))
++            throw new InvalidOperationException("انبار معتبر نیست.");
++        if (dto.AsOfDate is null)
++            throw new InvalidOperationException("تاریخ شروع دوره را وارد کنید.");
++
++        var lines = dto.Lines.Where(l => l.Quantity > 0).ToList();
++        if (lines.Select(l => l.ProductId).Distinct().Count() != lines.Count)
++            throw new InvalidOperationException("یک کالا بیش از یک بار وارد شده است.");
++        if (lines.Any(l => l.UnitCost <= 0))
++            throw new InvalidOperationException("برای هر کالای دارای مقدار، بهای واحد بزرگ‌تر از صفر لازم است.");
++        if (lines.Any(l => l.Quantity != decimal.Round(l.Quantity, 2)))
++            throw new InvalidOperationException("مقدار هر کالا حداکثر تا دو رقم اعشار قابل ثبت است.");
++
++        var productIds = lines.Select(l => l.ProductId).ToList();
++        var validCount = productIds.Count == 0 ? 0 : await _db.Products
++            .CountAsync(p => productIds.Contains(p.Id) && !p.IsService);
++        if (validCount != productIds.Count)
++            throw new InvalidOperationException("یکی از کالاها معتبر نیست یا خدماتی است.");
++
++        var existing = await _db.StoreOpeningStocks.Where(o => o.WarehouseId == dto.WarehouseId).ToListAsync();
++        var affected = existing.Select(o => o.ProductId).Union(productIds).Distinct().ToList();
++        var date = dto.AsOfDate.Value.Date;
++        var now = DateTime.Now;
++
++        await using var trx = await _db.Database.BeginTransactionAsync();
++        _db.StoreOpeningStocks.RemoveRange(existing);
++        await _db.SaveChangesAsync();
++
++        foreach (var l in lines)
++        {
++            _db.StoreOpeningStocks.Add(new Db.StoreOpeningStock
++            {
++                WarehouseId = dto.WarehouseId,
++                ProductId = l.ProductId,
++                AsOfDate = date,
++                Quantity = l.Quantity,
++                UnitCost = decimal.Round(l.UnitCost, 2),
++                UpdatedBy = user,
++                UpdatedAt = now,
++            });
++        }
++        await _db.SaveChangesAsync();
++
++        foreach (var pid in affected)
++            await _inventory.RebuildStockAsync(dto.WarehouseId, pid);
++
++        await _db.SaveChangesAsync();
++        await trx.CommitAsync();
++
++        return await GetStockAsync(dto.WarehouseId);
++    }
++
++    public async Task<List<StoreOpeningPartyDto>> GetPartiesAsync(PartyType? type)
++    {
++        var parties = _db.Parties.AsNoTracking()
++            .Where(p => type == null || p.Type == type.Value);
++
++        return await (from p in parties
++                      join o in _db.StoreOpeningParties.AsNoTracking() on p.Id equals o.PartyId into opening
++                      from o in opening.DefaultIfEmpty()
++                      orderby p.Name
++                      select new StoreOpeningPartyDto
++                      {
++                          PartyId = p.Id,
++                          PartyName = p.Name,
++                          Type = p.Type,
++                          AsOfDate = o == null ? null : o.AsOfDate,
++                          Amount = o == null ? 0 : o.Amount,
++                          Note = o == null ? null : o.Note,
++                          UpdatedBy = o == null ? null : o.UpdatedBy,
++                          UpdatedAt = o == null ? null : o.UpdatedAt,
++                      }).ToListAsync();
++    }
++
++    public async Task<StoreOpeningPartyDto> SavePartyAsync(int partyId, StoreOpeningPartyDto dto, string? user)
++    {
++        if (!await _db.Parties.AnyAsync(p => p.Id == partyId))
++            throw new InvalidOperationException("طرف حساب یافت نشد.");
++        if (dto.AsOfDate is null)
++            throw new InvalidOperationException("تاریخ شروع دوره را وارد کنید.");
++
++        var entity = await _db.StoreOpeningParties.FirstOrDefaultAsync(x => x.PartyId == partyId);
++        if (entity is null)
++        {
++            entity = new Db.StoreOpeningParty { PartyId = partyId };
++            _db.StoreOpeningParties.Add(entity);
++        }
++        entity.AsOfDate = dto.AsOfDate.Value.Date;
++        entity.Amount = decimal.Round(dto.Amount, 2);
++        entity.Note = string.IsNullOrWhiteSpace(dto.Note) ? null : dto.Note.Trim();
++        entity.UpdatedBy = user;
++        entity.UpdatedAt = DateTime.Now;
++        await _db.SaveChangesAsync();
++
++        return (await GetPartiesAsync(null)).First(x => x.PartyId == partyId);
++    }
++}
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Client/Layout/NavMenu.razor b/TotallCollectionSoftware/inventory/src/Inventory.Client/Layout/NavMenu.razor
+index 3d3823c0..9bb1c1c5 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Client/Layout/NavMenu.razor
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Client/Layout/NavMenu.razor
+@@ -388,6 +388,12 @@
+                         <i class="bi bi-cash-stack"></i><span>تسویه فاکتورها</span>
+                     </NavLink>
+                 }
++                @if (Auth.CanSee("StoreOpening"))
++                {
++                    <NavLink class="nav-link" href="store/opening" @onclick="NotifyClose">
++                        <i class="bi bi-journal-check"></i><span>اول دوره فروشگاه</span>
++                    </NavLink>
++                }
+                 @if (Auth.CanSee("ShopGuide"))
+                 {
+                     <NavLink class="nav-link" href="shop-guide" @onclick="NotifyClose">
+@@ -882,7 +888,7 @@
+     // ویزیتور میدانی فقط مجوز SalesVisit دارد؛ اگر گروه «سامانه فروشگاهی» به آن وابسته نباشد
+     // منوی او کاملاً خالی می‌ماند.
+     private bool ShowOpsGroup => ShowOpsReportsSub || ShowOpsBaseSub || ShowVisGroup || ModuleAccess.CanSeeAny(Auth, "Orders", "GoodsIssues", "Stock", "Repairs", "Expenses",
+-                                                        "Products", "Warehouses", "Parties", "Referrers", "TrsVouchers", "ShopGuide");
++                                                        "Products", "Warehouses", "Parties", "Referrers", "TrsVouchers", "ShopGuide", "StoreOpening");
+ 
+     private bool ShowAdminGroup => ModuleAccess.CanSeeAny(Auth, "ItRequests", "SystemUsers", "CctvCameras", "CctvNvrs", "ItVault", "Servers", "Ipam");
+     private bool ShowReportsGroup => Auth.Has("ReportPages.Kardex") || Auth.Has("ReportPages.Reorder");
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Client/Pages/StoreOpening/StoreOpeningPage.razor b/TotallCollectionSoftware/inventory/src/Inventory.Client/Pages/StoreOpening/StoreOpeningPage.razor
+new file mode 100644
+index 00000000..848729f7
+--- /dev/null
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Client/Pages/StoreOpening/StoreOpeningPage.razor
+@@ -0,0 +1,326 @@
++@page "/store/opening"
++@inject IStoreOpeningApi OpeningApi
++@inject IWarehouseService WarehouseSvc
++@inject IProductService ProductSvc
++@inject IToastService Toast
++@inject LayoutState Layout
++@inject IJSRuntime JS
++
++<PageTitle>اول دوره فروشگاه</PageTitle>
++
++<div class="page-head">
++    <div>
++        <h1 class="page-title">اول دوره فروشگاه</h1>
++        <p class="text-muted mb-0">
++            موجودی و مانده‌ی طرف‌حساب‌ها را برای شروع دوره‌ی فروشگاه ثبت کنید. این اطلاعات فقط در ماژول فروشگاه استفاده می‌شود
++            و هیچ سند انبارداری (ERP) یا سند حسابداری تولید نمی‌کند.
++        </p>
++    </div>
++</div>
++
++<ul class="nav nav-tabs mb-3">
++    <li class="nav-item">
++        <button class="nav-link @(tab == Tab.Stock ? "active" : "")" @onclick="() => SetTab(Tab.Stock)">موجودی کالا</button>
++    </li>
++    <li class="nav-item">
++        <button class="nav-link @(tab == Tab.Parties ? "active" : "")" @onclick="() => SetTab(Tab.Parties)">مانده طرف‌حساب‌ها</button>
++    </li>
++</ul>
++
++@if (tab == Tab.Stock)
++{
++    <div class="card mb-3">
++        <div class="card-body">
++            <div class="row g-3 align-items-end">
++                <div class="col-md-4">
++                    <label class="form-label">انبار <span class="text-danger">*</span></label>
++                    <select class="form-select" @onchange="WarehouseChanged" disabled="@busy">
++                        <option value="0">— انتخاب انبار —</option>
++                        @foreach (var w in warehouses)
++                        {
++                            <option value="@w.Id" selected="@(w.Id == warehouseId)">@w.Name</option>
++                        }
++                    </select>
++                </div>
++                <div class="col-md-3">
++                    <label class="form-label">تاریخ شروع دوره <span class="text-danger">*</span></label>
++                    <DatePicker Value="stockDate" ValueChanged="d => stockDate = d" />
++                </div>
++            </div>
++        </div>
++    </div>
++
++    @if (busy)
++    {
++        <div class="text-center py-4"><span class="spinner-border"></span></div>
++    }
++    else if (warehouseId > 0)
++    {
++        <div class="card">
++            <div class="table-responsive">
++                <table class="table table-sm align-middle mb-0">
++                    <thead>
++                        <tr>
++                            <th style="width:50px">#</th>
++                            <th>کالا</th>
++                            <th style="width:180px">مقدار اول دوره</th>
++                            <th style="width:220px">بهای واحد (تومان)</th>
++                            <th style="width:180px">ارزش</th>
++                        </tr>
++                    </thead>
++                    <tbody>
++                        @{ var i = 0; }
++                        @foreach (var r in rows)
++                        {
++                            i++;
++                            <tr>
++                                <td class="num">@i</td>
++                                <td>@r.Name</td>
++                                <td><input type="number" step="any" min="0" class="form-control form-control-sm num text-center" @bind="r.Qty" /></td>
++                                <td><MoneyInput Value="r.Cost" ValueChanged="v => r.Cost = v" /></td>
++                                <td class="num">@((r.Qty * r.Cost).Money())</td>
++                            </tr>
++                        }
++                    </tbody>
++                    <tfoot>
++                        <tr>
++                            <th colspan="4" class="text-end">جمع ارزش</th>
++                            <th class="num">@rows.Where(r => r.Qty > 0).Sum(r => r.Qty * r.Cost).Money()</th>
++                        </tr>
++                    </tfoot>
++                </table>
++            </div>
++        </div>
++        <div class="d-flex justify-content-end gap-2 mt-3">
++            <button class="btn btn-primary" @onclick="SaveStock" disabled="@saving">
++                @if (saving)
++                {
++                    <span class="spinner-border spinner-border-sm ms-1"></span>
++                }
++                ذخیره موجودی اول دوره
++            </button>
++        </div>
++        <div class="small text-muted mt-2">
++            ذخیره، جایگزین اول دوره‌ی قبلی همین انبار می‌شود. فقط کالاهای با مقدار بزرگ‌تر از صفر ذخیره می‌شوند.
++        </div>
++    }
++}
++else
++{
++    <div class="card mb-3">
++        <div class="card-body d-flex flex-wrap gap-2 align-items-center">
++            <div class="btn-group">
++                <button class="btn @(partyType == PartyType.Customer ? "btn-primary" : "btn-light")" @onclick="() => SetPartyType(PartyType.Customer)">مشتریان</button>
++                <button class="btn @(partyType == PartyType.Supplier ? "btn-primary" : "btn-light")" @onclick="() => SetPartyType(PartyType.Supplier)">تأمین‌کنندگان</button>
++            </div>
++            <span class="text-muted small">بدهکار = طرف‌حساب در ابتدای دوره به شرکت بدهکار است. بستانکار = شرکت به طرف‌حساب بدهکار است.</span>
++        </div>
++    </div>
++
++    @if (busy)
++    {
++        <div class="text-center py-4"><span class="spinner-border"></span></div>
++    }
++    else
++    {
++        <div class="card">
++            <div class="table-responsive">
++                <table class="table table-sm align-middle mb-0">
++                    <thead>
++                        <tr>
++                            <th>طرف‌حساب</th>
++                            <th style="width:160px">وضعیت</th>
++                            <th style="width:200px">مبلغ (تومان)</th>
++                            <th style="width:200px">تاریخ شروع دوره</th>
++                            <th>توضیح</th>
++                            <th style="width:110px"></th>
++                        </tr>
++                    </thead>
++                    <tbody>
++                        @foreach (var p in parties)
++                        {
++                            <tr>
++                                <td>@p.Name</td>
++                                <td>
++                                    <select class="form-select form-select-sm" @bind="p.Side">
++                                        <option value="debit">بدهکار</option>
++                                        <option value="credit">بستانکار</option>
++                                    </select>
++                                </td>
++                                <td><MoneyInput Value="p.Amount" ValueChanged="v => p.Amount = v" /></td>
++                                <td><DatePicker Value="p.Date" ValueChanged="d => p.Date = d" /></td>
++                                <td><input class="form-control form-control-sm" @bind="p.Note" maxlength="500" /></td>
++                                <td class="text-end">
++                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => SaveParty(p)" disabled="@(p.Saving)">ذخیره</button>
++                                </td>
++                            </tr>
++                        }
++                        @if (parties.Count == 0)
++                        {
++                            <tr><td colspan="6" class="text-center text-muted py-3">طرف‌حسابی برای این نوع ثبت نشده است.</td></tr>
++                        }
++                    </tbody>
++                </table>
++            </div>
++        </div>
++    }
++}
++
++@code {
++    private enum Tab { Stock, Parties }
++
++    private sealed class StockRow
++    {
++        public int ProductId { get; set; }
++        public string Name { get; set; } = "";
++        public decimal Qty { get; set; }
++        public decimal Cost { get; set; }
++    }
++
++    private sealed class PartyRow
++    {
++        public int PartyId { get; set; }
++        public string Name { get; set; } = "";
++        public string Side { get; set; } = "debit";
++        public decimal Amount { get; set; }
++        public DateTime? Date { get; set; }
++        public string? Note { get; set; }
++        public bool Saving { get; set; }
++    }
++
++    private Tab tab = Tab.Stock;
++    private bool busy, saving;
++
++    // موجودی
++    private List<LookupItem> warehouses = new();
++    private List<StockRow> rows = new();
++    private int warehouseId;
++    private DateTime? stockDate = DateTime.Today;
++
++    // طرف‌حساب
++    private PartyType partyType = PartyType.Customer;
++    private List<PartyRow> parties = new();
++
++    protected override async Task OnInitializedAsync()
++    {
++        Layout.SetTitle("اول دوره فروشگاه");
++        try
++        {
++            warehouses = (await WarehouseSvc.GetAllAsync())
++                .Select(w => new LookupItem { Id = w.Id, Name = w.Name }).ToList();
++        }
++        catch (Exception ex) { Toast.Error(ex.Message); }
++    }
++
++    private async Task SetTab(Tab t)
++    {
++        tab = t;
++        if (t == Tab.Parties) await LoadParties();
++    }
++
++    private async Task SetPartyType(PartyType t)
++    {
++        partyType = t;
++        await LoadParties();
++    }
++
++    private async Task WarehouseChanged(ChangeEventArgs e)
++    {
++        warehouseId = int.TryParse(e.Value?.ToString(), out var id) ? id : 0;
++        await LoadStock();
++    }
++
++    private async Task LoadStock()
++    {
++        rows.Clear();
++        if (warehouseId <= 0) return;
++        busy = true;
++        try
++        {
++            var products = await ProductSvc.GetLookupsAsync();
++            var opening = await OpeningApi.GetStockAsync(warehouseId);
++            var byProduct = opening.Lines.ToDictionary(l => l.ProductId);
++            rows = products.OrderBy(p => p.Name).Select(p => new StockRow
++            {
++                ProductId = p.Id,
++                Name = p.Name,
++                Qty = byProduct.TryGetValue(p.Id, out var l) ? l.Quantity : 0,
++                Cost = byProduct.TryGetValue(p.Id, out var l2) ? l2.UnitCost : 0,
++            }).ToList();
++            if (opening.AsOfDate is not null) stockDate = opening.AsOfDate;
++        }
++        catch (Exception ex) { Toast.Error(ex.Message); }
++        finally { busy = false; }
++    }
++
++    private async Task SaveStock()
++    {
++        if (warehouseId <= 0) return;
++        if (stockDate is null) { Toast.Error("تاریخ شروع دوره را وارد کنید."); return; }
++        saving = true;
++        try
++        {
++            var dto = new StoreOpeningStockDto
++            {
++                WarehouseId = warehouseId,
++                AsOfDate = stockDate,
++                Lines = rows.Where(r => r.Qty > 0).Select(r => new StoreOpeningStockLineDto
++                {
++                    ProductId = r.ProductId,
++                    ProductName = r.Name,
++                    Quantity = r.Qty,
++                    UnitCost = r.Cost,
++                }).ToList(),
++            };
++            await OpeningApi.SaveStockAsync(dto);
++            Toast.Success("موجودی اول دوره فروشگاه ذخیره شد.");
++            await LoadStock();
++        }
++        catch (Exception ex) { Toast.Error(ex.Message); }
++        finally { saving = false; }
++    }
++
++    private async Task LoadParties()
++    {
++        busy = true;
++        try
++        {
++            var list = await OpeningApi.GetPartiesAsync(partyType);
++            parties = list.Select(p => new PartyRow
++            {
++                PartyId = p.PartyId,
++                Name = p.PartyName,
++                Side = p.Amount < 0 ? "credit" : "debit",
++                Amount = Math.Abs(p.Amount),
++                Date = p.AsOfDate,
++                Note = p.Note,
++            }).ToList();
++        }
++        catch (Exception ex) { Toast.Error(ex.Message); }
++        finally { busy = false; }
++    }
++
++    private async Task SaveParty(PartyRow p)
++    {
++        if (p.Date is null)
++        {
++            Toast.Error($"برای «{p.Name}» تاریخ شروع دوره را وارد کنید.");
++            return;
++        }
++        p.Saving = true;
++        try
++        {
++            var signed = p.Side == "credit" ? -Math.Abs(p.Amount) : Math.Abs(p.Amount);
++            await OpeningApi.SavePartyAsync(p.PartyId, new StoreOpeningPartyDto
++            {
++                PartyId = p.PartyId,
++                AsOfDate = p.Date,
++                Amount = signed,
++                Note = string.IsNullOrWhiteSpace(p.Note) ? null : p.Note.Trim(),
++            });
++            Toast.Success($"مانده «{p.Name}» ذخیره شد.");
++        }
++        catch (Exception ex) { Toast.Error(ex.Message); }
++        finally { p.Saving = false; }
++    }
++}
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Client/Program.cs b/TotallCollectionSoftware/inventory/src/Inventory.Client/Program.cs
+index 095cbb7e..ea61a1cd 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Client/Program.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Client/Program.cs
+@@ -44,6 +44,7 @@ builder.Services.AddScoped<IUnitService, UnitService>();
+ builder.Services.AddScoped<IProductService, ProductService>();
+ builder.Services.AddScoped<IWarehouseService, WarehouseService>();
+ builder.Services.AddScoped<IPartyService, PartyService>();
++builder.Services.AddScoped<IStoreOpeningApi, StoreOpeningApiService>();
+ builder.Services.AddScoped<IStockService, StockService>();
+ builder.Services.AddScoped<IOrderService, OrderService>();
+ builder.Services.AddScoped<IGoodsIssueService, GoodsIssueService>(); // حواله تحویل کالا (بدون قیمت)
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/StoreOpeningApiServices.cs b/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/StoreOpeningApiServices.cs
+new file mode 100644
+index 00000000..328b6579
+--- /dev/null
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/StoreOpeningApiServices.cs
+@@ -0,0 +1,33 @@
++using Inventory.Shared;
++using Inventory.Shared.Dtos;
++
++namespace Inventory.Client.Services;
++
++/// <summary>سرویس HTTP ماژول «اول دوره فروشگاه» (جدا از سرویس‌های ERP).</summary>
++public interface IStoreOpeningApi
++{
++    Task<StoreOpeningStockDto> GetStockAsync(int warehouseId);
++    Task<StoreOpeningStockDto> SaveStockAsync(StoreOpeningStockDto dto);
++    Task<List<StoreOpeningPartyDto>> GetPartiesAsync(PartyType? type);
++    Task<StoreOpeningPartyDto> SavePartyAsync(int partyId, StoreOpeningPartyDto dto);
++}
++
++public class StoreOpeningApiService : IStoreOpeningApi
++{
++    private readonly IApiClient _api;
++    public StoreOpeningApiService(IApiClient api) => _api = api;
++
++    public Task<StoreOpeningStockDto> GetStockAsync(int warehouseId)
++        => _api.GetAsync<StoreOpeningStockDto>($"api/store-opening/stock?warehouseId={warehouseId}");
++
++    public Task<StoreOpeningStockDto> SaveStockAsync(StoreOpeningStockDto dto)
++        => _api.PutAsync<StoreOpeningStockDto>("api/store-opening/stock", dto);
++
++    public Task<List<StoreOpeningPartyDto>> GetPartiesAsync(PartyType? type)
++        => _api.GetAsync<List<StoreOpeningPartyDto>>(type is null
++            ? "api/store-opening/parties"
++            : $"api/store-opening/parties?type={(int)type.Value}");
++
++    public Task<StoreOpeningPartyDto> SavePartyAsync(int partyId, StoreOpeningPartyDto dto)
++        => _api.PutAsync<StoreOpeningPartyDto>($"api/store-opening/parties/{partyId}", dto);
++}
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Shared/Dtos/StoreOpeningDtos.cs b/TotallCollectionSoftware/inventory/src/Inventory.Shared/Dtos/StoreOpeningDtos.cs
+new file mode 100644
+index 00000000..8eb1c268
+--- /dev/null
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Shared/Dtos/StoreOpeningDtos.cs
+@@ -0,0 +1,31 @@
++namespace Inventory.Shared.Dtos;
++
++/// <summary>سطر اول دوره‌ی موجودی فروشگاه</summary>
++public class StoreOpeningStockLineDto
++{
++    public int ProductId { get; set; }
++    public string ProductName { get; set; } = "";
++    public decimal Quantity { get; set; }
++    public decimal UnitCost { get; set; }
++}
++
++/// <summary>اول دوره‌ی موجودی یک انبار (جایگزین کامل سطرهای همان انبار)</summary>
++public class StoreOpeningStockDto
++{
++    public int WarehouseId { get; set; }
++    public DateTime? AsOfDate { get; set; }
++    public List<StoreOpeningStockLineDto> Lines { get; set; } = new();
++}
++
++/// <summary>مانده اول دوره‌ی یک طرف‌حساب فروشگاه (مثبت = بدهکار، منفی = بستانکار)</summary>
++public class StoreOpeningPartyDto
++{
++    public int PartyId { get; set; }
++    public string PartyName { get; set; } = "";
++    public PartyType Type { get; set; }
++    public DateTime? AsOfDate { get; set; }
++    public decimal Amount { get; set; }
++    public string? Note { get; set; }
++    public string? UpdatedBy { get; set; }
++    public DateTime? UpdatedAt { get; set; }
++}
