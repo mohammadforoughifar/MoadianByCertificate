@@ -1,0 +1,515 @@
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Client/Pages/Catalog/Parties.razor b/TotallCollectionSoftware/inventory/src/Inventory.Client/Pages/Catalog/Parties.razor
+index 1539387..b79e293 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Client/Pages/Catalog/Parties.razor
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Client/Pages/Catalog/Parties.razor
+@@ -126,6 +126,7 @@
+                                 <td class="text-end">
+                                     @if (CanUpdateCurrent)
+                                     {
++                                        <button class="btn btn-sm btn-light" title="مانده اول دوره" @onclick="() => OpenOpening(p)"><i class="bi bi-journal-plus text-success"></i></button>
+                                         <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(p)"><i class="bi bi-pencil text-primary"></i></button>
+                                     }
+                                     @if (CanDeleteCurrent)
+@@ -178,6 +179,7 @@
+                         <div class="m-card-actions">
+                             @if (CanUpdateCurrent)
+                             {
++                                <button class="btn btn-light text-success" @onclick="() => OpenOpening(p)"><i class="bi bi-journal-plus"></i> مانده اول دوره</button>
+                                 <button class="btn btn-light text-primary" @onclick="() => OpenEdit(p)"><i class="bi bi-pencil"></i> ویرایش</button>
+                             }
+                             @if (CanDeleteCurrent)
+@@ -194,6 +196,11 @@
+     </div>
+ </div>
+ 
++<PartyOpeningModal Visible="showOpening"
++                   Target="openingTarget"
++                   OnSaved="OnOpeningSaved"
++                   OnCancel="CloseOpening" />
++
+ @* فرم تعریف طرف حساب — همان فرم مشترکِ ماژول ویزیتوری (/parties) *@
+ <PartyFormModal Visible="showModal"
+                 Type="type"
+@@ -278,6 +285,27 @@
+ 
+     private void CloseModal() => showModal = false;
+ 
++    private Party? openingTarget;
++    private bool showOpening;
++
++    private void OpenOpening(Party p)
++    {
++        openingTarget = p;
++        showOpening = true;
++    }
++
++    private void CloseOpening()
++    {
++        showOpening = false;
++        openingTarget = null;
++    }
++
++    private async Task OnOpeningSaved()
++    {
++        CloseOpening();
++        await Load();
++    }
++
+     /// <summary>توضیح کامل ثبت‌کننده: کاربر + پروندهٔ معرف + تاریخ ثبت.</summary>
+     private static string RegistrarTitle(Party p)
+     {
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Client/Pages/Warehousing/InvOpeningStock.razor b/TotallCollectionSoftware/inventory/src/Inventory.Client/Pages/Warehousing/InvOpeningStock.razor
+new file mode 100644
+index 0000000..87722d9
+--- /dev/null
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Client/Pages/Warehousing/InvOpeningStock.razor
+@@ -0,0 +1,249 @@
++@page "/inv/opening-stock"
++@inject IInvDocService DocSvc
++@inject IInvDocTypeService DocTypeSvc
++@inject IInvWarehouseService WarehouseSvc
++@inject IInvProductService ProductSvc
++@inject IToastService Toast
++@inject LayoutState Layout
++@inject NavigationManager Nav
++
++<PageTitle>اول دوره انبار</PageTitle>
++
++<div class="page-head">
++    <div>
++        <h1 class="page-title">موجودی اول دوره انبار</h1>
++        <p class="text-muted mb-0">
++            موجودی ابتدای دوره‌ی هر انبار را با مقدار و بهای واحد ثبت کنید. با ثبت، یک سند «رسید موجودی اول دوره» ساخته و قطعی می‌شود
++            و در کاردکس و موجودی انبار دیده می‌شود. سند حسابداری تولید نمی‌شود.
++        </p>
++    </div>
++</div>
++
++<div class="card mb-3">
++    <div class="card-body">
++        <div class="row g-3 align-items-end">
++            <div class="col-md-4">
++                <label class="form-label">انبار <span class="text-danger">*</span></label>
++                <select class="form-select" @onchange="WarehouseChanged" disabled="@(busy)">
++                    <option value="0">— انتخاب انبار —</option>
++                    @foreach (var w in warehouses)
++                    {
++                        <option value="@w.Id" selected="@(w.Id == warehouseId)">@w.Name</option>
++                    }
++                </select>
++            </div>
++            <div class="col-md-3">
++                <label class="form-label">تاریخ سند اول دوره</label>
++                <DatePicker Value="docDate" ValueChanged="d => docDate = d" />
++            </div>
++            <div class="col-md-3">
++                <button class="btn btn-outline-primary" @onclick="LoadProducts" disabled="@(warehouseId <= 0 || busy)">
++                    <i class="bi bi-arrow-repeat"></i> بارگذاری کالاها
++                </button>
++            </div>
++        </div>
++    </div>
++</div>
++
++@if (busy)
++{
++    <div class="text-center py-4"><span class="spinner-border"></span></div>
++}
++else if (warehouseId > 0 && loaded)
++{
++    @if (openingDocs.Count > 0)
++    {
++        <div class="card mb-3">
++            <div class="card-header fw-bold">اسناد اول دوره‌ی این انبار</div>
++            <div class="table-responsive">
++                <table class="table table-sm mb-0">
++                    <thead><tr><th>شماره</th><th>تاریخ</th><th>وضعیت</th><th>تعداد ردیف</th><th></th></tr></thead>
++                    <tbody>
++                        @foreach (var d in openingDocs)
++                        {
++                            <tr>
++                                <td class="num">@d.Number</td>
++                                <td class="num">@d.Date.ToString("yyyy/MM/dd")</td>
++                                <td>@d.StatusTitle</td>
++                                <td class="num">@d.LineCount</td>
++                                <td class="text-end"><a href="/inv/docs/edit/@d.Id">مشاهده سند</a></td>
++                            </tr>
++                        }
++                    </tbody>
++                </table>
++            </div>
++        </div>
++    }
++
++    @if (alreadyConfirmed)
++    {
++        <div class="alert alert-warning">
++            موجودی اول دوره‌ی این انبار قبلاً قطعی شده است. برای تغییر، سند قطعی را در صفحه‌ی سند ابطال یا اصلاح کنید؛
++            ثبت دوباره‌ی اول دوره مجاز نیست تا موجودی دوبار شمرده نشود.
++        </div>
++    }
++
++    <div class="card">
++        <div class="table-responsive">
++            <table class="table table-sm align-middle mb-0">
++                <thead>
++                    <tr>
++                        <th style="width:50px">#</th>
++                        <th>کالا</th>
++                        <th style="width:180px">مقدار اول دوره</th>
++                        <th style="width:220px">بهای واحد (تومان)</th>
++                        <th style="width:180px">ارزش</th>
++                    </tr>
++                </thead>
++                <tbody>
++                    @{ var i = 0; }
++                    @foreach (var r in rows)
++                    {
++                        i++;
++                        <tr>
++                            <td class="num">@i</td>
++                            <td>@r.Name</td>
++                            <td><input type="number" step="any" min="0" class="form-control form-control-sm num text-center" disabled="@alreadyConfirmed" @bind="r.Qty" /></td>
++                            <td><MoneyInput Value="r.Price" ValueChanged="v => r.Price = v" CssClass="form-control form-control-sm num text-center" /></td>
++                            <td class="num">@((r.Qty * r.Price).Money())</td>
++                        </tr>
++                    }
++                </tbody>
++                <tfoot>
++                    <tr>
++                        <th colspan="4" class="text-end">جمع ارزش (کالاهای با مقدار مثبت)</th>
++                        <th class="num">@TotalValue.Money()</th>
++                    </tr>
++                </tfoot>
++            </table>
++        </div>
++    </div>
++
++    <div class="d-flex justify-content-end gap-2 mt-3">
++        <button class="btn btn-primary" @onclick="SaveAndConfirm" disabled="@(saveDisabled)">
++            @if (saving)
++            {
++                <span class="spinner-border spinner-border-sm ms-1"></span>
++            }
++            ثبت و قطعی‌سازی اول دوره
++        </button>
++    </div>
++    <div class="small text-muted mt-2">
++        فقط کالاهایی ثبت می‌شوند که مقدار بزرگ‌تر از صفر دارند. برای هر کالای دارای مقدار، بهای واحد بزرگ‌تر از صفر لازم است.
++    </div>
++}
++
++@code {
++    private sealed class OpeningRow
++    {
++        public int ProductId { get; set; }
++        public string Name { get; set; } = "";
++        public decimal Qty { get; set; }
++        public decimal Price { get; set; }
++    }
++
++    private List<LookupItem> warehouses = new();
++    private List<OpeningRow> rows = new();
++    private List<InvDoc> openingDocs = new();
++    private InvDocType? openingType;
++    private int warehouseId;
++    private DateTime? docDate = DateTime.Today;
++    private bool busy, saving, loaded, alreadyConfirmed;
++
++    private decimal TotalValue => rows.Where(r => r.Qty > 0).Sum(r => r.Qty * r.Price);
++
++    private bool saveDisabled => saving || alreadyConfirmed
++        || !rows.Any(r => r.Qty > 0)
++        || rows.Any(r => r.Qty > 0 && r.Price <= 0)
++        || docDate is null;
++
++    protected override async Task OnInitializedAsync()
++    {
++        Layout.SetTitle("اول دوره انبار");
++        try
++        {
++            warehouses = await WarehouseSvc.GetLookupsAsync(true);
++            var types = await DocTypeSvc.GetAllAsync(true);
++            openingType = types.FirstOrDefault(t => t.Code == "RC-OPEN");
++            if (openingType is null)
++                Toast.Error("نوع سند «رسید موجودی اول دوره» (RC-OPEN) در سامانه پیدا نشد.");
++        }
++        catch (Exception ex) { Toast.Error(ex.Message); }
++    }
++
++    private void WarehouseChanged(ChangeEventArgs e)
++    {
++        warehouseId = int.TryParse(e.Value?.ToString(), out var id) ? id : 0;
++        loaded = false;
++        rows.Clear();
++        openingDocs.Clear();
++        alreadyConfirmed = false;
++    }
++
++    private async Task LoadProducts()
++    {
++        if (warehouseId <= 0) return;
++        busy = true;
++        try
++        {
++            var products = await ProductSvc.GetLookupsAsync(null, null);
++            rows = products.OrderBy(p => p.Name)
++                           .Select(p => new OpeningRow { ProductId = p.Id, Name = p.Name })
++                           .ToList();
++
++            openingDocs = new();
++            if (openingType is not null)
++            {
++                var page = await DocSvc.GetAllAsync(docTypeId: openingType.Id, warehouseId: warehouseId, pageSize: 50);
++                openingDocs = page.Items;
++            }
++            alreadyConfirmed = openingDocs.Any(d => d.Status == InvDocStatus.Confirmed);
++            loaded = true;
++        }
++        catch (Exception ex) { Toast.Error(ex.Message); }
++        finally { busy = false; }
++    }
++
++    private async Task SaveAndConfirm()
++    {
++        if (openingType is null || docDate is null || alreadyConfirmed) return;
++        var lines = rows.Where(r => r.Qty > 0).ToList();
++        if (lines.Count == 0) { Toast.Error("هیچ کالایی با مقدار مثبت وارد نشده است."); return; }
++
++        saving = true;
++        InvDoc? draft = null;
++        try
++        {
++            var doc = new InvDoc
++            {
++                DocTypeId = openingType.Id,
++                Nature = openingType.Nature,
++                IsTransfer = false,
++                WarehouseId = warehouseId,
++                Date = docDate.Value,
++                Description = "موجودی اول دوره",
++                Status = InvDocStatus.Draft,
++                Lines = lines.Select((r, idx) => new InvDocLine
++                {
++                    RowNo = idx + 1,
++                    ProductId = r.ProductId,
++                    Quantity = r.Qty,
++                    UnitPrice = r.Price,
++                }).ToList(),
++            };
++
++            draft = await DocSvc.SaveAsync(doc);
++            var confirmed = await DocSvc.ConfirmAsync(draft.Id);
++            Toast.Success($"اول دوره انبار ثبت و سند {confirmed.Number} قطعی شد.");
++            Nav.NavigateTo($"/inv/docs/edit/{confirmed.Id}");
++        }
++        catch (Exception ex)
++        {
++            Toast.Error(draft is not null
++                ? $"سند پیش‌نویس ساخته شد اما قطعی نشد: {ex.Message}"
++                : ex.Message);
++            if (draft is not null) Nav.NavigateTo($"/inv/docs/edit/{draft.Id}");
++        }
++        finally { saving = false; }
++    }
++}
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/ErpNavigation.cs b/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/ErpNavigation.cs
+index 536e60a..8a103ff 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/ErpNavigation.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/ErpNavigation.cs
+@@ -20,7 +20,8 @@ public static class ErpNavigation
+             E("inv/settings", "تنظیمات انبار و کدینگ", "bi-gear-wide-connected", "Products")]),
+         new("inv-ops", "عملیات انبار", "bi-arrow-left-right", [
+             E("inv/docs", "رسید و حواله", "bi-journal-text", "InvDocs"),
+-            E("inv/docs/new", "سند جدید انبار", "bi-file-earmark-plus", "InvDocs")]),
++            E("inv/docs/new", "سند جدید انبار", "bi-file-earmark-plus", "InvDocs"),
++            E("inv/opening-stock", "اول دوره انبار", "bi-box-arrow-in-down", "InvDocs")]),
+         new("inv-rep", "گزارش‌های انبار", "bi-clipboard-pulse", [
+             E("inv/stock", "موجودی انبار", "bi-clipboard-check", "InvDocs"),
+             E("inv/kardex", "کاردکس کالا", "bi-clipboard-data", "InvDocs")]),
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/IInventoryApi.cs b/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/IInventoryApi.cs
+index 197adf6..2bfb6e5 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/IInventoryApi.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/IInventoryApi.cs
+@@ -88,6 +88,8 @@ public interface IPartyService
+     Task<List<LookupItem>> GetLookupsAsync(PartyType type, bool activeOnly = false);
+     Task<Party> SaveAsync(Party party);
+     Task DeleteAsync(int id);
++    Task<PartyOpeningBalanceDto> GetOpeningBalanceAsync(int partyId);
++    Task<PartyOpeningBalanceDto> SaveOpeningBalanceAsync(int partyId, PartyOpeningBalanceDto dto);
+ }
+ 
+ /// <summary>سرویس موجودی انبار.</summary>
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/InventoryApiServices.cs b/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/InventoryApiServices.cs
+index 1ee0431..b165260 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/InventoryApiServices.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Client/Services/InventoryApiServices.cs
+@@ -183,6 +183,12 @@ public class PartyService : IPartyService
+ 
+     public Task DeleteAsync(int id)
+         => _api.DeleteAsync($"api/parties/{id}");
++
++    public Task<PartyOpeningBalanceDto> GetOpeningBalanceAsync(int partyId)
++        => _api.GetAsync<PartyOpeningBalanceDto>($"api/parties/{partyId}/opening-balance");
++
++    public Task<PartyOpeningBalanceDto> SaveOpeningBalanceAsync(int partyId, PartyOpeningBalanceDto dto)
++        => _api.PutAsync<PartyOpeningBalanceDto>($"api/parties/{partyId}/opening-balance", dto);
+ }
+ 
+ /// <summary>پیاده‌سازی سرویس موجودی.</summary>
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Client/Shared/PartyOpeningModal.razor b/TotallCollectionSoftware/inventory/src/Inventory.Client/Shared/PartyOpeningModal.razor
+new file mode 100644
+index 0000000..d23e97c
+--- /dev/null
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Client/Shared/PartyOpeningModal.razor
+@@ -0,0 +1,150 @@
++@namespace Inventory.Client.Shared
++@inject IPartyService PartySvc
++@inject IToastService Toast
++
++@* ================== مانده اول دوره‌ی طرف‌حساب ==================
++   مانده بدهکار/بستانکار شروع دوره را ثبت می‌کند. مثبت = بدهکار، منفی = بستانکار.
++   سند حسابداری تولید نمی‌کند؛ فقط به مانده‌ی طرف‌حساب اضافه می‌شود.
++   ================================================================ *@
++
++<Modal Visible="Visible" Title="@($"مانده اول دوره — {Target?.Name}")" OnClose="Close">
++    <ChildContent>
++        @if (loading)
++        {
++            <div class="text-center py-4"><span class="spinner-border"></span></div>
++        }
++        else
++        {
++            <div class="alert alert-light border py-2 fs-8 mb-3">
++                بدهکار یعنی طرف‌حساب در ابتدای دوره به شرکت بدهکار است؛ بستانکار یعنی شرکت به طرف‌حساب بدهکار است.
++            </div>
++            <div class="row g-3">
++                <div class="col-md-6">
++                    <label class="form-label">وضعیت مانده</label>
++                    <select class="form-select" @bind="side">
++                        <option value="debit">بدهکار (طلب شرکت)</option>
++                        <option value="credit">بستانکار (بدهی شرکت)</option>
++                    </select>
++                </div>
++                <div class="col-md-6">
++                    <label class="form-label">مبلغ (تومان)</label>
++                    <MoneyInput Value="amount" ValueChanged="v => amount = v" />
++                </div>
++                <div class="col-md-6">
++                    <label class="form-label">تاریخ شروع دوره <span class="text-danger">*</span></label>
++                    <DatePicker Value="asOfDate" ValueChanged="d => asOfDate = d" />
++                </div>
++                <div class="col-md-6">
++                    <label class="form-label">توضیح</label>
++                    <input class="form-control" @bind="note" maxlength="500" />
++                </div>
++            </div>
++            @if (!string.IsNullOrWhiteSpace(updatedInfo))
++            {
++                <div class="small text-muted mt-3">@updatedInfo</div>
++            }
++        }
++    </ChildContent>
++    <Footer>
++        <button class="btn btn-light" @onclick="Close">انصراف (Esc)</button>
++        <button class="btn btn-primary" @onclick="Save" disabled="@(saving || loading)">
++            @if (saving)
++            {
++                <span class="spinner-border spinner-border-sm ms-1"></span>
++            }
++            ذخیره مانده
++        </button>
++    </Footer>
++</Modal>
++
++@code {
++    [Parameter] public bool Visible { get; set; }
++    [Parameter] public Party? Target { get; set; }
++    [Parameter] public EventCallback OnSaved { get; set; }
++    [Parameter] public EventCallback OnCancel { get; set; }
++
++    private bool loading;
++    private bool saving;
++    private int loadedFor;
++    private string side = "debit";
++    private decimal amount;
++    private DateTime? asOfDate;
++    private string? note;
++    private string? updatedInfo;
++
++    protected override async Task OnParametersSetAsync()
++    {
++        if (!Visible)
++        {
++            loadedFor = 0;
++            return;
++        }
++        if (Target is not null && Target.Id != loadedFor)
++        {
++            loadedFor = Target.Id;
++            await LoadAsync();
++        }
++    }
++
++    private async Task LoadAsync()
++    {
++        loading = true;
++        try
++        {
++            var o = await PartySvc.GetOpeningBalanceAsync(Target!.Id);
++            side = o.Amount < 0 ? "credit" : "debit";
++            amount = Math.Abs(o.Amount);
++            asOfDate = o.AsOfDate ?? new DateTime(DateTime.Today.Year, 1, 1);
++            note = o.Note;
++            updatedInfo = o.UpdatedAt is null ? null
++                : $"آخرین ثبت: {o.UpdatedBy ?? "—"} — {o.UpdatedAt.Value:yyyy/MM/dd HH:mm}";
++        }
++        catch (Exception ex)
++        {
++            Toast.Error(ex.Message);
++        }
++        finally
++        {
++            loading = false;
++        }
++    }
++
++    private async Task Save()
++    {
++        if (Target is null) return;
++        if (asOfDate is null)
++        {
++            Toast.Error("تاریخ شروع دوره را وارد کنید.");
++            return;
++        }
++        saving = true;
++        try
++        {
++            var signed = side == "credit" ? -Math.Abs(amount) : Math.Abs(amount);
++            await PartySvc.SaveOpeningBalanceAsync(Target.Id, new PartyOpeningBalanceDto
++            {
++                PartyId = Target.Id,
++                AsOfDate = asOfDate,
++                Amount = signed,
++                Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim(),
++            });
++            Toast.Success("مانده اول دوره ثبت شد.");
++            loadedFor = 0;
++            await OnSaved.InvokeAsync();
++        }
++        catch (Exception ex)
++        {
++            Toast.Error(ex.Message);
++        }
++        finally
++        {
++            saving = false;
++        }
++    }
++
++    private async Task Close()
++    {
++        loadedFor = 0;
++        await OnCancel.InvokeAsync();
++    }
++}
