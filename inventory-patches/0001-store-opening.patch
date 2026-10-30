@@ -1,10 +1,11 @@
 diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Controllers/StoreOpening/StoreOpeningController.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Controllers/StoreOpening/StoreOpeningController.cs
 new file mode 100644
-index 00000000..449c6984
+index 00000000..f16d90a1
 --- /dev/null
 +++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Controllers/StoreOpening/StoreOpeningController.cs
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,52 @@
 +using Inventory.Api.Infrastructure;
++using Inventory.Api.Services;
 +using Inventory.Api.Services.StoreOpening;
 +using Inventory.Shared;
 +using Inventory.Shared.Dtos;
@@ -21,8 +22,21 @@ index 00000000..449c6984
 +public class StoreOpeningController : ControllerBase
 +{
 +    private readonly IStoreOpeningService _service;
++    private readonly IInventoryService _inventory;
 +
-+    public StoreOpeningController(IStoreOpeningService service) => _service = service;
++    public StoreOpeningController(IStoreOpeningService service, IInventoryService inventory)
++    {
++        _service = service;
++        _inventory = inventory;
++    }
++
++    /// <summary>بازمحاسبه‌ی موجودی فروشگاه از سوابق فروشگاه (برای اصلاح مقدارهای قدیمی).</summary>
++    [HttpPost("rebuild-stock")]
++    public async Task<IActionResult> RebuildStock()
++    {
++        await _inventory.RebuildAllStockAsync();
++        return Ok(new { ok = true });
++    }
 +
 +    [HttpGet("stock")]
 +    public async Task<ActionResult<StoreOpeningStockDto>> GetStock([FromQuery] int warehouseId)
@@ -270,20 +284,22 @@ index 6c7c9eae..70bc55c7 100644
  builder.Services.AddScoped<Inventory.Api.Services.Catalog.IGoodsIssueService, Inventory.Api.Services.Catalog.GoodsIssueService>(); // حواله تحویل کالا (بدون قیمت)
  builder.Services.AddScoped<Inventory.Api.Services.SalesVisit.IVisOrderService, Inventory.Api.Services.SalesVisit.VisOrderService>(); // ماژول ویزیتوری (پیش‌سند فروش)
 diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/IInventoryService.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/IInventoryService.cs
-index ff353276..4302136a 100644
+index ff353276..521ba782 100644
 --- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/IInventoryService.cs
 +++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/IInventoryService.cs
-@@ -62,6 +62,8 @@ public interface IInventoryService
+@@ -62,6 +62,10 @@ public interface IInventoryService
      // ---------------- موجودی ----------------
      Task<PagedResult<StockItem>> GetStockAsync(int? warehouseId, string? search, bool belowOnly, int page, int pageSize);
      Task AdjustStockAsync(AdjustmentCommand cmd);
 +    /// <summary>بازمحاسبه‌ی موجودی فروشگاه یک کالا در یک انبار (برای ماژول اول دوره‌ی فروشگاه).</summary>
 +    Task RebuildStockAsync(int warehouseId, int productId);
++    /// <summary>بازمحاسبه‌ی کل موجودی فروشگاه از سوابق فروشگاه و اول دوره‌ی فروشگاه (ERP در آن دخالتی ندارد).</summary>
++    Task RebuildAllStockAsync();
  
      // ---------------- خرید و فروش ----------------
      Task<Order> CreateOrderAsync(OrderCommand cmd);
 diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs
-index 2618f0c3..77ee16bd 100644
+index 2618f0c3..3941eeaa 100644
 --- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs
 +++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs
 @@ -1144,6 +1144,10 @@ public class InventoryService : IInventoryService
@@ -305,16 +321,34 @@ index 2618f0c3..77ee16bd 100644
          }).ToList();
      }
  
-@@ -2193,6 +2198,8 @@ public class InventoryService : IInventoryService
+@@ -2193,6 +2198,26 @@ public class InventoryService : IInventoryService
      }
  
      /// <summary>بازسازی موجودی و قیمت میانگین یک کالا در یک انبار بر اساس کل اسناد (فقط در حافظه؛ ذخیره توسط فراخواننده).</summary>
 +    public Task RebuildStockAsync(int warehouseId, int productId) => RecalcStockAsync(warehouseId, productId);
 +
++    public async Task RebuildAllStockAsync()
++    {
++        var pairs = new HashSet<(int WarehouseId, int ProductId)>();
++        foreach (var t in await _db.Transactions.AsNoTracking().Include(t => t.Lines).ToListAsync())
++            foreach (var l in t.Lines)
++                pairs.Add((t.WarehouseId, l.ProductId));
++        foreach (var o in await _db.StoreOpeningStocks.AsNoTracking().ToListAsync())
++            pairs.Add((o.WarehouseId, o.ProductId));
++        foreach (var s in await _db.Stocks.AsNoTracking().ToListAsync())
++            pairs.Add((s.WarehouseId, s.ProductId));
++
++        await using var trx = await _db.Database.BeginTransactionAsync();
++        foreach (var (w, p) in pairs)
++            await RecalcStockAsync(w, p);
++        await _db.SaveChangesAsync();
++        await trx.CommitAsync();
++    }
++
      private async Task RecalcStockAsync(int warehouseId, int productId)
      {
          var txns = await _db.Transactions.Include(t => t.Lines)
-@@ -2204,6 +2211,15 @@ public class InventoryService : IInventoryService
+@@ -2204,6 +2229,15 @@ public class InventoryService : IInventoryService
          var product = await _db.Products.FindAsync(productId);
          var defaultCost = product?.PurchasePrice ?? 0;
  
@@ -330,6 +364,23 @@ index 2618f0c3..77ee16bd 100644
          foreach (var t in txns)
          {
              foreach (var l in t.Lines.Where(l => l.ProductId == productId))
+@@ -2227,15 +2261,7 @@ public class InventoryService : IInventoryService
+             }
+         }
+ 
+-        // ---------- ماژول انبارداری ----------
+-        // گردش اسناد رسید/حواله انبار هم به مانده اضافه می‌شود تا مانده «یکپارچه» بماند.
+-        var invStock = await _db.InvStocks.AsNoTracking()
+-            .FirstOrDefaultAsync(s => s.WarehouseId == warehouseId && s.ProductId == productId);
+-        if (invStock is not null)
+-        {
+-            qty += invStock.Quantity;
+-            if (invStock.AvgCost > 0) cost = invStock.AvgCost;
+-        }
++        // موجودی فروشگاه فقط از سوابق فروشگاه و اول دوره‌ی فروشگاه محاسبه می‌شود (InvStocks در آن نقشی ندارد).
+ 
+         var stock = await _db.Stocks.FirstOrDefaultAsync(s => s.WarehouseId == warehouseId && s.ProductId == productId);
+         if (qty == 0 && stock is null) return;
 diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/StoreOpening/StoreOpeningService.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/StoreOpening/StoreOpeningService.cs
 new file mode 100644
 index 00000000..fd1b8b65
@@ -485,6 +536,89 @@ index 00000000..fd1b8b65
 +        return (await GetPartiesAsync(null)).First(x => x.PartyId == partyId);
 +    }
 +}
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Warehousing/WarehousingService.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Warehousing/WarehousingService.cs
+index 2faf8c29..2fc90886 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Warehousing/WarehousingService.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Warehousing/WarehousingService.cs
+@@ -710,9 +710,7 @@ public class WarehousingService : IWarehousingService
+         var invStocks = await _db.InvStocks.Where(s => s.ProductId == id).ToListAsync();
+         _db.InvStocks.RemoveRange(invStocks);
+ 
+-        var stocks = await _db.Stocks.Where(s => s.ProductId == id).ToListAsync();
+-        _db.Stocks.RemoveRange(stocks);
+-
++        // موجودی فروشگاه (Stocks) متعلق به ماژول فروشگاه است و اینجا لمس نمی‌شود.
+         _db.Products.Remove(entity);
+         await _db.SaveChangesAsync();
+     }
+@@ -1697,7 +1695,6 @@ public class WarehousingService : IWarehousingService
+         if (stock is null && balQty == 0 && balValue == 0)
+         {
+             await _db.SaveChangesAsync();
+-            await SyncLegacyStockAsync(productId, warehouseId, 0);
+             return;
+         }
+         if (stock is null)
+@@ -1711,7 +1708,6 @@ public class WarehousingService : IWarehousingService
+         stock.UpdatedAt = DateTime.Now;
+ 
+         await _db.SaveChangesAsync();
+-        await SyncLegacyStockAsync(productId, warehouseId, balQty);
+     }
+ 
+     /// <summary>مصرف لایه‌های موجودی بر اساس روش قیمت‌گذاری و برگرداندن بهای تمام‌شده خروج.</summary>
+@@ -1847,51 +1843,6 @@ public class WarehousingService : IWarehousingService
+         }
+     }
+ 
+-    /// <summary>
+-    /// همگام‌سازی مانده با جدول قدیمی Stocks تا صفحات قبلی (نقطه سفارش، داشبورد، فروش)
+-    /// اثر اسناد انبارداری را ببینند: مانده = گردش اسناد خرید/فروش + گردش اسناد انبار.
+-    /// </summary>
+-    private async Task SyncLegacyStockAsync(int productId, int warehouseId, decimal invQty)
+-    {
+-        var legacyQty = await LegacyQuantityAsync(productId, warehouseId);
+-        var total = legacyQty + invQty;
+-
+-        var stock = await _db.Stocks.FirstOrDefaultAsync(s => s.ProductId == productId && s.WarehouseId == warehouseId);
+-        if (stock is null)
+-        {
+-            if (total == 0) return;
+-            stock = new Db.Stock { ProductId = productId, WarehouseId = warehouseId };
+-            _db.Stocks.Add(stock);
+-        }
+-        stock.Quantity = total;
+-
+-        var inv = await _db.InvStocks.AsNoTracking()
+-            .FirstOrDefaultAsync(s => s.ProductId == productId && s.WarehouseId == warehouseId);
+-        if (inv is not null && inv.AvgCost > 0) stock.AvgCost = inv.AvgCost;
+-
+-        await _db.SaveChangesAsync();
+-    }
+-
+-    /// <summary>مانده حاصل از اسناد قدیمی خرید/فروش/اصلاح.</summary>
+-    private async Task<decimal> LegacyQuantityAsync(int productId, int warehouseId)
+-    {
+-        var txns = await _db.Transactions.Include(t => t.Lines)
+-            .Where(t => t.WarehouseId == warehouseId && t.Lines.Any(l => l.ProductId == productId))
+-            .OrderBy(t => t.Date).ThenBy(t => t.Id)
+-            .ToListAsync();
+-
+-        decimal qty = 0;
+-        foreach (var t in txns)
+-            foreach (var l in t.Lines.Where(l => l.ProductId == productId))
+-                qty = t.Type switch
+-                {
+-                    TransactionType.Purchase => qty + l.Quantity,
+-                    TransactionType.Sale => qty - l.Quantity,
+-                    _ => l.Quantity
+-                };
+-        return qty;
+-    }
+-
+     // =====================================================================
+     //  کاردکس و موجودی
+     // =====================================================================
 diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Client/Layout/NavMenu.razor b/TotallCollectionSoftware/inventory/src/Inventory.Client/Layout/NavMenu.razor
 index 3d3823c0..9bb1c1c5 100644
 --- a/TotallCollectionSoftware/inventory/src/Inventory.Client/Layout/NavMenu.razor
