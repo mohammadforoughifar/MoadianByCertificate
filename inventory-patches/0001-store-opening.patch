@@ -299,7 +299,7 @@ index ff353276..521ba782 100644
      // ---------------- خرید و فروش ----------------
      Task<Order> CreateOrderAsync(OrderCommand cmd);
 diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs
-index 2618f0c3..3941eeaa 100644
+index 2618f0c3..6454730b 100644
 --- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs
 +++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs
 @@ -1144,6 +1144,10 @@ public class InventoryService : IInventoryService
@@ -321,7 +321,34 @@ index 2618f0c3..3941eeaa 100644
          }).ToList();
      }
  
-@@ -2193,6 +2198,26 @@ public class InventoryService : IInventoryService
+@@ -1650,13 +1655,25 @@ public class InventoryService : IInventoryService
+ 
+     public async Task<List<KardexRow>> GetKardexAsync(int productId, int? warehouseId, DateTime? from, DateTime? to, Paging.Request? pagination = null)
+     {
+-        var source = _db.Transactions.AsNoTracking()
++        var txSource = _db.Transactions.AsNoTracking()
+             .Where(t => !warehouseId.HasValue || t.WarehouseId == warehouseId.Value)
+             .SelectMany(t => t.Lines.Where(l => l.ProductId == productId), (t, l) => new
+             {
+                 TransactionId = t.Id, LineId = l.Id, t.Date, t.Type, t.Number, t.PartyId, t.Description,
+                 l.Quantity, l.Price
+             });
++
++        // اول دوره‌ی فروشگاه (StoreOpeningStocks) به‌عنوان اولین گردش کاردکس؛ مانده با موجودی فروشگاه یکی می‌ماند.
++        var openingSource = _db.StoreOpeningStocks.AsNoTracking()
++            .Where(o => o.ProductId == productId && (!warehouseId.HasValue || o.WarehouseId == warehouseId.Value))
++            .Select(o => new
++            {
++                TransactionId = 0, LineId = 0, Date = o.AsOfDate, Type = TransactionType.Initial,
++                Number = "اول دوره", PartyId = (int?)null, Description = (string?)"موجودی اول دوره فروشگاه",
++                Quantity = o.Quantity, Price = o.UnitCost
++            });
++
++        var source = txSource.Concat(openingSource);
+         var filtered = source;
+         if (from.HasValue) { var start = from.Value.Date; filtered = filtered.Where(r => r.Date >= start); }
+         if (to.HasValue && to.Value.Date < DateTime.MaxValue.Date)
+@@ -2193,6 +2210,26 @@ public class InventoryService : IInventoryService
      }
  
      /// <summary>بازسازی موجودی و قیمت میانگین یک کالا در یک انبار بر اساس کل اسناد (فقط در حافظه؛ ذخیره توسط فراخواننده).</summary>
@@ -348,7 +375,7 @@ index 2618f0c3..3941eeaa 100644
      private async Task RecalcStockAsync(int warehouseId, int productId)
      {
          var txns = await _db.Transactions.Include(t => t.Lines)
-@@ -2204,6 +2229,15 @@ public class InventoryService : IInventoryService
+@@ -2204,6 +2241,15 @@ public class InventoryService : IInventoryService
          var product = await _db.Products.FindAsync(productId);
          var defaultCost = product?.PurchasePrice ?? 0;
  
@@ -364,7 +391,7 @@ index 2618f0c3..3941eeaa 100644
          foreach (var t in txns)
          {
              foreach (var l in t.Lines.Where(l => l.ProductId == productId))
-@@ -2227,15 +2261,7 @@ public class InventoryService : IInventoryService
+@@ -2227,15 +2273,7 @@ public class InventoryService : IInventoryService
              }
          }
  
