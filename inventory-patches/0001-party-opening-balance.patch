@@ -1,0 +1,286 @@
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Controllers/Catalog/PartiesController.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Controllers/Catalog/PartiesController.cs
+index 3dc2fa1..701d438 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Controllers/Catalog/PartiesController.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Controllers/Catalog/PartiesController.cs
+@@ -167,6 +167,30 @@ public class PartiesController : ControllerBase
+         return Ok(await _service.SavePartyAsync(party));
+     }
+ 
++    /// <summary>مانده اول دوره‌ی طرف‌حساب (فقط کاربرانی که دید کامل آن نوع را دارند).</summary>
++    [HttpGet("{id:int}/opening-balance")]
++    public async Task<ActionResult> GetOpeningBalance(int id)
++    {
++        var perms = await MyPermissionsAsync();
++        var party = await _db.Parties.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id);
++        if (party is null) return NotFound(new { message = "طرف حساب یافت نشد." });
++        if (!CanReadAll(perms, party.Type)) return Denied("شما به مانده اول دوره‌ی این بخش دسترسی ندارید.");
++        return Ok(await _service.GetPartyOpeningBalanceAsync(id));
++    }
++
++    /// <summary>ثبت یا ویرایش مانده اول دوره‌ی طرف‌حساب (مثبت = بدهکار، منفی = بستانکار).</summary>
++    [HttpPut("{id:int}/opening-balance")]
++    public async Task<ActionResult> SaveOpeningBalance(int id, [FromBody] Inventory.Shared.Dtos.PartyOpeningBalanceDto dto)
++    {
++        var perms = await MyPermissionsAsync();
++        var party = await _db.Parties.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id);
++        if (party is null) return NotFound(new { message = "طرف حساب یافت نشد." });
++        if (!CanReadAll(perms, party.Type) || !CanWrite(perms, party.Type, update: true))
++            return Denied("شما مجوز ثبت مانده اول دوره‌ی این بخش را ندارید.");
++        dto.PartyId = id;
++        return Ok(await _service.SavePartyOpeningBalanceAsync(id, dto, await MyDisplayNameAsync()));
++    }
++
+     /// <summary>حذف طرف حساب.</summary>
+     [HttpDelete("{id:int}")]
+     public async Task<IActionResult> Delete(int id, [FromQuery] PartyType type = PartyType.Customer)
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/AppDbContext.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/AppDbContext.cs
+index ff6615d..5d4ba00 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/AppDbContext.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/AppDbContext.cs
+@@ -135,6 +135,7 @@ public class AppDbContext : DbContext
+     public DbSet<Product> Products => Set<Product>();
+     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
+     public DbSet<Party> Parties => Set<Party>();
++    public DbSet<PartyOpeningBalance> PartyOpeningBalances => Set<PartyOpeningBalance>();
+     public DbSet<Stock> Stocks => Set<Stock>();
+     public DbSet<Transaction> Transactions => Set<Transaction>();
+     public DbSet<TransactionLine> TransactionLines => Set<TransactionLine>();
+@@ -1612,6 +1613,9 @@ public class AppDbContext : DbContext
+         mb.Entity<MeasureUnit>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
+         mb.Entity<Warehouse>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
+         mb.Entity<Party>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
++        mb.Entity<PartyOpeningBalance>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
++        mb.Entity<PartyOpeningBalance>().HasIndex(x => new { x.CompanyId, x.PartyId }).IsUnique();
++        mb.Entity<PartyOpeningBalance>().Property(x => x.Amount).HasPrecision(18, 2);
+         mb.Entity<Referrer>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
+         mb.Entity<ReferrerPayment>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
+         mb.Entity<Stock>().HasQueryFilter(x => ActiveCompanyId == null || x.CompanyId == ActiveCompanyId);
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/DbInitializer.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/DbInitializer.cs
+index 4f485a7..b75690a 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/DbInitializer.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/DbInitializer.cs
+@@ -135,6 +135,8 @@ public static class DbInitializer
+                 await PushDeliverySchema.EnsureAsync(db);
+                 // مدت نمایش اعلان‌ها/پیام‌ها (سراسری، مدیر سامانه) — ستون‌های AppSettings
+                 await AppSettingsSchemaV1.EnsureAsync(db);
++                // مانده اول دوره طرف‌حساب‌ها (جدول تازه برای دیتابیس‌های قدیمی)
++                await PartyOpeningSchemaV1.EnsureAsync(db);
+                 await MeetingMinutesSchemaV1.EnsureAsync(db);
+                 await CompanyAccessSchemaV1.EnsureAsync(db);
+                 await AiSchemaV1.EnsureAsync(db);
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/PartyOpeningSchemaV1.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/PartyOpeningSchemaV1.cs
+new file mode 100644
+index 0000000..8076360
+--- /dev/null
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Data/PartyOpeningSchemaV1.cs
+@@ -0,0 +1,67 @@
++using Microsoft.EntityFrameworkCore;
++
++namespace Inventory.Api.Data;
++
++// ============================================================
++//  خودتعمیرِ جدول «مانده اول دوره‌ی طرف‌حساب» — نسخه ۱
++//  • EnsureCreated فقط دیتابیس خالی را می‌سازد و Migrate هم برای
++//    جدول‌های تازه در دیتابیس‌های قدیمی همیشه کافی نیست؛ پس جدول را
++//    به‌صورت idempotent (IF NOT EXISTS) می‌سازیم.
++//  • ستون‌ها و نام‌ها دقیقاً مطابق PartyOpeningBalance / AppDbContext هستند.
++// ============================================================
++public static class PartyOpeningSchemaV1
++{
++    public static Task EnsureAsync(AppDbContext db) =>
++        db.Database.IsSqlite() ? EnsureSqliteAsync(db) : EnsureSqlServerAsync(db);
++
++    private static async Task EnsureSqlServerAsync(AppDbContext db)
++    {
++        await SafeAsync(db, @"
++IF OBJECT_ID(N'dbo.PartyOpeningBalances', N'U') IS NULL
++CREATE TABLE dbo.PartyOpeningBalances (
++    Id          int IDENTITY(1,1) NOT NULL CONSTRAINT PK_PartyOpeningBalances PRIMARY KEY,
++    CompanyId   int NULL,
++    PartyId     int NOT NULL,
++    AsOfDate    datetime2 NOT NULL,
++    Amount      decimal(18,2) NOT NULL CONSTRAINT DF_PartyOpeningBalances_Amount DEFAULT(0),
++    Note        nvarchar(500) NULL,
++    UpdatedBy   nvarchar(80) NULL,
++    UpdatedAt   datetime2 NOT NULL CONSTRAINT DF_PartyOpeningBalances_UpdatedAt DEFAULT(GETDATE())
++);");
++
++        await SafeAsync(db, @"
++IF OBJECT_ID(N'dbo.PartyOpeningBalances', N'U') IS NOT NULL
++   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_PartyOpeningBalances_CompanyId_PartyId')
++CREATE UNIQUE INDEX IX_PartyOpeningBalances_CompanyId_PartyId ON dbo.PartyOpeningBalances (CompanyId, PartyId);");
++    }
++
++    private static async Task EnsureSqliteAsync(AppDbContext db)
++    {
++        await SafeAsync(db, @"
++CREATE TABLE IF NOT EXISTS PartyOpeningBalances (
++    Id        INTEGER PRIMARY KEY AUTOINCREMENT,
++    CompanyId INTEGER NULL,
++    PartyId   INTEGER NOT NULL,
++    AsOfDate  TEXT NOT NULL,
++    Amount    TEXT NOT NULL DEFAULT '0',
++    Note      TEXT NULL,
++    UpdatedBy TEXT NULL,
++    UpdatedAt TEXT NOT NULL
++);");
++
++        await SafeAsync(db,
++            "CREATE UNIQUE INDEX IF NOT EXISTS IX_PartyOpeningBalances_CompanyId_PartyId ON PartyOpeningBalances (CompanyId, PartyId);");
++    }
++
++    private static async Task SafeAsync(AppDbContext db, string sql)
++    {
++        try { await db.Database.ExecuteSqlRawAsync(sql); }
++        catch (Exception ex)
++        {
++            var m = ex.Message ?? "";
++            if (!m.Contains("duplicate", StringComparison.OrdinalIgnoreCase) &&
++                !m.Contains("already exists", StringComparison.OrdinalIgnoreCase))
++                Console.WriteLine($"[DB] PartyOpeningSchemaV1: {m}");
++        }
++    }
++}
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Entities/Catalog/PartyOpeningBalance.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Entities/Catalog/PartyOpeningBalance.cs
+new file mode 100644
+index 0000000..6c3efb7
+--- /dev/null
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Entities/Catalog/PartyOpeningBalance.cs
+@@ -0,0 +1,38 @@
++using System.ComponentModel.DataAnnotations;
++using Inventory.Shared;
++namespace Inventory.Api.Data;
++
++/// <summary>
++/// مانده اول دوره‌ی طرف‌حساب (بدهکار/بستانکار) به تفکیک شرکت.
++/// <para>
++/// علامت مبلغ همان قاعدهٔ مانده‌ی طرف‌حساب است:
++/// <c>مثبت</c> = طرف‌حساب به شرکت بدهکار است، <c>منفی</c> = بستانکار است.
++/// </para>
++/// <para>
++/// این مانده جداست از سوابق فروش/خرید (<see cref="Transaction"/>) و به مانده‌ی
++/// محاسبه‌شده اضافه می‌شود؛ سند حسابداری تولید نمی‌کند.
++/// </para>
++/// </summary>
++public class PartyOpeningBalance : ICompanyOwned
++{
++    public int Id { get; set; }
++
++    /// <summary>شرکت مالک رکورد — دادهٔ هر شرکت مستقل نگه‌داری می‌شود (فیلتر خودکار).</summary>
++    public int? CompanyId { get; set; }
++
++    public int PartyId { get; set; }
++
++    /// <summary>تاریخ شروع دوره‌ای که این مانده متعلق به آن است.</summary>
++    public DateTime AsOfDate { get; set; }
++
++    /// <summary>مبلغ مانده؛ مثبت = بدهکار، منفی = بستانکار.</summary>
++    public decimal Amount { get; set; }
++
++    [MaxLength(500)]
++    public string? Note { get; set; }
++
++    [MaxLength(80)]
++    public string? UpdatedBy { get; set; }
++
++    public DateTime UpdatedAt { get; set; } = DateTime.Now;
++}
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/IInventoryService.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/IInventoryService.cs
+index ff35327..01a7c93 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/IInventoryService.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/IInventoryService.cs
+@@ -59,6 +59,11 @@ public interface IInventoryService
+     Task<Party> SavePartyAsync(Party dto);
+     Task DeletePartyAsync(int id);
+ 
++    /// <summary>مانده اول دوره‌ی طرف‌حساب (اگر ثبت نشده باشد، مبلغ صفر برمی‌گرداند).</summary>
++    Task<PartyOpeningBalanceDto> GetPartyOpeningBalanceAsync(int partyId);
++    /// <summary>ثبت یا به‌روزرسانی مانده اول دوره‌ی طرف‌حساب (یک ردیف به ازای هر شرکت و طرف‌حساب).</summary>
++    Task<PartyOpeningBalanceDto> SavePartyOpeningBalanceAsync(int partyId, PartyOpeningBalanceDto dto, string? user);
++
+     // ---------------- موجودی ----------------
+     Task<PagedResult<StockItem>> GetStockAsync(int? warehouseId, string? search, bool belowOnly, int page, int pageSize);
+     Task AdjustStockAsync(AdjustmentCommand cmd);
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs
+index 2618f0c..ad8ba78 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Api/Services/Catalog/InventoryService.cs
+@@ -1144,6 +1144,10 @@ public class InventoryService : IInventoryService
+         var ids = list.Select(p => p.Id).ToList();
+         var txns = await _db.Transactions.Where(t => t.PartyId != null && ids.Contains(t.PartyId.Value)).ToListAsync();
+         var refNames = await _db.Referrers.ToDictionaryAsync(r => r.Id, r => r.Name);
++        // مانده اول دوره‌ی هر طرف‌حساب (جدا از سوابق سند؛ به مانده اضافه می‌شود)
++        var openings = (await _db.PartyOpeningBalances.Where(o => ids.Contains(o.PartyId)).ToListAsync())
++            .GroupBy(o => o.PartyId)
++            .ToDictionary(g => g.Key, g => g.Sum(x => x.Amount));
+         return list.Select(p => new Party
+         {
+             Id = p.Id,
+@@ -1167,9 +1171,48 @@ public class InventoryService : IInventoryService
+             RegisteredAt = p.RegisteredAt,
+             Balance = txns.Where(t => t.PartyId == p.Id)
+                           .Sum(t => t.Type == TransactionType.Sale ? t.Amount : -t.Amount)
++                          + (openings.TryGetValue(p.Id, out var opening) ? opening : 0)
+         }).ToList();
+     }
+ 
++    public async Task<PartyOpeningBalanceDto> GetPartyOpeningBalanceAsync(int partyId)
++    {
++        var o = await _db.PartyOpeningBalances.AsNoTracking().FirstOrDefaultAsync(x => x.PartyId == partyId);
++        return new PartyOpeningBalanceDto
++        {
++            PartyId = partyId,
++            AsOfDate = o?.AsOfDate,
++            Amount = o?.Amount ?? 0,
++            Note = o?.Note,
++            UpdatedBy = o?.UpdatedBy,
++            UpdatedAt = o?.UpdatedAt,
++        };
++    }
++
++    public async Task<PartyOpeningBalanceDto> SavePartyOpeningBalanceAsync(int partyId, PartyOpeningBalanceDto dto, string? user)
++    {
++        // طرف‌حساب باید در شرکت فعال باشد (فیلتر شرکت روی Parties اعمال می‌شود)
++        _ = await _db.Parties.AsNoTracking().FirstOrDefaultAsync(p => p.Id == partyId)
++            ?? throw new InvalidOperationException("طرف حساب یافت نشد.");
++        if (dto.AsOfDate is null)
++            throw new InvalidOperationException("تاریخ شروع دوره را وارد کنید.");
++
++        var entity = await _db.PartyOpeningBalances.FirstOrDefaultAsync(x => x.PartyId == partyId);
++        if (entity is null)
++        {
++            entity = new Db.PartyOpeningBalance { PartyId = partyId };
++            _db.PartyOpeningBalances.Add(entity);
++        }
++        entity.AsOfDate = dto.AsOfDate.Value.Date;
++        entity.Amount = Math.Round(dto.Amount, 2);
++        entity.Note = NullIfEmpty(dto.Note);
++        entity.UpdatedBy = user;
++        entity.UpdatedAt = DateTime.Now;
++        await _db.SaveChangesAsync();
++
++        return await GetPartyOpeningBalanceAsync(partyId);
++    }
++
+     public async Task<Party> SavePartyAsync(Party dto)
+     {
+         Db.Party entity;
+diff --git a/TotallCollectionSoftware/inventory/src/Inventory.Shared/Dtos/CatalogDtos.cs b/TotallCollectionSoftware/inventory/src/Inventory.Shared/Dtos/CatalogDtos.cs
+index 49470fb..6fae189 100644
+--- a/TotallCollectionSoftware/inventory/src/Inventory.Shared/Dtos/CatalogDtos.cs
++++ b/TotallCollectionSoftware/inventory/src/Inventory.Shared/Dtos/CatalogDtos.cs
+@@ -344,3 +344,14 @@ public class LookupItem
+     /// <summary>اطلاعات تکمیلی اختیاری برای نمایش زیر عنوان گزینه در انتخابگرها.</summary>
+     public string? InfoText { get; set; }
+ }
++
++/// <summary>مانده اول دوره‌ی یک طرف‌حساب (مثبت = بدهکار، منفی = بستانکار)</summary>
++public class PartyOpeningBalanceDto
++{
++    public int PartyId { get; set; }
++    public DateTime? AsOfDate { get; set; }
++    public decimal Amount { get; set; }
++    public string? Note { get; set; }
++    public string? UpdatedBy { get; set; }
++    public DateTime? UpdatedAt { get; set; }
++}
