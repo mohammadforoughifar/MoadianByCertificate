@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import unittest
 
-CLIENT = Path(__file__).resolve().parents[2] / "src/Inventory.Client"
+CLIENT = Path(__file__).resolve().parents[2] / "src/TotallSoftwareForoughAriya.Client"
 OFFICE = CLIENT / "Pages/Office"
 GUIDES = OFFICE / "Guides"
 

@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const ui = fs.readFileSync(path.join(__dirname, '../../src/Inventory.Client/wwwroot/js/ui.js'), 'utf8');
+const ui = fs.readFileSync(path.join(__dirname, '../../src/TotallSoftwareForoughAriya.Client/wwwroot/js/ui.js'), 'utf8');
 const printHelper = ui.slice(ui.indexOf('window.officeGuides ='));
 
 function setup() {

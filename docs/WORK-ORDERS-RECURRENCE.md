@@ -41,7 +41,7 @@
 از ریشه مخزن، با .NET 8 SDK:
 
 ```bash
-dotnet build inventory/Inventory.sln -m:1
+dotnet build inventory/TotallSoftwareForoughAriya.sln -m:1
 dotnet test tests/work-orders/Inventory.WorkOrders.Tests.csproj -m:1
 ```
 

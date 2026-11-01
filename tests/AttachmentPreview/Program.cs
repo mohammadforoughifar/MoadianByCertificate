@@ -26,12 +26,12 @@ public static class PreviewProgram
     public static async Task Main(string[] args)
     {
         var source = FindSource();
-        var fixtureDir = Path.Combine(source, "inventory/tests/AttachmentPreview/Fixtures");
+        var fixtureDir = Path.Combine(source, "tests/AttachmentPreview/Fixtures");
         PreviewVerification.Run(fixtureDir);
         if (args.Contains("--verify")) return;
         if (Environment.GetEnvironmentVariable("PREVIEW_TEST_HOST") != "1")
             throw new InvalidOperationException("Test-only host. Set PREVIEW_TEST_HOST=1 explicitly; never publish this as the application.");
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = source, WebRootPath = Path.Combine(source, "inventory/src/Inventory.Client/wwwroot") });
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = source, WebRootPath = Path.Combine(source, "src/TotallSoftwareForoughAriya.Client/wwwroot") });
         builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning);
         var database = Path.Combine(Path.GetTempPath(), "attachment-preview-" + Guid.NewGuid().ToString("N") + ".sqlite");
         builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite("Data Source=" + database));
@@ -97,9 +97,9 @@ public static class PreviewProgram
     private static string FindSource()
     {
         var specified = Environment.GetEnvironmentVariable("PREVIEW_SOURCE_ROOT");
-        if (specified != null && Directory.Exists(Path.Combine(specified, "inventory/src"))) return specified;
+        if (specified != null && Directory.Exists(Path.Combine(specified, "src/TotallSoftwareForoughAriya.Client"))) return specified;
         for (var d = new DirectoryInfo(Directory.GetCurrentDirectory()); d != null; d = d.Parent)
-            if (Directory.Exists(Path.Combine(d.FullName, "inventory/src"))) return d.FullName;
+            if (Directory.Exists(Path.Combine(d.FullName, "src/TotallSoftwareForoughAriya.Client"))) return d.FullName;
         throw new DirectoryNotFoundException("Run from the source tree or set PREVIEW_SOURCE_ROOT.");
     }
     private static async Task Seed(IServiceProvider services, string fixtures)

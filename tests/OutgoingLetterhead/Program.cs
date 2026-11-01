@@ -10,7 +10,7 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 
 // Test the real renderer/helpers without constructing a DbContext, executing Program, or connecting to SQL.
-var apiRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/Inventory.Api"));
+var apiRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/TotallSoftwareForoughAriya.Api"));
 var output = Path.Combine(AppContext.BaseDirectory, "letterhead-probe");
 var testWebRoot = Path.Combine(output, "wwwroot");
 Directory.CreateDirectory(testWebRoot);

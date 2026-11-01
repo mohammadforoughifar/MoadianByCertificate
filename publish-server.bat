@@ -3,18 +3,18 @@ setlocal EnableExtensions
 chcp 65001 >nul
 
 rem ================================================================
-rem Inventory - انتشار روی Windows Server
+rem TotallSoftwareForoughAriya - انتشار روی Windows Server
 rem آدرس اجرا: http://192.168.30.104:8181
-rem SQL Server: 192.168.30.104 / InventoryDb
+rem SQL Server: 192.168.30.104 / TotallSoftwareForoughAriya
 rem ================================================================
 
 set "ROOT=%~dp0"
-set "CLIENT=%ROOT%src\Inventory.Client"
-set "API=%ROOT%src\Inventory.Api"
+set "CLIENT=%ROOT%src\TotallSoftwareForoughAriya.Client"
+set "API=%ROOT%src\TotallSoftwareForoughAriya.Api"
 set "CLIENT_PUBLISH=%ROOT%artifacts\client-publish"
-set "API_PUBLISH=%ROOT%artifacts\inventory-server"
-set "DEPLOY=%ROOT%deploy\inventory-server"
-set "DB_CONNECTION=Server=.;Database=InventoryDb;Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False"
+set "API_PUBLISH=%ROOT%artifacts\totall-server"
+set "DEPLOY=%ROOT%deploy\TotallSoftwareForoughAriya-server"
+set "DB_CONNECTION=Server=.;Database=TotallSoftwareForoughAriya;Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False"
 
 where dotnet >nul 2>nul
 if errorlevel 1 (
@@ -31,7 +31,7 @@ mkdir "%CLIENT_PUBLISH%" "%API_PUBLISH%" "%DEPLOY%"
 pushd "%ROOT%"
 
 echo [2/6] انتشار کلاینت Blazor...
-dotnet publish "%CLIENT%\Inventory.Client.csproj" -c Release --no-restore -o "%CLIENT_PUBLISH%"
+dotnet publish "%CLIENT%\TotallSoftwareForoughAriya.Client.csproj" -c Release --no-restore -o "%CLIENT_PUBLISH%"
 if errorlevel 1 goto :failed
 
 rem فایل‌های static کلاینت باید در wwwroot API قرار بگیرند.
@@ -41,7 +41,7 @@ xcopy "%CLIENT_PUBLISH%\wwwroot\*" "%API%\wwwroot\" /E /I /Y >nul
 if errorlevel 1 goto :failed
 
 echo [4/6] انتشار API برای Windows x64...
-dotnet publish "%API%\Inventory.Api.csproj" -c Release -r win-x64 --self-contained false -o "%API_PUBLISH%"
+dotnet publish "%API%\TotallSoftwareForoughAriya.Api.csproj" -c Release -r win-x64 --self-contained false -o "%API_PUBLISH%"
 if errorlevel 1 goto :failed
 
 echo [5/6] آماده‌سازی پوشه استقرار...
@@ -54,12 +54,12 @@ rem تنظیمات اجرایی را جداگانه می‌سازیم تا اج�
 >>"%DEPLOY%\run-server.bat" echo set "ASPNETCORE_URLS=http://192.168.30.104:8181"
 >>"%DEPLOY%\run-server.bat" echo set "ConnectionStrings__Default=%DB_CONNECTION%"
 >>"%DEPLOY%\run-server.bat" echo cd /d "%%~dp0"
->>"%DEPLOY%\run-server.bat" echo Inventory.Api.exe
+>>"%DEPLOY%\run-server.bat" echo TotallSoftwareForoughAriya.Api.exe
 
 >"%DEPLOY%\README-DEPLOY.txt" echo آدرس سامانه: http://192.168.30.104:8181
 >>"%DEPLOY%\README-DEPLOY.txt" echo اجرا: فایل run-server.bat را با دسترسی مناسب اجرا کنید.
 >>"%DEPLOY%\README-DEPLOY.txt" echo در Windows Firewall پورت TCP 8181 را باز کنید.
->>"%DEPLOY%\README-DEPLOY.txt" echo SQL Server: 192.168.30.104 / InventoryDb
+>>"%DEPLOY%\README-DEPLOY.txt" echo SQL Server: 192.168.30.104 / TotallSoftwareForoughAriya
 
 popd
 echo.

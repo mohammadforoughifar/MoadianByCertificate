@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     راه‌اندازی HTTPS سامانه روی سرور ویندوز — هم برای داخل شبکه و هم برای بیرون.
 
@@ -233,7 +233,7 @@ $svc = Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.Name -match
 if ($svc) {
     foreach ($s in $svc) { Write-Info "سرویس پیدا شد: $($s.Name) — برای اعمال:  Restart-Service '$($s.Name)'" }
 } else {
-    Write-Info "پنجرهٔ برنامه (Inventory.Api.exe / dotnet) را ببندید و دوباره اجرا کنید. متغیرهای محیطی فقط در پنجره/فرایند جدید دیده می‌شوند."
+    Write-Info "پنجرهٔ برنامه (TotallSoftwareForoughAriya.Api.exe / dotnet) را ببندید و دوباره اجرا کنید. متغیرهای محیطی فقط در پنجره/فرایند جدید دیده می‌شوند."
 }
 
 $lanIps = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |

@@ -116,27 +116,27 @@ ApiClient  ──►  هدر  X-Company-Id: <id>  ──►  ActiveCompanyMiddle
 **افزوده‌شده**
 
 ```
-inventory/src/Inventory.Api/Data/ICompanyOwned.cs
-inventory/src/Inventory.Api/Data/SalesCompanySchemaV1.cs
-inventory/src/Inventory.Api/Infrastructure/ActiveCompanyMiddleware.cs
-inventory/src/Inventory.Client/Services/CompanyContext.cs
+src/TotallSoftwareForoughAriya.Api/Data/ICompanyOwned.cs
+src/TotallSoftwareForoughAriya.Api/Data/SalesCompanySchemaV1.cs
+src/TotallSoftwareForoughAriya.Api/Infrastructure/ActiveCompanyMiddleware.cs
+src/TotallSoftwareForoughAriya.Client/Services/CompanyContext.cs
 ```
 
 **تغییر‌یافته**
 
 ```
-inventory/src/Inventory.Api/Data/AppDbContext.cs            (فیلترها + SaveChanges + ایندکس‌ها)
-inventory/src/Inventory.Api/Data/DbInitializer.cs           (فراخوانی خودتعمیر اسکیما)
-inventory/src/Inventory.Api/Program.cs                      (ثبت میان‌افزار شرکت فعال)
-inventory/src/Inventory.Api/Controllers/System/SystemCompaniesController.cs
-inventory/src/Inventory.Api/Entities/*                      (۲۰ موجودیت: CompanyId + ICompanyOwned)
-inventory/src/Inventory.Client/Program.cs                   (ثبت CompanyContext)
-inventory/src/Inventory.Client/Layout/MainLayout.razor      (کمبو + رفرش همهٔ تب‌ها)
-inventory/src/Inventory.Client/Layout/NavMenu.razor         (نام ماژول + چیپ شرکت)
-inventory/src/Inventory.Client/Services/TabService.cs       (RefreshAll)
-inventory/src/Inventory.Client/Pages/Operations/OperationsDashboard.razor
-inventory/src/Inventory.Client/Pages/Settings/Roles.razor
-inventory/src/Inventory.Client/wwwroot/css/app.css
+src/TotallSoftwareForoughAriya.Api/Data/AppDbContext.cs            (فیلترها + SaveChanges + ایندکس‌ها)
+src/TotallSoftwareForoughAriya.Api/Data/DbInitializer.cs           (فراخوانی خودتعمیر اسکیما)
+src/TotallSoftwareForoughAriya.Api/Program.cs                      (ثبت میان‌افزار شرکت فعال)
+src/TotallSoftwareForoughAriya.Api/Controllers/System/SystemCompaniesController.cs
+src/TotallSoftwareForoughAriya.Api/Entities/*                      (۲۰ موجودیت: CompanyId + ICompanyOwned)
+src/TotallSoftwareForoughAriya.Client/Program.cs                   (ثبت CompanyContext)
+src/TotallSoftwareForoughAriya.Client/Layout/MainLayout.razor      (کمبو + رفرش همهٔ تب‌ها)
+src/TotallSoftwareForoughAriya.Client/Layout/NavMenu.razor         (نام ماژول + چیپ شرکت)
+src/TotallSoftwareForoughAriya.Client/Services/TabService.cs       (RefreshAll)
+src/TotallSoftwareForoughAriya.Client/Pages/Operations/OperationsDashboard.razor
+src/TotallSoftwareForoughAriya.Client/Pages/Settings/Roles.razor
+src/TotallSoftwareForoughAriya.Client/wwwroot/css/app.css
 ```
 
 ---
@@ -186,7 +186,7 @@ inventory/src/Inventory.Client/wwwroot/css/app.css
    پیدا و حذف می‌شود و ایندکس یکتای مرکب `(CompanyId, ستون)` ساخته می‌شود.
 
 ### اگر باز هم خطا دیدید
-- اسکریپت آماده را با کاربر `sa` روی دیتابیس `InventoryDb` اجرا کنید:
+- اسکریپت آماده را با کاربر `sa` روی دیتابیس `TotallSoftwareForoughAriya` اجرا کنید:
   **`FIX-COMPANYID-SQLSERVER.sql`** (قابل اجرای مکرر، قبلش Backup بگیرید).
 - یا با کاربری وارد شوید که مالک جدول‌هاست (کاربر ویندوزیِ `Trusted_Connection`
   باید Login و دسترسی `db_owner` داشته باشد).

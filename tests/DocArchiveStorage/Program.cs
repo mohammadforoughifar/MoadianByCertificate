@@ -197,7 +197,7 @@ return failures == 0 ? 0 : 1;
 public sealed class TestEnvironment : IWebHostEnvironment
 {
     public TestEnvironment(string path) { ContentRootPath = path; WebRootPath = Path.Combine(path, "wwwroot"); }
-    public string ApplicationName { get; set; } = "Inventory.Api";
+    public string ApplicationName { get; set; } = "TotallSoftwareForoughAriya.Api";
     public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     public string ContentRootPath { get; set; }
     public string EnvironmentName { get; set; } = "Production";

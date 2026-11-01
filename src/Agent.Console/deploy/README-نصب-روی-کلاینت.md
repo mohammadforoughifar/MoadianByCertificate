@@ -121,7 +121,7 @@ ExecStart=/opt/inventory-agent/InventoryAgent run -s http://192.168.30.104:8181
 
 **دو راه برای رفع:**
 1. **درست و دائمی:** سرور را با نسخهٔ جدید منتشر و راه‌اندازی کنید
-   (`deploy-single.ps1` یا `dotnet publish src/Inventory.Api` سپس ری‌استارت برنامه).
+   (`deploy-single.ps1` یا `dotnet publish src/TotallSoftwareForoughAriya.Api` سپس ری‌استارت برنامه).
 2. **موقت (بدون به‌روزرسانی سرور):** ایجنت را با یک کاربر معتبر اجرا کنید تا توکن بگیرد:
    ```powershell
    InventoryAgent.exe run -s http://192.168.30.104:8181 --username <کاربر> --password <رمز>

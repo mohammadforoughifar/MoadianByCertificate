@@ -143,8 +143,8 @@ python inventory/tools/audit_database_pagination.py --strict
 
 ```sh
 dotnet run --project inventory/tests/DatabasePagination
-dotnet build inventory/src/Inventory.Api/Inventory.Api.csproj
-dotnet build inventory/src/Inventory.Client/Inventory.Client.csproj
+dotnet build src/TotallSoftwareForoughAriya.Api/TotallSoftwareForoughAriya.Api.csproj
+dotnet build src/TotallSoftwareForoughAriya.Client/TotallSoftwareForoughAriya.Client.csproj
 ```
 
 تست از SQLite واقعی و ثبت SQL استفاده می‌کند و helperهای production و parser

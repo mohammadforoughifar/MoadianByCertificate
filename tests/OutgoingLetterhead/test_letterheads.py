@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-API = Path(__file__).resolve().parents[2] / "src" / "Inventory.Api"
-CLIENT = API.parent / "Inventory.Client"
+API = Path(__file__).resolve().parents[2] / "src" / "TotallSoftwareForoughAriya.Api"
+CLIENT = API.parent / "TotallSoftwareForoughAriya.Client"
 SERVICE = API / "Services" / "Office" / "Outgoing" / "OutgoingLetterPrintService.cs"
 TEMPLATES = API / "Reports" / "OutgoingLetters" / "Companies"
 
@@ -237,8 +237,8 @@ class LetterheadAssetsTests(unittest.TestCase):
         self.assertNotIn("AttachmentLabel", layout)
 
     def test_print_popup_is_reserved_on_native_menu_click(self):
-        view = (Path(__file__).resolve().parents[2] / "src" / "Inventory.Client" / "Pages" / "Office" / "Letters" / "Outgoing" / "OutgoingLetterView.razor").read_text()
-        shell = (Path(__file__).resolve().parents[2] / "src" / "Inventory.Client" / "wwwroot" / "js" / "app-shell.js").read_text()
+        view = (CLIENT / "Pages" / "Office" / "Letters" / "Outgoing" / "OutgoingLetterView.razor").read_text()
+        shell = (CLIENT / "wwwroot" / "js" / "app-shell.js").read_text()
         self.assertIn('data-ltx-print-option', view)
         self.assertIn("document.addEventListener('click'", shell)
         self.assertIn("window.ltxPrintReserveByClick()", shell)
@@ -260,7 +260,7 @@ class LetterheadAssetsTests(unittest.TestCase):
         self.assertNotIn("FirstOrDefaultAsync", flow_check)
 
     def test_saved_signature_preview_uses_authenticated_bytes_not_an_img_request(self):
-        users_page = (Path(__file__).resolve().parents[2] / "src" / "Inventory.Client" / "Pages" / "System" / "Users.razor").read_text()
+        users_page = (CLIENT / "Pages" / "System" / "Users.razor").read_text()
         auth_controller = (API / "Controllers" / "Core" / "AuthController.cs").read_text()
         self.assertIn('Http.GetAsync($"/api/auth/users/signature/{userId}")', users_page)
         self.assertIn('data:image/png;base64,', users_page)
@@ -272,7 +272,7 @@ class LetterheadAssetsTests(unittest.TestCase):
         self.assertIn('Accept="image/png"', users_page)
 
     def test_templates_travel_with_build_and_publish(self):
-        project = ET.parse(API / "Inventory.Api.csproj").getroot()
+        project = ET.parse(API / "TotallSoftwareForoughAriya.Api.csproj").getroot()
         content = next(e for e in project.iter("Content") if e.get("Include") == "Reports/**/*.mrt")
         self.assertEqual(content.get("CopyToOutputDirectory"), "PreserveNewest")
         self.assertEqual(content.get("CopyToPublishDirectory"), "PreserveNewest")
@@ -413,15 +413,16 @@ class CompanyTemplateMapTests(unittest.TestCase):
                     self.assertTrue((folder / f"Outgoing-{size}.mrt").is_file())
 
     def test_report_folder_templates_can_be_synced_to_the_print_path(self):
-        """پوشهٔ Report/outgoingletter مرجع طراحی است؛ اسکریپت همگام‌سازی باید وجود داشته باشد."""
-        repo = Path(__file__).resolve().parents[3]
+        """پوشهٔ Report/outgoingletter مرجع طراحی قدیمی بود؛ در ساختار تک‌ریشه‌ای اختیاری است."""
+        repo = Path(__file__).resolve().parents[2]
         folder = repo / "Report" / "outgoingletter"
+        if not folder.is_dir():
+            return
         self.assertTrue((folder / "README-FA.md").is_file())
         sync = folder / "sync-to-api-templates.bat"
         self.assertTrue(sync.is_file(), "بدون اسکریپت همگام‌سازی، ویرایش این پوشه هیچ اثری روی چاپ ندارد")
         script = sync.read_text(encoding="utf-8", errors="replace")
         self.assertIn("Outgoing-%%S.mrt", script)
-        self.assertIn("inventory\\src\\Inventory.Api\\Reports\\OutgoingLetters\\Companies", script)
         for company in ("3", "1003"):
             for size in ("A4", "A5"):
                 self.assertTrue((folder / company / f"Report_{size}_OutgoingLetter.mrt").is_file())
@@ -463,8 +464,8 @@ class PrintPreparationBudgetTests(unittest.TestCase):
         self.assertIn("ltxSetPrintStatus(session, String(text", js)
 
     def test_failed_render_is_not_cached(self):
-        for service in (SERVICE, Path(__file__).resolve().parents[3] / "src" / "Inventory.Api" / "Services" / "Office" / "Outgoing" / "OutgoingLetterPrintService.cs"):
-            with self.subTest(service=str(service.parts[-6])):
+        for service in (SERVICE,):
+            with self.subTest(service=str(service.parts[-5])):
                 source = service.read_text(encoding="utf-8")
                 self.assertIn("RenderedPdfLifetime = TimeSpan.FromSeconds(90)", source)
                 self.assertIn("ConcurrentDictionary<string, CachedRender> RenderedPdfs", source)
@@ -495,9 +496,8 @@ class PrintPreparationBudgetTests(unittest.TestCase):
         """VSTHRD011: خواندن Lazy<Task<T>>.Value می‌تواند deadlock کند و ساخت پروژه را
         با «Error» متوقف می‌کند (خطای VS روی همین سرویس). رندر مشترک با
         TaskCompletionSource پیاده شده است."""
-        for service in (SERVICE, Path(__file__).resolve().parents[3] / "src" / "Inventory.Api"
-                        / "Services" / "Office" / "Outgoing" / "OutgoingLetterPrintService.cs"):
-            with self.subTest(service=service.parts[-6]):
+        for service in (SERVICE,):
+            with self.subTest(service=service.parts[-5]):
                 source = service.read_text(encoding="utf-8")
                 self.assertNotIn("Lazy<Task", source, "VSTHRD011 build break")
                 self.assertNotIn("render.Value", source)
@@ -505,32 +505,24 @@ class PrintPreparationBudgetTests(unittest.TestCase):
     def test_unexpected_print_errors_reach_the_user(self):
         controllers = [
             API / "Controllers" / "Office" / "OutgoingLettersController.cs",
-            Path(__file__).resolve().parents[3] / "src" / "Inventory.Api" / "Controllers" / "Office" / "OutgoingLettersController.cs",
         ]
         for controller in controllers:
-            with self.subTest(tree=controller.parts[-6]):
+            with self.subTest(tree=controller.parts[-5]):
                 text = controller.read_text(encoding="utf-8")
                 self.assertIn("catch (Exception ex)", text)
                 self.assertIn("ساخت PDF نامه ناموفق بود ({ex.GetType().Name})", text)
 
     def test_missing_persian_font_is_reported_instead_of_silently_ignored(self):
-        for service in (SERVICE, Path(__file__).resolve().parents[3] / "src" / "Inventory.Api" / "Services" / "Office" / "Outgoing" / "OutgoingLetterPrintService.cs"):
-            with self.subTest(service=service.parts[-6]):
+        for service in (SERVICE,):
+            with self.subTest(service=service.parts[-5]):
                 text = service.read_text(encoding="utf-8")
                 self.assertIn("if (!File.Exists(reg))", text)
                 self.assertIn("فونت چاپ فارسی پیدا نشد", text)
 
 
 class BothClientTreesPrintTests(unittest.TestCase):
-    """هر دو درخت این مخزن باید رفتار چاپ یکسان داشته باشند.
-
-    اسکریپت‌های انتشار در ریشهٔ مخزن از `src/` استفاده می‌کنند و
-    `inventory/publish-server.bat` از `inventory/src/`؛ اگر اصلاح فقط در یکی باشد،
-    نصب کاربر بسته به اینکه با کدام اسکریپت منتشر شده، همان خطای قبلی را می‌دهد.
-    """
-
-    ROOT = Path(__file__).resolve().parents[3]
-    CLIENTS = [ROOT / "src" / "Inventory.Client", ROOT / "inventory" / "src" / "Inventory.Client"]
+    ROOT = Path(__file__).resolve().parents[2]
+    CLIENTS = [ROOT / "src" / "TotallSoftwareForoughAriya.Client"]
 
     def test_every_client_has_the_shared_print_workflow(self):
         for client in self.CLIENTS:
@@ -589,22 +581,22 @@ class LetterheadSourceResolutionTests(unittest.TestCase):
        (لاگ آن هم فقط Debug بود و در سطح پیش‌فرض دیده نمی‌شد).
     """
 
-    ROOT = Path(__file__).resolve().parents[3]
-    TREES = [ROOT / "src", ROOT / "inventory" / "src"]
+    ROOT = Path(__file__).resolve().parents[2]
+    TREES = [ROOT / "src"]
 
     def service_text(self, tree):
-        return (tree / "Inventory.Api" / "Services" / "Office" / "Outgoing"
+        return (tree / "TotallSoftwareForoughAriya.Api" / "Services" / "Office" / "Outgoing"
                 / "OutgoingLetterPrintService.cs").read_text(encoding="utf-8")
 
     def test_template_can_win_over_the_registered_file(self):
         for tree in self.TREES:
-            with self.subTest(tree=tree.parts[-3]):
+            with self.subTest(tree=tree.parts[-2]):
                 service = self.service_text(tree)
                 self.assertIn("PreferTemplateLetterhead", service)
                 self.assertIn('"Reporting:OutgoingLetters:PreferTemplateLetterhead"', service)
                 self.assertIn("var preferTemplate = PreferTemplateLetterhead;", service)
                 self.assertIn("preferTemplate && templateLetterheadPath != null", service)
-                settings = (tree / "Inventory.Api" / "appsettings.json").read_text(encoding="utf-8")
+                settings = (tree / "TotallSoftwareForoughAriya.Api" / "appsettings.json").read_text(encoding="utf-8")
                 self.assertIn('"PreferTemplateLetterhead": false', settings)
 
     def test_shadowing_of_the_design_is_logged(self):
@@ -646,8 +638,8 @@ class LetterheadSourceResolutionTests(unittest.TestCase):
 
     def test_letters_store_the_active_company_when_the_form_sends_none(self):
         for tree in self.TREES:
-            with self.subTest(tree=tree.parts[-3]):
-                service = (tree / "Inventory.Api" / "Services" / "Office" / "Outgoing"
+            with self.subTest(tree=tree.parts[-2]):
+                service = (tree / "TotallSoftwareForoughAriya.Api" / "Services" / "Office" / "Outgoing"
                            / "OutgoingLetterService.cs").read_text(encoding="utf-8")
                 self.assertIn("private int? DefaultCompanyIdForLetter()", service)
                 self.assertIn("var active = _db.ActiveCompanyId;", service)
@@ -657,15 +649,15 @@ class LetterheadSourceResolutionTests(unittest.TestCase):
 
     def test_print_diagnostics_are_reachable(self):
         for tree in self.TREES:
-            with self.subTest(tree=tree.parts[-3]):
+            with self.subTest(tree=tree.parts[-2]):
                 service = self.service_text(tree)
                 self.assertIn("Task<OutgoingLetterPrintDiagnosticsDto?> DiagnoseAsync(int letterId, string size);", service)
                 self.assertIn("public async Task<OutgoingLetterPrintDiagnosticsDto?> DiagnoseAsync(", service)
-                controller = (tree / "Inventory.Api" / "Controllers" / "Office" /
+                controller = (tree / "TotallSoftwareForoughAriya.Api" / "Controllers" / "Office" /
                               "OutgoingLettersController.cs").read_text(encoding="utf-8")
                 self.assertIn('HttpGet("{id:int}/print/diagnose")', controller)
                 self.assertIn("await _print.DiagnoseAsync(id, size)", controller)
-                dto = (tree / "Inventory.Shared" / "Dtos" / "OutgoingLetterDtos.cs").read_text(encoding="utf-8")
+                dto = (tree / "TotallSoftwareForoughAriya.Shared" / "Dtos" / "OutgoingLetterDtos.cs").read_text(encoding="utf-8")
                 self.assertIn("class OutgoingLetterPrintDiagnosticsDto", dto)
                 for field in ("LetterCompanyId", "EffectiveCompanyId", "TemplatePath",
                               "RegisteredLetterheadPath", "LetterheadSource", "AvailableDesigns", "Hint"):
@@ -673,8 +665,8 @@ class LetterheadSourceResolutionTests(unittest.TestCase):
                     self.assertIn(field, dto)
 
     def test_client_offers_every_company_and_shows_the_diagnosis(self):
-        for client in [self.ROOT / "src" / "Inventory.Client", self.ROOT / "inventory" / "src" / "Inventory.Client"]:
-            with self.subTest(client=client.parts[-4]):
+        for client in [self.ROOT / "src" / "TotallSoftwareForoughAriya.Client"]:
+            with self.subTest(client=client.parts[-2]):
                 compose = (client / "Pages" / "Office" / "Letters" / "Outgoing" /
                            "ComposeOutgoingModal.razor").read_text(encoding="utf-8")
                 self.assertIn("@foreach (var company in CompanyOptions)", compose)
@@ -696,8 +688,8 @@ class PrintServiceSignatureTests(unittest.TestCase):
     «does not implement interface member» متوقف شد.
     """
 
-    ROOT = Path(__file__).resolve().parents[3]
-    TREES = [ROOT / "src", ROOT / "inventory" / "src"]
+    ROOT = Path(__file__).resolve().parents[2]
+    TREES = [ROOT / "src"]
 
     @staticmethod
     def _params(text):
@@ -707,9 +699,9 @@ class PrintServiceSignatureTests(unittest.TestCase):
         import re
 
         for tree in self.TREES:
-            service = (tree / "Inventory.Api" / "Services" / "Office" / "Outgoing"
+            service = (tree / "TotallSoftwareForoughAriya.Api" / "Services" / "Office" / "Outgoing"
                        / "OutgoingLetterPrintService.cs").read_text(encoding="utf-8")
-            with self.subTest(tree=tree.parts[-3]):
+            with self.subTest(tree=tree.parts[-2]):
                 interface = re.search(
                     r"public interface IOutgoingLetterPrintService.*?\n\}", service, re.S)
                 self.assertIsNotNone(interface, "interface IOutgoingLetterPrintService not found")
@@ -737,9 +729,9 @@ class PrintServiceSignatureTests(unittest.TestCase):
         # اگر کلید کش بعضی گزینه‌ها را نبیند، نسخهٔ «با سربرگ» و «بدون سربرگ» خروجی
         # یکدیگر را از کش برمی‌دارند.
         for tree in self.TREES:
-            service = (tree / "Inventory.Api" / "Services" / "Office" / "Outgoing"
+            service = (tree / "TotallSoftwareForoughAriya.Api" / "Services" / "Office" / "Outgoing"
                        / "OutgoingLetterPrintService.cs").read_text(encoding="utf-8")
-            with self.subTest(tree=tree.parts[-3]):
+            with self.subTest(tree=tree.parts[-2]):
                 wrapper = service.split("public async Task<byte[]?> GeneratePdfAsync", 1)[1]
                 wrapper = wrapper.split("if (cacheKey == null) return null;", 1)[0]
                 signature = wrapper.split(")", 1)[0]

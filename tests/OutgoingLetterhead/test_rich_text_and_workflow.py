@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-API = ROOT / "src" / "Inventory.Api"
-CLIENT = ROOT / "src" / "Inventory.Client"
+API = ROOT / "src" / "TotallSoftwareForoughAriya.Api"
+CLIENT = ROOT / "src" / "TotallSoftwareForoughAriya.Client"
 
 
 class RichLetterPrintTests(unittest.TestCase):
@@ -34,7 +34,7 @@ class RichLetterPrintTests(unittest.TestCase):
         self.assertIn("text.Justify();", renderer)
 
     def test_markup_is_allow_list_sanitized_before_blazor_render(self):
-        sanitizer = (ROOT / "src/Inventory.Shared/Security/RichLetterHtml.cs").read_text()
+        sanitizer = (ROOT / "src/TotallSoftwareForoughAriya.Shared/Security/RichLetterHtml.cs").read_text()
         self.assertIn('"ol", "ul", "li", "strong", "b", "em", "i"', sanitizer)
         self.assertIn('"p", "div", "br"', sanitizer)
         self.assertIn('"blockquote", "table", "thead"', sanitizer)

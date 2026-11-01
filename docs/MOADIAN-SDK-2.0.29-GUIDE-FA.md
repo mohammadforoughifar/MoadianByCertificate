@@ -1,12 +1,12 @@
 # مستند فنی و اجرایی ماژول سامانه مودیان (نسخه گواهی امضای الکترونیکی — SDK 2.0.29)
 
-این مستند معماری، نحوه استقرار، امنیت گواهی امضا و قابلیت‌های ماژول بازطراحی‌شدهٔ **سامانه مودیان مالیاتی** در پروژه یکپارچهٔ `Inventory` را شرح می‌دهد.
+این مستند معماری، نحوه استقرار، امنیت گواهی امضا و قابلیت‌های ماژول بازطراحی‌شدهٔ **سامانه مودیان مالیاتی** در پروژه یکپارچهٔ **`TotallSoftwareForoughAriya`** را شرح می‌دهد.
 
 ---
 
 ## ۱. خلاصه تغییرات ساختاری مخزن
 
-1. **استقرار کامل `inventory` در ریشه مخزن:** ساختار اصلی پروژه (`Inventory.sln`، `src/Inventory.Shared`، `src/Inventory.Api`، `src/Inventory.Client`، `tests/`، `sql/`، `packages/`) مستقیماً در ریشه مخزن قرار گرفت و پوشه موقت قبلی (`MoudianMiddleware/`) و فایل آرشیو موقت حذف شدند.
+1. **استقرار کامل و یکپارچه با نام `TotallSoftwareForoughAriya` در ریشه مخزن:** ساختار اصلی پروژه (`TotallSoftwareForoughAriya.sln`، `src/TotallSoftwareForoughAriya.Shared`، `src/TotallSoftwareForoughAriya.Api`، `src/TotallSoftwareForoughAriya.Client`، `tests/`، `sql/`، `packages/`) مستقیماً در ریشه مخزن قرار گرفته و نام دیتابیس پیش‌فرض SQL Server به **`TotallSoftwareForoughAriya`** تغییر یافته است.
 2. **حذف کامل ماژول منسوخ `0.0.27`:** تمام کنترلرها، سرویس‌ها، مدل‌ها، صفحات Blazor قدیمی و جداول SQL نسخه `0.0.27` به طور کامل حذف شدند.
 3. **بسته‌بندی محلی و آفلاین `TaxCollectData.Library` نسخه `2.0.29`:**
    - پکیج رسمی `packages/TaxCollectData.Library.2.0.29.nupkg` در مخزن قرار دارد و توسط `NuGet.config` (منبع `local-moadian`) بدون نیاز به دسترسی خارجی بازیابی می‌شود.
@@ -16,14 +16,14 @@
 
 ## ۲. معماری ماژول جدید مودیان (`SDK 2.0.29`)
 
-### لایه مشترک (`src/Inventory.Shared/Dtos/Moadian/MoadianDtos.cs`)
+### لایه مشترک (`src/TotallSoftwareForoughAriya.Shared/Dtos/Moadian/MoadianDtos.cs`)
 - انواع شمارشی استاندارد منطبق با دستورالعمل سازمان امور مالیاتی:
   - `MdnInvoiceType` (نوع اول و دوم)، `MdnInvoicePattern` (الگوهای ۱ تا ۷ شامل فروش، ارزی، طلا و جواهر، پیمانکاری، قبوض، بلیط هواپیما و صادرات)، `MdnInvoiceSubject` (اصلی، اصلاحی، ابطالی، برگشت از فروش)
   - `MdnSubmissionStatus` (وضعیت پذیرش فنی درگاه ارسال)
   - `MdnFolderStatus` (وضعیت به‌روز کارپوشه خریدار از طریق `InquiryInvoiceStatus`: در انتظار واکنش، تأیید شده، تأیید سیستمی، رد شده، باطل شده)
   - `MdnPaymentMethod` (روش‌های پرداخت رسمی ۱ تا ۸) و `MdnPaymentSyncState` (چرخه ثبت پرداخت در مودیان)
 
-### لایه دیتابیس و EF Core (`src/Inventory.Api/Data/`)
+### لایه دیتابیس و EF Core (`src/TotallSoftwareForoughAriya.Api/Data/`)
 - **موجودیت‌ها (`Entities/Moadian/MoadianCertEntities.cs`):**
   - `MdnTaxpayerProfile` — پرونده مالیاتی و گاوصندوق رمزنگاری‌شده گواهی امضا به تفکیک هر شرکت (`ICompanyOwned`)
   - `MdnMeasureUnit` — کدهای رسمی واحدهای سنجش سازمان امور مالیاتی (۲۰ واحد پرکاربرد به صورت خودکار Seed می‌شوند)
@@ -99,11 +99,11 @@
 
 ```powershell
 # ۱. بازیابی پکیج‌ها (شامل TaxCollectData.Library 2.0.29 از پوشه محلی packages/)
-dotnet restore Inventory.sln
+dotnet restore TotallSoftwareForoughAriya.sln
 
 # ۲. بیلد کل راهکار
-dotnet build Inventory.sln -c Release
+dotnet build TotallSoftwareForoughAriya.sln -c Release
 
-# ۳. اعمال خودکار ارتقای دیتابیس بدون بالا آوردن وب‌سرور (اختیاری — در اجرای عادی نیز خودکار انجام می‌شود)
-dotnet run --project src/Inventory.Api -- --update-database
+# ۳. اعمال خودکار ارتقای دیتابیس روی TotallSoftwareForoughAriya بدون بالا آوردن وب‌سرور (اختیاری)
+dotnet run --project src/TotallSoftwareForoughAriya.Api -- --update-database
 ```

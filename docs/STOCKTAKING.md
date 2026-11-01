@@ -114,7 +114,7 @@ Accuracy   = (CountedLines − DiffLines) ÷ CountedLines × ۱۰۰
 
 ### استانداردهای پشتیبانی‌شده
 
-پیاده‌سازی در `src/Inventory.Shared/Barcode.cs` انجام شده و **هیچ وابستگی بیرونی
+پیاده‌سازی در `src/TotallSoftwareForoughAriya.Shared/Barcode.cs` انجام شده و **هیچ وابستگی بیرونی
 ندارد** — خروجی مستقیماً SVG است و در مرورگر و در چاپ یکسان رندر می‌شود.
 
 | نوع | توضیح | اعتبارسنجی |

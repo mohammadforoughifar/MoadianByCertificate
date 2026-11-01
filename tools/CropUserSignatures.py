@@ -20,7 +20,7 @@ except ImportError as exc:  # pragma: no cover - dependency message for the oper
     raise SystemExit("Pillow is required. Install it with: python3 -m pip install Pillow") from exc
 
 
-DEFAULT_ROOT = Path(__file__).resolve().parents[1] / "src" / "Inventory.Api" / "wwwroot" / "uploads" / "UserSignatures"
+DEFAULT_ROOT = Path(__file__).resolve().parents[1] / "src" / "TotallSoftwareForoughAriya.Api" / "wwwroot" / "uploads" / "UserSignatures"
 PADDING = 4
 
 

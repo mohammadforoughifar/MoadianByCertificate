@@ -20,7 +20,7 @@ check expanding FAQ answers for print and restoring their original state after
 printing or errors, plus instance-local TOC scrolling for cached workspace tabs. These are **not** a substitute for compiling Razor:
 
 ```sh
-dotnet build inventory/src/Inventory.Client/Inventory.Client.csproj
+dotnet build src/TotallSoftwareForoughAriya.Client/TotallSoftwareForoughAriya.Client.csproj
 ```
 
 ## Browser regression checklist

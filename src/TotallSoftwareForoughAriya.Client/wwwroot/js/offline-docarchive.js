@@ -160,9 +160,9 @@ window.docOfflineStatus = window.docOfflineStatus || (function () {
         attach: function () {
             if (h) return;
             h = {
-                online: function () { try { DotNet.invokeMethodAsync('Inventory.Client', 'DocOfflineStatus_OnlineChanged', true); } catch (e) { } },
-                offline: function () { try { DotNet.invokeMethodAsync('Inventory.Client', 'DocOfflineStatus_OnlineChanged', false); } catch (e) { } },
-                queue: function (e) { try { DotNet.invokeMethodAsync('Inventory.Client', 'DocOfflineStatus_QueueChanged', e.detail.count); } catch (err) { } }
+                online: function () { try { DotNet.invokeMethodAsync('TotallSoftwareForoughAriya.Client', 'DocOfflineStatus_OnlineChanged', true); } catch (e) { } },
+                offline: function () { try { DotNet.invokeMethodAsync('TotallSoftwareForoughAriya.Client', 'DocOfflineStatus_OnlineChanged', false); } catch (e) { } },
+                queue: function (e) { try { DotNet.invokeMethodAsync('TotallSoftwareForoughAriya.Client', 'DocOfflineStatus_QueueChanged', e.detail.count); } catch (err) { } }
             };
             window.addEventListener('online', h.online);
             window.addEventListener('offline', h.offline);

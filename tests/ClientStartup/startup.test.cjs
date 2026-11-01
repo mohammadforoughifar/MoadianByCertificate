@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const root = path.resolve(__dirname, '../../src');
-const webroot = path.join(root, 'Inventory.Client/wwwroot');
+const webroot = path.join(root, 'TotallSoftwareForoughAriya.Client/wwwroot');
 const shell = fs.readFileSync(path.join(webroot, 'js/app-shell.js'), 'utf8');
 const index = fs.readFileSync(path.join(webroot, 'index.html'), 'utf8');
 
@@ -24,12 +24,12 @@ function setup(url, stored = {}) {
 }
 
 test('only the source client opens a browser in every launch profile', () => {
-    for (const [project, expected] of [['Inventory.Api', false], ['Inventory.Client', true]]) {
+    for (const [project, expected] of [['TotallSoftwareForoughAriya.Api', false], ['TotallSoftwareForoughAriya.Client', true]]) {
         const settings = JSON.parse(fs.readFileSync(path.join(root, project, 'Properties/launchSettings.json'), 'utf8').replace(/^\uFEFF/, ''));
         for (const [name, profile] of Object.entries(settings.profiles))
             assert.equal(profile.launchBrowser, expected, `${project}: ${name}`);
     }
-    const launch = JSON.parse(fs.readFileSync(path.join(root, '../Inventory.slnLaunch'), 'utf8'));
+    const launch = JSON.parse(fs.readFileSync(path.join(root, '../TotallSoftwareForoughAriya.slnLaunch'), 'utf8'));
     assert.equal(launch[0].Projects.filter(p => p.Action === 'Start').length, 2, 'API must still be started');
 });
 
