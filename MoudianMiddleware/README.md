@@ -20,7 +20,7 @@ The script downloads the package from a pinned GitHub revision, checks the Git b
 Secrets and the SQL connection string are read from environment variables only; do not place them in appsettings or tracked files.
 
 - `MOUDIAN__CONNECTION_STRING`: SQL Server connection string.
-- `MOUDIAN__JWT_SIGNING_KEY`: Base64 encoding of at least 32 random bytes.
+- `MOUDIAN__JWT_SIGNING_KEY`: Base64 encoding of at least 32 random bytes in non-Development environments. The checked-in API launch profile sets `ASPNETCORE_ENVIRONMENT=Development`; only in that environment, if this variable is absent, the API creates an ephemeral 32-byte key at startup and logs a warning. Tokens become invalid when the API restarts. Set a stable key for persistent local sessions; production always requires this variable.
 - `MOUDIAN__JWT_ISSUER`, `MOUDIAN__JWT_AUDIENCE`: optional JWT identity values.
 - `MOUDIAN__MASTER_KEY`: Base64 32-byte KEK v1, or `MOUDIAN__MASTER_KEY_V1`, `MOUDIAN__MASTER_KEY_V2`, … and `MOUDIAN__MASTER_KEY_ACTIVE_VERSION` for rotation.
 - `MOUDIAN__CLIENT_ORIGIN`: exact HTTPS client origin allowed by CORS (loopback HTTP is allowed for local development).

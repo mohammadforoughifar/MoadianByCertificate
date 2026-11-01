@@ -160,11 +160,22 @@ public sealed class JwtOptions
     public required byte[] SigningKey { get; init; }
     public int AccessTokenMinutes { get; init; } = 10;
     public int RefreshTokenDays { get; init; } = 14;
-    public static JwtOptions FromEnvironment()
+    public static JwtOptions FromEnvironment(bool allowDevelopmentFallback = false)
     {
-        var encoded = Environment.GetEnvironmentVariable("MOUDIAN__JWT_SIGNING_KEY") ?? throw new InvalidOperationException("MOUDIAN__JWT_SIGNING_KEY is required.");
-        var key = Convert.FromBase64String(encoded);
-        if (key.Length < 32) throw new InvalidOperationException("JWT signing key must contain at least 32 bytes.");
+        var encoded = Environment.GetEnvironmentVariable("MOUDIAN__JWT_SIGNING_KEY");
+        byte[] key;
+        if (string.IsNullOrWhiteSpace(encoded))
+        {
+            if (!allowDevelopmentFallback)
+                throw new InvalidOperationException("MOUDIAN__JWT_SIGNING_KEY is required outside Development.");
+            key = RandomNumberGenerator.GetBytes(32);
+        }
+        else
+        {
+            try { key = Convert.FromBase64String(encoded); }
+            catch (FormatException exception) { throw new InvalidOperationException("MOUDIAN__JWT_SIGNING_KEY must be Base64.", exception); }
+            if (key.Length < 32) throw new InvalidOperationException("JWT signing key must contain at least 32 bytes.");
+        }
         return new JwtOptions { Issuer = Environment.GetEnvironmentVariable("MOUDIAN__JWT_ISSUER") ?? "MoudianMiddleware", Audience = Environment.GetEnvironmentVariable("MOUDIAN__JWT_AUDIENCE") ?? "MoudianMiddleware.Client", SigningKey = key };
     }
 }

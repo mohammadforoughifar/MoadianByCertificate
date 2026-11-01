@@ -15,7 +15,10 @@ using MoudianMiddleware.DataLayer;
 using MoudianMiddleware.DataLayer.Abstractions;
 
 var builder = WebApplication.CreateBuilder(args);
-var jwt = JwtOptions.FromEnvironment();
+var jwtKeyIsMissing = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MOUDIAN__JWT_SIGNING_KEY"));
+var jwt = JwtOptions.FromEnvironment(allowDevelopmentFallback: builder.Environment.IsDevelopment());
+if (jwtKeyIsMissing && builder.Environment.IsDevelopment())
+    Console.Error.WriteLine("WARNING: Using an ephemeral development-only JWT key. Tokens will stop validating after API restart.");
 var clientOrigin = Environment.GetEnvironmentVariable("MOUDIAN__CLIENT_ORIGIN");
 builder.Services.AddSingleton(jwt);
 builder.Services.AddSingleton(TimeProvider.System);
