@@ -15,7 +15,7 @@ namespace MoudianMiddleware.Tests.Api;
 public sealed class AuthServiceTests
 {
     [Fact]
-    public async Task RefreshReplay_RevokesEveryStillActiveTokenForTheUser()
+    public async Task RefreshReplay_RevokesEveryStillActiveTokenForTheUserAsync()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         const string raw = "one-time-refresh-secret";
@@ -28,7 +28,7 @@ public sealed class AuthServiceTests
             var user = new User { UserName = "auth-user", NormalizedUserName = "AUTH-USER", FullName = "Auth User", PasswordHash = "unused" };
             user.UserTenants.Add(new UserTenant { TenantId = 1, Tenant = tenant, Role = role, IsActive = true });
             user.RefreshTokens.Add(new RefreshToken { TenantId = 1, TokenHash = Hash(raw), CreatedAt = now, ExpiresAt = now.AddDays(7) });
-            seed.AddRange(tenant, role, user);
+            await seed.AddRangeAsync(tenant, role, user);
             await seed.SaveChangesAsync();
         }
 

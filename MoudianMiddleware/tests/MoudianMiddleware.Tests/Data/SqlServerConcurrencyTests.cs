@@ -35,12 +35,9 @@ public sealed class SqlServerConcurrencyTests
         }
         var key = RandomNumberGenerator.GetBytes(32);
         var options = new JwtOptions { Issuer = "integration", Audience = "integration-client", SigningKey = key };
-        var attempts = new[] { RefreshAsync(database, options, rawToken), RefreshAsync(database, options, rawToken) };
-        var results = await Task.WhenAll(attempts.Select(async task =>
-        {
-            try { return await task.ConfigureAwait(false); }
-            catch (UnauthorizedAccessException) { return null; }
-        })).ConfigureAwait(false);
+        var results = await Task.WhenAll(
+            CaptureRefreshAsync(database, options, rawToken),
+            CaptureRefreshAsync(database, options, rawToken)).ConfigureAwait(false);
         results.Count(result => result is not null).Should().Be(1);
         await using var verify = database.CreateContext(tenantId, new TenantScope());
         (await verify.RefreshTokens.IgnoreQueryFilters().Where(x => x.UserId == 1 && x.RevokedAt == null).CountAsync()).Should().Be(0);
@@ -71,6 +68,12 @@ public sealed class SqlServerConcurrencyTests
         gateway.Verify(x => x.SendInvoiceAsync(It.IsAny<MoadianSetting>(), It.IsAny<MoadianCredential>(), It.IsAny<Invoice>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    private static async Task<TokenResult?> CaptureRefreshAsync(SqlServerTestDatabase database, JwtOptions options, string token)
+    {
+        try { return await RefreshAsync(database, options, token).ConfigureAwait(false); }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
     private static async Task<TokenResult> RefreshAsync(SqlServerTestDatabase database, JwtOptions options, string token)
     {
         var scope = new TenantScope();
@@ -87,7 +90,7 @@ public sealed class SqlServerConcurrencyTests
         var tenant = new Tenant { Name = "Concurrency tenant" };
         var user = new User { UserName = "parallel-user", NormalizedUserName = "PARALLEL-USER", FullName = "Parallel", PasswordHash = "not-used" };
         user.UserTenants.Add(new UserTenant { Tenant = tenant, Role = role, IsActive = true });
-        context.AddRange(tenant, role, user); await context.SaveChangesAsync();
+        await context.AddRangeAsync(tenant, role, user); await context.SaveChangesAsync();
         return tenant.Id;
     }
 
