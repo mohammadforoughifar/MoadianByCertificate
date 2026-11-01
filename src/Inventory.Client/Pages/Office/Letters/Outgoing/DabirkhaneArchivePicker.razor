@@ -1,0 +1,191 @@
+@using Inventory.Shared.Dtos
+@inject IOutgoingLetterService OutgoingSvc
+@inject IToastService Toast
+
+@* ============================================================
+   انتخاب پوشهٔ مقصد در بایگانی دبیرخانه (نامه صادره)
+   • درخت پوشه‌ها مخصوص دبیرخانه است (مستقل از بایگانی شخصی)
+   • امکان ساخت سریع دسته در ریشه
+   ============================================================ *@
+
+@if (visible)
+{
+    <div class="ltx" style="animation:none;transform:none">
+        @* قرارداد مودال: بسته‌شدن فقط با × / انصراف — کلیک روی پس‌زمینه فرم را نمی‌بندد *@
+        <div class="gov">
+            <div class="gmodal" style="width:min(480px,96vw)" @onclick:stopPropagation="true">
+                <div class="gm-h">
+                    <div class="ttl">
+                        <b><i class="bi bi-archive" style="color:var(--p2)"></i> @title</b>
+                        <small>پوشه مقصد را انتخاب کنید</small>
+                    </div>
+                    <button class="x" @onclick="Cancel"><i class="bi bi-x-lg"></i></button>
+                </div>
+                <div class="gm-b">
+                    <div style="font-size:12.5px;color:#64748b;margin-bottom:8px">
+                        <i class="bi bi-info-circle"></i> @hint
+                    </div>
+
+                    <div style="border:1px solid #e2e8f0;border-radius:10px;max-height:46vh;overflow:auto;padding:4px">
+                        @if (loading)
+                        {
+                            <div class="empty" style="padding:24px"><i class="bi bi-hourglass-split"></i> در حال بارگذاری…</div>
+                        }
+                        else
+                        {
+                            <div class="pk-row @(selectedId == 0 ? "sel" : "")" @onclick="() => selectedId = 0">
+                                <span class="chev-ph"></span>
+                                <i class="bi bi-house fld"></i> ریشه بایگانی دبیرخانه
+                            </div>
+                            @if (Folders.Count == 0)
+                            {
+                                <div class="empty" style="padding:18px 0"><i class="bi bi-folder-x"></i> هنوز پوشه‌ای ندارید — از پایین یک پوشه بسازید</div>
+                            }
+                            @foreach (var f in Folders)
+                            {
+                                @RenderFolder(f, 0)
+                            }
+                        }
+                    </div>
+
+                    @if (quickCreating)
+                    {
+                        <div style="display:flex;gap:6px;margin-top:10px">
+                            <input class="tin" placeholder="نام دسته جدید…" @bind="quickName" @bind:event="oninput" @onkeydown="QuickKeyDown" />
+                            <button class="lbtn ghost" @onclick="() => quickCreating = false">انصراف</button>
+                            <button class="lbtn pri" @onclick="QuickCreate"><i class="bi bi-check-lg"></i> ساخت</button>
+                        </div>
+                    }
+                </div>
+                <div class="gm-f" style="flex-wrap:wrap;gap:8px">
+                    @if (!quickCreating)
+                    {
+                        <button class="lbtn ghost" style="margin-inline-end:auto" @onclick="StartQuickCreate">
+                            <i class="bi bi-folder-plus"></i> دسته جدید
+                        </button>
+                    }
+                    <button class="lbtn ghost" @onclick="Cancel">انصراف</button>
+                    <button class="lbtn pri" disabled="@(selectedId == null)" @onclick="Confirm">
+                        <i class="bi bi-check-lg"></i> انتخاب
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool visible;
+    private bool loading;
+    private string title = "";
+    private string hint = "";
+    private int? excludeFolderId;
+    private int? selectedId;
+    private readonly HashSet<int> open = new();
+
+    private bool quickCreating;
+    private string quickName = "";
+    private List<BayeganiNodeDto> tree = new();
+    private TaskCompletionSource<int?>? tcs;
+
+    private List<BayeganiNodeDto> Folders =>
+        tree.Where(n => n.IsFolder && n.BayeganiId != excludeFolderId).ToList();
+
+    /// <summary>بازکردن مودال؛ نتیجه: شناسه پوشه مقصد (0=ریشه) یا null=انصراف</summary>
+    public async Task<int?> PickAsync(string caption, string hintText = "", int? excludeFolderId = null)
+    {
+        title = caption;
+        hint = hintText;
+        this.excludeFolderId = excludeFolderId;
+        selectedId = null;
+        quickCreating = false;
+        visible = true;
+        loading = true;
+        StateHasChanged();
+
+        tcs = new TaskCompletionSource<int?>();
+        await LoadAsync();
+        return await tcs.Task;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            tree = await OutgoingSvc.GetDabirkhaneBayeganiTreeAsync();
+            open.Clear();
+            AddOpen(tree);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); tree = new(); }
+        finally { loading = false; StateHasChanged(); }
+    }
+
+    private void AddOpen(List<BayeganiNodeDto> list)
+    {
+        foreach (var n in list.Where(x => x.IsFolder)) { open.Add(n.BayeganiId); AddOpen(n.Children); }
+    }
+
+    private void Confirm()
+    {
+        visible = false;
+        tcs?.TrySetResult(selectedId);
+        StateHasChanged();
+    }
+
+    private void Cancel()
+    {
+        visible = false;
+        tcs?.TrySetResult(null);
+        StateHasChanged();
+    }
+
+    private void StartQuickCreate() { quickCreating = true; quickName = ""; }
+
+    private async Task QuickKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await QuickCreate();
+        else if (e.Key == "Escape") quickCreating = false;
+    }
+
+    private async Task QuickCreate()
+    {
+        if (string.IsNullOrWhiteSpace(quickName)) { Toast.Error("نام دسته را وارد کنید."); return; }
+        try
+        {
+            var created = await OutgoingSvc.AddDabirkhaneMainCategoryAsync(
+                new SaveBayeganiFolderDto { Title = quickName.Trim() });
+            quickCreating = false;
+            selectedId = created.BayeganiId;
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private RenderFragment RenderFolder(BayeganiNodeDto n, int depth) => @<div>
+        @{
+            var kids = n.Children.Where(c => c.IsFolder && c.BayeganiId != excludeFolderId).ToList();
+            var isOpen = open.Contains(n.BayeganiId);
+        }
+        <div class="pk-row @(selectedId == n.BayeganiId ? "sel" : "")" style="--dep:@depth"
+             @onclick="() => selectedId = n.BayeganiId">
+            @if (kids.Count > 0)
+            {
+                <span class="chev @(isOpen ? "open" : "")"
+                      @onclick="() => { if (!open.Add(n.BayeganiId)) open.Remove(n.BayeganiId); }"
+                      @onclick:stopPropagation="true"><i class="bi bi-chevron-left"></i></span>
+            }
+            else
+            {
+                <span class="chev-ph"></span>
+            }
+            <i class="bi bi-folder-fill fld"></i> @n.Title
+        </div>
+        @if (isOpen)
+        {
+            @foreach (var c in kids)
+            {
+                @RenderFolder(c, depth + 1)
+            }
+        }
+    </div>;
+}

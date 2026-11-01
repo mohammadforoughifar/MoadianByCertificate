@@ -1,0 +1,188 @@
+@inject IJSRuntime JS
+
+@* فیلتر تاریخ برای سرستون گرید: هم تایپ دستی (ارقام فارسی یا لاتین، حتی بخشی مثل ۱۴۰۵/۰۶) هم انتخاب از تقویم کوچک *@
+<div class="dfi">
+    <input type="text"
+           class="col-filter-input"
+           placeholder="@Placeholder"
+           value="@Text"
+           @oninput="OnText"
+           dir="ltr" />
+    <button @ref="btnRef" type="button" class="dfi-cal" title="انتخاب از تقویم" @onclick="ToggleCal" @onclick:stopPropagation="true">
+        <i class="bi bi-calendar3"></i>
+    </button>
+    @if (calOpen)
+    {
+        <div class="dfi-overlay" @onclick="CloseCal"></div>
+        <div class="dfi-pop" style="@PopStyle" @onclick:stopPropagation="true">
+            <div class="dfi-head">
+                <button type="button" @onclick="() => MoveMonth(1)" title="ماه بعد"><i class="bi bi-chevron-right"></i></button>
+                <span>@PersianDate.MonthName(viewMonth) @Fa.Digits(viewYear)</span>
+                <button type="button" @onclick="() => MoveMonth(-1)" title="ماه قبل"><i class="bi bi-chevron-left"></i></button>
+            </div>
+            <div class="dfi-grid">
+                @foreach (var w in WeekDays) { <span class="dfi-wd">@w</span> }
+                @for (var i = 0; i < firstOffset; i++) { <span></span> }
+                @for (var d = 1; d <= daysInMonth; d++)
+                {
+                    var day = d;
+                    <button type="button" class="dfi-day" @onclick="() => Pick(day)">@Fa.Digits(day)</button>
+                }
+            </div>
+            <div class="dfi-foot">
+                <button type="button" class="dfi-today" @onclick="PickToday" title="درج تاریخ امروز"><i class="bi bi-calendar-check"></i> امروز</button>
+                <button type="button" @onclick="Clear" title="پاک کردن فیلتر"><i class="bi bi-x-lg"></i> پاک کردن</button>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .dfi { position: relative; display: flex; align-items: center; gap: 2px; }
+    .dfi input { flex: 1; }
+    .dfi-cal {
+        border: 1px solid #e2e8f0; background: #fff; color: #6366f1; border-radius: 7px;
+        font-size: .8rem; padding: 2px 7px; flex-shrink: 0; cursor: pointer;
+    }
+    .dfi-cal:hover { background: #eef2ff; }
+    .dfi-overlay { position: fixed; inset: 0; z-index: 4490; background: transparent; }
+    .dfi-pop {
+        position: fixed; z-index: 4500;
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+        box-shadow: 0 14px 40px rgba(15,23,42,.22); padding: .6rem; width: 220px;
+    }
+    .dfi-head {
+        display: flex; align-items: center; justify-content: space-between;
+        font-weight: 800; font-size: .82rem; color: #334155; margin-bottom: .35rem;
+    }
+    .dfi-head button { border: 0; background: #eef2ff; color: #4338ca; border-radius: 6px; width: 24px; height: 24px; line-height: 1; }
+    .dfi-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+    .dfi-wd { font-size: .62rem; color: #94a3b8; font-weight: 700; padding: .15rem 0; }
+    .dfi-day {
+        border: 0; background: none; border-radius: 7px; padding: .25rem 0;
+        font-size: .74rem; color: #334155; cursor: pointer;
+    }
+    .dfi-day:hover { background: #eef2ff; }
+    .dfi-foot { display: flex; gap: .4rem; justify-content: center; border-top: 1px solid #f1f5f9; margin-top: .35rem; padding-top: .3rem; }
+    .dfi-foot button { border: 0; border-radius: 7px; font-size: .7rem; padding: 2px 10px; }
+    .dfi-foot .dfi-today { background: #ecfdf5; color: #059669; }
+    .dfi-foot button:last-child { background: #fff1f2; color: #e11d48; }
+</style>
+
+@code {
+    /// <summary>متن فیلتر (دودویی با صفحه والد)</summary>
+    [Parameter] public string? Text { get; set; }
+    [Parameter] public EventCallback<string?> TextChanged { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "مثلا ۱۴۰۵/۰۶";
+
+    private ElementReference btnRef;
+    private static readonly string[] WeekDays = { "ش", "ی", "د", "س", "چ", "پ", "ج" };
+
+    private bool calOpen;
+    private int viewYear, viewMonth;
+    private double popRight, popBottom;
+
+    private sealed class DomRect
+    {
+        public double Left { get; set; }
+        public double Top { get; set; }
+        public double Right { get; set; }
+        public double Bottom { get; set; }
+    }
+
+    /// <summary>موقعیت پاپ‌اور دقیقا زیر دکمه تقویم، با چسبیدن لبه راست به لبه راست دکمه</summary>
+    private string PopStyle =>
+        $"top:{popBottom + 4:0}px;left:{Math.Max(8, popRight - 220):0}px;";
+
+    private int DaysInJalaliMonth(int y, int m)
+    {
+        for (var d = 31; d >= 28; d--)
+            if (PersianDate.ToGregorian(y, m, d) != DateTime.MinValue) return d;
+        return 29;
+    }
+
+    private int daysInMonth => DaysInJalaliMonth(viewYear, viewMonth);
+
+    private int firstOffset
+    {
+        get
+        {
+            var g = PersianDate.ToGregorian(viewYear, viewMonth, 1);
+            return ((int)g.DayOfWeek + 1) % 7;
+        }
+    }
+
+    private async Task OnText(ChangeEventArgs e)
+    {
+        Text = e.Value?.ToString();
+        await TextChanged.InvokeAsync(Text);
+    }
+
+    private async Task ToggleCal(Microsoft.AspNetCore.Components.Web.MouseEventArgs e)
+    {
+        calOpen = !calOpen;
+        if (calOpen)
+        {
+            try
+            {
+                var rect = await JS.InvokeAsync<DomRect>("getElementRect", btnRef);
+                if (rect != null && rect.Bottom > 0)
+                {
+                    popRight = rect.Right;
+                    popBottom = rect.Bottom;
+                }
+                else
+                {
+                    popRight = e.ClientX;
+                    popBottom = e.ClientY;
+                }
+            }
+            catch
+            {
+                popRight = e.ClientX;
+                popBottom = e.ClientY;
+            }
+            InitView();
+        }
+    }
+
+    private void CloseCal() => calOpen = false;
+
+    private void InitView()
+    {
+        var parsed = PersianDate.TryParse(Text);
+        var (y, m, _) = PersianDate.FromGregorian(parsed ?? DateTime.Now);
+        viewYear = y;
+        viewMonth = m;
+    }
+
+    private void MoveMonth(int delta)
+    {
+        var m = viewMonth + delta;
+        if (m > 12) { viewMonth = 1; viewYear++; }
+        else if (m < 1) { viewMonth = 12; viewYear--; }
+        else viewMonth = m;
+    }
+
+    private async Task Pick(int day)
+    {
+        calOpen = false;
+        var g = PersianDate.ToGregorian(viewYear, viewMonth, day);
+        Text = Fa.Digits(PersianDate.ToShort(g));
+        await TextChanged.InvokeAsync(Text);
+    }
+
+    private async Task PickToday()
+    {
+        calOpen = false;
+        Text = PersianDate.ToShortFa(DateTime.Now);
+        await TextChanged.InvokeAsync(Text);
+    }
+
+    private async Task Clear()
+    {
+        calOpen = false;
+        Text = "";
+        await TextChanged.InvokeAsync(Text);
+    }
+}

@@ -1,0 +1,160 @@
+@page "/reports/reorder"
+@inject IAuthState Auth
+@inject IReportService ReportSvc
+@inject IWarehouseService WarehouseSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+
+@if (!Auth.Has("ReportPages.Reorder"))
+{
+    <div class="alert alert-warning mt-3">
+        <i class="bi bi-shield-exclamation"></i>
+        شما به «گزارش نقطه سفارش» دسترسی ندارید. برای دریافت دسترسی با مدیر سیستم تماس بگیرید.
+    </div>
+}
+else
+{
+<PageTitle>گزارش نقطه سفارش</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>گزارش نقطه سفارش</h1>
+        <p class="lead">کالاهایی که موجودی آن‌ها به حداقل مجاز (نقطه سفارش) رسیده است</p>
+    </div>
+</div>
+
+@if (!loading)
+{
+    <div class="alert alert-warning d-flex align-items-center gap-2" role="alert">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <div>
+            <strong>@totalCount.Num() کالا</strong> زیر نقطه سفارش قرار دارد و نیاز به خرید مجدد دارد.
+        </div>
+    </div>
+}
+
+<div class="card mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">انبار</label>
+                <SearchSelect Items="whLookup" Value="warehouseId" ValueChanged="v => warehouseId = v" Placeholder="همه انبارها" />
+            </div>
+            <div class="col-md-auto">
+                <button class="btn btn-primary" @onclick="Load"><i class="bi bi-funnel"></i> اعمال</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-check2-circle"></i><h5>هیچ کالایی زیر نقطه سفارش نیست</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>کد</th>
+                            <th>نام کالا</th>
+                            <th>گروه</th>
+                            <th>واحد</th>
+                            <th class="text-start">موجودی فعلی</th>
+                            <th class="text-start">نقطه سفارش</th>
+                            <th class="text-start">حداکثر موجودی</th>
+                            <th class="text-start">کمبود</th>
+                            <th class="text-start">پیشنهاد خرید</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in items)
+                        {
+                            <tr>
+                                <td class="doc-number text-muted">@r.ProductCode</td>
+                                <td class="fw-500">@r.ProductName</td>
+                                <td>@(r.Category ?? "—")</td>
+                                <td>@r.Unit</td>
+                                <td class="text-start num fw-700 text-danger">@r.TotalStock.Num()</td>
+                                <td class="text-start num">@r.ReorderPoint.Num()</td>
+                                <td class="text-start num">@r.MaxStock.Num()</td>
+                                <td class="text-start num fw-700 text-danger">@r.Shortage.Num()</td>
+                                <td class="text-start">
+                                    <span class="badge badge-soft-primary fs-7">@r.Suggested.Num() @r.Unit</span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="ChangePage" />
+        }
+    </div>
+</div>
+
+}
+
+@code {
+    private List<ReorderItem> items = new();
+
+    // ---------- صفحه‌بندی ----------
+    private int page = 1;
+    private const int PageSize = 12;
+    private int totalCount;
+    private int loadVersion;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(totalCount / (double)PageSize));
+    private List<LookupItem> whLookup = new();
+    private int warehouseId;
+    private bool loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("گزارش نقطه سفارش");
+        try
+        {
+            whLookup = await WarehouseSvc.GetLookupsAsync();
+        }
+        catch { }
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        page = 1;
+        await LoadPage();
+    }
+
+    private async Task ChangePage(int value)
+    {
+        page = Math.Clamp(value, 1, PageCount);
+        await LoadPage();
+    }
+
+    private async Task LoadPage()
+    {
+        var version = ++loadVersion;
+        loading = true;
+        try
+        {
+            var result = await ReportSvc.GetReorderPageAsync((page - 1) * PageSize, PageSize, warehouseId);
+            if (version != loadVersion) return;
+            items = result.Items;
+            totalCount = result.TotalCount;
+            if (page > PageCount)
+            {
+                page = PageCount;
+                await LoadPage();
+            }
+        }
+        catch (Exception ex) { if (version == loadVersion) Toast.Error(ex.Message); }
+        finally { if (version == loadVersion) loading = false; }
+    }
+}

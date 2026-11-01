@@ -1,0 +1,233 @@
+@page "/acc/dashboard"
+@inject IAccReportService ReportSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+
+<PageTitle>داشبورد مالی</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>داشبورد مالی</h1>
+        <p class="lead">خلاصه‌ی وضعیت حساب‌ها در دوره‌ی مالی جاری — بر پایه‌ی اسناد قطعی</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-primary" href="/acc/vouchers/new"><i class="bi bi-plus-lg"></i> سند جدید</a>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else if (data is null)
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="bi bi-bar-chart"></i>
+                <h5>اطلاعاتی برای نمایش وجود ندارد</h5>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <div class="alert @(data.IsBalanced ? "alert-success" : "alert-warning") d-flex align-items-center gap-2">
+        <i class="bi @(data.IsBalanced ? "bi-check-circle-fill" : "bi-exclamation-triangle-fill")"></i>
+        <span>
+            @data.FiscalYearTitle —
+            @if (data.IsBalanced)
+            {
+                <span>دفاتر تراز است.</span>
+            }
+            else
+            {
+                <span>
+                    دفاتر ناتراز است؛ اختلاف:
+                    <b class="num">@Math.Abs(data.TotalDebit - data.TotalCredit).Money()</b> ریال
+                </span>
+            }
+        </span>
+    </div>
+
+    <!-- ---------- کارت‌های آماری ---------- -->
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-primary"><i class="bi bi-journal-text text-primary"></i></div>
+                <div>
+                    <div class="stat-label">تعداد اسناد</div>
+                    <div class="stat-value num">@data.VoucherCount.Num()</div>
+                    <div class="fs-8 text-muted num">@data.DraftCount.Num() پیش‌نویس</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-success"><i class="bi bi-arrow-down-left text-success"></i></div>
+                <div>
+                    <div class="stat-label">جمع بدهکار</div>
+                    <div class="stat-value num text-success">@data.TotalDebit.Money()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-danger"><i class="bi bi-arrow-up-right text-danger"></i></div>
+                <div>
+                    <div class="stat-label">جمع بستانکار</div>
+                    <div class="stat-value num text-danger">@data.TotalCredit.Money()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon @(data.Profit >= 0 ? "bg-soft-success" : "bg-soft-danger")">
+                    <i class="bi @(data.Profit >= 0 ? "bi-graph-up-arrow text-success" : "bi-graph-down-arrow text-danger")"></i>
+                </div>
+                <div>
+                    <div class="stat-label">@(data.Profit >= 0 ? "سود دوره" : "زیان دوره")</div>
+                    <div class="stat-value num @(data.Profit >= 0 ? "text-success" : "text-danger")">
+                        @Math.Abs(data.Profit).Money()
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <!-- ---------- ترکیب ترازنامه ---------- -->
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-pie-chart text-primary"></i>
+                    <span class="card-title">ترازنامه (حساب‌های دائم)</span>
+                </div>
+                <div class="card-body">
+                    @RenderBar("دارایی‌ها", data.AssetTotal, "bg-primary")
+                    @RenderBar("بدهی‌ها", data.LiabilityTotal, "bg-danger")
+                    @RenderBar("سرمایه", data.EquityTotal, "bg-success")
+
+                    <div class="d-flex justify-content-between border-top pt-2 mt-3">
+                        <span class="text-muted">معادله حسابداری</span>
+                        <span class="num">
+                            دارایی @data.AssetTotal.Money() =
+                            بدهی @data.LiabilityTotal.Money() +
+                            سرمایه @((data.EquityTotal + data.Profit).Money())
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ---------- سود و زیان ---------- -->
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-bar-chart text-primary"></i>
+                    <span class="card-title">سود و زیان (حساب‌های موقت)</span>
+                </div>
+                <div class="card-body">
+                    @RenderBar("درآمدها", data.IncomeTotal, "bg-success")
+                    @RenderBar("هزینه‌ها", data.ExpenseTotal, "bg-warning")
+
+                    <div class="d-flex justify-content-between border-top pt-2 mt-3">
+                        <span class="text-muted">@(data.Profit >= 0 ? "سود خالص" : "زیان خالص")</span>
+                        <b class="num @(data.Profit >= 0 ? "text-success" : "text-danger")">@Math.Abs(data.Profit).Money() ریال</b>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ---------- میان‌برها ---------- -->
+    <div class="row g-3 mt-1">
+        <div class="col-6 col-lg-3">
+            <a class="card text-decoration-none h-100" href="/acc/accounts">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-diagram-3 fs-3 text-primary"></i>
+                    <div><b>کدینگ حساب‌ها</b><div class="fs-8 text-muted">درخت حساب‌ها</div></div>
+                </div>
+            </a>
+        </div>
+        <div class="col-6 col-lg-3">
+            <a class="card text-decoration-none h-100" href="/acc/reports/journal">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-journals fs-3 text-info"></i>
+                    <div><b>دفتر روزنامه</b><div class="fs-8 text-muted">همه آرتیکل‌ها</div></div>
+                </div>
+            </a>
+        </div>
+        <div class="col-6 col-lg-3">
+            <a class="card text-decoration-none h-100" href="/acc/reports/trial-balance">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-table fs-3 text-success"></i>
+                    <div><b>تراز آزمایشی</b><div class="fs-8 text-muted">۸ ستونی</div></div>
+                </div>
+            </a>
+        </div>
+        <div class="col-6 col-lg-3">
+            <a class="card text-decoration-none h-100" href="/acc/inv-rules">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-gear-wide-connected fs-3 text-warning"></i>
+                    <div><b>سند خودکار انبار</b><div class="fs-8 text-muted">نگاشت حساب‌ها</div></div>
+                </div>
+            </a>
+        </div>
+    </div>
+}
+
+@code {
+    private AccDashboard? data;
+    private bool loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("داشبورد مالی");
+        try { data = await ReportSvc.GetDashboardAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    /// <summary>یک ردیف نوار نسبت‌سنج برای مقایسه‌ی بصری مبالغ.</summary>
+    private RenderFragment RenderBar(string title, decimal value, string css) => builder =>
+    {
+        var max = Max();
+        var pct = max == 0 ? 0 : (double)(Math.Abs(value) / max) * 100;
+
+        builder.OpenElement(0, "div");
+        builder.AddAttribute(1, "class", "mb-3");
+
+        builder.OpenElement(2, "div");
+        builder.AddAttribute(3, "class", "d-flex justify-content-between mb-1");
+        builder.OpenElement(4, "span");
+        builder.AddContent(5, title);
+        builder.CloseElement();
+        builder.OpenElement(6, "b");
+        builder.AddAttribute(7, "class", "num");
+        builder.AddContent(8, value.Money());
+        builder.CloseElement();
+        builder.CloseElement();
+
+        builder.OpenElement(9, "div");
+        builder.AddAttribute(10, "class", "progress");
+        builder.AddAttribute(11, "style", "height:10px");
+        builder.OpenElement(12, "div");
+        builder.AddAttribute(13, "class", $"progress-bar {css}");
+        builder.AddAttribute(14, "style", $"width:{pct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%");
+        builder.CloseElement();
+        builder.CloseElement();
+
+        builder.CloseElement();
+    };
+
+    private decimal Max()
+    {
+        if (data is null) return 0;
+        return new[]
+        {
+            Math.Abs(data.AssetTotal), Math.Abs(data.LiabilityTotal), Math.Abs(data.EquityTotal),
+            Math.Abs(data.IncomeTotal), Math.Abs(data.ExpenseTotal)
+        }.Max();
+    }
+}

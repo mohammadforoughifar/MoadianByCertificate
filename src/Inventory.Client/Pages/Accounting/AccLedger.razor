@@ -1,0 +1,254 @@
+@page "/acc/reports/ledger"
+@inject IAccAccountService AccountSvc
+@inject IAccReportService ReportSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+
+<PageTitle>دفتر حساب</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>دفتر حساب (کل / معین / تفصیلی)</h1>
+        <p class="lead">گردش و مانده‌ی یک حساب در بازه‌ی دلخواه — فقط اسناد قطعی</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-outline-secondary" @onclick="Print" disabled="@(result is null)">
+            <i class="bi bi-printer"></i> چاپ
+        </button>
+    </div>
+</div>
+
+<div class="card mb-3 d-print-none">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-4">
+                <label class="form-label">حساب <span class="text-danger">*</span></label>
+                <SearchSelect Items="accounts" Value="accountId" ValueChanged="OnAccount" Placeholder="کد یا نام حساب…" />
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">از تاریخ</label>
+                <DatePicker Value="from" ValueChanged="OnFrom" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">تا تاریخ</label>
+                <DatePicker Value="to" ValueChanged="OnTo" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-2">
+                <div class="form-check form-switch mt-4">
+                    <input class="form-check-input" type="checkbox" id="incChildren" checked="@includeChildren" @onchange="OnChildren" />
+                    <label class="form-check-label" for="incChildren">با زیرحساب‌ها</label>
+                </div>
+            </div>
+            <div class="col-6 col-md-2">
+                <button class="btn btn-primary w-100" @onclick="Load" disabled="@(accountId == 0 || loading)">
+                    <i class="bi bi-search"></i> نمایش
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else if (result is null)
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="bi bi-journal-text"></i>
+                <h5>یک حساب را انتخاب کنید</h5>
+                <p class="text-muted">پس از انتخاب حساب و بازه‌ی زمانی، گردش آن نمایش داده می‌شود.</p>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <!-- ---------- کارت‌های خلاصه ---------- -->
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-primary"><i class="bi bi-wallet2 text-primary"></i></div>
+                <div>
+                    <div class="stat-label">مانده ابتدای دوره</div>
+                    <div class="stat-value num">@Math.Abs(result.OpeningBalance).Money() @Side(result.OpeningBalance)</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-success"><i class="bi bi-arrow-down-left text-success"></i></div>
+                <div>
+                    <div class="stat-label">جمع بدهکار</div>
+                    <div class="stat-value num text-success">@result.TotalDebit.Money()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-danger"><i class="bi bi-arrow-up-right text-danger"></i></div>
+                <div>
+                    <div class="stat-label">جمع بستانکار</div>
+                    <div class="stat-value num text-danger">@result.TotalCredit.Money()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-info"><i class="bi bi-calculator text-info"></i></div>
+                <div>
+                    <div class="stat-label">مانده پایان دوره</div>
+                    <div class="stat-value num">@Math.Abs(result.ClosingBalance).Money() @Side(result.ClosingBalance)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-journal-text text-primary"></i>
+            <span class="card-title">
+                @result.AccountCode.FaDigits() — @result.AccountName
+                <span class="badge badge-soft-primary ms-1">@result.LevelTitle</span>
+            </span>
+            <span class="badge badge-soft-primary ms-auto num">@result.Rows.Count.Num() گردش</span>
+        </div>
+        <div class="card-body p-0">
+            @if (result.Rows.Count == 0)
+            {
+                <div class="empty-state">
+                    <i class="bi bi-inbox"></i>
+                    <h5>در این بازه گردشی ثبت نشده است</h5>
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th style="width:44px">#</th>
+                                <th>تاریخ</th>
+                                <th class="text-center">شماره سند</th>
+                                <th class="text-center">ردیف</th>
+                                <th>حساب</th>
+                                <th>شرح</th>
+                                <th class="text-center">بدهکار</th>
+                                <th class="text-center">بستانکار</th>
+                                <th class="text-center">مانده</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="table-light">
+                                <td></td>
+                                <td colspan="5"><b>مانده از قبل (ابتدای دوره)</b></td>
+                                <td></td>
+                                <td></td>
+                                <td class="text-center num fw-600">
+                                    @Math.Abs(result.OpeningBalance).Money() @Side(result.OpeningBalance)
+                                </td>
+                            </tr>
+                            @{ var row = 1; }
+                            @foreach (var r in result.Rows)
+                            {
+                                <tr>
+                                    <td class="num text-muted">@((row++).FaDigits())</td>
+                                    <td class="num">@r.Date.ToFaDate()</td>
+                                    <td class="text-center num">
+                                        <a href="@($"/acc/vouchers/edit/{r.VoucherId}")">@r.VoucherNumber.FaDigits()</a>
+                                    </td>
+                                    <td class="text-center num text-muted">@r.RowNo.FaDigits()</td>
+                                    <td>
+                                        <span class="num text-muted">@r.AccountCode.FaDigits()</span>
+                                        <div class="fs-8">@r.AccountName</div>
+                                    </td>
+                                    <td>
+                                        @(string.IsNullOrWhiteSpace(r.Description) ? "—" : r.Description)
+                                        @if (!string.IsNullOrWhiteSpace(r.PartyName))
+                                        {
+                                            <div class="fs-8 text-muted"><i class="bi bi-person"></i> @r.PartyName</div>
+                                        }
+                                    </td>
+                                    <td class="text-center num text-success">@(r.Debit == 0 ? "—" : r.Debit.Money())</td>
+                                    <td class="text-center num text-danger">@(r.Credit == 0 ? "—" : r.Credit.Money())</td>
+                                    <td class="text-center num fw-600">@Math.Abs(r.Balance).Money() @r.BalanceSide</td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot class="table-light">
+                            <tr>
+                                <th colspan="6" class="text-end">جمع دوره</th>
+                                <th class="text-center num text-success">@result.TotalDebit.Money()</th>
+                                <th class="text-center num text-danger">@result.TotalCredit.Money()</th>
+                                <th class="text-center num">@Math.Abs(result.ClosingBalance).Money() @Side(result.ClosingBalance)</th>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "accountId")] public int? QueryAccountId { get; set; }
+
+    private List<LookupItem> accounts = new();
+    private AccLedgerResult? result;
+    private int accountId;
+    private DateTime? from, to;
+    private bool includeChildren = true, loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("دفتر حساب");
+        try { accounts = await AccountSvc.GetLookupsAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+
+        if (QueryAccountId is > 0)
+        {
+            accountId = QueryAccountId.Value;
+            await Load();
+        }
+    }
+
+    private async Task OnAccount(int id)
+    {
+        accountId = id;
+        if (accountId > 0) await Load();
+    }
+
+    private async Task OnFrom(DateTime? d)
+    {
+        from = d;
+        if (accountId > 0) await Load();
+    }
+
+    private async Task OnTo(DateTime? d)
+    {
+        to = d;
+        if (accountId > 0) await Load();
+    }
+
+    private async Task OnChildren(ChangeEventArgs e)
+    {
+        includeChildren = e.Value is bool b && b;
+        if (accountId > 0) await Load();
+    }
+
+    private async Task Load()
+    {
+        if (accountId == 0) return;
+        loading = true;
+        try { result = await ReportSvc.GetLedgerAsync(accountId, from, to, includeChildren); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private static string Side(decimal v) => v > 0 ? "بد" : v < 0 ? "بس" : "";
+
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+    private async Task Print() => await JS.InvokeVoidAsync("window.print");
+}

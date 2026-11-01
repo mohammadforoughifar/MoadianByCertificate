@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>نرم افزار یکپارچه فروغ آریا</title>
+    <base href="/" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="description" content="سامانه مدیریت انبار، خرید و فروش با تاریخ شمسی" />
+    <!-- آیکن تب مرورگر = نشان فروغ آریا (همان آرم ابتدای صفحه) -->
+    <link rel="icon" type="image/svg+xml" href="icon.svg?v=2" />
+    <link rel="icon" type="image/png" sizes="64x64" href="favicon-64.png?v=2" />
+    <link rel="icon" type="image/png" sizes="48x48" href="favicon-48.png?v=2" />
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2" />
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png?v=2" />
+    <link rel="shortcut icon" href="favicon.ico?v=2" />
+    <link rel="mask-icon" href="icon.svg?v=2" color="#e8352a" />
+    <link rel="stylesheet" href="css/bootstrap.min.css" />
+    <link rel="stylesheet" href="icons/bootstrap-icons.css" />
+    <link rel="stylesheet" href="css/app.css?v=16" />
+    <link rel="stylesheet" href="css/letters.css?v=12" />
+    <link rel="stylesheet" href="Inventory.Client.styles.css" />
+    <link href="manifest.webmanifest" rel="manifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=2" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="فروغ آریا" />
+    <script src="js/app-shell.js?v=3"></script>
+</head>
+
+<body>
+    <div id="app">
+        <!-- صفحهٔ نخست/بارگذاری: نشان فروغ آریا تا آماده شدن برنامه نمایش داده می‌شود -->
+        <div class="app-loading">
+            <div class="app-loading-card">
+                <img src="images/forough-logo.png" alt="فروغ آریا" class="app-loading-logo"
+                     width="150" height="150" decoding="async" />
+                <div class="app-loading-title">نرم‌افزار یکپارچه فروغ آریا</div>
+                <div class="app-loading-sub">در حال بارگذاری سامانه…</div>
+                <div class="app-loading-bar" role="status" aria-label="در حال بارگذاری"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui">
+        خطایی رخ داده است.
+        <a href="" class="reload">بارگذاری مجدد</a>
+        <a class="dismiss">بستن</a>
+    </div>
+
+    <script>
+        // ---------- توابع کمکی فوکوس و اسکرول سند انبار ----------
+        window.focusLastProductInput = function () {
+            setTimeout(function () {
+                var inputs = document.querySelectorAll('.doc-grid tbody tr:last-child .ss input');
+                if (inputs && inputs.length) {
+                    inputs[0].focus();
+                    if (inputs[0].select) inputs[0].select();
+                }
+            }, 60);
+        };
+
+        // ---------- کلیدهای میانبر سراسری و ناوبری بین فیلدها با اینتر ----------
+        // F3 = افزودن دستگاه در پذیرش تعمیرات | F2 = میانبر فرم‌ها | F1 = افزودن ردیف/ثبت فرم | Esc = خروج | Enter = جابه‌جایی بین فیلدها
+        document.addEventListener('keydown', function (e) {
+            // کلید F1 برای افزودن ردیف در فرم ثبت سند انبار
+            if (e.key === 'F1') {
+                var addLineBtn = document.getElementById('btn-add-line') || document.getElementById('btn-add-line-empty');
+                if (addLineBtn && !addLineBtn.disabled && addLineBtn.offsetParent !== null) {
+                    e.preventDefault();
+                    addLineBtn.click();
+                    return;
+                }
+            }
+
+            var key = null;
+            if (e.key === 'F3') key = 'f3';
+            else if (e.key === 'F2') key = 'f2';
+            else if (e.key === 'F1') key = 'f1';
+            else if (e.key === 'Escape') key = 'esc';
+            if (key) {
+                var els = Array.from(document.querySelectorAll('[data-hotkey="' + key + '"]'));
+                var visibleEls = els.filter(function (el) {
+                    return !el.disabled && el.offsetParent !== null;
+                });
+                if (visibleEls.length) {
+                    e.preventDefault();
+                    visibleEls[visibleEls.length - 1].click();
+                    return;
+                }
+            }
+
+            // جلوگیری از پرش‌های ناخواسته مرورگر هنگام استفاده از جهت‌نما و اینتر در کمبوباکس باز
+            var ssEl = e.target && e.target.closest ? e.target.closest('.ss') : null;
+            var isSsMenuOpen = ssEl && ssEl.querySelector('.ss-menu');
+            if (isSsMenuOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
+                // فقط preventDefault تا مکان‌نما در اینپوت حرکت نکند و فرم سابمیت نشود، اما رویداد به Blazor برسد
+                e.preventDefault();
+                if (e.key === 'Enter') return;
+            }
+
+            // ناوبری با کلید Enter بین المان‌ها
+            if (e.key === 'Enter') {
+                var target = e.target;
+                if (!target) return;
+                var tag = (target.tagName || '').toUpperCase();
+                if (tag === 'TEXTAREA') return;
+                if (tag === 'BUTTON' || (tag === 'INPUT' && (target.type === 'submit' || target.type === 'button'))) return;
+
+                // اگر منوی کمبوباکس باز است، اینتر باید صرفاً انتخاب را تایید کند
+                if (isSsMenuOpen) return;
+
+                // فرم پذیرش تعمیرات ناوبری Enter اختصاصی دارد؛ از اجرای هم‌زمان این مسیر عمومی جلوگیری کن.
+                if (target.closest('.repair-intake-form')) return;
+
+                var container = target.closest('.doc-grid') || target.closest('.modal-content') || target.closest('form') || target.closest('.card-body') || document.body;
+                var focusables = Array.from(container.querySelectorAll('input:not([disabled]):not([type="hidden"]), select:not([disabled])'));
+                focusables = focusables.filter(function (el) { return el.offsetParent !== null && !el.readOnly; });
+
+                var idx = focusables.indexOf(target);
+                if (idx > -1 && idx < focusables.length - 1) {
+                    e.preventDefault();
+                    var next = focusables[idx + 1];
+                    next.focus();
+                    if (next.select && typeof next.select === 'function') {
+                        next.select();
+                    }
+                }
+            }
+        }, true);
+    </script>
+    <script src="lib/chart.umd.min.js"></script>
+    <script>
+        // ---------- QR فاکتور الکترونیکی (سامانه مودیان) ----------
+        window.appQr = {
+            render: function (id, text) {
+                var el = document.getElementById(id);
+                if (!el) return;
+                el.innerHTML = '';
+                new QRCode(el, { text: text || '', width: 160, height: 160, correctLevel: QRCode.CorrectLevel.M });
+            },
+            clear: function (id) { var el = document.getElementById(id); if (el) el.innerHTML = ''; }
+        };
+    </script>
+    <script>
+        // ---------- نمودارهای داشبورد (Chart.js) ----------
+        window.appCharts = {
+            _charts: {},
+            destroy: function (id) {
+                if (this._charts[id]) { this._charts[id].destroy(); delete this._charts[id]; }
+            },
+            bar: function (id, labels, salesData, profitData) {
+                var el = document.getElementById(id);
+                if (!el || !window.Chart) return;
+                this.destroy(id);
+                this._charts[id] = new Chart(el, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            { label: 'فروش', data: salesData, backgroundColor: 'rgba(79,70,229,.75)', borderRadius: 8, barPercentage: .55 },
+                            { label: 'سود', data: profitData, backgroundColor: 'rgba(5,150,105,.75)', borderRadius: 8, barPercentage: .55 }
+                        ]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'top', labels: { font: { family: 'Vazirmatn, Tahoma' }, usePointStyle: true, pointStyle: 'circle' } },
+                            tooltip: { rtl: true, bodyFont: { family: 'Vazirmatn, Tahoma' }, titleFont: { family: 'Vazirmatn, Tahoma' },
+                                callbacks: { label: function (c) { return c.dataset.label + ': ' + c.parsed.y.toLocaleString('fa-IR') + ' ریال'; } } }
+                        },
+                        scales: {
+                            y: { ticks: { font: { family: 'Vazirmatn, Tahoma' }, callback: function (v) { return (v / 1000000).toLocaleString('fa-IR') + 'م'; } }, grid: { color: 'rgba(148,163,184,.15)' } },
+                            x: { ticks: { font: { family: 'Vazirmatn, Tahoma' } }, grid: { display: false } }
+                        }
+                    }
+                });
+            },
+            line: function (id, labels, data, label, color) {
+                var el = document.getElementById(id);
+                if (!el || !window.Chart) return;
+                this.destroy(id);
+                var ctx = el.getContext('2d');
+                var grad = ctx.createLinearGradient(0, 0, 0, el.height || 220);
+                grad.addColorStop(0, color + '55'); grad.addColorStop(1, color + '05');
+                this._charts[id] = new Chart(el, {
+                    type: 'line',
+                    data: { labels: labels, datasets: [{ label: label, data: data, borderColor: color, backgroundColor: grad, fill: true, tension: .4, pointRadius: 3, pointBackgroundColor: color, borderWidth: 2.5 }] },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { rtl: true, bodyFont: { family: 'Vazirmatn, Tahoma' },
+                                callbacks: { label: function (c) { return c.parsed.y.toLocaleString('fa-IR') + ' ریال'; } } }
+                        },
+                        scales: {
+                            y: { ticks: { font: { family: 'Vazirmatn, Tahoma' }, callback: function (v) { return (v / 1000000).toLocaleString('fa-IR') + 'م'; } }, grid: { color: 'rgba(148,163,184,.15)' } },
+                            x: { ticks: { font: { family: 'Vazirmatn, Tahoma' } }, grid: { display: false } }
+                        }
+                    }
+                });
+            },
+            doughnut: function (id, labels, data, colors) {
+                var el = document.getElementById(id);
+                if (!el || !window.Chart) return;
+                this.destroy(id);
+                this._charts[id] = new Chart(el, {
+                    type: 'doughnut',
+                    data: { labels: labels, datasets: [{ data: data, backgroundColor: colors, borderWidth: 2, borderColor: '#fff', hoverOffset: 8 }] },
+                    options: {
+                        responsive: true, maintainAspectRatio: false, cutout: '68%',
+                        plugins: {
+                            legend: { position: 'bottom', labels: { font: { family: 'Vazirmatn, Tahoma' }, usePointStyle: true, pointStyle: 'circle', padding: 14 } },
+                            tooltip: { rtl: true, bodyFont: { family: 'Vazirmatn, Tahoma' },
+                                callbacks: { label: function (c) { return c.label + ': ' + c.parsed.toLocaleString('fa-IR') + ' ریال'; } } }
+                        }
+                    }
+                });
+            }
+        };
+
+        // ---------- QR کارت ویزیت معرف (با retry تا آماده شدن DOM/کتابخانه) ----------
+        window.makeQr = function (elementId, text, size) {
+            var attempts = 0;
+            function tryMake() {
+                attempts++;
+                var el = document.getElementById(elementId);
+                if (!el || !window.QRCode) {
+                    if (attempts < 20) setTimeout(tryMake, 150);
+                    return;
+                }
+                try {
+                    el.innerHTML = '';
+                    new QRCode(el, {
+                        text: text,
+                        width: size || 110,
+                        height: size || 110,
+                        colorDark: '#0f172a',
+                        colorLight: '#ffffff',
+                        correctLevel: QRCode.CorrectLevel.M
+                    });
+                } catch (e) {
+                    console.error('makeQr error:', e);
+                    if (attempts < 20) setTimeout(tryMake, 150);
+                }
+            }
+            tryMake();
+        };
+
+        // ---------- چاپ کارت ویزیت ----------
+        window.printBusinessCard = function () {
+            document.body.classList.add('print-card-mode');
+            window.print();
+            setTimeout(function () { document.body.classList.remove('print-card-mode'); }, 500);
+        };
+
+        // ---------- دانلود فایل (خروجی CSV/Excel) ----------
+        window.saveAsFile = function (fileName, base64Content) {
+            try {
+                var bytes = atob(base64Content);
+                var arr = new Uint8Array(bytes.length);
+                for (var i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+                var blob = new Blob([arr], { type: 'text/csv;charset=utf-8;' });
+                var link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = fileName;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                setTimeout(function () { URL.revokeObjectURL(link.href); }, 1000);
+            } catch (e) {
+                console.error('saveAsFile error:', e);
+            }
+        };
+        window.printHtml = function (html) {
+            try {
+                var w = window.open('', '_blank');
+                if (!w) return;
+                w.document.write(html);
+                w.document.close();
+                w.focus();
+                setTimeout(function () { w.print(); }, 300);
+            } catch (e) {
+                console.error('printHtml error:', e);
+            }
+        };
+    </script>
+    <script src="js/tabs.js?v=1"></script>
+    <script src="js/ui.js?v=10"></script>
+    <script src="js/signature-pad.js"></script>
+    <script src="js/smart-scanner.js"></script>
+    <script src="js/offline-docarchive.js?v=2"></script>
+    <script src="js/project-interop.js?v=8"></script>
+    <script src="js/inventory-workproject-mindflow.js?v=1"></script>
+    <script src="js/push-notifications.js?v=4"></script>
+    <script src="js/stocktaking.js"></script>
+    <script src="js/file-preview.js?v=5"></script>
+    <script src="js/dashboard.js?v=2"></script>
+    <script src="js/ai-voice.js?v=2"></script>
+    <script src="_framework/blazor.webassembly.js"></script>
+    <script>
+        // ثبت سرویس‌ورکر + به‌روزرسانی خودکار بعد از هر پابلیش:
+        // وقتی نسخهٔ جدید فعال شد (controllerchange)، صفحه یک‌بار رفرش می‌شود تا
+        // کاربر بلافاصله نسخهٔ جدید را ببیند (قبلاً تا بستن همهٔ تب‌ها روی نسخهٔ قدیمی می‌ماند).
+        (function () {
+            if (!('serviceWorker' in navigator)) return;
+            navigator.serviceWorker.register('service-worker.js', { updateViaCache: 'none' }).then(function (reg) {
+                if (reg && reg.update) { try { reg.update(); } catch (e) { } }
+            }).catch(function () { /* Push diagnostics reports registration failures. */ });
+            var refreshed = false;
+            navigator.serviceWorker.addEventListener('controllerchange', function () {
+                // فقط وقتی از قبل کنترلر داشتیم (یعنی «تعویض نسخه» است، نه اولین نصب)
+                if (refreshed) return;
+                refreshed = true;
+                if (window.__swHadController) window.location.reload();
+            });
+            window.__swHadController = !!navigator.serviceWorker.controller;
+        })();
+    </script>
+</body>
+
+</html>

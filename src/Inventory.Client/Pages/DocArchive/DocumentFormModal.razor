@@ -1,0 +1,459 @@
+@* ================== فرم ثبت / ویرایش مدرک ==================
+   چیدمان: سه بخش مشخص (مشخصات اصلی / پیشنهاد هوشمند / بخش‌های تاشو)
+   + فوتر مرتب با دکمه‌های هم‌اندازه. تمام idها و data-hotkeyها حفظ شده‌اند. *@
+@inject IDocArchiveService Svc
+@inject IToastService Toast
+
+<div class="da-document-form" dir="rtl">
+<Modal Visible="Visible" Title="@(EditId > 0 ? "ویرایش مدرک" : "مدرک جدید")" Size="modal-xl" OnClose="OnClose">
+    <ChildContent>
+        @* ================= بخش ۱: مشخصات اصلی ================= *@
+        <div class="da-sec">
+            <div class="da-sec-head"><i class="bi bi-file-earmark-text"></i> مشخصات مدرک</div>
+            <div class="row g-3">
+                <div class="col-12 col-md-7">
+                    <label class="form-label" for="da-doc-title">عنوان مدرک <span class="text-danger">*</span></label>
+                    <div class="input-group da-title-group">
+                        <input id="da-doc-title" class="form-control" @bind="form.Title" placeholder="مثلاً: قرارداد همکاری ۱۴۰۴" />
+                        <button type="button" class="btn btn-outline-warning da-btn-icon" title="بررسی تکراری"
+                                disabled="@(string.IsNullOrWhiteSpace(form.Title) || dupLoading)" @onclick="CheckDuplicate">
+                            @if (dupLoading) { <span class="spinner-border spinner-border-sm"></span> } else { <i class="bi bi-search"></i> }
+                        </button>
+                    </div>
+                    @if (dupResult != null && dupResult.Hits.Count > 0)
+                    {
+                        <div class="alert alert-warning py-1 px-2 mt-1 fs-8 mb-0">
+                            <i class="bi bi-exclamation-triangle ms-1"></i> @dupResult.Hits.Count مورد مشابه یافت شد
+                            @foreach (var h in dupResult.Hits.Take(3))
+                            {
+                                <div><a href="@($"/doc-archive/documents/{h.DocumentId}")" target="_blank">@h.Code — @h.Title (@h.Reason @h.Score.ToString("0.00"))</a></div>
+                            }
+                            @if (dupResult.IsDuplicate) { <b class="text-danger">احتمال تکراری بالا — لطفاً بررسی کنید!</b> }
+                        </div>
+                    }
+                </div>
+                <div class="col-12 col-md-5">
+                    <label class="form-label">پوشه <span class="text-danger">*</span></label>
+                    <SearchSelect Items="Folders" @bind-Value="form.FolderId" Placeholder="انتخاب پوشه…" />
+                </div>
+                <div class="col-6 col-md-4">
+                    <label class="form-label" for="da-doc-code">
+                        کد مدرک
+                        @if (!(EditId == 0 && NumberingEnabled)) { <span class="text-danger">*</span> }
+                    </label>
+                    <input id="da-doc-code" class="form-control @((codeError || codeExists) ? "is-invalid" : "")" @bind="form.Code"
+                           placeholder="@(EditId == 0 && NumberingEnabled ? "خودکار" : "")" @onfocusout="CheckCodeLive" />
+                    @if (codeExists)
+                    {
+                        <div class="invalid-feedback d-block">این کد قبلاً ثبت شده است.</div>
+                    }
+                </div>
+                <div class="col-6 col-md-4">
+                    <label class="form-label" for="da-customer-code">شماره مدرک مشتری</label>
+                    <input id="da-customer-code" class="form-control" @bind="form.CustomerCode" />
+                </div>
+                <div class="col-12 col-md-4">
+                    <label class="form-label">تاریخ انقضا</label>
+                    <DatePicker @bind-Value="form.ExpireDate" AllowClear="true" Placeholder="----/--/--" />
+                </div>
+                <div class="col-12">
+                    <label class="form-label" for="da-doc-description">توضیحات</label>
+                    <textarea id="da-doc-description" class="form-control" rows="2" @bind="form.Description"></textarea>
+                </div>
+            </div>
+        </div>
+
+        @* ================= بخش ۲: پیشنهاد هوشمند ================= *@
+        <div class="da-sec da-suggest">
+            <div class="da-suggest-row">
+                <button type="button" class="btn btn-sm btn-outline-primary"
+                        disabled="@(suggestLoading || string.IsNullOrWhiteSpace(form.Title))" @onclick="SuggestNow">
+                    @if (suggestLoading) { <span class="spinner-border spinner-border-sm ms-1"></span> } else { <i class="bi bi-stars ms-1"></i> }
+                    پیشنهاد هوشمند برچسب و پوشه ✨
+                </button>
+                <span class="da-suggest-hint fs-9 text-muted">بر اساس عنوان و توضیحات، با هوش معنایی</span>
+            </div>
+            @if (suggestResult != null)
+            {
+                <div class="card mt-2 border-primary">
+                    <div class="card-body py-2">
+                        @if (suggestResult.FolderSuggestion != null)
+                        {
+                            <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+                                <span class="fw-700 fs-8"><i class="bi bi-folder2-open ms-1"></i> پوشه پیشنهادی:</span>
+                                <button type="button" class="btn btn-sm @(suggestResult.FolderSuggestion.CanWrite ? "btn-primary" : "btn-outline-secondary")"
+                                        @onclick="() => ApplyFolderSuggestion(suggestResult.FolderSuggestion)">
+                                    @suggestResult.FolderSuggestion.Path <span class="badge bg-light text-dark ms-1">@suggestResult.FolderSuggestion.Score.ToString("0.00")</span>
+                                    @if (!suggestResult.FolderSuggestion.CanWrite) { <span class="fs-9">(بدون دسترسی نوشتن)</span> }
+                                </button>
+                                <span class="fs-9 text-muted">@(suggestResult.Semantic ? "معنایی" : "کلیدواژه‌ای")</span>
+                            </div>
+                        }
+                        @if (suggestResult.TagSuggestions.Count > 0)
+                        {
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <span class="fw-700 fs-8"><i class="bi bi-tags ms-1"></i> برچسب پیشنهادی:</span>
+                                @foreach (var ts in suggestResult.TagSuggestions)
+                                {
+                                    var sel = selectedTagIds.Contains(ts.TagId);
+                                    <button type="button" class="btn btn-sm rounded-pill @(sel ? "btn-success" : "btn-outline-primary")" @onclick="() => ToggleTag(ts.TagId)">
+                                        @ts.Name <span class="badge bg-light text-dark ms-1">@ts.Score.ToString("0.00")</span>
+                                    </button>
+                                }
+                                <button type="button" class="btn btn-sm btn-link text-decoration-none p-0 fs-8" @onclick="ApplyAllTags">افزودن همه</button>
+                            </div>
+                        }
+                        @if (suggestResult.TagSuggestions.Count == 0 && suggestResult.FolderSuggestion == null)
+                        {
+                            <div class="fs-8 text-muted">پیشنهادی یافت نشد — عنوان را کامل‌تر بنویس.</div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(suggestResult.Note))
+                        {
+                            <div class="fs-9 text-muted mt-1">@suggestResult.Note</div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+        @* ================= بخش ۳: بخش‌های تاشو ================= *@
+        <details class="da-form-extra">
+            <summary><i class="bi bi-shield-check ms-1"></i> نسخه و امنیت</summary>
+            <div class="row g-3 da-extra-content">
+                @* ---------- نسخه‌های فعال ---------- *@
+                <div class="col-12 col-md-6">
+                    <label class="form-label fw-700"><i class="bi bi-layers ms-1"></i> نسخه‌های فعال</label>
+                    <div class="border rounded-3 p-2 da-box">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" id="vOne" name="vpol"
+                                   checked="@(!form.AllowMultipleActiveVersions)"
+                                   @onchange="() => form.AllowMultipleActiveVersions = false" />
+                            <label class="form-check-label" for="vOne">
+                                فقط یک نسخه فعال
+                            </label>
+                        </div>
+                        <div class="form-check mt-1">
+                            <input class="form-check-input" type="radio" id="vMulti" name="vpol"
+                                   checked="@form.AllowMultipleActiveVersions"
+                                   @onchange="() => form.AllowMultipleActiveVersions = true" />
+                            <label class="form-check-label" for="vMulti">
+                                چند نسخه هم‌زمان فعال
+                            </label>
+                        </div>
+                        @if (EditId == 0)
+                        {
+                            <div class="form-check form-switch mt-2 pt-2 border-top">
+                                <input class="form-check-input" type="checkbox" id="v1act" @bind="form.FirstVersionActive" />
+                                <label class="form-check-label fs-8" for="v1act">فعال‌سازی نسخه اول (بدون تأییدکننده)</label>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                @* ---------- نمایش برای همه ---------- *@
+                <div class="col-12 col-md-6">
+                    <label class="form-label fw-700"><i class="bi bi-globe2 ms-1"></i> امنیت و نمایش</label>
+                    <div class="border rounded-3 p-2 da-box">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="dPub" @bind="form.IsPublic" />
+                            <label class="form-check-label fw-700" for="dPub">نمایش برای همه کاربران</label>
+                        </div>
+                        <div class="form-check form-switch mt-1">
+                            <input class="form-check-input" type="checkbox" id="dPubDl" @bind="form.PublicCanDownload"
+                                   disabled="@(!form.IsPublic)" />
+                            <label class="form-check-label" for="dPubDl">دانلود برای همه کاربران</label>
+                        </div>
+                        <hr class="my-2" />
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="dConf" @bind="form.RequireDownloadConfirm" />
+                            <label class="form-check-label fw-700 text-danger" for="dConf"><i class="bi bi-shield-lock ms-1"></i> تأیید رمز برای مشاهده و دانلود</label>
+                        </div>
+                        <div class="form-check form-switch mt-1">
+                            <input class="form-check-input" type="checkbox" id="dWm" @bind="form.WatermarkPreview" />
+                            <label class="form-check-label fw-700" for="dWm"><i class="bi bi-droplet-half ms-1" style="color:#0284c7"></i> واترمارک نام کاربر و زمان مشاهده</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </details>
+
+        <details class="da-form-extra">
+            <summary><i class="bi bi-tags ms-1"></i> برچسب‌ها و ارتباطات</summary>
+            <div class="row g-3 da-extra-content">
+                @* ---------- تگ‌ها و برچسب‌ها ---------- *@
+                <div class="col-12">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-1">
+                        <label class="form-label fw-700 mb-0"><i class="bi bi-tags ms-1"></i> برچسب‌ها</label>
+                        <button type="button" class="btn btn-sm btn-link text-decoration-none p-0 fs-8" @onclick="() => showTagsModal = true">
+                            <i class="bi bi-plus-circle"></i> برچسب جدید
+                        </button>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 p-2 border rounded-3 bg-light da-box">
+                        @if (availableTags.Count == 0)
+                        {
+                            <span class="fs-8 text-muted">بدون برچسب</span>
+                        }
+                        else
+                        {
+                            @foreach (var t in availableTags)
+                            {
+                                var isSelected = selectedTagIds.Contains(t.Id);
+                                <button type="button" class="btn btn-sm rounded-pill d-flex align-items-center gap-1 shadow-sm da-tag-pill"
+                                        style="@(isSelected ? $"{t.Color.ReadableBadgeStyle()};border:2px solid #101828;" : $"background-color:#fff;color:#1f2937;border:1.5px solid {t.Color};")"
+                                        @onclick="() => ToggleTag(t.Id)">
+                                    <i class="bi @(isSelected ? "bi-check-circle-fill" : "bi-tag")"></i>
+                                    @t.Name
+                                </button>
+                            }
+                        }
+                    </div>
+                </div>
+
+                @* ---------- نفرات گردش ---------- *@
+                <div class="col-12">
+                    <label class="form-label fw-700">
+                        <i class="bi bi-arrow-repeat ms-1"></i> تأییدکنندگان
+                    </label>
+                    <MultiSearchSelect Items="Users" Values="approverIds" ValuesChanged="v => approverIds = v"
+                                       Placeholder="انتخاب افراد…"
+                                       EmptyText="بدون تأییدکننده؛ تأیید مستقیم" />
+                </div>
+
+                @* ---------- مدارک مرتبط (چندانتخابی سرچ‌دار) ---------- *@
+                <div class="col-12">
+                    <label class="form-label fw-700"><i class="bi bi-link-45deg ms-1"></i> مدارک مرتبط</label>
+                    <MultiSearchSelect Items="LinkableDocs" Values="linkIds" ValuesChanged="v => linkIds = v"
+                                       Placeholder="انتخاب مدرک…"
+                                       EmptyText="انتخاب نشده" />
+                </div>
+            </div>
+        </details>
+
+        @* ---------- دسترسی نفرات ----------
+           فقط دارندگان «دسترسی کامل» روی همین مدرک می‌توانند دسترسی دیگران را تعیین کنند؛
+           برای بقیه این بخش اصلاً نمایش داده نمی‌شود (دسترسی از صفحهٔ خود مدرک مدیریت می‌شود). *@
+        @if (CanManageAccess)
+        {
+            <details class="da-form-extra">
+                <summary><i class="bi bi-people ms-1"></i> دسترسی اختصاصی</summary>
+                <div class="da-extra-content">
+                    <DocPermissionEditor Users="Users" Roles="Roles" Items="perms" />
+                </div>
+            </details>
+        }
+    </ChildContent>
+    <Footer>
+        <div class="da-foot">
+            <button class="btn btn-outline-secondary da-btn-cancel" @onclick="OnClose">انصراف</button>
+            <button class="btn btn-primary da-btn-save" data-hotkey="f1" @onclick="Save" disabled="@saving">
+                @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                <i class="bi bi-check-lg ms-1"></i> ذخیره
+            </button>
+        </div>
+    </Footer>
+</Modal>
+</div>
+
+<DocTagsModal Visible="showTagsModal" OnClose="() => showTagsModal = false" OnTagsChanged="LoadTags" />
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public List<LookupItem> Folders { get; set; } = new();
+    [Parameter] public List<LookupItem> Users { get; set; } = new();
+
+    /// <summary>مدارک قابل لینک (فقط فعال) — از lookups می‌آید</summary>
+    [Parameter] public List<LookupItem> Documents { get; set; } = new();
+
+    /// <summary>نقش‌های فعال RBAC برای تعریف «دسترسی گروهی» — از lookups می‌آید</summary>
+    [Parameter] public List<LookupItem> Roles { get; set; } = new();
+
+    /// <summary>شماره‌گذار خودکار فعال است (از lookups) — در ساخت، کد می‌تواند خالی بماند</summary>
+    [Parameter] public bool NumberingEnabled { get; set; }
+
+    /// <summary>
+    /// آیا کاربر جاری «دسترسی کامل» روی این مدرک دارد و بنابراین مجاز است دسترسی دیگران را
+    /// تعیین کند؟ اگر false باشد بخش دسترسی نمایش داده نمی‌شود و هنگام ذخیره هم فهرست
+    /// دسترسی‌ها ارسال نمی‌شود (null ⇒ سرور ردیف‌های موجود را دست‌نخورده نگه می‌دارد).
+    /// </summary>
+    [Parameter] public bool CanManageAccess { get; set; }
+
+    [Parameter] public int DefaultFolderId { get; set; }
+
+    /// <summary>در حالت ویرایش، شناسه مدرک</summary>
+    [Parameter] public int EditId { get; set; }
+
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private List<LookupItem> LinkableDocs => Documents.Where(d => d.Id != EditId).ToList();
+
+    private DocumentDto form = new();
+    private List<int> approverIds = new();
+    private List<int> linkIds = new();
+    private List<int> selectedTagIds = new();
+    private List<DocTagDto> availableTags = new();
+    private List<DocPermissionDto> perms = new();
+    private bool saving, codeError, codeExists, showTagsModal;
+    private DocAutoSuggestResultDto? suggestResult;
+    private bool suggestLoading;
+    private DocDuplicateResultDto? dupResult;
+    private bool dupLoading;
+    private bool lastVisible;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !lastVisible)
+        {
+            codeError = false;
+            codeExists = false;
+            suggestResult = null;
+            dupResult = null;
+            await LoadTags();
+            if (EditId > 0)
+            {
+                try
+                {
+                    form = await Svc.GetDocumentAsync(EditId);
+                    approverIds = form.Approvers.Select(a => a.UserId).ToList();
+                    linkIds = form.Links.Select(l => l.LinkedDocumentId).ToList();
+                    selectedTagIds = form.Tags.Select(t => t.Id).ToList();
+                    perms = form.Permissions;
+                }
+                catch (Exception ex) { Toast.Error(ex.Message); }
+            }
+            else
+            {
+                form = new DocumentDto { FolderId = DefaultFolderId, FirstVersionActive = true };
+                approverIds = new();
+                linkIds = new();
+                selectedTagIds = new();
+                perms = new();
+            }
+        }
+        lastVisible = Visible;
+    }
+
+    private async Task LoadTags()
+    {
+        try { availableTags = await Svc.GetTagsAsync(); }
+        catch { availableTags = new(); }
+    }
+
+    private void ToggleTag(int tagId)
+    {
+        if (selectedTagIds.Contains(tagId)) selectedTagIds.Remove(tagId);
+        else selectedTagIds.Add(tagId);
+    }
+
+    private async Task SuggestNow()
+    {
+        if (string.IsNullOrWhiteSpace(form.Title)) { Toast.Error("اول عنوان را بنویس."); return; }
+        suggestLoading = true; suggestResult = null;
+        try
+        {
+            var req = new DocAutoSuggestRequest
+            {
+                Title = form.Title.Trim(),
+                Description = form.Description?.Trim(),
+                CurrentFolderId = form.FolderId > 0 ? form.FolderId : null
+            };
+            suggestResult = await Svc.SuggestAsync(req);
+            if ((suggestResult.TagSuggestions.Count == 0) && suggestResult.FolderSuggestion == null)
+                Toast.Info("پیشنهاد معنایی یافت نشد — عنوان را کامل‌تر کن.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { suggestLoading = false; }
+    }
+
+    private void ApplyFolderSuggestion(DocFolderSuggestionDto f)
+    {
+        form.FolderId = f.FolderId;
+        Toast.Success($"پوشه «{f.Path}» انتخاب شد.");
+    }
+
+    private void ApplyAllTags()
+    {
+        if (suggestResult == null) return;
+        foreach (var t in suggestResult.TagSuggestions)
+            if (!selectedTagIds.Contains(t.TagId)) selectedTagIds.Add(t.TagId);
+        Toast.Success("همه برچسب‌های پیشنهادی اضافه شد.");
+    }
+    private async Task CheckDuplicate()
+    {
+        if (string.IsNullOrWhiteSpace(form.Title)) return;
+        dupLoading = true;
+        try
+        {
+            var req = new DocDuplicateCheckRequest { Title = form.Title.Trim(), FileName = form.Code, Snippet = form.Description };
+            dupResult = await Svc.CheckDuplicateAsync(req);
+            if (dupResult.Hits.Count == 0) Toast.Info("مورد تکراری یافت نشد.");
+            else if (dupResult.IsDuplicate) Toast.Error("احتمال تکراری بالا — لیست را ببین.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { dupLoading = false; }
+    }
+
+    /// <summary>هشدار زنده تکراری بودن کد (بدون جلوگیری از ذخیره — سرور هم کنترل می‌کند).</summary>
+    private async Task CheckCodeLive()
+    {
+        var c = (form.Code ?? "").Trim();
+        if (c.Length == 0) { codeExists = false; return; }
+        try { codeExists = await Svc.CheckCodeExistsAsync(c, EditId); }
+        catch { /* هشدار زنده اختیاری است */ }
+    }
+
+    private async Task Save()
+    {
+        codeError = false;
+        if (string.IsNullOrWhiteSpace(form.Title)) { Toast.Error("عنوان مدرک اجباری است."); return; }
+        // در ساخت مدرک با شماره‌گذار فعال، کد می‌تواند خالی بماند تا خودکار تخصیص یابد
+        if (string.IsNullOrWhiteSpace(form.Code) && !(EditId == 0 && NumberingEnabled))
+        {
+            Toast.Error("کد مدرک اجباری است.");
+            codeError = true;
+            return;
+        }
+        if (form.FolderId <= 0) { Toast.Error("پوشه مدرک را انتخاب کنید."); return; }
+
+        form.Approvers = approverIds.Select((id, i) => new DocApproverDto
+        {
+            UserId = id,
+            UserName = Users.FirstOrDefault(u => u.Id == id)?.Name ?? "",
+            Order = i
+        }).ToList();
+        // فقط دارندهٔ «دسترسی کامل» روی این مدرک فهرست دسترسی‌ها را ارسال می‌کند؛
+        // null یعنی «دست نزن» و سرور ردیف‌های موجود را حفظ می‌کند.
+        form.Permissions = CanManageAccess ? perms : null!;
+        form.LinkedDocumentIds = linkIds;
+        form.TagIds = selectedTagIds;
+
+        saving = true;
+        try
+        {
+            if (EditId > 0)
+            {
+                await Svc.UpdateDocumentAsync(EditId, form);
+
+                // همگام‌سازی مدارک مرتبط: افزودن موارد جدید و حذف موارد برداشته‌شده
+                var current = form.Links.Select(l => l.LinkedDocumentId).ToList();
+                var toAdd = linkIds.Except(current).ToList();
+                var toRemove = current.Except(linkIds).ToList();
+
+                if (toAdd.Count > 0)
+                    await Svc.LinkManyAsync(new DocLinkSaveDto { DocumentId = EditId, LinkedDocumentIds = toAdd });
+                foreach (var r in toRemove)
+                    await Svc.UnlinkAsync(EditId, r);
+            }
+            else await Svc.CreateDocumentAsync(form);
+
+            Toast.Success(EditId > 0 ? "مدرک ویرایش شد." : "مدرک ثبت شد.");
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            if (ex.Message.Contains("یکتا") || ex.Message.Contains("تکراری")) codeError = true;
+            Toast.Error(ex.Message);
+        }
+        finally { saving = false; }
+    }
+}

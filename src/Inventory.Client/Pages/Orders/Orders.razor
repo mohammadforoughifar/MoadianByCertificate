@@ -1,0 +1,537 @@
+@page "/orders/{Type}"
+@inject IAuthState Auth
+@inject IOrderService OrderSvc
+@inject IWarehouseService WarehouseSvc
+@inject IPartyService PartySvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+@inject ICompanyProfileService ProfileSvc
+
+<PageTitle>@(isPurchase ? "خرید" : "فروش")</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>@(isPurchase ? "اسناد خرید" : "اسناد فروش")</h1>
+        <p class="lead">@(isPurchase ? "ثبت و مدیریت رسیدهای خرید" : "ثبت و مدیریت فاکتورهای فروش")</p>
+    </div>
+    <div class="d-flex align-items-center gap-2 me-auto">
+        @if (Auth.CanSee("ShopGuide"))
+        {
+            <a class="btn btn-outline-secondary" href="shop-guide">
+                <i class="bi bi-journal-check"></i> راهنما
+            </a>
+        }
+        <button class="btn btn-primary" @onclick="OpenNew">
+            <i class="bi bi-plus-lg"></i> @(isPurchase ? "خرید جدید" : "فروش جدید")
+        </button>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <div class="d-flex flex-wrap gap-2 align-items-end">
+            <div class="flex-grow-1" style="min-width:220px">
+                <label class="form-label">از تاریخ</label>
+                <DatePicker @bind-Value="from" AllowClear="true" />
+            </div>
+            <div class="flex-grow-1" style="min-width:220px">
+                <label class="form-label">تا تاریخ</label>
+                <DatePicker @bind-Value="to" AllowClear="true" />
+            </div>
+            <div style="min-width:220px">
+                <label class="form-label">انبار</label>
+                <SearchSelect Items="whLookup" Value="filterWarehouseId" ValueChanged="v => filterWarehouseId = v" Placeholder="همه انبارها" />
+            </div>
+            <div style="min-width:220px">
+                <label class="form-label">طرف حساب</label>
+                <SearchSelect Items="partyLookup" Value="filterPartyId" ValueChanged="v => filterPartyId = v" Placeholder="همه" />
+            </div>
+            <button class="btn btn-primary" @onclick="ApplyFilter"><i class="bi bi-funnel"></i> اعمال فیلتر</button>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-receipt"></i><h5>سندی ثبت نشده است</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>شماره سند</th>
+                            <th>تاریخ</th>
+                            <th>طرف حساب</th>
+                            <th>انبار</th>
+                            <th>اقلام</th>
+                            <th class="text-start">مبلغ کل (ریال)</th>
+                            <th>پرداخت</th>
+                            @if (!isPurchase && CanSeeProfit)
+                            {
+                                <th class="text-start">سود</th>
+                            }
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var o in items)
+                        {
+                            <tr>
+                                <td class="doc-number fw-700 text-primary">@o.Number</td>
+                                <td class="text-muted">@o.Date.ToFa()</td>
+                                <td>@o.PartyName</td>
+                                <td class="text-muted">@o.WarehouseName</td>
+                                <td><span class="badge badge-soft-primary">@o.Lines.Count.Num() قلم</span></td>
+                                <td class="text-start num fw-700">@o.TotalAmount.Money()</td>
+                                <td>@PayBadge(o)</td>
+                                @if (!isPurchase && CanSeeProfit)
+                                {
+                                    <td class="text-start num">
+                                        @if (o.TotalProfit.HasValue)
+                                        {
+                                            <span class="fw-500 @(o.TotalProfit >= 0 ? "text-success" : "text-danger")">@o.TotalProfit.Value.Money()</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted">—</span>
+                                        }
+                                    </td>
+                                }
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-light" title="مشاهده" @onclick="() => View(o)"><i class="bi bi-eye text-primary"></i></button>
+                                    @if (!isPurchase)
+                                    {
+                                        <button class="btn btn-sm btn-light text-primary" title="چاپ فاکتور فروش" aria-label="چاپ فاکتور فروش"
+                                                @onclick="() => Print(o)" disabled="@(printingId == o.Id)">
+                                            @if (printingId == o.Id)
+                                            {
+                                                <span class="spinner-border spinner-border-sm"></span>
+                                            }
+                                            else
+                                            {
+                                                <i class="bi bi-printer"></i>
+                                            }
+                                            <span class="d-none d-xxl-inline ms-1">چاپ فاکتور فروش</span>
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-sm btn-light" title="چاپ رسید خرید" aria-label="چاپ رسید خرید"
+                                                @onclick="() => Print(o)" disabled="@(printingId == o.Id)">
+                                            @if (printingId == o.Id)
+                                            {
+                                                <span class="spinner-border spinner-border-sm text-primary"></span>
+                                            }
+                                            else
+                                            {
+                                                <i class="bi bi-printer text-primary"></i>
+                                            }
+                                        </button>
+                                    }
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(o)"><i class="bi bi-pencil text-primary"></i></button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(o)"><i class="bi bi-trash text-danger"></i></button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var o in items)
+                {
+                    <div class="m-card @(isPurchase ? "st-received" : "st-ready")">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi @(isPurchase ? "bi-bag-plus" : "bi-cart3")"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <span class="doc-number fw-800 text-primary">@o.Number</span>
+                                    @PayBadge(o)
+                                </div>
+                                <div class="fw-700 text-truncate">@o.PartyName</div>
+                                <div class="fs-8 text-muted">@o.Date.ToFa() — @o.Lines.Count.Num() قلم — @o.WarehouseName</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-money">
+                                <div>
+                                    <div class="fs-8 text-muted">مبلغ کل</div>
+                                    <div class="num fw-700">@o.TotalAmount.Money()</div>
+                                </div>
+                                @if (!isPurchase && CanSeeProfit && o.TotalProfit.HasValue)
+                                {
+                                    <div class="text-end">
+                                        <div class="fs-8 text-muted">سود</div>
+                                        <div class="num fw-800 @(o.TotalProfit >= 0 ? "text-success" : "text-danger")">@o.TotalProfit.Value.Money()</div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                        <div class="m-card-actions">
+                            <button class="btn btn-light" @onclick="() => View(o)"><i class="bi bi-eye"></i> مشاهده</button>
+                            <button class="btn btn-light text-primary" title="@(isPurchase ? "چاپ رسید خرید" : "چاپ فاکتور فروش")"
+                                    aria-label="@(isPurchase ? "چاپ رسید خرید" : "چاپ فاکتور فروش")"
+                                    @onclick="() => Print(o)" disabled="@(printingId == o.Id)">
+                                @if (printingId == o.Id)
+                                {
+                                    <span class="spinner-border spinner-border-sm"></span>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-printer"></i>
+                                }
+                                @(isPurchase ? "چاپ رسید خرید" : "چاپ فاکتور فروش")
+                            </button>
+                            <button class="btn btn-light text-primary" @onclick="() => OpenEdit(o)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            <button class="btn btn-light text-danger" @onclick="() => Delete(o)"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="pageCount" OnPageChanged="GoToPage" />
+        }
+    </div>
+</div>
+
+@if (showForm)
+{
+    <OrderForm Type="@txnType" EditOrder="editingOrder" OnSaved="OnFormSaved" OnCancel="CloseForm" />
+}
+
+<Modal Visible="viewing is not null" Title="جزئیات سند" Size="modal-lg" OnClose="() => viewing = null">
+    <ChildContent>
+        @if (viewing is not null)
+        {
+            <div class="d-flex flex-wrap gap-3 mb-3">
+                <div class="flex-grow-1">
+                    <div class="fs-8 text-muted">شماره سند</div>
+                    <div class="fw-700 text-primary doc-number">@viewing.Number</div>
+                </div>
+                <div class="flex-grow-1">
+                    <div class="fs-8 text-muted">تاریخ</div>
+                    <div class="fw-500">@viewing.Date.ToFa()</div>
+                </div>
+                <div class="flex-grow-1">
+                    <div class="fs-8 text-muted">طرف حساب</div>
+                    <div class="fw-500">@viewing.PartyName</div>
+                </div>
+                <div class="flex-grow-1">
+                    <div class="fs-8 text-muted">انبار</div>
+                    <div class="fw-500">@viewing.WarehouseName</div>
+                </div>
+                @if (!string.IsNullOrEmpty(viewing.ReferrerName))
+                {
+                    <div class="flex-grow-1">
+                        <div class="fs-8 text-muted">معرف</div>
+                        <div class="fw-500">@viewing.ReferrerName</div>
+                    </div>
+                }
+            </div>
+            @if (!string.IsNullOrEmpty(viewing.Description))
+            {
+                <div class="mb-3 fs-8 text-muted">توضیحات: @viewing.Description</div>
+            }
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>کالا</th>
+                            <th>واحد</th>
+                            <th class="text-start">مقدار</th>
+                            <th class="text-start">قیمت واحد</th>
+                            <th class="text-start">جمع</th>
+                            @if (viewing.IsSale)
+                            {
+                                @if (CanSeeProfit)
+                                {
+                                    <th class="text-start">بهای تمام‌شده</th>
+                                    <th class="text-start">سود</th>
+                                }
+                                @if (viewing.CommissionAmount is > 0)
+                                {
+                                    <th class="text-start">پورسانت معرف</th>
+                                }
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var l in viewing.Lines)
+                        {
+                            <tr>
+                                <td>
+                                    @l.ProductName
+                                    @if (l.IsService)
+                                    {
+                                        <span class="badge badge-soft-primary fs-8 me-1">خدمات</span>
+                                    }
+                                </td>
+                                <td>@l.Unit</td>
+                                <td class="text-start num">@l.Quantity.Num()</td>
+                                <td class="text-start num">@l.Price.Money()</td>
+                                <td class="text-start num fw-700">@l.Total.Money()</td>
+                                @if (viewing.IsSale)
+                                {
+                                    @if (CanSeeProfit)
+                                    {
+                                        <td class="text-start num text-muted">@(l.UnitCost.HasValue ? l.UnitCost.Value.Money() : "—")</td>
+                                        <td class="text-start num">
+                                            @if (l.Profit.HasValue)
+                                            {
+                                                <span class="fw-500 @(l.Profit >= 0 ? "text-success" : "text-danger")">@l.Profit.Value.Money()</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">—</span>
+                                            }
+                                        </td>
+                                    }
+                                    @if (viewing.CommissionAmount is > 0)
+                                    {
+                                        <td class="text-start num">
+                                            @if (l.Commission is > 0)
+                                            {
+                                                <span class="fw-500 text-primary">@l.Commission.Value.Money()</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">—</span>
+                                            }
+                                        </td>
+                                    }
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="d-flex justify-content-end align-items-center gap-3 mt-2">
+                @if (viewing.IsSale && CanSeeProfit && viewing.TotalProfit.HasValue)
+                {
+                    <div>
+                        <span class="text-muted ms-1 fs-8">سود سند:</span>
+                        <span class="fw-700 num @(viewing.TotalProfit >= 0 ? "text-success" : "text-danger")">@viewing.TotalProfit.Value.Money()</span>
+                    </div>
+                }
+                @if (viewing.CommissionAmount is > 0)
+                {
+                    <div>
+                        <span class="text-muted ms-1 fs-8">پورسانت معرف:</span>
+                        <span class="fw-700 num text-primary">@viewing.CommissionAmount.Value.Money()</span>
+                    </div>
+                    @if (CanSeeProfit)
+                    {
+                        <div>
+                            <span class="text-muted ms-1 fs-8">سود خالص:</span>
+                            <span class="fw-700 num @(viewing.NetProfit >= 0 ? "text-success" : "text-danger")">@((viewing.NetProfit ?? 0).Money())</span>
+                        </div>
+                    }
+                }
+                <div>
+                    <span class="text-muted ms-2">مبلغ کل:</span>
+                    <span class="fw-800 fs-5 text-primary num">@viewing.TotalAmount.Money()</span>
+                    <span class="fs-8 text-muted">ریال</span>
+                </div>
+            </div>
+
+            <div class="alert alert-light border d-flex flex-wrap gap-4 align-items-center py-2 px-3 mt-3 mb-0">
+                <div>
+                    <span class="fs-8 text-muted ms-1">روش تسویه:</span>
+                    <span class="fw-700">@PayBadge(viewing)</span>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(viewing.TrsAccountName))
+                {
+                    <div>
+                        <span class="fs-8 text-muted ms-1">حساب / بانک:</span>
+                        <span class="fw-700 text-primary"><i class="bi bi-bank ms-1"></i>@viewing.TrsAccountName</span>
+                    </div>
+                }
+                @if (viewing.Cheques.Count > 0)
+                {
+                    <div>
+                        <span class="fs-8 text-muted ms-1">چک‌ها:</span>
+                        <span class="fw-700">@viewing.Cheques.Count.Num() فقره (@string.Join("، ", viewing.Cheques.Where(c => !string.IsNullOrWhiteSpace(c.BankName)).Select(c => c.BankName).Distinct()))</span>
+                    </div>
+                }
+            </div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-outline-primary" @onclick="() => Print(viewing!)" disabled="@(viewing is null || printingId == viewing.Id)">
+            @if (viewing is not null && printingId == viewing.Id)
+            {
+                <span class="spinner-border spinner-border-sm ms-1"></span>
+            }
+            <i class="bi bi-printer"></i> چاپ @(viewing?.IsSale == true ? "فاکتور فروش" : "رسید خرید")
+        </button>
+        <button class="btn btn-light" @onclick="() => viewing = null"><i class="bi bi-x-lg"></i> بستن</button>
+    </Footer>
+</Modal>
+
+
+@code {
+    /// <summary>دسترسی «مشاهده سود» — Orders.ViewProfit از بخش نقش‌ها و دسترسی‌ها</summary>
+    private bool CanSeeProfit => Auth.Has("Orders.ViewProfit");
+
+    private static RenderFragment PayBadge(Order o) => o.PaymentMethod switch
+    {
+        PaymentMethod.Cash => @<span class="badge badge-pay-cash fs-8" title="@o.TrsAccountName"><i class="bi bi-cash-coin"></i> نقدی @(!string.IsNullOrWhiteSpace(o.TrsAccountName) ? $"({o.TrsAccountName})" : "")</span>,
+        PaymentMethod.Credit => @<span class="badge badge-pay-credit fs-8"><i class="bi bi-hourglass-split"></i> نسیه</span>,
+        PaymentMethod.Cheque => @<span class="badge badge-pay-cheque fs-8"><i class="bi bi-bank"></i> چک</span>,
+        PaymentMethod.Mixed => @<span class="badge badge-pay-mixed fs-8"><i class="bi bi-pie-chart"></i> ترکیبی</span>,
+        _ => @<span class="badge badge-pay-inst fs-8"><i class="bi bi-journal-check"></i> اقساطی</span>
+    };
+
+    [Parameter] public string? Type { get; set; }
+
+    private bool isPurchase => Type == "purchase";
+    private TransactionType txnType => isPurchase ? TransactionType.Purchase : TransactionType.Sale;
+
+    private List<Order> items = new();
+    private int total, page = 1, pageCount = 1;
+    private const int PageSize = 15;
+    private bool loading = true, showForm;
+    private DateTime? from, to;
+    private int filterWarehouseId, filterPartyId;
+    private List<LookupItem> whLookup = new();
+    private List<LookupItem> partyLookup = new();
+    private Order? viewing;
+
+    protected override void OnInitialized()
+    {
+        Layout.SetTitle(isPurchase ? "اسناد خرید" : "اسناد فروش");
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadLookups();
+        page = 1;
+        await Load();
+    }
+
+    private async Task LoadLookups()
+    {
+        try
+        {
+            if (whLookup.Count == 0)
+                whLookup = await WarehouseSvc.GetLookupsAsync();
+            partyLookup = await PartySvc.GetLookupsAsync(isPurchase ? PartyType.Supplier : PartyType.Customer);
+        }
+        catch { }
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var res = await OrderSvc.GetOrdersAsync(txnType, from, to, filterPartyId, filterWarehouseId, page, PageSize);
+            items = res.Items;
+            total = res.TotalCount;
+            pageCount = Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private Order? editingOrder;
+    /// <summary>شناسهٔ سندی که همین حالا در حال آماده‌سازی چاپ است (برای نمایش اسپینر و جلوگیری از کلیک دوباره).</summary>
+    private int printingId;
+    /// <summary>تنظیمات چاپ/سربرگ شرکت — یک‌بار خوانده و نگه داشته می‌شود.</summary>
+    private CompanyProfileDto? companyProfile;
+
+    /// <summary>
+    /// چاپ سند فروش/خرید در قالب مستقل (A4 یا A5 بر اساس «تعریف شرکت»)؛
+    /// سند کامل همراه اقلام از سرور خوانده می‌شود و همان سازندهٔ چاپِ فاکتور فروش
+    /// (SaleInvoicePrint) که در تبدیل تعمیرات به فاکتور هم استفاده می‌شود، خروجی را می‌سازد.
+    /// چاپ در iframe مستقل انجام می‌شود تا استایل‌های @media printِ خود برنامه روی فاکتور اثر نگذارد.
+    /// </summary>
+    private async Task Print(Order o)
+    {
+        if (printingId != 0) return;   // از کلیک‌های پشت‌سرهم جلوگیری می‌کند
+        printingId = o.Id;
+        try
+        {
+            companyProfile ??= await ProfileSvc.GetAsync();
+            var order = await OrderSvc.GetAsync(o.Id) ?? o;   // سند کامل (اقلام/چک‌ها)
+            if (order.Lines.Count == 0)
+                Toast.Error("این سند قلمی ندارد؛ چاپ انجام نشد.");
+            else
+            {
+                var html = SaleInvoicePrint.Build(order, companyProfile);
+                var opened = await JS.InvokeAsync<bool>("giPrint", html);
+                if (!opened)
+                    Toast.Error("پنجرهٔ چاپ باز نشد؛ لطفاً اجازهٔ پنجرهٔ بازشو (pop-up) را در مرورگر فعال کنید.");
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { printingId = 0; }
+    }
+
+    private void OpenNew()
+    {
+        editingOrder = null;
+        showForm = true;
+    }
+
+    private async Task OpenEdit(Order o)
+    {
+        try
+        {
+            // دریافت سند کامل (همراه اقلام) از سرور
+            editingOrder = await OrderSvc.GetAsync(o.Id) ?? o;
+            showForm = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void CloseForm()
+    {
+        showForm = false;
+        editingOrder = null;
+    }
+
+    private async Task OnFormSaved()
+    {
+        showForm = false;
+        editingOrder = null;
+        await Load();
+    }
+
+    private async Task ApplyFilter()
+    {
+        page = 1;
+        await Load();
+    }
+
+    private async Task GoToPage(int p)
+    {
+        page = p;
+        await Load();
+    }
+
+    private void View(Order o) => viewing = o;
+
+    private async Task Delete(Order o)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف سند «{o.Number}» مطمئن هستید؟ موجودی انبار اصلاح خواهد شد.");
+        if (!ok) return;
+        try
+        {
+            await OrderSvc.DeleteAsync(o.Id);
+            Toast.Success("سند حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

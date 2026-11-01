@@ -1,0 +1,168 @@
+@page "/acc/reports/journal"
+@inject IAccReportService ReportSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>دفتر روزنامه</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>دفتر روزنامه</h1>
+        <p class="lead">تمام آرتیکل‌های اسناد قطعی به ترتیب تاریخ و شماره سند</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-outline-secondary" @onclick="Print"><i class="bi bi-printer"></i> چاپ</button>
+    </div>
+</div>
+
+<div class="card mb-3 d-print-none">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-6 col-md-3">
+                <label class="form-label">از تاریخ</label>
+                <DatePicker Value="from" ValueChanged="OnFrom" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">تا تاریخ</label>
+                <DatePicker Value="to" ValueChanged="OnTo" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-3">
+                <button class="btn btn-primary w-100" @onclick="Reload" disabled="@loading">
+                    <i class="bi bi-search"></i> نمایش
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-journals text-primary"></i>
+        <span class="card-title">آرتیکل‌های دفتر روزنامه</span>
+        <span class="badge badge-soft-primary ms-auto num">@total.Num() سطر</span>
+    </div>
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (rows.Count == 0)
+        {
+            <div class="empty-state">
+                <i class="bi bi-inbox"></i>
+                <h5>در این بازه سند قطعی‌شده‌ای وجود ندارد</h5>
+                <p class="text-muted">فقط اسناد «قطعی» در دفتر روزنامه نمایش داده می‌شوند.</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:44px">#</th>
+                            <th>تاریخ</th>
+                            <th class="text-center">شماره سند</th>
+                            <th class="text-center">ردیف</th>
+                            <th>کد حساب</th>
+                            <th>نام حساب</th>
+                            <th>شرح</th>
+                            <th class="text-center">بدهکار</th>
+                            <th class="text-center">بستانکار</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{ var row = (page - 1) * PageSize + 1; }
+                        @foreach (var r in rows)
+                        {
+                            <tr>
+                                <td class="num text-muted">@((row++).FaDigits())</td>
+                                <td class="num">@r.Date.ToFaDate()</td>
+                                <td class="text-center num">
+                                    <a href="@($"/acc/vouchers/edit/{r.VoucherId}")">@r.VoucherNumber.FaDigits()</a>
+                                </td>
+                                <td class="text-center num text-muted">@r.RowNo.FaDigits()</td>
+                                <td class="num">@r.AccountCode.FaDigits()</td>
+                                <td>@r.AccountName</td>
+                                <td>
+                                    @(string.IsNullOrWhiteSpace(r.Description) ? "—" : r.Description)
+                                    @if (!string.IsNullOrWhiteSpace(r.PartyName))
+                                    {
+                                        <div class="fs-8 text-muted"><i class="bi bi-person"></i> @r.PartyName</div>
+                                    }
+                                </td>
+                                <td class="text-center num text-success">@(r.Debit == 0 ? "—" : r.Debit.Money())</td>
+                                <td class="text-center num text-danger">@(r.Credit == 0 ? "—" : r.Credit.Money())</td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot class="table-light">
+                        <tr>
+                            <th colspan="7" class="text-end">جمع این صفحه</th>
+                            <th class="text-center num text-success">@rows.Sum(r => r.Debit).Money()</th>
+                            <th class="text-center num text-danger">@rows.Sum(r => r.Credit).Money()</th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="OnPage" />
+        }
+    </div>
+</div>
+
+@code {
+    private List<AccLedgerRow> rows = new();
+    private DateTime? from, to;
+    private bool loading = true;
+    private int page = 1, total;
+    private const int PageSize = 30;
+
+    private int PageCount => total == 0 ? 1 : (int)Math.Ceiling(total / (double)PageSize);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("دفتر روزنامه");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var res = await ReportSvc.GetJournalAsync(from, to, page, PageSize);
+            rows = res.Items;
+            total = res.TotalCount;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Reload()
+    {
+        page = 1;
+        await Load();
+    }
+
+    private async Task OnFrom(DateTime? d)
+    {
+        from = d;
+        await Reload();
+    }
+
+    private async Task OnTo(DateTime? d)
+    {
+        to = d;
+        await Reload();
+    }
+
+    private async Task OnPage(int p)
+    {
+        page = p;
+        await Load();
+    }
+
+    private async Task Print() => await JS.InvokeVoidAsync("window.print");
+}

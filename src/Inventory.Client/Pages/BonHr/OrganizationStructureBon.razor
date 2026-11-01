@@ -1,0 +1,289 @@
+@namespace Inventory.Client.Pages.BonHr
+@page "/bon-hr/organization-structure"
+@inject BonHrApi Api
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject LayoutState Layout
+
+<PageTitle>واحدها و ماتریس پرسنل</PageTitle>
+<BonHrGuard Section="OrgStructure">
+<BonHrShell Title="واحدها و ماتریس پرسنل" Sub="ساختار سازمانی بن‌سازه">
+    <Actions>
+        <button class="btn btn-light" type="button" @onclick="ExportMatrixAsync">خروجی ماتریس</button>
+        <button class="btn btn-light" type="button" @onclick="() => _showDept = true"><i class="bi bi-plus-lg"></i> واحد جدید</button>
+        <button class="btn btn-primary" type="button" @onclick="() => _showStation = true"><i class="bi bi-plus-lg"></i> ایستگاه کاری</button>
+    </Actions>
+</BonHrShell>
+
+@using System.Text
+
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+            <p class="text-muted small mb-0">مدیریت واحدها و جایگاه‌ها</p>
+            <h2>واحدهای سازمانی و ماتریس پرسنل</h2>
+            <p class="text-muted">واحدها، ایستگاه‌های کاری و جایگاه پرسنل در ماتریس قابل تعریف و مشاهده هستند.</p>
+        </div>
+        <button class="btn btn-light" type="button" @onclick="ExportMatrixAsync">خروجی ماتریس</button>
+    </div>
+
+    <div class="organization-layout">
+        <article class="card card-body mt-3">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                <div><p class="text-muted small mb-0">مدیریت ساختار</p><h3>تعریف واحد و زیرمجموعه</h3></div>
+                <span class="badge badge-soft-primary">ویژه واحد اداری</span>
+            </div>
+
+            <p class="small mt-2" role="status">@_message</p>
+
+            <Modal Size="modal-lg" Visible="_showDept" Title="واحد سازمانی جدید" OnClose="() => _showDept = false">
+                <ChildContent>
+                    <label class="form-label">نام واحد</label>
+                    <input class="form-control" maxlength="80" required placeholder="مثلاً تعمیرات" @bind="_newDepartment" />
+                </ChildContent>
+                <Footer>
+                    <button class="btn btn-light" type="button" @onclick="() => _showDept = false">انصراف</button>
+                    <button class="btn btn-primary" type="button" @onclick="AddDepartmentAsync">افزودن واحد</button>
+                </Footer>
+            </Modal>
+
+            <Modal Size="modal-lg" Visible="_showStation" Title="ایستگاه کاری جدید" OnClose="() => _showStation = false">
+                <ChildContent>
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label">واحد سازمانی</label>
+                            <select class="form-select" required @bind="_stationDepartmentId">
+                                <option value="0">— انتخاب واحد —</option>
+                                @foreach (var department in _departments)
+                                {
+                                    <option value="@department.Id">@department.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">ایستگاه کاری</label>
+                            <input class="form-control" maxlength="100" required placeholder="مثلاً اپراتور میکسر" @bind="_newStation" />
+                        </div>
+                    </div>
+                </ChildContent>
+                <Footer>
+                    <button class="btn btn-light" type="button" @onclick="() => _showStation = false">انصراف</button>
+                    <button class="btn btn-primary" type="button" @onclick="AddStationAsync">افزودن ایستگاه</button>
+                </Footer>
+            </Modal>
+
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th>واحد</th><th>ایستگاه‌های کاری</th><th>پرسنل</th><th>عملیات</th></tr></thead>
+                    <tbody>
+                        @foreach (var department in _departments)
+                        {
+                            var unit = department;
+                            <tr>
+                                <td>@unit.Name</td>
+                                <td>
+                                    @if (unit.Stations.Count == 0)
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                    else
+                                    {
+                                        @foreach (var station in unit.Stations)
+                                        {
+                                            var s = station;
+                                            <span class="chip">
+                                                @s.Name
+                                                <button class="chip-remove" type="button" title="حذف ایستگاه"
+                                                        @onclick="() => RemoveStationAsync(unit, s)">×</button>
+                                            </span>
+                                        }
+                                    }
+                                </td>
+                                <td>@BonFa.N(CountOf(unit.Name))</td>
+                                <td class="row-actions">
+                                    <button class="btn btn-outline-danger" type="button" @onclick="() => DeleteDepartmentAsync(unit)">حذف واحد</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (_departments.Count == 0)
+            {
+                <p class="text-muted text-center py-4">هنوز واحدی تعریف نشده است.</p>
+            }
+        </article>
+    </div>
+
+    <article class="card card-body mt-3 personnel-matrix-panel">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+            <div><p class="text-muted small mb-0">نمودار ماتریسی</p><h3>جایگاه پرسنل بر اساس واحد، ایستگاه و سطح سازمانی</h3></div>
+            <label class="form-label">واحد
+                <select class="form-select" @bind="_matrixUnitFilter">
+                    <option value="">همه واحدها</option>
+                    @foreach (var unit in _matrix)
+                    {
+                        <option value="@unit.Unit">@unit.Unit</option>
+                    }
+                </select>
+            </label>
+        </div>
+
+        <div class="personnel-matrix">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle matrix-table">
+                    <thead>
+                        <tr>
+                            <th>واحد / ایستگاه</th>
+                            @foreach (var level in _levels) { <th>@level</th> }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (VisibleStations.Count == 0)
+                        {
+                            <tr><td colspan="@(_levels.Count + 1)">ایستگاه کاری ثبت نشده است.</td></tr>
+                        }
+                        else
+                        {
+                            @foreach (var slot in VisibleStations)
+                            {
+                                var cell = slot;
+                                <tr>
+                                    <th><strong>@cell.Unit</strong><span>@cell.Station</span></th>
+                                    @foreach (var level in _levels)
+                                    {
+                                        var people = cell.Employees.Where(p => p.ResponsibilityLevel == level).ToList();
+                                        <td>
+                                            @if (people.Count == 0)
+                                            {
+                                                <span class="matrix-empty">—</span>
+                                            }
+                                            else
+                                            {
+                                                @foreach (var person in people)
+                                                {
+                                                    <span class="person-chip">
+                                                        <b>@person.Name</b>
+                                                        <small>@(string.IsNullOrWhiteSpace(person.PositionTitle) ? BonFa.N(person.Code) : person.PositionTitle)</small>
+                                                    </span>
+                                                }
+                                            }
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </article>
+
+
+</BonHrGuard>
+@code {
+    private List<Department> _departments = new();
+    private List<MatrixUnitDto> _matrix = new();
+    private List<string> _levels = new();
+    private List<Employee> _employees = new();
+
+    private string _newDepartment = "";
+    private string _newStation = "";
+    private int _stationDepartmentId;
+    private string _matrixUnitFilter = "";
+    private string _message = "";
+    private bool _showDept, _showStation;
+
+    private IEnumerable<MatrixUnitDto> FilteredMatrix =>
+        string.IsNullOrEmpty(_matrixUnitFilter) ? _matrix : _matrix.Where(u => u.Unit == _matrixUnitFilter);
+
+    private record MatrixSlot(string Unit, string Station, List<MatrixPersonDto> Employees);
+
+    /// <summary>ردیف‌های ماتریس: هر ایستگاه کاری یک سطر، ستون‌ها سطوح مسئولیت</summary>
+    private List<MatrixSlot> VisibleStations =>
+        FilteredMatrix.SelectMany(u => u.Stations
+            .Select(s => new MatrixSlot(u.Unit, s.Station, s.Employees))).ToList();
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _departments = await Api.ListAsync<Department>("api/organization/departments");
+        _matrix = await Api.ListAsync<MatrixUnitDto>("api/organization/matrix");
+        _levels = await Api.ListAsync<string>("api/organization/levels");
+        _employees = await Api.ListAsync<Employee>("api/employees");
+    }
+
+    private int CountOf(string unit) => _employees.Count(e => e.Unit == unit);
+
+    private async Task AddDepartmentAsync()
+    {
+        var name = _newDepartment.Trim();
+        if (name.Length == 0) { _message = "نام واحد را وارد کنید."; return; }
+
+        var ok = await Api.SendAsync(HttpMethod.Post, "api/organization/departments", new Department { Name = name });
+        if (!ok) return;
+
+        _newDepartment = "";
+        _showDept = false;
+        _message = "واحد جدید ثبت شد.";
+        await ReloadAsync();
+    }
+
+    private async Task AddStationAsync()
+    {
+        var name = _newStation.Trim();
+        var department = _departments.FirstOrDefault(d => d.Id == _stationDepartmentId);
+        if (department == null || name.Length == 0) { _message = "واحد و نام ایستگاه کاری الزامی است."; return; }
+        if (department.Stations.Any(s => s.Name == name)) { _message = "این ایستگاه کاری قبلاً ثبت شده است."; return; }
+
+        var stations = department.Stations.Select(s => new WorkStation { Name = s.Name }).ToList();
+        stations.Add(new WorkStation { Name = name });
+
+        var ok = await Api.SendAsync(HttpMethod.Put, $"api/organization/departments/{department.Id}",
+            new Department { Id = department.Id, Name = department.Name, Stations = stations });
+        if (!ok) return;
+
+        _newStation = "";
+        _showStation = false;
+        _message = "ایستگاه کاری افزوده شد.";
+        await ReloadAsync();
+    }
+
+    private async Task RemoveStationAsync(Department department, WorkStation station)
+    {
+        var stations = department.Stations.Where(s => s.Id != station.Id)
+            .Select(s => new WorkStation { Name = s.Name }).ToList();
+
+        var ok = await Api.SendAsync(HttpMethod.Put, $"api/organization/departments/{department.Id}",
+            new Department { Id = department.Id, Name = department.Name, Stations = stations });
+        if (ok) await ReloadAsync();
+    }
+
+    private async Task DeleteDepartmentAsync(Department department)
+    {
+        var ok = await Api.SendAsync(HttpMethod.Delete, $"api/organization/departments/{department.Id}");
+        if (ok) await ReloadAsync();
+    }
+
+    private async Task ExportMatrixAsync()
+    {
+        var csv = new StringBuilder();
+        csv.AppendLine("واحد,ایستگاه کاری,کد پرسنلی,نام,سطح مسئولیت,عنوان شغلی");
+
+        foreach (var unit in _matrix)
+        {
+            foreach (var station in unit.Stations)
+                foreach (var person in station.Employees)
+                    csv.AppendLine($"{unit.Unit},{station.Station},{person.Code},{person.Name},{person.ResponsibilityLevel},{person.PositionTitle}");
+
+            foreach (var person in unit.Unassigned)
+                csv.AppendLine($"{unit.Unit},—,{person.Code},{person.Name},{person.ResponsibilityLevel},");
+        }
+
+        var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(csv.ToString())).ToArray();
+        await JS.InvokeVoidAsync("saveAsFile", "personnel-matrix.csv", Convert.ToBase64String(bytes));
+        Toast.Success("خروجی ماتریس پرسنل آماده شد.");
+    }
+}

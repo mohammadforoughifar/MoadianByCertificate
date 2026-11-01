@@ -1,0 +1,172 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core"
+@inject IHrCoreService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+
+<PageTitle>کارگزینی</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-people"></i> هسته پرسنلی (کارگزینی)</h1>
+    <div class="lead">پرونده پرسنل، ساختار سازمانی، قراردادها و احکام — در یک نگاه</div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به ماژول کارگزینی برای شما فعال نیست.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span><div class="mt-2">در حال بارگذاری…</div></div>
+}
+else if (dash is not null)
+{
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-lg-3">
+            <div class="card border-0 shadow-sm h-100 hr-stat" @onclick='() => Nav.NavigateTo("hr-core/employees")'>
+                <div class="card-body d-flex align-items-center gap-3">
+                    <div class="hr-ic" style="background:#e0edff;color:#2563eb"><i class="bi bi-person-badge"></i></div>
+                    <div><div class="hr-num num">@dash.ActiveEmployees.Num()</div><div class="text-muted small">پرسنل فعال</div></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="card border-0 shadow-sm h-100 hr-stat" @onclick='() => Nav.NavigateTo("hr-core/org")'>
+                <div class="card-body d-flex align-items-center gap-3">
+                    <div class="hr-ic" style="background:#dcfce7;color:#15803d"><i class="bi bi-diagram-3"></i></div>
+                    <div><div class="hr-num num">@dash.OrgUnits.Num()</div><div class="text-muted small">واحد سازمانی</div></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="card border-0 shadow-sm h-100 hr-stat" @onclick='() => Nav.NavigateTo("hr-core/contracts")'>
+                <div class="card-body d-flex align-items-center gap-3">
+                    <div class="hr-ic" style="background:#fef3c7;color:#b45309"><i class="bi bi-file-earmark-text"></i></div>
+                    <div><div class="hr-num num">@dash.ExpiringContracts.Num()</div><div class="text-muted small">قرارداد رو به پایان (۳۰ روز)</div></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="card border-0 shadow-sm h-100 hr-stat" @onclick='() => Nav.NavigateTo("hr-core/decrees")'>
+                <div class="card-body d-flex align-items-center gap-3">
+                    <div class="hr-ic" style="background:#fae8ff;color:#a21caf"><i class="bi bi-patch-check"></i></div>
+                    <div><div class="hr-num num">@dash.PendingDecrees.Num()</div><div class="text-muted small">حکم اجرا نشده</div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <div class="col-lg-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-bold">
+                    <i class="bi bi-exclamation-triangle text-warning ms-1"></i> قراردادهای رو به پایان
+                    <button class="btn btn-sm btn-light float-start" @onclick="Reload" title="به‌روزرسانی"><i class="bi bi-arrow-clockwise"></i></button>
+                </div>
+                <div class="card-body p-0">
+                    @if (dash.ExpiringList.Count == 0)
+                    {
+                        <div class="text-muted text-center py-4"><i class="bi bi-check-circle text-success"></i> موردی نیست.</div>
+                    }
+                    else
+                    {
+                        <table class="table table-hover mb-0 align-middle">
+                            <thead class="table-light"><tr><th>پرسنل</th><th>شماره قرارداد</th><th>پایان</th><th>مانده</th></tr></thead>
+                            <tbody>
+                                @foreach (var c in dash.ExpiringList)
+                                {
+                                    <tr>
+                                        <td><a href="hr-core/employees/@c.EmployeeId">@c.EmployeeName</a></td>
+                                        <td class="num">@c.ContractNo</td>
+                                        <td class="num">@c.EndDate?.ToFa()</td>
+                                        <td><span class="badge @((c.DaysToEnd ?? 999) < 0 ? "text-bg-danger" : (c.DaysToEnd ?? 999) <= 7 ? "text-bg-warning" : "text-bg-info")">@RemainText(c.DaysToEnd)</span></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-bold"><i class="bi bi-clock-history text-primary ms-1"></i> آخرین احکام</div>
+                <div class="card-body p-0">
+                    @if (dash.RecentDecrees.Count == 0)
+                    {
+                        <div class="text-muted text-center py-4">حکمی ثبت نشده است.</div>
+                    }
+                    else
+                    {
+                        <ul class="list-group list-group-flush">
+                            @foreach (var d in dash.RecentDecrees)
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <a href="hr-core/employees/@d.EmployeeId" class="fw-bold">@d.EmployeeName</a>
+                                        <div class="small text-muted">@HrCoreUi.DecreeType(d.Type) • @d.EffectiveDate.ToFa()</div>
+                                    </div>
+                                    @if (d.IsApplied)
+                                    {
+                                        <span class="badge text-bg-success">اجرا شده</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-secondary">در انتظار اجرا</span>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+            </div>
+            @if (dash.ByEmploymentType.Count > 0)
+            {
+                <div class="card border-0 shadow-sm mt-3">
+                    <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+                        <span class="text-muted small">ترکیب استخدام:</span>
+                        @foreach (var kv in dash.ByEmploymentType)
+                        {
+                            <span class="badge rounded-pill text-bg-light border">@kv.Key: <b class="num">@kv.Value.Num()</b></span>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+<style>
+    .hr-stat { cursor: pointer; transition: transform .12s ease; }
+    .hr-stat:hover { transform: translateY(-3px); }
+    .hr-ic { width: 52px; height: 52px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0; }
+    .hr-num { font-size: 1.5rem; font-weight: 800; color: #1e293b; }
+</style>
+
+@code {
+    private bool canRead => Auth.Has("HrCore.Read") || Auth.IsAdmin;
+    private bool loading = true;
+    private HrDashboardDto? dash;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        if (!canRead) return;
+        loading = true;
+        try { dash = await Svc.GetDashboardAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private static string RemainText(int? days) => days switch
+    {
+        null => "دائمی",
+        < 0 => $"منقضی شده ({Math.Abs(days.Value).Num()} روز)",
+        0 => "امروز",
+        _ => $"{days.Value.Num()} روز"
+    };
+}

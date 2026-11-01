@@ -1,0 +1,194 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/audit"
+@inject IHrCoreService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>تاریخچه عملیات HR</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-clipboard-data"></i> تاریخچه عملیات حساس HR</h1>
+    <div class="lead">کی، کِی، چه کاری کرد — ثبت خودکار همه عملیات ثبت/ویرایش/حذف</div>
+</div>
+
+@if (!canManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص مدیر منابع انسانی است.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-2">
+                <label class="form-label small text-muted">ماژول</label>
+                <select class="form-select" @bind="fModule" @bind:after="ReloadFirst">
+                    <option value="">همه</option>
+                    <option value="HrMain">منابع انسانی اصلی</option>
+                    <option value="HrCore">کارگزینی</option>
+                    <option value="HrTalent">استعداد و ارزیابی</option>
+                    <option value="FaAtt">حضور و مرخصی</option>
+                    <option value="FaPay">حقوق و دستمزد</option>
+                    <option value="FaLms">آموزش</option>
+                    <option value="FaCom">ارتباطات</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">عملیات</label>
+                <input class="form-control" placeholder="مثلاً Delete" @bind="fAction" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small text-muted">جستجو (کاربر / خلاصه / مسیر)</label>
+                <input class="form-control" @bind="q" @bind:event="oninput" @onkeyup="OnSearchKey" placeholder="تایپ کنید و Enter بزنید…" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">از تاریخ</label>
+                <DatePicker @bind-Value="fFrom" AllowClear="true" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">تا تاریخ</label>
+                <DatePicker @bind-Value="fTo" AllowClear="true" />
+            </div>
+            <div class="col-md-1">
+                <button class="btn btn-primary w-100" @onclick="ReloadFirst"><i class="bi bi-search"></i></button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+}
+else
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>زمان</th><th>کاربر</th><th>ماژول</th><th>عملیات</th><th>خلاصه</th><th>نتیجه</th><th style="width:50px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var l in items)
+                        {
+                            <tr>
+                                <td class="num small">@l.At.ToFa()<div class="text-muted">@l.At.ToString("HH:mm")</div></td>
+                                <td>@(l.Username ?? "—")</td>
+                                <td><span class="badge text-bg-info">@HrCoreUi.HrModule(l.Module)</span></td>
+                                <td><span class="badge text-bg-light border">@l.Action</span> <span class="small text-muted">@l.HttpMethod</span></td>
+                                <td class="small">@(l.Summary ?? l.Path ?? "—")</td>
+                                <td>
+                                    @if (l.StatusCode is >= 200 and < 300)
+                                    {
+                                        <span class="badge text-bg-success num">@l.StatusCode</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-danger num">@l.StatusCode</span>
+                                    }
+                                </td>
+                                <td><button class="btn btn-sm btn-light" title="جزئیات" @onclick="() => OpenDetail(l.Id)"><i class="bi bi-eye text-primary"></i></button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="card-footer bg-white d-flex justify-content-between align-items-center">
+            <span class="small text-muted num">@total.Num() رکورد</span>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-light" disabled="@(skip == 0)" @onclick="Prev">قبلی</button>
+                <button class="btn btn-sm btn-light" disabled="@(skip + take >= total)" @onclick="Next">بعدی</button>
+            </div>
+        </div>
+    </div>
+}
+
+<Modal Visible="showDetail" Title="جزئیات عملیات" Size="modal-lg" OnClose="() => showDetail = false">
+<ChildContent>
+    @if (detail != null)
+    {
+        <dl class="row small">
+            <dt class="col-12 col-sm-3">زمان</dt><dd class="col-12 col-sm-9 num">@detail.At.ToFa() — @detail.At.ToString("HH:mm:ss")</dd>
+            <dt class="col-12 col-sm-3">کاربر</dt><dd class="col-12 col-sm-9">@detail.Username (@detail.UserId)</dd>
+            <dt class="col-12 col-sm-3">ماژول/عملیات</dt><dd class="col-12 col-sm-9">@HrCoreUi.HrModule(detail.Module) / @detail.Action (@detail.HttpMethod)</dd>
+            <dt class="col-12 col-sm-3">مسیر</dt><dd class="col-12 col-sm-9 num" dir="ltr">@detail.Path</dd>
+            <dt class="col-12 col-sm-3">IP</dt><dd class="col-12 col-sm-9 num" dir="ltr">@(detail.Ip ?? "—")</dd>
+            <dt class="col-12 col-sm-3">نتیجه/مدت</dt><dd class="col-12 col-sm-9 num">@detail.StatusCode — @detail.DurationMs میلی‌ثانیه</dd>
+        </dl>
+        @if (!string.IsNullOrWhiteSpace(detail.Payload))
+        {
+            <label class="form-label small text-muted">بدنه درخواست</label>
+            <pre class="bg-light rounded p-2 small" dir="ltr" style="max-height:260px;overflow:auto">@detail.Payload</pre>
+        }
+    }
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-light" @onclick="() => showDetail = false">بستن</button>
+    </div>
+</Footer>
+</Modal>
+
+@code {
+    private bool canManage => Auth.Has("HrCore.Manage") || Auth.IsAdmin;
+
+    private bool loading = true, showDetail;
+    private List<HrAuditLogDto> items = new();
+    private HrAuditLogDto? detail;
+    private int total, skip, take = 25;
+
+    private string? fModule, fAction, q;
+    private DateTime? fFrom, fTo;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canManage) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task ReloadFirst()
+    {
+        skip = 0;
+        await Reload();
+    }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await ReloadFirst();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            var r = await Svc.SearchHrAuditAsync(fModule, fAction, q, fFrom, fTo, skip, take);
+            items = r.Items;
+            total = r.Total;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private async Task Prev()
+    {
+        skip = Math.Max(0, skip - take);
+        await Reload();
+    }
+
+    private async Task Next()
+    {
+        skip += take;
+        await Reload();
+    }
+
+    private async Task OpenDetail(long id)
+    {
+        try
+        {
+            detail = await Svc.GetHrAuditAsync(id);
+            showDetail = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

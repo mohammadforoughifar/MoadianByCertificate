@@ -1,0 +1,344 @@
+@page "/operations/reports/orders/{Type}"
+@inject IAuthState Auth
+@inject IOrderService OrderSvc
+@inject IWarehouseService WarehouseSvc
+@inject IPartyService PartySvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>@(isPurchase ? "گزارش خرید" : "گزارش فروش")</PageTitle>
+
+@if (!Auth.CanSee("Orders"))
+{
+    <div class="alert alert-warning mt-3">
+        <i class="bi bi-shield-exclamation"></i>
+        برای مشاهدهٔ گزارش خرید و فروش، دسترسی مشاهدهٔ اسناد خرید و فروش لازم است.
+    </div>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>@(isPurchase ? "گزارش خرید" : "گزارش فروش")</h1>
+                    </div>
+        <div class="ms-auto d-flex gap-2">
+            <button class="btn btn-outline-secondary" disabled="@(summary is null)" @onclick="Print">
+                <i class="bi bi-printer"></i> چاپ گزارش
+            </button>
+        </div>
+    </div>
+
+    <div class="card mb-3 d-print-none">
+        <div class="card-body py-3">
+            <div class="row g-2 align-items-end">
+                <div class="col-6 col-lg-2">
+                    <label class="form-label">از تاریخ</label>
+                    <DatePicker @bind-Value="from" AllowClear="true" />
+                </div>
+                <div class="col-6 col-lg-2">
+                    <label class="form-label">تا تاریخ</label>
+                    <DatePicker @bind-Value="to" AllowClear="true" />
+                </div>
+                <div class="col-6 col-lg-3">
+                    <label class="form-label">طرف حساب</label>
+                    <SearchSelect Items="partyLookup" Value="partyId" ValueChanged="v => partyId = v" Placeholder="همهٔ طرف‌حساب‌ها" />
+                </div>
+                <div class="col-6 col-lg-3">
+                    <label class="form-label">انبار</label>
+                    <SearchSelect Items="warehouseLookup" Value="warehouseId" ValueChanged="v => warehouseId = v" Placeholder="همهٔ انبارها" />
+                </div>
+                <div class="col-12 col-lg-2">
+                    <button class="btn btn-primary w-100" disabled="@loading" @onclick="ApplyFilter">
+                        <i class="bi bi-funnel"></i> اعمال فیلتر
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (loading && summary is null)
+    {
+        <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+    }
+    else if (!loading && summary is null)
+    {
+        <div class="card"><div class="empty-state"><i class="bi bi-exclamation-circle"></i><h5>گزارش بارگذاری نشد</h5></div></div>
+    }
+    else if (summary is not null)
+    {
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-lg-3">
+                <div class="stat-card">
+                    <div class="stat-icon @(isPurchase ? "bg-soft-primary" : "bg-soft-success")">
+                        <i class="bi @(isPurchase ? "bi-bag-check text-primary" : "bi-cart-check text-success")"></i>
+                    </div>
+                    <div>
+                        <div class="stat-label">جمع مبلغ @(isPurchase ? "خرید" : "فروش")</div>
+                        <div class="stat-value num @(isPurchase ? "text-primary" : "text-success")">@summary.TotalAmount.Money()</div>
+                        <div class="fs-8 text-muted">ریال</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="stat-card">
+                    <div class="stat-icon bg-soft-info"><i class="bi bi-receipt text-info"></i></div>
+                    <div>
+                        <div class="stat-label">تعداد اسناد</div>
+                        <div class="stat-value num">@summary.DocumentCount.Num()</div>
+                        <div class="fs-8 text-muted num">@summary.LineCount.Num() ردیف کالا</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="stat-card">
+                    <div class="stat-icon bg-soft-warning"><i class="bi bi-box-seam text-warning"></i></div>
+                    <div>
+                        <div class="stat-label">مقدار کل اقلام</div>
+                        <div class="stat-value num">@summary.TotalQuantity.Qty()</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="stat-card">
+                    <div class="stat-icon bg-soft-muted"><i class="bi bi-calculator text-secondary"></i></div>
+                    <div>
+                        <div class="stat-label">میانگین مبلغ هر سند</div>
+                        <div class="stat-value num">@summary.AverageDocumentAmount.Money()</div>
+                        <div class="fs-8 text-muted">ریال</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+            <div class="col-lg-7">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <i class="bi bi-bar-chart-line text-primary"></i>
+                        <span class="card-title">روند @(isPurchase ? "خرید" : "فروش")</span>
+                        <span class="badge badge-soft-primary ms-auto">@TrendPeriod</span>
+                    </div>
+                    <div class="card-body">
+                        @if (summary.Trend.Count == 0)
+                        {
+                            <div class="empty-state py-3"><i class="bi bi-bar-chart"></i><h5>داده‌ای برای نمودار وجود ندارد</h5></div>
+                        }
+                        else
+                        {
+                            var maxAmount = summary.Trend.Max(x => x.Amount);
+                            <div class="d-flex flex-column gap-3">
+                                @foreach (var point in summary.Trend)
+                                {
+                                    <div>
+                                        <div class="d-flex justify-content-between gap-2 mb-1">
+                                            <span class="text-muted">@point.Label <span class="fs-8">(@point.DocumentCount.Num() سند)</span></span>
+                                            <b class="num">@point.Amount.Money()</b>
+                                        </div>
+                                        <div class="progress" style="height:7px">
+                                            <div class="progress-bar @(isPurchase ? "bg-primary" : "bg-success")" role="progressbar" style="@BarStyle(point.Amount, maxAmount)"></div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-5">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <i class="bi bi-people text-primary"></i>
+                        <span class="card-title">@(isPurchase ? "تأمین‌کنندگان برتر" : "مشتریان برتر")</span>
+                    </div>
+                    <div class="card-body p-0">
+                        @if (summary.TopParties.Count == 0)
+                        {
+                            <div class="empty-state"><i class="bi bi-inbox"></i><h5>طرف‌حسابی در این بازه ثبت نشده است</h5></div>
+                        }
+                        else
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover align-middle mb-0">
+                                    <thead><tr><th>طرف حساب</th><th class="text-center">اسناد</th><th class="text-end">مبلغ (ریال)</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var party in summary.TopParties)
+                                        {
+                                            <tr>
+                                                <td class="fw-500">@party.PartyName</td>
+                                                <td class="text-center num">@party.DocumentCount.Num()</td>
+                                                <td class="text-end num">@party.TotalAmount.Money()</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-journal-text text-primary"></i>
+                <span class="card-title">جزئیات اسناد @(isPurchase ? "خرید" : "فروش")</span>
+                <span class="badge badge-soft-primary ms-auto num">@total.Num() سند</span>
+            </div>
+            <div class="card-body p-0">
+                @if (loading)
+                {
+                    <div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary" role="status"></div></div>
+                }
+                else if (items.Count == 0)
+                {
+                    <div class="empty-state"><i class="bi bi-receipt"></i><h5>در فیلتر انتخاب‌شده سندی پیدا نشد</h5></div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>شماره سند</th>
+                                    <th>تاریخ</th>
+                                    <th>طرف حساب</th>
+                                    <th>انبار</th>
+                                    <th class="text-center">اقلام</th>
+                                    <th class="text-center">مقدار</th>
+                                    <th class="text-end">مبلغ (ریال)</th>
+                                    @if (!isPurchase && CanSeeProfit)
+                                    {
+                                        <th class="text-end">سود (ریال)</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var order in items)
+                                {
+                                    <tr>
+                                        <td class="doc-number fw-700 text-primary">@order.Number</td>
+                                        <td class="text-muted">@order.Date.ToFa()</td>
+                                        <td>@order.PartyName</td>
+                                        <td class="text-muted">@order.WarehouseName</td>
+                                        <td class="text-center num">@order.Lines.Count.Num()</td>
+                                        <td class="text-center num">@order.Lines.Sum(l => l.Quantity).Qty()</td>
+                                        <td class="text-end num fw-700">@order.TotalAmount.Money()</td>
+                                        @if (!isPurchase && CanSeeProfit)
+                                        {
+                                            <td class="text-end num">
+                                                @if (order.TotalProfit.HasValue)
+                                                {
+                                                    <span class="@(order.TotalProfit >= 0 ? "text-success" : "text-danger")">@order.TotalProfit.Value.Money()</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-muted">—</span>
+                                                }
+                                            </td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="d-print-none"><Pager Page="page" PageCount="pageCount" OnPageChanged="GoToPage" /></div>
+                }
+            </div>
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public string? Type { get; set; }
+
+    private bool isPurchase => string.Equals(Type, "purchase", StringComparison.OrdinalIgnoreCase);
+    private bool CanSeeProfit => Auth.Has("Orders.ViewProfit");
+    private TransactionType selectedType => isPurchase ? TransactionType.Purchase : TransactionType.Sale;
+    private string TrendPeriod => summary?.Trend.Any(p => p.Label.Contains('/')) == true ? "روزانه" : "ماهانه";
+
+    private const int PageSize = 20;
+    private int page = 1;
+    private int pageCount = 1;
+    private int total;
+    private int partyId;
+    private int warehouseId;
+    private DateTime? from = DateTime.Today.AddDays(-30);
+    private DateTime? to = DateTime.Today;
+    private bool loading = true;
+    private bool lookupsLoaded;
+    private bool? lookupPurchase;
+    private List<Order> items = new();
+    private List<LookupItem> partyLookup = new();
+    private List<LookupItem> warehouseLookup = new();
+    private OperationsOrderReportDto? summary;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        Layout.SetTitle(isPurchase ? "گزارش خرید" : "گزارش فروش");
+        if (!Auth.CanSee("Orders")) return;
+        if (lookupPurchase.HasValue && lookupPurchase.Value != isPurchase)
+        {
+            lookupsLoaded = false;
+            partyId = 0;
+            partyLookup.Clear();
+        }
+        lookupPurchase = isPurchase;
+        await LoadLookups();
+        page = 1;
+        await Load();
+    }
+
+    private async Task LoadLookups()
+    {
+        if (lookupsLoaded) return;
+        try
+        {
+            var parties = PartySvc.GetLookupsAsync(isPurchase ? PartyType.Supplier : PartyType.Customer);
+            var warehouses = WarehouseSvc.GetLookupsAsync();
+            await Task.WhenAll(parties, warehouses);
+            partyLookup = await parties;
+            warehouseLookup = await warehouses;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { lookupsLoaded = true; }
+    }
+
+    private async Task ApplyFilter()
+    {
+        page = 1;
+        await Load();
+    }
+
+    private async Task GoToPage(int selectedPage)
+    {
+        page = selectedPage;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var ordersTask = OrderSvc.GetOrdersAsync(selectedType, from, to, partyId, warehouseId, page, PageSize);
+            var summaryTask = OrderSvc.GetReportSummaryAsync(selectedType, from, to, partyId, warehouseId);
+            await Task.WhenAll(ordersTask, summaryTask);
+            var paged = await ordersTask;
+            items = paged.Items;
+            total = paged.TotalCount;
+            pageCount = Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+            summary = await summaryTask;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private static string BarStyle(decimal value, decimal max)
+    {
+        var pct = max <= 0 ? 0 : Math.Clamp((double)(value / max) * 100d, 0d, 100d);
+        return $"width:{pct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%";
+    }
+
+    private async Task Print() => await JS.InvokeVoidAsync("window.print");
+}

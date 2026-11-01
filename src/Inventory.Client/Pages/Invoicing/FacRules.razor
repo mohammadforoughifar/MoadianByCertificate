@@ -1,0 +1,201 @@
+@page "/fac/rules"
+@inject IFacRuleService RuleSvc
+@inject IAccAccountService AccountSvc
+@inject IInvDocTypeService DocTypeSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+
+<PageTitle>تنظیمات فاکتور</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>تنظیمات انواع فاکتور</h1>
+        <p class="lead">پیکربندی الگوهای صدور اسناد حسابداری و انبارداری متناظر فاکتورها</p>
+    </div>
+</div>
+
+<div class="alert alert-info d-flex align-items-start gap-2">
+    <i class="bi bi-info-circle-fill mt-1"></i>
+    <div>
+        با قطعی شدن فاکتور سه اتفاق می‌افتد: <b>۱)</b> سند انبار صادر و قطعی می‌شود (اثر روی موجودی و کاردکس)،
+        <b>۲)</b> سند حسابداریِ سند انبار (موجودی کالا / بهای تمام‌شده) صادر می‌شود،
+        <b>۳)</b> سند حسابداری خود فاکتور (طرف حساب / فروش یا خرید / مالیات) صادر می‌شود.
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else
+{
+    <div class="row g-3">
+        @foreach (var r in rules)
+        {
+            var rule = r;
+            <div class="col-lg-6">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <i class="bi @KindIcon(rule.Kind) text-primary"></i>
+                        <span class="card-title">@rule.KindTitle</span>
+                        <div class="form-check form-switch ms-auto mb-0">
+                            <input class="form-check-input" type="checkbox" id="@($"act{(int)rule.Kind}")"
+                                   checked="@rule.IsActive" @onchange="e => OnActive(rule, e)" />
+                            <label class="form-check-label fs-8" for="@($"act{(int)rule.Kind}")">فعال</label>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <label class="form-label">
+                                    نوع سند انبار
+                                    <span class="badge badge-soft-muted fs-8">@(IsIncoming(rule.Kind) ? "باید رسید (افزایشی) باشد" : "باید حواله (کاهشی) باشد")</span>
+                                </label>
+                                <select class="form-select" value="@(rule.DocTypeId?.ToString() ?? "")" @onchange="e => OnDocType(rule, e)">
+                                    <option value="">— بدون صدور سند انبار —</option>
+                                    @foreach (var t in DocTypesFor(rule.Kind))
+                                    {
+                                        <option value="@t.Id">@t.Name</option>
+                                    }
+                                </select>
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label">حساب طرف حساب (نسیه)</label>
+                                <SearchSelect Items="accounts" Value="@(rule.PartyAccountId ?? 0)"
+                                              ValueChanged="v => rule.PartyAccountId = v > 0 ? v : null" Placeholder="انتخاب حساب…" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">حساب صندوق/بانک (نقدی)</label>
+                                <SearchSelect Items="accounts" Value="@(rule.CashAccountId ?? 0)"
+                                              ValueChanged="v => rule.CashAccountId = v > 0 ? v : null" Placeholder="انتخاب حساب…" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">حساب اصلی (@MainTitle(rule.Kind))</label>
+                                <SearchSelect Items="accounts" Value="@(rule.MainAccountId ?? 0)"
+                                              ValueChanged="v => rule.MainAccountId = v > 0 ? v : null" Placeholder="انتخاب حساب…" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">حساب مالیات بر ارزش افزوده</label>
+                                <SearchSelect Items="accounts" Value="@(rule.VatAccountId ?? 0)"
+                                              ValueChanged="v => rule.VatAccountId = v > 0 ? v : null" Placeholder="انتخاب حساب…" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">حساب هزینه حمل</label>
+                                <SearchSelect Items="accounts" Value="@(rule.ShippingAccountId ?? 0)"
+                                              ValueChanged="v => rule.ShippingAccountId = v > 0 ? v : null" Placeholder="انتخاب حساب…" />
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <div class="w-100">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="@($"doc{(int)rule.Kind}")"
+                                               checked="@rule.AutoInvDoc" @onchange="e => rule.AutoInvDoc = e.Value is bool b && b" />
+                                        <label class="form-check-label fs-8" for="@($"doc{(int)rule.Kind}")">صدور خودکار سند انبار</label>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="@($"vch{(int)rule.Kind}")"
+                                               checked="@rule.AutoVoucher" @onchange="e => rule.AutoVoucher = e.Value is bool b && b" />
+                                        <label class="form-check-label fs-8" for="@($"vch{(int)rule.Kind}")">صدور خودکار سند حسابداری</label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-12">
+                                <div class="alert alert-light border mb-0 fs-8">
+                                    <b>اثر سند:</b> @Effect(rule.Kind)
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-end mt-3">
+                            <button class="btn btn-primary" @onclick="() => Save(rule)">
+                                <i class="bi bi-save"></i> ذخیره
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private List<FacRule> rules = new();
+    private List<LookupItem> accounts = new();
+    private List<InvDocType> docTypes = new();
+    private bool loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("تنظیمات فاکتور");
+        loading = true;
+        try
+        {
+            accounts = await AccountSvc.GetLookupsAsync();
+            docTypes = await DocTypeSvc.GetAllAsync(true);
+            rules = await RuleSvc.GetAllAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private static bool IsIncoming(InvoiceKind k) => k is InvoiceKind.Purchase or InvoiceKind.SaleReturn;
+
+    private List<InvDocType> DocTypesFor(InvoiceKind k)
+    {
+        var nature = IsIncoming(k) ? StockNature.Increase : StockNature.Decrease;
+        return docTypes.Where(t => t.Nature == nature).ToList();
+    }
+
+    private void OnDocType(FacRule rule, ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        rule.DocTypeId = string.IsNullOrEmpty(raw) ? null : int.Parse(raw);
+    }
+
+    private async Task OnActive(FacRule rule, ChangeEventArgs e)
+    {
+        rule.IsActive = e.Value is bool b && b;
+        await Save(rule);
+    }
+
+    private async Task Save(FacRule rule)
+    {
+        try
+        {
+            var saved = await RuleSvc.SaveAsync(rule);
+            var idx = rules.FindIndex(x => x.Kind == saved.Kind);
+            if (idx >= 0) rules[idx] = saved;
+            Toast.Success($"تنظیمات «{saved.KindTitle}» ذخیره شد.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+            rule.IsActive = false;
+        }
+    }
+
+    private static string KindIcon(InvoiceKind k) => k switch
+    {
+        InvoiceKind.Purchase => "bi-bag-plus",
+        InvoiceKind.Sale => "bi-cart-check",
+        InvoiceKind.PurchaseReturn => "bi-arrow-return-right",
+        _ => "bi-arrow-return-left"
+    };
+
+    private static string MainTitle(InvoiceKind k) => k switch
+    {
+        InvoiceKind.Purchase => "خرید کالا",
+        InvoiceKind.Sale => "فروش کالا",
+        InvoiceKind.PurchaseReturn => "برگشت از خرید",
+        _ => "برگشت از فروش"
+    };
+
+    private static string Effect(InvoiceKind k) => k switch
+    {
+        InvoiceKind.Purchase => "خرید کالا و مالیات بدهکار | حساب‌های پرداختنی (یا صندوق) بستانکار — کالا وارد انبار می‌شود.",
+        InvoiceKind.Sale => "حساب‌های دریافتنی (یا صندوق) بدهکار | فروش کالا و مالیات بستانکار — کالا از انبار خارج می‌شود.",
+        InvoiceKind.PurchaseReturn => "حساب‌های پرداختنی (یا صندوق) بدهکار | برگشت از خرید و مالیات بستانکار — کالا از انبار خارج می‌شود.",
+        _ => "برگشت از فروش و مالیات بدهکار | حساب‌های دریافتنی (یا صندوق) بستانکار — کالا وارد انبار می‌شود."
+    };
+}

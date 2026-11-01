@@ -1,0 +1,197 @@
+@inject IDocArchiveService Svc
+@inject IToastService Toast
+
+<Modal Visible="Visible" Title="مدیریت تگ‌ها و برچسب‌های آرشیو" Size="modal-lg" OnClose="OnClose">
+    <ChildContent>
+        <div class="row g-3">
+            @* فرم ساخت/ویرایش تگ *@
+            <div class="col-md-5 border-start">
+                <div class="card bg-light border-0">
+                    <div class="card-body p-3">
+                        <h6 class="fw-700 text-primary mb-3">
+                            <i class="bi @(editingId > 0 ? "bi-pencil-square" : "bi-tag-fill") me-1"></i>
+                            @(editingId > 0 ? "ویرایش تگ" : "ایجاد تگ جدید")
+                        </h6>
+
+                        <div class="mb-2">
+                            <label class="form-label fs-8 fw-600">عنوان تگ <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-sm" @bind="form.Name" placeholder="مثلاً: قرارداد مالی، فوری، ایزو…" />
+                        </div>
+
+                        <div class="mb-2">
+                            <label class="form-label fs-8 fw-600">رنگ تگ</label>
+                            <div class="d-flex flex-wrap gap-2 align-items-center mb-1">
+                                @foreach (var c in PresetColors)
+                                {
+                                    <button type="button" class="btn btn-sm rounded-circle p-0"
+                                            style="width:24px;height:24px;background-color:@c;border:@(form.Color == c ? "3px solid #000" : "1px solid #ccc")"
+                                            @onclick="() => form.Color = c"></button>
+                                }
+                            </div>
+                            <div class="input-group input-group-sm mt-1">
+                                <input type="color" class="form-control form-control-color" @bind="form.Color" style="width:45px" />
+                                <input type="text" class="form-control" @bind="form.Color" placeholder="#4f46e5" />
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fs-8 fw-600">توضیحات (اختیاری)</label>
+                            <input class="form-control form-control-sm" @bind="form.Description" placeholder="کاربرد تگ…" />
+                        </div>
+
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-primary flex-grow-1" @onclick="SaveTag" disabled="@saving">
+                                @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                                <i class="bi bi-check-lg ms-1"></i> @(editingId > 0 ? "به‌روزرسانی" : "افزودن تگ")
+                            </button>
+                            @if (editingId > 0)
+                            {
+                                <button class="btn btn-sm btn-light" @onclick="ResetForm">انصراف</button>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            @* لیست تگ‌های موجود *@
+            <div class="col-md-7">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="fw-700 fs-8"><i class="bi bi-tags ms-1"></i> فهرست تگ‌ها (@tags.Count.Num())</span>
+                    <button class="btn btn-sm btn-outline-secondary p-1 py-0 fs-8" @onclick="LoadTags">
+                        <i class="bi bi-arrow-clockwise"></i> تازه‌سازی
+                    </button>
+                </div>
+
+                @if (loading)
+                {
+                    <div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary"></div></div>
+                }
+                else if (tags.Count == 0)
+                {
+                    <div class="text-center text-muted py-4 fs-8">تگی تعریف نشده است.</div>
+                }
+                else
+                {
+                    <div class="list-group list-group-flush fs-8" style="max-height:360px;overflow:auto;">
+                        @foreach (var t in tags)
+                        {
+                            <div class="list-group-item d-flex justify-content-between align-items-center py-2 px-1">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="badge rounded-pill shadow-sm" style="@t.Color.ReadableBadgeStyle();padding:5px 10px;">
+                                        <i class="bi bi-tag-fill me-1"></i>@t.Name
+                                    </span>
+                                    @if (!string.IsNullOrWhiteSpace(t.Description))
+                                    {
+                                        <span class="text-muted fs-9">@t.Description</span>
+                                    }
+                                    <span class="badge bg-light text-secondary fs-9">@t.DocumentCount.Num() مدرک</span>
+                                </div>
+                                <div class="d-flex gap-1">
+                                    <button class="btn btn-sm btn-light p-1" title="ویرایش" @onclick="() => EditTag(t)">
+                                        <i class="bi bi-pencil text-primary"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light p-1" title="حذف" @onclick="() => DeleteTag(t)">
+                                        <i class="bi bi-trash text-danger"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="OnClose">بستن</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnTagsChanged { get; set; }
+
+    private List<DocTagDto> tags = new();
+    private DocTagSaveDto form = new() { Color = "#4f46e5" };
+    private int editingId;
+    private bool loading, saving;
+    private bool lastVisible;
+
+    private static readonly string[] PresetColors = new[]
+    {
+        "#4f46e5", "#059669", "#dc2626", "#d97706", "#0284c7",
+        "#7c3aed", "#db2777", "#475569", "#0891b2", "#65a30d"
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !lastVisible)
+        {
+            ResetForm();
+            await LoadTags();
+        }
+        lastVisible = Visible;
+    }
+
+    private async Task LoadTags()
+    {
+        loading = true;
+        try { tags = await Svc.GetTagsAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void EditTag(DocTagDto t)
+    {
+        editingId = t.Id;
+        form = new DocTagSaveDto { Name = t.Name, Color = t.Color, Description = t.Description };
+    }
+
+    private void ResetForm()
+    {
+        editingId = 0;
+        form = new DocTagSaveDto { Color = "#4f46e5" };
+    }
+
+    private async Task SaveTag()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name))
+        {
+            Toast.Error("عنوان تگ اجباری است.");
+            return;
+        }
+
+        saving = true;
+        try
+        {
+            if (editingId > 0)
+            {
+                await Svc.UpdateTagAsync(editingId, form);
+                Toast.Success("تگ به‌روزرسانی شد.");
+            }
+            else
+            {
+                await Svc.CreateTagAsync(form);
+                Toast.Success("تگ جدید ایجاد شد.");
+            }
+            ResetForm();
+            await LoadTags();
+            await OnTagsChanged.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task DeleteTag(DocTagDto t)
+    {
+        try
+        {
+            await Svc.DeleteTagAsync(t.Id);
+            Toast.Success("تگ حذف شد.");
+            if (editingId == t.Id) ResetForm();
+            await LoadTags();
+            await OnTagsChanged.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

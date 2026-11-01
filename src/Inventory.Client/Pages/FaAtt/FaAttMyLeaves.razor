@@ -1,0 +1,182 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/my-leaves"
+@inject IFaAttService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>مرخصی‌های من</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-calendar-heart"></i> مرخصی‌های من</h1>
+            <div class="lead">ثبت درخواست روزانه/ساعتی + پیگیری گردش تأیید (مدیر ← منابع انسانی)</div>
+        </div>
+        @if (faCreate)
+        {
+            <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> درخواست جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+    return;
+}
+
+<div class="row g-2 mb-3">
+    @foreach (var b in balances)
+    {
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center py-2">
+                <div class="fs-5 fw-bold num @(b.Remaining <= 0 ? "text-danger" : "text-success")">@FaAttUi.Num(b.Remaining)</div>
+                <div class="text-muted small">مانده @b.LeaveTypeName (روز)</div>
+                <div class="small text-muted num">استحقاق @FaAttUi.Num(b.EntitledDays) | مصرف @FaAttUi.Num(b.UsedDays)</div>
+            </div>
+        </div>
+    }
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (leaves.Count == 0)
+        {
+            <div class="text-center text-muted py-5">درخواستی ثبت نکرده‌اید.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>نوع</th><th>بازه</th><th>مدت</th><th class="d-none d-md-table-cell">علت</th><th>وضعیت</th><th class="d-none d-md-table-cell">مرحله</th><th style="width:120px"></th></tr></thead>
+                <tbody>
+                    @foreach (var l in leaves)
+                    {
+                        <tr>
+                            <td><b>@l.LeaveTypeName</b></td>
+                            <td class="num text-nowrap">@l.FromDate.ToFa() تا @l.ToDate.ToFa()</td>
+                            <td class="num">@(l.HoursPerDay == null ? FaAttUi.Num((l.ToDate - l.FromDate).Days + 1) + " روز" : FaAttUi.Num(l.HoursPerDay.Value) + " ساعت/روز")</td>
+                            <td class="d-none d-md-table-cell">@(l.Reason ?? "—")</td>
+                            <td><span class="badge @FaAttUi.ReqBadge(l.Status)">@FaAttUi.ReqStatus(l.Status)</span></td>
+                            <td class="d-none d-md-table-cell"><span class="badge @FaAttUi.WorkflowBadge(l.WorkflowStep)">@FaAttUi.WorkflowStep(l.WorkflowStep)</span></td>
+                            <td class="text-end">
+                                @if (l.Status == 0 && faCreate)
+                                {
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-secondary" title="ویرایش" @onclick="() => OpenEdit(l)"><i class="bi bi-pencil"></i></button>
+                                        <button class="btn btn-outline-danger" title="انصراف" @onclick="() => Cancel(l)"><i class="bi bi-x-lg"></i></button>
+                                    </div>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="درخواست مرخصی" OnClose="() => showEdit = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-12"><label class="form-label">نوع مرخصی</label><select class="form-select" @bind="form.LeaveTypeId">@foreach (var t in types){<option value="@t.Id">@t.Name</option>}</select></div>
+        <div class="col-md-6"><label class="form-label">از تاریخ</label><DatePicker @bind-Value="dFrom" /></div>
+        <div class="col-md-6"><label class="form-label">تا تاریخ</label><DatePicker @bind-Value="dTo" /></div>
+        <div class="col-12"><div class="form-check"><input type="checkbox" class="form-check-input" @bind="isHourly" /><label class="form-check-label">مرخصی ساعتی</label></div></div>
+        @if (isHourly)
+        {
+            <div class="col-md-6"><label class="form-label">ساعت در روز</label><input type="number" step="0.5" min="0.5" max="8" class="form-control" @bind="hours" /></div>
+        }
+        <div class="col-12"><label class="form-label">علت</label><textarea class="form-control" rows="2" @bind="form.Reason"></textarea></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" @onclick="Save">ثبت درخواست</button>
+    </div>
+    </Footer>
+</Modal>
+
+<style>
+    @@media (max-width: 575px) {
+        .page-head h1 { font-size: 1.25rem; }
+        .page-head .lead { font-size: .85rem; }
+        .table { font-size: .82rem; }
+    }
+</style>
+
+@code {
+    private bool faRead => Auth.Has("FaAtt.Read") || Auth.IsAdmin;
+    private bool faCreate => Auth.Has("FaAtt.Create") || Auth.IsAdmin;
+    private bool loading = true, showEdit, isHourly;
+    private List<FaAttLeaveDto> leaves = new();
+    private List<FaAttLeaveBalanceDto> balances = new();
+    private List<FaAttLeaveTypeDto> types = new();
+    private int? editId;
+    private FaAttLeaveSaveDto form = new();
+    private DateTime? dFrom = DateTime.Today, dTo = DateTime.Today;
+    private double hours = 2;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            types = (await Svc.GetLeaveTypesAsync()).Where(t => t.IsActive).ToList();
+            leaves = await Svc.MyLeavesAsync();
+            balances = await Svc.MyBalancesAsync(FaAttUi.CurrentYear);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenEdit(FaAttLeaveDto? l)
+    {
+        editId = l?.Id;
+        form = new FaAttLeaveSaveDto
+        {
+            LeaveTypeId = l?.LeaveTypeId ?? types.FirstOrDefault()?.Id ?? 0,
+            Reason = l?.Reason
+        };
+        dFrom = l?.FromDate ?? DateTime.Today;
+        dTo = l?.ToDate ?? DateTime.Today;
+        isHourly = l?.HoursPerDay != null;
+        hours = l?.HoursPerDay ?? 2;
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        form.FromDate = dFrom ?? DateTime.Today;
+        form.ToDate = dTo ?? DateTime.Today;
+        form.HoursPerDay = isHourly ? hours : null;
+        try
+        {
+            if (editId == null) await Svc.RequestMyLeaveAsync(form);
+            else await Svc.UpdateMyLeaveAsync(editId.Value, form);
+            Toast.Success("درخواست ثبت شد و نزد مدیر مستقیم قرار گرفت.");
+            showEdit = false;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Cancel(FaAttLeaveDto l)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "از این درخواست انصراف می‌دهید؟")) return;
+        try { await Svc.CancelMyLeaveAsync(l.Id); Toast.Success("انصراف ثبت شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

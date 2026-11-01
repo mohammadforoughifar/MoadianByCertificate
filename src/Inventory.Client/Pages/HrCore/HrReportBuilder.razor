@@ -1,0 +1,438 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/reports"
+@using System.Text
+@inject IHrCoreService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>گزارش‌ساز HR</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-file-earmark-spreadsheet"></i> گزارش‌ساز سفارشی HR</h1>
+    <div class="lead">موجودیت، ستون‌ها و فیلترها را انتخاب کنید؛ خروجی CSV بگیرید یا قالب ذخیره کنید</div>
+</div>
+
+@if (!canManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص مدیر منابع انسانی است.</div>
+    return;
+}
+
+<div class="row g-3">
+    <div class="col-lg-8">
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-body">
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted">موجودیت</label>
+                        <select class="form-select" value="@entity" @onchange="OnEntityChanged">
+                            <option value="employee">پرسنل</option>
+                            <option value="contract">قراردادها</option>
+                            <option value="decree">احکام</option>
+                            <option value="leave">مرخصی‌ها</option>
+                            <option value="mission">مأموریت‌ها</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">سقف ردیف</label>
+                        <select class="form-select num" @bind="take">
+                            <option value="100">۱۰۰</option>
+                            <option value="500">۵۰۰</option>
+                            <option value="1000">۱۰۰۰</option>
+                        </select>
+                    </div>
+                    <div class="col-md-5 d-flex gap-2 justify-content-end">
+                        <button class="btn btn-outline-secondary" @onclick="ToggleAllCols">@(allChecked ? "هیچ ستونی" : "همه ستون‌ها")</button>
+                        <button class="btn btn-primary" @onclick="Run" disabled="@running">
+                            @if (running) { <span class="spinner-border spinner-border-sm"></span> }
+                            <i class="bi bi-play-fill"></i> اجرا
+                        </button>
+                    </div>
+                </div>
+                <hr />
+                <label class="form-label small text-muted">ستون‌ها</label>
+                @if (loadingMeta)
+                {
+                    <div class="text-muted small">در حال بارگذاری…</div>
+                }
+                else
+                {
+                    <div class="d-flex flex-wrap gap-3">
+                        @foreach (var c in meta)
+                        {
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="col-@c.Key"
+                                       checked="@checkedCols.Contains(c.Key)"
+                                       @onchange="e => OnColToggle(c.Key, (bool)(e.Value ?? false))" />
+                                <label class="form-check-label small" for="col-@c.Key">@c.Label</label>
+                            </div>
+                        }
+                    </div>
+                }
+                <hr />
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <label class="form-label small text-muted mb-0">فیلترها</label>
+                    <button class="btn btn-sm btn-outline-primary" @onclick="AddFilter"><i class="bi bi-plus"></i> افزودن فیلتر</button>
+                </div>
+                @if (filters.Count == 0)
+                {
+                    <div class="text-muted small">فیلتری تعریف نشده — کل رکوردها برمی‌گردد.</div>
+                }
+                @foreach (var f in filters)
+                {
+                    <div class="row g-2 align-items-end mb-2">
+                        <div class="col-md-4">
+                            <select class="form-select form-select-sm" @bind="f.Field">
+                                <option value="">— ستون —</option>
+                                @foreach (var c in meta)
+                                {
+                                    <option value="@c.Key">@c.Label</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <select class="form-select form-select-sm" @bind="f.Op">
+                                <option value="contains">شامل</option>
+                                <option value="eq">مساوی</option>
+                                <option value="gte">از / ≥</option>
+                                <option value="lte">تا / ≤</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            @FilterValueControl(f)
+                        </div>
+                        <div class="col-md-1">
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => filters.Remove(f)"><i class="bi bi-x"></i></button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        @if (result != null)
+        {
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <div class="small text-muted">
+                            <span class="num">@Fa.Digits(result.Total.ToString())</span> ردیف
+                            @if (result.Truncated)
+                            {
+                                <span class="badge bg-warning text-dark ms-1">فقط @Fa.Digits(result.Rows.Count.ToString()) ردیف اول نمایش داده شد</span>
+                            }
+                        </div>
+                        <a class="btn btn-sm btn-success" href="@CsvHref()" download="@CsvFileName()"><i class="bi bi-download"></i> خروجی CSV</a>
+                    </div>
+                    <div class="table-responsive" style="max-height:480px;overflow:auto">
+                        <table class="table table-sm table-striped table-hover align-middle">
+                            <thead class="table-light position-sticky top-0">
+                                <tr>
+                                    <th class="num">#</th>
+                                    @foreach (var c in result.Columns)
+                                    {
+                                        <th>@c.Label</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @{
+                                    var i = 0;
+                                }
+                                @foreach (var row in result.Rows)
+                                {
+                                    i++;
+                                    <tr>
+                                        <td class="num">@Fa.Digits(i.ToString())</td>
+                                        @foreach (var cell in row)
+                                        {
+                                            <td class="num">@cell</td>
+                                        }
+                                    </tr>
+                                }
+                                @if (result.Rows.Count == 0)
+                                {
+                                    <tr><td colspan="@(result.Columns.Count + 1)" class="text-center text-muted py-4">رکوردی یافت نشد.</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="card-title"><i class="bi bi-bookmark"></i> قالب‌های من</h6>
+                <div class="input-group input-group-sm mb-2">
+                    <input class="form-control" placeholder="نام قالب جدید…" @bind="tplName" />
+                    <button class="btn btn-outline-primary" @onclick="SaveTpl" disabled="@running">ذخیره</button>
+                </div>
+                @if (loadingTpl)
+                {
+                    <div class="text-muted small">در حال بارگذاری…</div>
+                }
+                else if (templates.Count == 0)
+                {
+                    <div class="text-muted small">هنوز قالبی ذخیره نشده است.</div>
+                }
+                else
+                {
+                    <div class="list-group list-group-flush">
+                        @foreach (var t in templates)
+                        {
+                            <div class="list-group-item d-flex align-items-center justify-content-between px-0">
+                                <div>
+                                    <div class="fw-bold small">@t.Name</div>
+                                    <div class="text-muted" style="font-size:.75rem">@EntityFa(t.Entity) — @Fa.Digits(t.Columns.Count.ToString()) ستون</div>
+                                </div>
+                                <div class="d-flex gap-1">
+                                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => LoadTpl(t)">باز کردن</button>
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteTpl(t.Id)"><i class="bi bi-trash"></i></button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool canManage => Auth.Has("HrCore.Manage") || Auth.IsAdmin;
+
+    private string entity = "employee";
+    private int take = 500;
+    private bool loadingMeta, running, loadingTpl = true;
+    private List<HrReportColumnDto> meta = new();
+    private HashSet<string> checkedCols = new();
+    private List<FRow> filters = new();
+    private HrReportResultDto? result;
+    private List<HrReportTemplateDto> templates = new();
+    private string tplName = "";
+
+    private bool allChecked => meta.Count > 0 && checkedCols.Count == meta.Count;
+
+    private class FRow
+    {
+        public string Field { get; set; } = "";
+        public string Op { get; set; } = "contains";
+        public string? Value { get; set; }
+        public DateTime? DateVal { get; set; }
+    }
+
+    private HrReportColumnDto? ColOf(string field) => meta.FirstOrDefault(m => m.Key == field);
+
+    private RenderFragment FilterValueControl(FRow f) => builder =>
+    {
+        var col = ColOf(f.Field);
+        if (col == null) return;
+        var seq = 0;
+        if (col.Type == "enum")
+        {
+            builder.OpenElement(seq++, "select");
+            builder.AddAttribute(seq++, "class", "form-select form-select-sm");
+            builder.AddAttribute(seq++, "value", f.Value ?? "");
+            builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => f.Value = e.Value?.ToString()));
+            builder.OpenElement(seq++, "option");
+            builder.AddAttribute(seq++, "value", "");
+            builder.AddContent(seq++, "— انتخاب —");
+            builder.CloseElement();
+            foreach (var o in col.Options)
+            {
+                builder.OpenElement(seq++, "option");
+                builder.AddAttribute(seq++, "value", o.Value);
+                builder.AddContent(seq++, o.Label);
+                builder.CloseElement();
+            }
+            builder.CloseElement();
+        }
+        else if (col.Type == "bool")
+        {
+            builder.OpenElement(seq++, "select");
+            builder.AddAttribute(seq++, "class", "form-select form-select-sm");
+            builder.AddAttribute(seq++, "value", f.Value ?? "");
+            builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => f.Value = e.Value?.ToString()));
+            foreach (var (v, l) in new[] { ("", "— انتخاب —"), ("1", "بله"), ("0", "خیر") })
+            {
+                builder.OpenElement(seq++, "option");
+                builder.AddAttribute(seq++, "value", v);
+                builder.AddContent(seq++, l);
+                builder.CloseElement();
+            }
+            builder.CloseElement();
+        }
+        else if (col.Type == "date")
+        {
+            builder.OpenComponent<DatePicker>(seq++);
+            builder.AddAttribute(seq++, "Value", f.DateVal);
+            builder.AddAttribute(seq++, "ValueChanged", EventCallback.Factory.Create<DateTime?>(this, v => f.DateVal = v));
+            builder.AddAttribute(seq++, "ValueExpression", (System.Linq.Expressions.Expression<Func<DateTime?>>)(() => f.DateVal));
+            builder.AddAttribute(seq++, "AllowClear", true);
+            builder.CloseComponent();
+        }
+        else
+        {
+            builder.OpenElement(seq++, "input");
+            builder.AddAttribute(seq++, "class", "form-control form-control-sm num");
+            builder.AddAttribute(seq++, "value", f.Value ?? "");
+            builder.AddAttribute(seq++, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, e => f.Value = e.Value?.ToString()));
+            builder.CloseElement();
+        }
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canManage) return;
+        await LoadMeta();
+        await LoadTemplates();
+    }
+
+    private async Task OnEntityChanged(ChangeEventArgs e)
+    {
+        entity = e.Value?.ToString() ?? "employee";
+        filters.Clear();
+        result = null;
+        await LoadMeta();
+    }
+
+    private async Task LoadMeta()
+    {
+        loadingMeta = true;
+        try
+        {
+            meta = await Svc.GetReportMetaAsync(entity);
+            checkedCols = meta.Select(m => m.Key).ToHashSet();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loadingMeta = false;
+    }
+
+    private void OnColToggle(string key, bool on)
+    {
+        if (on) checkedCols.Add(key);
+        else checkedCols.Remove(key);
+    }
+
+    private void ToggleAllCols()
+    {
+        if (allChecked) checkedCols.Clear();
+        else checkedCols = meta.Select(m => m.Key).ToHashSet();
+    }
+
+    private void AddFilter() => filters.Add(new FRow());
+
+    private async Task Run()
+    {
+        if (checkedCols.Count == 0) { Toast.Error("حداقل یک ستون انتخاب کنید."); return; }
+        running = true;
+        try
+        {
+            var dto = new HrReportRunDto
+            {
+                Entity = entity,
+                Columns = meta.Where(m => checkedCols.Contains(m.Key)).Select(m => m.Key).ToList(),
+                Take = take,
+                Filters = filters
+                    .Where(f => !string.IsNullOrEmpty(f.Field))
+                    .Select(f =>
+                    {
+                        var v = f.Value;
+                        var col = ColOf(f.Field);
+                        if (col?.Type == "date")
+                            v = f.DateVal == null ? null : f.DateVal.Value.ToString("yyyy-MM-dd");
+                        return new HrReportFilterDto { Field = f.Field, Op = f.Op, Value = v };
+                    })
+                    .Where(f => !string.IsNullOrWhiteSpace(f.Value))
+                    .ToList()
+            };
+            result = await Svc.RunReportAsync(dto);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        running = false;
+    }
+
+    private static string CsvCell(string s) => "\"" + (s ?? "").Replace("\"", "\"\"") + "\"";
+
+    private string CsvHref()
+    {
+        if (result == null) return "";
+        var sb = new StringBuilder();
+        sb.Append('\uFEFF');
+        sb.AppendLine(string.Join(",", result.Columns.Select(c => CsvCell(c.Label))));
+        foreach (var row in result.Rows)
+            sb.AppendLine(string.Join(",", row.Select(CsvCell)));
+        return "data:text/csv;charset=utf-8;base64," + Convert.ToBase64String(Encoding.UTF8.GetBytes(sb.ToString()));
+    }
+
+    private string CsvFileName() => $"hr-report-{entity}-{DateTime.Now:yyyyMMdd-HHmm}.csv";
+
+    private async Task LoadTemplates()
+    {
+        loadingTpl = true;
+        try { templates = await Svc.ListReportTemplatesAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loadingTpl = false;
+    }
+
+    private async Task SaveTpl()
+    {
+        if (string.IsNullOrWhiteSpace(tplName)) { Toast.Error("نام قالب را وارد کنید."); return; }
+        try
+        {
+            var dto = new HrReportTemplateSaveDto
+            {
+                Name = tplName.Trim(),
+                Entity = entity,
+                Columns = meta.Where(m => checkedCols.Contains(m.Key)).Select(m => m.Key).ToList(),
+                Filters = filters
+                    .Where(f => !string.IsNullOrEmpty(f.Field))
+                    .Select(f => new HrReportFilterDto { Field = f.Field, Op = f.Op, Value = f.Value })
+                    .ToList()
+            };
+            await Svc.SaveReportTemplateAsync(dto);
+            tplName = "";
+            Toast.Success("قالب ذخیره شد.");
+            await LoadTemplates();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task LoadTpl(HrReportTemplateDto t)
+    {
+        entity = t.Entity;
+        await LoadMeta();
+        checkedCols = t.Columns.Where(c => meta.Any(m => m.Key == c)).ToHashSet();
+        filters = t.Filters.Select(f =>
+        {
+            var col = ColOf(f.Field);
+            DateTime? dv = null;
+            if (col?.Type == "date" && DateTime.TryParse(f.Value, out var d)) dv = d;
+            return new FRow { Field = f.Field, Op = f.Op, Value = f.Value, DateVal = dv };
+        }).ToList();
+        result = null;
+    }
+
+    private async Task DeleteTpl(int id)
+    {
+        try
+        {
+            await Svc.DeleteReportTemplateAsync(id);
+            Toast.Success("قالب حذف شد.");
+            await LoadTemplates();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string EntityFa(string e) => e switch
+    {
+        "employee" => "پرسنل",
+        "contract" => "قراردادها",
+        "decree" => "احکام",
+        "leave" => "مرخصی‌ها",
+        "mission" => "مأموریت‌ها",
+        _ => e
+    };
+}

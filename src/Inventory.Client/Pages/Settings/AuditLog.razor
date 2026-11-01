@@ -1,0 +1,419 @@
+@page "/settings/audit-log"
+@namespace Inventory.Client.Pages
+@using Inventory.Shared.Dtos
+@using System.Text.Json
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>لاگ عملیات</PageTitle>
+
+@if (!Auth.IsAdmin)
+{
+    <div class="alert alert-warning">دسترسی به لاگ عملیات فقط برای مدیر سیستم فعال است.</div>
+}
+else
+{
+    <div class="page-head mb-4">
+        <h1><i class="bi bi-clipboard-data"></i> لاگ عملیات</h1>
+        <div class="lead">ثبت و پایش وقایع سیستمی (ثبت، ویرایش، حذف و دسترسی‌ها) به همراه شناسه کاربر، زمان، IP و اطلاعات نشست کاری</div>
+    </div>
+
+    <div class="card border-0 shadow-sm al-card">
+        <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <span class="fw-800"><i class="bi bi-funnel text-primary"></i> فیلترها</span>
+            <span class="small text-muted">@Fa.Digits(total) رکورد</span>
+        </div>
+        <div class="card-body">
+            <div class="row g-2 mb-3">
+                <div class="col-6 col-lg-2">
+                    <label class="al-label">کاربر</label>
+                    <SearchSelect Items="@userItems" Value="@fUserId" ValueChanged='async v => { fUserId = v; await Load(); }' Placeholder="همه‌ی کاربران" />
+                </div>
+                <div class="col-6 col-lg-2">
+                    <label class="al-label">بخش نرم‌افزار (ماژول)</label>
+                    <SearchSelectStr Items="@moduleDisplay" Value="@fModuleDisplay" ValueChanged='async v => { fModuleDisplay = v ?? ""; fModule = labelToModule.TryGetValue(v ?? "", out var mk) ? mk : ""; fAction = ""; await LoadActions(); await Load(); }' Placeholder="همه‌ی بخش‌ها" />
+                </div>
+                <div class="col-6 col-lg-2">
+                    <label class="al-label">عملیات</label>
+                    <SearchSelectStr Items="@actions" Value="@fAction" ValueChanged='async v => { fAction = v; await Load(); }' Placeholder="همه‌ی عملیات‌ها" />
+                </div>
+                <div class="col-6 col-lg-2">
+                    <label class="al-label">از تاریخ</label>
+                    <DatePicker Value="@fromDate" ValueChanged="v => fromDate = v" AllowClear CssClass="form-control-sm" />
+                </div>
+                <div class="col-6 col-lg-2">
+                    <label class="al-label">تا تاریخ</label>
+                    <DatePicker Value="@toDate" ValueChanged="v => toDate = v" AllowClear CssClass="form-control-sm" />
+                </div>
+                <div class="col-12 col-lg-2">
+                    <label class="al-label">جستجو</label>
+                    <input type="text" class="form-control form-control-sm" value="@q" @onchange='e => q = e.Value?.ToString() ?? ""' placeholder="نام، IP، متن..." />
+                </div>
+            </div>
+
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <button class="btn btn-sm btn-primary" @onclick='() => _ = Load()'><i class="bi bi-search me-1"></i> اعمال فیلتر</button>
+                <button class="btn btn-sm btn-outline-secondary" @onclick="ClearFilters"><i class="bi bi-x-circle me-1"></i> پاک‌کردن فیلترها</button>
+                <button class="btn btn-sm btn-outline-success" @onclick="ExportCsv"><i class="bi bi-filetype-csv me-1"></i> خروجی CSV</button>
+                <div class="ms-auto d-flex gap-1">
+                    @foreach (var rng in Ranges)
+                    {
+                        <button class="btn btn-sm @(activeRange == rng.Key ? "btn-outline-primary active" : "btn-light")" @onclick='() => SetRange(rng.Key)'>@rng.Label</button>
+                    }
+                </div>
+            </div>
+
+            @if (loading)
+            {
+                <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+            }
+            else if (items.Count == 0)
+            {
+                <div class="text-muted text-center py-4"><i class="bi bi-inbox fs-4 d-block mb-1"></i> با این فیلترها لاگی ثبت نشده است.</div>
+            }
+            else
+            {
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 px-1 pb-2 small text-muted">
+                    <span><i class="bi bi-ui-checks-grid me-1"></i> نمایش @Fa.Digits(startRow) تا @Fa.Digits(endRow) از @Fa.Digits(total) رکورد</span>
+                    <span>صفحه‌ی @Fa.Digits(pageNum) از @Fa.Digits(pageCount)</span>
+                    <div class="d-flex align-items-center gap-1">
+                        <span class="small">تعداد در صفحه:</span>
+                        <div class="btn-group btn-group-sm" role="group">
+                            @foreach (var s in PageSizes)
+                            {
+                                <button type="button" class="btn @(pageSize == s ? "btn-primary" : "btn-outline-secondary")" @onclick='() => SetPageSize(s)'>@Fa.Digits(s)</button>
+                            }
+                        </div>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle al-table">
+                        <thead>
+                            <tr>
+                                <th>زمان</th>
+                                <th>کاربر</th>
+                                <th>بخش</th>
+                                <th>عملیات</th>
+                                <th>خلاصه</th>
+                                <th>وضعیت</th>
+                                <th>IP</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var l in items)
+                            {
+                                <tr class="@(l.StatusCode >= 400 ? "al-err" : "")">
+                                    <td class="text-nowrap small">@Fa.Digits(PersianDate.ToShortWithTime(l.At))</td>
+                                    <td class="fw-700 text-nowrap">@l.Username</td>
+                                    <td class="text-nowrap"><span class="badge rounded-pill al-mod">@ModuleLabel(l.Module)</span></td>
+                                    <td class="text-nowrap small">@ActionLabel(l.Action) <span class="text-muted" dir="ltr">(@l.HttpMethod)</span></td>
+                                    <td class="small al-sum">@l.Summary</td>
+                                    <td class="text-nowrap">
+                                        @if (l.StatusCode < 400)
+                                        {
+                                            <span class="badge text-bg-success">@Fa.Digits(l.StatusCode)</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge text-bg-danger">@Fa.Digits(l.StatusCode)</span>
+                                        }
+                                        <span class="small text-muted">@Fa.Digits(l.DurationMs)ms</span>
+                                    </td>
+                                    <td class="small text-muted" dir="ltr">@l.Ip</td>
+                                    <td>
+                                        <button class="btn btn-sm btn-light" title="جزئیات" @onclick='() => ShowDetails(l.Id)'><i class="bi bi-eye text-primary"></i></button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <Pager Page="@pageNum" PageCount="@pageCount" OnPageChanged="p => GoPage(p)" />
+            }
+        </div>
+    </div>
+
+    @if (details != null)
+    {
+        <div class="modal fade show d-block" style="background:rgba(0,0,0,.5)">
+            <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable" @onclick:stopPropagation>
+                <div class="modal-content">
+                    <div class="modal-header py-2">
+                        <h5 class="modal-title"><i class="bi bi-card-text text-primary"></i> جزئیات لاگ @Fa.Digits(details.Id)</h5>
+                        <button type="button" class="btn-close" @onclick='() => details = null'></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="row g-2 small mb-2">
+                            <div class="col-6 col-md-4"><b>زمان:</b> @Fa.Digits(PersianDate.ToShortWithTime(details.At))</div>
+                            <div class="col-6 col-md-4"><b>کاربر:</b> @details.Username <span class="text-muted">(#@Fa.Digits(details.UserId ?? 0))</span></div>
+                            <div class="col-6 col-md-4"><b>بخش/عملیات:</b> @ModuleLabel(details.Module) / @ActionLabel(details.Action)</div>
+                            <div class="col-6 col-md-4"><b>متد/مسیر:</b> <span dir="ltr">@details.HttpMethod @details.Path</span></div>
+                            <div class="col-6 col-md-4"><b>IP:</b> <span dir="ltr">@details.Ip</span></div>
+                            <div class="col-6 col-md-4"><b>کد وضعیت:</b> @Fa.Digits(details.StatusCode) — @Fa.Digits(details.DurationMs)ms</div>
+                            <div class="col-12"><b>دستگاه:</b> <span dir="ltr" class="text-muted">@details.Device</span></div>
+                            <div class="col-12"><b>خلاصه:</b> @details.Summary</div>
+                        </div>
+                        <label class="al-label">بدنه‌ی درخواست (مقادیر حساس پوشانده شده)</label>
+                        <pre class="al-payload" dir="ltr">@Pretty(details.Payload)</pre>
+                    </div>
+                    <div class="modal-footer py-2">
+                        <button class="btn btn-light" @onclick='() => details = null'>بستن</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private bool loading = true;
+    private int pageNum = 1, pageSize = 25, total;
+    private int pageCount => total == 0 ? 1 : (int)Math.Ceiling(total / (double)pageSize);
+    private List<AuditRow> items = new();
+
+    // ---- فیلترها ----
+    private int fUserId;
+    private string fModule = "";
+    private string fModuleDisplay = "";
+    private string fAction = "";
+    private string q = "";
+    private DateTime? fromDate;
+    private DateTime? toDate;
+    private string activeRange = "";
+
+    // ---- کمبوها ----
+    private List<LookupItem> userItems = new();
+    private List<string> modules = new();
+    private List<string> moduleDisplay = new();
+    private Dictionary<string, string> labelToModule = new();
+    private List<string> actions = new();
+    private static readonly int[] PageSizes = { 10, 25, 50, 100 };
+    private int startRow => total == 0 ? 0 : (pageNum - 1) * pageSize + 1;
+    private int endRow => Math.Min(pageNum * pageSize, total);
+
+    private AuditDetails? details;
+
+    private static readonly (string Key, string Label)[] Ranges =
+    {
+        ("today", "امروز"), ("week", "۷ روز"), ("month", "این ماه"), ("all", "همه"),
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(Auth.Token))
+            Http.DefaultRequestHeaders.Authorization = new("Bearer", Auth.Token);
+        // پیش‌فرض: امروز
+        fromDate = DateTime.Today;
+        toDate = DateTime.Today;
+        activeRange = "today";
+        await LoadUsers();
+        await LoadModules();
+        await Load();
+    }
+
+    private void SetRange(string key)
+    {
+        activeRange = key;
+        var today = DateTime.Today;
+        var (jy, jm, _) = PersianDate.FromGregorian(DateTime.Now);
+        var mFrom = PersianDate.ToGregorian(jy, jm, 1);
+        (fromDate, toDate) = key switch
+        {
+            "today" => ((DateTime?)today, (DateTime?)today),
+            "week" => ((DateTime?)today.AddDays(-6), (DateTime?)today),
+            "month" => ((DateTime?)mFrom, (DateTime?)today),
+            _ => ((DateTime?)null, (DateTime?)null),
+        };
+        pageNum = 1;
+        _ = Load();
+    }
+
+    private void ClearFilters()
+    {
+        fUserId = 0; fModule = ""; fModuleDisplay = ""; fAction = ""; q = "";
+        fromDate = null; toDate = null; activeRange = ""; pageNum = 1;
+        actions = new();
+        _ = Load();
+    }
+
+    private void SetPageSize(int s)
+    {
+        if (pageSize == s) return;
+        pageSize = s; pageNum = 1;
+        _ = Load();
+    }
+
+    private void GoPage(int p) { pageNum = p; _ = Load(); }
+
+    private string Qs()
+    {
+        var parts = new List<string> { $"page={pageNum}", $"pageSize={pageSize}" };
+        if (fUserId > 0) parts.Add($"userId={fUserId}");
+        if (!string.IsNullOrWhiteSpace(fModule)) parts.Add($"module={Uri.EscapeDataString(fModule)}");
+        if (!string.IsNullOrWhiteSpace(fAction)) parts.Add($"action={Uri.EscapeDataString(fAction)}");
+        if (!string.IsNullOrWhiteSpace(q)) parts.Add($"q={Uri.EscapeDataString(q.Trim())}");
+        if (fromDate.HasValue) parts.Add("from=" + Uri.EscapeDataString(fromDate.Value.ToString("yyyy-MM-ddTHH:mm:ss")));
+        if (toDate.HasValue) parts.Add("to=" + Uri.EscapeDataString(toDate.Value.ToString("yyyy-MM-ddTHH:mm:ss")));
+        return string.Join("&", parts);
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var r = await Http.GetFromJsonAsync<AuditResp>($"/api/AuditLogs?{Qs()}");
+            items = r?.items ?? new();
+            total = r?.total ?? 0;
+        }
+        catch { items = new(); total = 0; }
+        loading = false;
+    }
+
+    private async Task LoadUsers()
+    {
+        try
+        {
+            var raw = await Http.GetFromJsonAsync<List<AuditUserDto>>("/api/AuditLogs/users") ?? new();
+            userItems = raw.Select(u => new LookupItem { Id = u.Id ?? 0, Name = u.Name ?? "-" }).ToList();
+        }
+        catch { userItems = new(); }
+    }
+
+    private async Task LoadModules()
+    {
+        try
+        {
+            modules = await Http.GetFromJsonAsync<List<string>>("/api/AuditLogs/modules") ?? new();
+            // نمایش فارسی در کمبو + نگاشت برعکس به کلید انگلیسی برای فیلتر
+            labelToModule = new();
+            foreach (var m in modules.Distinct())
+            {
+                var lbl = ModuleLabel(m);
+                if (!labelToModule.ContainsKey(lbl)) labelToModule[lbl] = m;
+            }
+            moduleDisplay = labelToModule.Keys.OrderBy(x => x, StringComparer.CurrentCulture).ToList();
+        }
+        catch { modules = new(); moduleDisplay = new(); }
+    }
+
+    private async Task LoadActions()
+    {
+        try
+        {
+            var url = string.IsNullOrWhiteSpace(fModule) ? "/api/AuditLogs/actions" : $"/api/AuditLogs/actions?module={Uri.EscapeDataString(fModule)}";
+            actions = await Http.GetFromJsonAsync<List<string>>(url) ?? new();
+        }
+        catch { actions = new(); }
+    }
+
+    private async Task ShowDetails(long id)
+    {
+        try { details = await Http.GetFromJsonAsync<AuditDetails>($"/api/AuditLogs/{id}"); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task ExportCsv()
+    {
+        try
+        {
+            var bytes = await Http.GetByteArrayAsync($"/api/AuditLogs/export.csv?{Qs()}");
+            await JSRuntime.InvokeVoidAsync("saveAsFile", $"audit-log-{PersianDate.TodayInput()}.csv", Convert.ToBase64String(bytes));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    [Inject] private IJSRuntime JSRuntime { get; set; } = default!;
+
+    private string ModuleLabel(string m) => m switch
+    {
+        "Auth" => "ورود/احراز هویت",
+        "Products" => "کالاها", "Categories" => "گروه کالا", "Units" => "واحدها",
+        "Warehouses" => "انبارها", "Parties" => "طرف حساب‌ها", "Customers" => "مشتریان", "Suppliers" => "تأمین‌کنندگان", "Stock" => "موجودی انبار",
+        "Orders" => "خرید/فروش", "GoodsIssues" => "بیجک", "Expenses" => "هزینه‌ها",
+        "Attendance" => "حضور و غیاب", "LeaveRequests" => "مرخصی و ماموریت",
+        "Repairs" => "تعمیرات", "WorkOrders" => "دستور کار", "ItRequests" => "درخواست IT",
+        "CctvCameras" => "دوربین‌ها", "CctvNvrs" => "NVR", "CctvScan" => "اسکن دوربین‌ها",
+        "ItVault" => "گاوصندوق رمزها", "Ipam" => "مدیریت آی‌پی",
+        "NetworkScan" => "اسکن شبکه", "OfficeMachines" => "ماشین‌های اداری",
+        "SystemUsers" => "کاربران سیستم", "Roles" => "نقش‌ها", "Permissions" => "مجوزها", "Settings" => "تنظیمات",
+        "SystemCompanies" => "شرکت‌ها", "SystemDepartments" => "واحدهای سازمانی",
+        "AuditLogs" => "لاگ عملیات", "Reports" => "گزارش‌ها", "Archive" => "بایگانی",
+        "Notifications" => "اعلان‌ها", "Dashboard" => "داشبورد",
+        "MeetingMinutes" => "صورتجلسه",
+        _ => m,
+    };
+
+    private string ActionLabel(string a) => a switch
+    {
+        "Create" or "Add" or "AddHoliday" or "CheckIn" => "ایجاد",
+        "Update" or "Edit" or "Save" or "SaveShift" or "SaveCalendar" or "SaveSettings" or "AssignShift" or "UpdateSegment" or "Approve" => "ویرایش/تایید",
+        "Delete" or "Remove" => "حذف",
+        "Login" => "ورود به سیستم",
+        "Reject" => "رد",
+        "Import" => "ورود گروهی",
+        _ => a,
+    };
+
+    private string Pretty(string? payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload)) return "—";
+        try
+        {
+            var el = JsonSerializer.Deserialize<JsonElement>(payload);
+            return JsonSerializer.Serialize(el, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch { return payload; }
+    }
+
+    // ================== DTOها ==================
+    public class AuditRow
+    {
+        public long Id { get; set; }
+        public DateTime At { get; set; }
+        public int? UserId { get; set; }
+        public string? Username { get; set; }
+        public string Module { get; set; } = "";
+        public string Action { get; set; } = "";
+        public string HttpMethod { get; set; } = "";
+        public string? Summary { get; set; }
+        public string? Ip { get; set; }
+        public string? Device { get; set; }
+        public int StatusCode { get; set; }
+        public int DurationMs { get; set; }
+    }
+
+    public class AuditDetails : AuditRow
+    {
+        public string? Path { get; set; }
+        public string? Payload { get; set; }
+    }
+
+    public class AuditResp
+    {
+        public int total { get; set; }
+        public int page { get; set; }
+        public int pageSize { get; set; }
+        public List<AuditRow> items { get; set; } = new();
+    }
+
+    public class AuditUserDto
+    {
+        public int? Id { get; set; }
+        public string? Name { get; set; }
+    }
+}
+
+<style>
+.al-card { border-radius: 16px; }
+.al-label { display: block; font-size: .72rem; font-weight: 800; color: #5f688a; margin-bottom: .25rem; }
+.al-table { font-size: .8rem; }
+.al-table th { white-space: nowrap; font-size: .74rem; color: #64748b; }
+.al-err { background: #fff5f5; }
+.al-sum { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-mod { background: #eef2ff; color: #4338ca; font-size: .66rem; }
+.al-payload { background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: .8rem 1rem; font-size: .72rem; max-height: 300px; overflow: auto; }
+</style>

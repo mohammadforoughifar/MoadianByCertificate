@@ -1,0 +1,372 @@
+@namespace Inventory.Client.Pages
+@page "/network-scan"
+@inject HttpClient Http
+
+<PageTitle>اسکن شبکه — سیستم‌ها و دوربین‌ها</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-broadcast-pin"></i> اسکن شبکه</h1>
+    <div class="lead">سیستم‌های شبکه و دوربین‌های مداربسته — با پیشرفت زنده</div>
+</div>
+
+@if (error != null)
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+@* ============ کارت ۱: اسکن سیستم‌های شبکه ============ *@
+<div class="card shadow-sm mb-4">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center flex-wrap gap-2" style="background:linear-gradient(135deg,#4f8cff,#8e5cff);color:#fff;border-radius:14px 14px 0 0;">
+        <span><i class="bi bi-pc-display me-2"></i>لیست سیستم‌های داخل شبکه</span>
+    </div>
+    <div class="card-body">
+        @* انتخاب رنج *@
+        <div class="row g-2 mb-3">
+            <div class="col-md-4">
+                <label class="form-label small fw-800 mb-1">رنج آی‌پی</label>
+                <select class="form-select form-select-sm" @bind="rangeMode" @bind:after="OnRangeModeChanged">
+                    <option value="auto">خودکار — شبکه‌ی خودم</option>
+                    <option value="manual">دستی — خودم می‌نویسم</option>
+                </select>
+            </div>
+            <div class="col-md-8">
+                @if (rangeMode == "manual")
+                {
+                    <label class="form-label small fw-800 mb-1">رنج دلخواه</label>
+                    <input type="text" class="form-control form-control-sm" @bind="manualRange"
+                           placeholder="مثال: 192.168.1 یا 192.168.1.0/24 یا 192.168.1.1-192.168.1.254" />
+                    <div class="form-text small">فرمت‌ها: پیشوند /24 — یا CIDR — یا بازه‌ی شروع-پایان</div>
+                }
+                else
+                {
+                    <label class="form-label small fw-800 mb-1">&nbsp;</label>
+                    <div class="small text-muted pt-2">
+                        <i class="bi bi-magic"></i> رنج به‌صورت خودکار از کارت شبکه‌ی سرور تشخیص داده می‌شود
+                        @if (scanStatus != null && !string.IsNullOrEmpty(scanStatus.LocalIp))
+                        {
+                            <text>— سرور: <b>@scanStatus.LocalIp</b> (@scanStatus.Range)</text>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <button class="btn btn-sm rounded-pill px-4 fw-800 scan-btn mb-3" @onclick="StartScan" disabled="@(scanStarting || (scanStatus?.Running ?? false))">
+            @if (scanStarting || (scanStatus?.Running ?? false))
+            {
+                <span class="spinner-border spinner-border-sm me-1"></span> <text>در حال اسکن…</text>
+            }
+            else
+            {
+                <i class="bi bi-play-fill"></i> <text>شروع اسکن</text>
+            }
+        </button>
+
+        @* پیشرفت + نتایج زنده *@
+        @if (scanStatus != null)
+        {
+            <div class="mb-2">
+                <div class="progress" style="height:22px;border-radius:10px;">
+                    <div class="progress-bar" style="width:@(scanStatus.Progress)%;background:linear-gradient(90deg,#4f8cff,#8e5cff);">
+                        @scanStatus.Progress٪
+                    </div>
+                </div>
+                <div class="small text-muted mt-1">
+                    @scanStatus.Scanned از @scanStatus.TargetCount آدرس بررسی شد —
+                    <b>@scanStatus.FoundCount</b> سیستم پیدا شد
+                    @if (!scanStatus.Running && scanStatus.ElapsedMs > 0)
+                    {
+                        <text>(کل اسکن: @(((double)scanStatus.ElapsedMs / 1000.0).ToString("0.#")) ثانیه)</text>
+                    }
+                    @if (scanStatus.Error != null)
+                    {
+                        <span class="text-danger">— خطا: @scanStatus.Error</span>
+                    }
+                </div>
+            </div>
+
+            @if (!scanStatus.Running && scanStatus.Hosts.Count == 0 && scanStatus.Error == null)
+            {
+                <div class="alert alert-info py-2 small">
+                    چیزی پیدا نشد — بررسی کنید: API روی سیستمی که به شبکه وصل است اجرا شود؛
+                    «Client Isolation» روتر خاموش باشد؛ شبکه در ویندوز Private باشد.
+                    می‌توانید رنج را دستی وارد کنید و دوباره امتحان کنید.
+                </div>
+            }
+
+            @if (scanStatus.Hosts.Count > 0)
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0" style="white-space:nowrap;">
+                        <thead class="table-light">
+                            <tr>
+                                <th>#</th><th>آی‌پی</th><th>تشخیص</th><th>نام کامپیوتر</th>
+                                <th>مک آدرس</th><th>شناسنامه سیستم</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{ var i = 1; }
+                            @foreach (var h in scanStatus.Hosts)
+                            {
+                                <tr>
+                                    <td class="text-secondary fw-600">@(i++)</td>
+                                    <td><span class="badge bg-dark">@h.Ip</span></td>
+                                    <td>
+                                        @if (h.Method == "tcp")
+                                        { <span class="badge bg-warning text-dark" title="با اتصال TCP پیدا شد — پینگ این سیستم بسته است">TCP</span> }
+                                        else
+                                        { <span class="badge bg-light text-dark">پینگ</span> }
+                                    </td>
+                                    <td>@(string.IsNullOrWhiteSpace(h.Hostname) ? "—" : h.Hostname)</td>
+                                    <td><code>@(string.IsNullOrWhiteSpace(h.Mac) ? "—" : h.Mac)</code></td>
+                                    <td>
+                                        @if (h.SystemInfoId != null)
+                                        {
+                                            <a href="/system-id/@h.SystemInfoId" class="btn btn-sm btn-outline-success">
+                                                <i class="bi bi-card-checklist"></i> ثبت‌شده (#@h.SystemInfoId)
+                                            </a>
+                                        }
+                                        else
+                                        { <span class="text-muted">—</span> }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@* ============ کارت ۲: اسکن دوربین و NVR ============ *@
+<div class="card shadow-sm mb-4">
+    <div class="card-header fw-700 d-flex flex-wrap justify-content-between align-items-center gap-2" style="background:linear-gradient(135deg,#e0245e,#ff5f6d);color:#fff;border-radius:14px 14px 0 0;">
+        <div>
+            <b><i class="bi bi-camera-video-fill me-2"></i> دوربین‌ها و دستگاه‌های NVR/DVR</b>
+            @if (cctv != null)
+            {
+                <span class="ms-2 text-muted small">@cctv.ScannedCount آدرس بررسی شد در @(((double)cctv.ElapsedMs / 1000.0).ToString("0.#")) ثانیه</span>
+            }
+        </div>
+        <button class="btn btn-sm rounded-pill px-4 fw-800 cctv-btn" @onclick="ScanCctv" disabled="@cctvBusy">
+            @if (cctvBusy)
+            {
+                <span class="spinner-border spinner-border-sm me-1"></span> <text>در حال اسکن دوربین‌ها…</text>
+            }
+            else
+            {
+                <i class="bi bi-camera-video-fill"></i> <text>اسکن دوربین و NVR</text>
+            }
+        </button>
+    </div>
+    <div class="card-body">
+        <div class="small text-muted mb-2">
+            تشخیص چندلایه: ONVIF WS-Discovery + پورت‌های RTSP/Hikvision/Dahua + پروب RTSP و HTTP + برند از MAC
+        </div>
+        @if (cctvBusy)
+        {
+            <div class="text-center py-4">
+                <div class="spinner-border text-danger" style="width:2.5rem;height:2.5rem;"></div>
+                <div class="mt-2 text-muted small">اسکن پورت‌های ۵۵۴ / ۸۰۰۰ / ۳۷۷۷۷ … — ممکن است ۱۰ تا ۳۰ ثانیه طول بکشد</div>
+            </div>
+        }
+        else if (cctv != null && cctv.Devices.Count == 0)
+        {
+            <div class="alert alert-info py-2 mb-0">دوربین یا NVR ای در این شبکه پیدا نشد.</div>
+        }
+        else if (cctv != null)
+        {
+            <div class="alert alert-warning py-2">
+                <b>@cctv.Devices.Count</b> دستگاه CCTV پیدا شد
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0" style="white-space:nowrap;">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th><th>آی‌پی</th><th>نوع</th><th>برند</th>
+                            <th>پورت‌های باز</th><th>RTSP</th><th>ONVIF</th><th>MAC</th><th>دقت تشخیص</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{ var j = 1; }
+                        @foreach (var d in cctv.Devices)
+                        {
+                            <tr>
+                                <td class="text-secondary fw-600">@(j++)</td>
+                                <td><span class="badge bg-dark">@d.Ip</span></td>
+                                <td>
+                                    @if (d.Kind == "camera")
+                                    { <span class="badge bg-success">📷 دوربین</span> }
+                                    else if (d.Kind == "nvr")
+                                    { <span class="badge bg-primary">📼 NVR/DVR</span> }
+                                    else
+                                    { <span class="badge bg-secondary">نامشخص</span> }
+                                </td>
+                                <td>@(string.IsNullOrEmpty(d.Vendor) ? "—" : d.Vendor)</td>
+                                <td>@string.Join("، ", d.OpenPorts)</td>
+                                <td>@(string.IsNullOrEmpty(d.RtspServer) ? "—" : d.RtspServer)</td>
+                                <td>
+                                    @if (d.Onvif)
+                                    { <span class="badge bg-info">ONVIF ✅</span> }
+                                    else
+                                    { <text>—</text> }
+                                </td>
+                                <td><code>@(string.IsNullOrEmpty(d.Mac) ? "—" : d.Mac)</code>@(!string.IsNullOrEmpty(d.MacVendor) ? " (" + d.MacVendor + ")" : "")</td>
+                                <td>
+                                    @if (d.Confidence == "high")
+                                    { <span class="badge bg-success">بالا</span> }
+                                    else if (d.Confidence == "medium")
+                                    { <span class="badge bg-warning text-dark">متوسط</span> }
+                                    else
+                                    { <span class="badge bg-secondary">نیاز به بررسی</span> }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+.scan-btn{background:linear-gradient(135deg,#4f8cff,#8e5cff);border:none;color:#fff;}
+.scan-btn:hover:not(:disabled){filter:brightness(1.08);color:#fff;}
+.scan-btn:disabled{background:#c9cfdf;}
+.cctv-btn{background:linear-gradient(135deg,#e0245e,#ff5f6d);border:none;color:#fff;}
+.cctv-btn:hover:not(:disabled){filter:brightness(1.08);color:#fff;}
+.cctv-btn:disabled{background:#c9cfdf;}
+</style>
+
+@code {
+    // ================= اسکن سیستم‌ها =================
+    private string rangeMode = "auto";
+    private string manualRange = "";
+    private bool scanStarting;
+    private ScanStatus? scanStatus;
+    private string? error;
+
+    private void OnRangeModeChanged()
+    {
+        scanStatus = null;
+        error = null;
+    }
+
+    private async Task StartScan()
+    {
+        scanStarting = true;
+        error = null;
+        try
+        {
+            var range = rangeMode == "auto" ? "auto" : manualRange.Trim();
+            if (rangeMode == "manual" && string.IsNullOrWhiteSpace(range))
+            {
+                error = "رنج آی‌پی را وارد کنید (مثلاً 192.168.1)";
+                return;
+            }
+
+            var resp = await Http.PostAsJsonAsync("/api/NetworkScan/start", new { range });
+            var body = await resp.Content.ReadAsStringAsync();
+            if (!resp.IsSuccessStatusCode)
+            {
+                try { error = "سرور: " + System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("message").GetString(); }
+                catch { error = "شروع اسکن ناموفق بود (کد " + (int)resp.StatusCode + ")"; }
+                return;
+            }
+
+            var started = System.Text.Json.JsonSerializer.Deserialize<StartResult>(body,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            // پایش زنده تا پایان اسکن
+            while (true)
+            {
+                try
+                {
+                    scanStatus = await Http.GetFromJsonAsync<ScanStatus>($"/api/NetworkScan/status/{started?.JobId}");
+                }
+                catch { break; }
+                StateHasChanged();
+                if (scanStatus == null || !scanStatus.Running) break;
+                await Task.Delay(1000);
+            }
+        }
+        catch (Exception ex)
+        {
+            error = "ارتباط با API برقرار نشد — مطمئن شوید API در حال اجراست. (" + ex.Message + ")";
+        }
+        finally
+        {
+            scanStarting = false;
+        }
+    }
+
+    // ================= اسکن دوربین =================
+    private CctvScanResult? cctv;
+    private bool cctvBusy;
+
+    private async Task ScanCctv()
+    {
+        cctvBusy = true;
+        try { cctv = await Http.GetFromJsonAsync<CctvScanResult>("/api/CctvScan"); }
+        catch { cctv = new CctvScanResult(); }
+        finally { cctvBusy = false; }
+    }
+
+    // ================= مدل‌ها =================
+    public class StartResult
+    {
+        public string JobId { get; set; } = "";
+        public int TargetCount { get; set; }
+        public string Range { get; set; } = "";
+        public string LocalIp { get; set; } = "";
+    }
+
+    public class ScanHost
+    {
+        public string Ip { get; set; } = "";
+        public string Hostname { get; set; } = "";
+        public string Mac { get; set; } = "";
+        public int? SystemInfoId { get; set; }
+        public string Method { get; set; } = "ping";
+    }
+
+    public class ScanStatus
+    {
+        public bool Running { get; set; }
+        public int Progress { get; set; }
+        public int Scanned { get; set; }
+        public int TargetCount { get; set; }
+        public int FoundCount { get; set; }
+        public string Range { get; set; } = "";
+        public string LocalIp { get; set; } = "";
+        public string Adapter { get; set; } = "";
+        public int ElapsedMs { get; set; }
+        public string? Error { get; set; }
+        public List<ScanHost> Hosts { get; set; } = new();
+    }
+
+    public class CctvDevice
+    {
+        public string Ip { get; set; } = "";
+        public string Kind { get; set; } = "unknown";
+        public string Vendor { get; set; } = "";
+        public List<int> OpenPorts { get; set; } = new();
+        public string RtspServer { get; set; } = "";
+        public string HttpTitle { get; set; } = "";
+        public bool Onvif { get; set; }
+        public string OnvifInfo { get; set; } = "";
+        public string Mac { get; set; } = "";
+        public string MacVendor { get; set; } = "";
+        public string Confidence { get; set; } = "low";
+    }
+
+    public class CctvScanResult
+    {
+        public string LocalIp { get; set; } = "";
+        public string Subnet { get; set; } = "";
+        public int ScannedCount { get; set; }
+        public int ElapsedMs { get; set; }
+        public List<CctvDevice> Devices { get; set; } = new();
+    }
+}

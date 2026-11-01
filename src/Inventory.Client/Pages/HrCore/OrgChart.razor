@@ -1,0 +1,225 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/org"
+@inject IHrCoreService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>چارت سازمانی</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-diagram-3"></i> چارت سازمانی</h1>
+    <div class="lead">شرکت، شعبه‌ها، دپارتمان‌ها و مراکز هزینه</div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به ماژول کارگزینی برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <b><i class="bi bi-diagram-2 ms-1"></i> ساختار سازمانی</b>
+        <div class="d-flex gap-2">
+            <button class="btn btn-sm btn-light" @onclick="Reload" title="به‌روزرسانی"><i class="bi bi-arrow-clockwise"></i></button>
+            <button class="btn btn-sm btn-outline-primary" @onclick="PrintChart" title="چاپ چارت"><i class="bi bi-printer"></i> چاپ</button>
+            <button class="btn btn-sm btn-outline-success" @onclick="ExportExcel" title="خروجی اکسل"><i class="bi bi-file-earmark-excel"></i> اکسل</button>
+            @if (canCreate)
+            {
+                <button class="btn btn-sm btn-success" @onclick="() => OpenEdit(null, null)"><i class="bi bi-plus-lg"></i> واحد ریشه</button>
+            }
+        </div>
+    </div>
+    <div class="card-body" style="overflow-x:auto">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (tree.Count == 0)
+        {
+            <div class="text-center text-muted py-5">
+                <i class="bi bi-diagram-3 fs-3"></i>
+                <div>هنوز واحدی ثبت نشده است. از دکمه «واحد ریشه» شروع کنید (مثلاً خود شرکت).</div>
+            </div>
+        }
+        else
+        {
+            <ul class="d-flex justify-content-center gap-3 p-0 m-0" style="list-style:none">
+                @foreach (var root in tree)
+                {
+                    <OrgNode Unit="root" CanEdit="@canEdit" OnAdd="OnAddChild" OnEdit="OnEditNode" OnDelete="OnDeleteNode" />
+                }
+            </ul>
+        }
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="@(editId == null ? "واحد جدید" : "ویرایش واحد")" Size="modal-lg" OnClose="() => showEdit = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-6"><label class="form-label">نام واحد <span class="text-danger">*</span></label><input class="form-control" @bind="form.Name" /></div>
+            <div class="col-md-3"><label class="form-label">کد واحد <span class="text-danger">*</span></label><input class="form-control num" @bind="form.Code" /></div>
+            <div class="col-md-3">
+                <label class="form-label">نوع</label>
+                <select class="form-select" @bind="form.Type">
+                    <option value="0">شرکت</option><option value="1">شعبه</option>
+                    <option value="2">دپارتمان</option><option value="3">مرکز هزینه</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">واحد والد</label>
+                <select class="form-select" @bind="form.ParentId">
+                    <option value="">— ریشه —</option>
+                    @foreach (var u in flat)
+                    {
+                        @if (u.Id != editId)
+                        {
+                            <option value="@u.Id">@u.Name (@HrCoreUi.OrgType(u.Type))</option>
+                        }
+                    }
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">مدیر واحد</label>
+                <select class="form-select" @bind="form.ManagerEmployeeId">
+                    <option value="">—</option>
+                    @foreach (var m in managers)
+                    {
+                        <option value="@m.Id">@m.FullName (@m.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3"><label class="form-label">تلفن</label><input class="form-control num" @bind="form.Phone" /></div>
+            <div class="col-md-3"><label class="form-label">ترتیب نمایش</label><input class="form-control num" type="number" @bind="form.SortOrder" /></div>
+            <div class="col-md-6 d-flex align-items-end">
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="uact" @bind="form.IsActive" /><label class="form-check-label" for="uact">فعال</label></div>
+            </div>
+            <div class="col-12"><label class="form-label">آدرس</label><input class="form-control" @bind="form.Address" /></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="Save">ذخیره</button>
+    </Footer>
+</Modal>
+
+@code {
+    private bool canRead => Auth.Has("HrCore.Read") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrCore.Create") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrCore.Update") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrCore.Delete") || Auth.IsAdmin;
+    private bool canEdit => canCreate || canUpdate || canDelete;
+
+    private bool loading = true, saving, showEdit;
+    private List<HrOrgUnitDto> tree = new();
+    private List<HrOrgUnitDto> flat = new();
+    private List<HrEmployeeDto> managers = new();
+    private int? editId;
+    private HrOrgUnitSaveDto form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) return;
+        try { managers = (await Svc.SearchEmployeesAsync(null, null, 0, 0, 200)).Items; } catch { }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            tree = await Svc.GetOrgTreeAsync();
+            flat = await Svc.GetOrgUnitsAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenEdit(HrOrgUnitDto? u, int? parentId)
+    {
+        editId = u?.Id;
+        form = u is null
+            ? new HrOrgUnitSaveDto { ParentId = parentId, Type = parentId == null ? 0 : 2 }
+            : new HrOrgUnitSaveDto
+            {
+                ParentId = u.ParentId, Type = u.Type, Code = u.Code, Name = u.Name,
+                ManagerEmployeeId = u.ManagerEmployeeId, Phone = u.Phone,
+                IsActive = u.IsActive, SortOrder = u.SortOrder
+            };
+        showEdit = true;
+    }
+
+    private HrOrgUnitDto? FindUnit(int id)
+    {
+        HrOrgUnitDto? found = null;
+        void Walk(List<HrOrgUnitDto> list)
+        {
+            foreach (var x in list)
+            {
+                if (x.Id == id) { found = x; return; }
+                Walk(x.Children);
+                if (found is not null) return;
+            }
+        }
+        Walk(tree);
+        return found;
+    }
+
+    private Task OnAddChild(int parentId) { OpenEdit(null, parentId); return Task.CompletedTask; }
+    private Task OnEditNode(int id) { OpenEdit(FindUnit(id), null); return Task.CompletedTask; }
+
+    private async Task OnDeleteNode(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "واحد حذف شود؟")) return;
+        try { await Svc.DeleteOrgUnitAsync(id); await Reload(); Toast.Success("حذف شد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task ExportExcel()
+    {
+        try
+        {
+            var f = await Svc.ExportOrgExcelAsync();
+            await JS.InvokeVoidAsync("saveAsFile", f.FileName, System.Convert.ToBase64String(f.Data));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task PrintChart()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("<html dir='rtl' lang='fa'><head><meta charset='utf-8'><title>چارت سازمانی</title>");
+        sb.Append("<style>body{font-family:Tahoma;font-size:13px}h2{text-align:center}ul{list-style:none;padding-right:20px;border-right:2px solid #0d6efd;margin:6px 0}li{margin:4px 0}.box{border:1px solid #999;border-radius:6px;padding:4px 10px;display:inline-block}.t{color:#666;font-size:11px}</style>");
+        sb.Append("</head><body><h2>چارت سازمانی</h2>");
+        void Walk(List<HrOrgUnitDto> list)
+        {
+            sb.Append("<ul>");
+            foreach (var x in list)
+            {
+                sb.Append($"<li><span class='box'><b>{System.Net.WebUtility.HtmlEncode(x.Name)}</b> <span class='t'>({HrCoreUi.OrgType(x.Type)} • {System.Net.WebUtility.HtmlEncode(x.Code)})</span></span>");
+                if (x.Children.Count > 0) Walk(x.Children);
+                sb.Append("</li>");
+            }
+            sb.Append("</ul>");
+        }
+        Walk(tree);
+        sb.Append("</body></html>");
+        await JS.InvokeVoidAsync("printHtml", sb.ToString());
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            await Svc.SaveOrgUnitAsync(editId, form);
+            showEdit = false;
+            await Reload();
+            Toast.Success("ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+}

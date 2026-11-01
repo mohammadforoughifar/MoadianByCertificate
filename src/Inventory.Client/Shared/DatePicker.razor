@@ -1,0 +1,321 @@
+@inject IJSRuntime JS
+
+<div class="date-picker" @ref="_root" @ondpclose="ClosePop">
+    <div class="input-group input-group-sm" @ref="_inputGroup">
+        <input type="text"
+               class="form-control @CssClass"
+               value="@Text"
+               placeholder="@(string.IsNullOrWhiteSpace(Placeholder) ? "1403/05/12" : Placeholder)"
+               @oninput="OnInput"
+               @onblur="OnBlur" />
+        @if (AllowClear && Value.HasValue)
+        {
+            <button class="btn btn-outline-secondary" type="button" title="پاک کردن" @onclick="Clear">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        }
+        <button class="btn btn-outline-secondary" type="button" title="انتخاب از تقویم" @onclick="Toggle" @onmousedown:preventDefault="true">
+            <i class="bi bi-calendar3"></i>
+        </button>
+    </div>
+
+    @if (open)
+    {
+        <div class="dp-popover" style="@_popStyle;z-index:4600" @ref="_pop">
+            <div class="dp-head">
+                <button class="btn btn-sm btn-light" type="button" @onclick="() => MoveMonth(1)">
+                    <i class="bi bi-chevron-right"></i>
+                </button>
+                <div class="d-flex gap-1">
+                    <select class="form-select form-select-sm" style="width:auto" @bind="viewMonth">
+                        @for (int m = 1; m <= 12; m++)
+                        {
+                            <option value="@m">@PersianDate.MonthName(m)</option>
+                        }
+                    </select>
+                    <select class="form-select form-select-sm" style="width:auto" @bind="viewYear">
+                        @for (int y = MinYear; y <= MaxYear; y++)
+                        {
+                            <option value="@y">@Fa.Digits(y)</option>
+                        }
+                    </select>
+                </div>
+                <button class="btn btn-sm btn-light" type="button" @onclick="() => MoveMonth(-1)">
+                    <i class="bi bi-chevron-left"></i>
+                </button>
+            </div>
+
+            <div class="dp-grid">
+                @foreach (var wd in weekDays)
+                {
+                    <div class="dp-weekday">@wd</div>
+                }
+
+                @for (int i = 0; i < firstCol; i++)
+                {
+                    <div></div>
+                }
+
+                @for (int d = 1; d <= daysInMonth; d++)
+                {
+                    var day = d;
+                    var g = PersianDate.ToGregorian(viewYear, viewMonth, day);
+                    var key = g == DateTime.MinValue ? "" : g.ToString("yyyy-MM-dd");
+                    var isFri = g != DateTime.MinValue && g.DayOfWeek == DayOfWeek.Friday;
+                    var extraCls = key.Length > 0 && DayClasses != null && DayClasses.TryGetValue(key, out var c) ? c : "";
+                    var title = key.Length > 0 && DayTitles != null && DayTitles.TryGetValue(key, out var t) ? t : "";
+                    <button type="button"
+                            class="dp-day @(IsSelected(day) ? "selected" : "") @(IsToday(day) ? "today" : "") @(isFri ? "fri" : "") @extraCls"
+                            title="@title"
+                            @onclick="() => Pick(day)">
+                        @Fa.Digits(day)
+                    </button>
+                }
+            </div>
+
+            @if (DayClasses != null && DayClasses.Count > 0)
+            {
+                <div class="dp-legend">
+                    <span><i class="dp-dot dp-dot-hol"></i> تعطیل رسمی</span>
+                    <span><i class="dp-dot dp-dot-leave"></i> مرخصی شما</span>
+                    <span><i class="dp-dot dp-dot-fri"></i> جمعه</span>
+                </div>
+            }
+
+            <div class="d-flex justify-content-between align-items-center mt-3">
+                <button class="btn btn-sm btn-outline-primary" type="button" @onclick="SetToday">
+                    <i class="bi bi-arrow-counterclockwise ms-1"></i>امروز
+                </button>
+                <span class="fs-7 text-muted">@PersianDate.MonthName(viewMonth) @Fa.Digits(viewYear)</span>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public DateTime? Value { get; set; }
+    [Parameter] public EventCallback<DateTime?> ValueChanged { get; set; }
+    [Parameter] public bool AllowClear { get; set; }
+    [Parameter] public string CssClass { get; set; } = "";
+
+    /// <summary>متن جای‌نمای فیلد — مثلاً «از تاریخ» در فیلترها (پیش‌فرض: نمونهٔ تاریخ شمسی)</summary>
+    [Parameter] public string? Placeholder { get; set; }
+
+    /// <summary>کلاسِ وضعیتِ روزها (کلید: yyyy-MM-dd میلادی) — مثل «dp-hol» برای تعطیل رسمی یا «dp-leave» برای مرخصی کاربر.</summary>
+    [Parameter] public Dictionary<string, string>? DayClasses { get; set; }
+
+    /// <summary>توضیحِ وضعیتِ روزها (کلید: yyyy-MM-dd میلادی) — به‌صورت tooltip روی روز نمایش داده می‌شود.</summary>
+    [Parameter] public Dictionary<string, string>? DayTitles { get; set; }
+
+    /// <summary>پشتیبانی از هر ویژگی نامشخص اضافی بدون خطای رندر بلیزور</summary>
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private static readonly string[] weekDays = { "ش", "ی", "د", "س", "چ", "پ", "ج" };
+
+    private string _text = "";
+    private DateTime? _last;
+    private bool open;
+    private int viewYear, viewMonth;
+
+    /// <summary>کمترین سال شمسی قابل انتخاب (پیش‌فرض ۱۳۹۰ — برای تاریخ تولد ۱۳۰۰ بدهید)</summary>
+    [Parameter] public int MinYear { get; set; } = 1390;
+
+    /// <summary>بیشترین سال شمسی قابل انتخاب</summary>
+    [Parameter] public int MaxYear { get; set; } = 1430;
+
+    private string Text
+    {
+        get => _text;
+        set
+        {
+            _text = value;
+            var dt = PersianDate.TryParse(value);
+            if (dt.HasValue)
+                _ = Notify(dt.Value);
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (Value != _last)
+        {
+            _last = Value;
+            _text = Value.HasValue ? PersianDate.ToShort(Value.Value) : "";
+            InitView();
+        }
+    }
+
+    private void InitView()
+    {
+        var (y, m, _) = PersianDate.FromGregorian(Value ?? DateTime.Now);
+        viewYear = Math.Clamp(y, MinYear, MaxYear);
+        viewMonth = Math.Clamp(m, 1, 12);
+    }
+
+    private void OnInput(ChangeEventArgs e)
+    {
+        _text = e.Value?.ToString() ?? "";
+        var dt = PersianDate.TryParse(_text);
+        if (dt.HasValue) _ = Notify(dt.Value);
+    }
+
+    private void OnBlur()
+    {
+        if (!open)
+        {
+            if (Value.HasValue)
+                _text = PersianDate.ToShort(Value.Value);
+            else
+                _text = "";
+        }
+    }
+    private async Task Notify(DateTime dt)
+    {
+        _text = PersianDate.ToShort(dt);
+        _last = dt;
+        if (Value != dt)
+        {
+            Value = dt;
+            await ValueChanged.InvokeAsync(dt);
+        }
+    }
+
+    private async Task Clear()
+    {
+        _text = "";
+        _last = null;
+        Value = null;
+        await ValueChanged.InvokeAsync(null);
+    }
+
+    private void Toggle()
+    {
+        open = !open;
+        if (open)
+        {
+            InitView();
+            _popStyle = "visibility:hidden";
+            _needPlace = true;
+        }
+    }
+
+    private void ClosePop() => open = false;
+
+    private async Task SetToday()
+    {
+        open = false;
+        await Notify(DateTime.Now);
+    }
+
+    private async Task Pick(int day)
+    {
+        open = false;
+        var dt = PersianDate.ToGregorian(viewYear, viewMonth, day);
+        if (dt != DateTime.MinValue)
+            await Notify(dt);
+    }
+
+    private void MoveMonth(int delta)
+    {
+        var (y, m) = PersianDate.AddMonths(viewYear, viewMonth, delta);
+        viewYear = y;
+        viewMonth = m;
+    }
+
+    private int firstCol => PersianDate.FirstDayColumn(viewYear, viewMonth);
+    private int daysInMonth => PersianDate.DaysInMonth(viewYear, viewMonth);
+
+    private bool IsSelected(int day)
+    {
+        if (!Value.HasValue) return false;
+        var (y, m, d) = PersianDate.FromGregorian(Value.Value);
+        return y == viewYear && m == viewMonth && d == day;
+    }
+
+    private bool IsToday(int day)
+    {
+        var (y, m, d) = PersianDate.FromGregorian(DateTime.Now);
+        return y == viewYear && m == viewMonth && d == day;
+    }
+
+    // ---------------- موقعیت‌یابی هوشمند ----------------
+    // پنجره‌ی تقویم position:fixed دارد و با کد جاوااسکریپتی که «از داخل خود کامپوننت» نصب می‌شود
+    // جای‌گذاری می‌شود — حتی اگر index.html قدیمی (کش PWA) باشد کار می‌کند و هیچ‌وقت زیر فرم نمی‌رود.
+    private ElementReference _root;
+    private ElementReference _inputGroup;
+    private ElementReference _pop;
+    private string _popStyle = "visibility:hidden";
+    private bool _needPlace;
+
+    private const string DpJs = @"
+        window.dpPlace = function (anchor, pop) {
+            try {
+                if (!anchor || !pop) return false;
+                if (!window._dpBound) {
+                    window._dpBound = true;
+                    var rp = function () {
+                        var p = document.querySelector('.dp-popover');
+                        if (p && p.style.visibility === 'visible' && p._dpAnchor) window.dpPlace(p._dpAnchor, p);
+                    };
+                    window.addEventListener('scroll', rp, true);
+                    window.addEventListener('resize', rp);
+                }
+                var r = anchor.getBoundingClientRect();
+                var pw = pop.offsetWidth || 292, ph = pop.offsetHeight || 400;
+                var vw = window.innerWidth, vh = window.innerHeight, m = 8;
+                var top = r.bottom + 6;
+                if (top + ph > vh - m) top = Math.max(m, r.top - ph - 6);
+                var right = vw - r.right;
+                if (right < m) right = m;
+                if (right + pw > vw - m) right = m + 4;
+                pop.style.position = 'fixed';
+                pop.style.top = Math.round(top) + 'px';
+                pop.style.right = Math.round(right) + 'px';
+                pop.style.left = 'auto';
+                pop.style.visibility = 'visible';
+                pop._dpAnchor = anchor;
+                return true;
+            } catch (e) { try { pop.style.visibility = 'visible'; } catch (e2) { } return false; }
+        };
+        window.dpRect = function (el) {
+            try {
+                if (!el) return null;
+                var r = el.getBoundingClientRect();
+                return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, vw: window.innerWidth, vh: window.innerHeight };
+            } catch (e) { return null; }
+        };
+        if (!window._dpOutsideBound) {
+            window._dpOutsideBound = true;
+            document.addEventListener('click', function (ev) {
+                var pops = document.querySelectorAll('.dp-popover');
+                for (var i = 0; i < pops.length; i++) {
+                    var p = pops[i];
+                    var a = p._dpAnchor;
+                    if (p.style.visibility === 'visible' && !p.contains(ev.target) && !(a && a.contains(ev.target))) {
+                        p.dispatchEvent(new CustomEvent('dpclose', { bubbles: true }));
+                    }
+                }
+            }, true);
+        }";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (open && _needPlace)
+        {
+            _needPlace = false;
+            try
+            {
+                var has = await JS.InvokeAsync<bool>("eval", "typeof window.dpPlace === 'function'");
+                if (!has) await JS.InvokeVoidAsync("eval", DpJs);
+                await JS.InvokeVoidAsync("dpPlace", _inputGroup, _pop);
+            }
+            catch
+            {
+                // اگر جاوااسکریپت در دسترس نبود، حداقل با موقعیت پیش‌فرض CSS دیده شود
+                _popStyle = "";
+                StateHasChanged();
+            }
+        }
+    }
+}

@@ -1,0 +1,331 @@
+@namespace Inventory.Client.Pages
+@page "/parties"
+@inject IPartyService PartySvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+@inject IAuthState Auth
+
+<PageTitle>@PageTitleText</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>@PageTitleText</h1>
+        <p class="lead">
+            @(CanSeeCustomers && CanSeeSuppliers ? "مدیریت مشتریان و تأمین‌کنندگان"
+              : CanSeeCustomers ? "تعریف و مدیریت مشتریان"
+              : "مدیریت تأمین‌کنندگان")
+        </p>
+    </div>
+    @if (CanCreateCurrent)
+    {
+        <button class="btn btn-primary ms-auto" @onclick="OpenNew">
+            <i class="bi bi-plus-lg"></i> @(type == PartyType.Supplier ? "تأمین‌کننده جدید" : "مشتری جدید")
+        </button>
+    }
+</div>
+
+<div class="card">
+    <div class="card-body">
+        @* مشتری و تأمین‌کننده دسترسی مستقل دارند: هر زبانه فقط با مجوز خودش دیده می‌شود *@
+        <div class="d-flex gap-2 mb-3">
+            @if (CanSeeCustomers)
+            {
+                <button class="btn @(type == PartyType.Customer ? "btn-primary" : "btn-light")" @onclick="() => SetType(PartyType.Customer)">
+                    <i class="bi bi-people"></i> مشتریان
+                </button>
+            }
+            @if (CanSeeSuppliers)
+            {
+                <button class="btn @(type == PartyType.Supplier ? "btn-primary" : "btn-light")" @onclick="() => SetType(PartyType.Supplier)">
+                    <i class="bi bi-truck"></i> تأمین‌کنندگان
+                </button>
+            }
+        </div>
+
+        @if (!AnyAccess)
+        {
+            <div class="empty-state">
+                <i class="bi bi-shield-lock"></i>
+                <h5>به این بخش دسترسی ندارید</h5>
+                <p class="text-muted fs-8">برای دریافت دسترسی «مشتریان» یا «تأمین‌کنندگان» با مدیر سیستم تماس بگیرید.</p>
+            </div>
+        }
+        else if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-people"></i><h5>طرف حسابی ثبت نشده است</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>نام</th>
+                            <th>موبایل</th>
+                            <th>تلفن</th>
+                            <th>آدرس</th>
+                            @if (type == PartyType.Customer)
+                            {
+                                <th>معرف</th>
+                                <th>ثبت‌کننده</th>
+                            }
+                            <th class="text-start">مانده حساب (ریال)</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in Paged)
+                        {
+                            <tr>
+                                <td class="fw-500">@p.Name</td>
+                                <td>@(p.Mobile ?? "—")</td>
+                                <td>@(p.Phone ?? "—")</td>
+                                <td class="text-muted">@(p.Address ?? "—")</td>
+                                @if (type == PartyType.Customer)
+                                {
+                                    <td>
+                                        @if (string.IsNullOrWhiteSpace(p.ReferrerName))
+                                        {
+                                            <span class="text-muted">بدون معرف</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge badge-soft-primary">@p.ReferrerName</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (string.IsNullOrWhiteSpace(p.RegisteredByName))
+                                        {
+                                            <span class="text-muted">—</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge badge-soft-success" title="@RegistrarTitle(p)">@p.RegisteredByName</span>
+                                        }
+                                    </td>
+                                }
+                                <td class="text-start">
+                                    <div class="num @(p.Balance > 0 ? "text-success fw-700" : "text-danger fw-700")">
+                                        @p.Balance.Money()
+                                    </div>
+                                    @if (p.BouncedChequesCount > 0)
+                                    {
+                                        <div class="badge badge-soft-danger fs-8 mt-1" title="مشتری دارای چک برگشتی فعال است!">
+                                            <i class="bi bi-x-octagon"></i> @p.BouncedChequesCount.Num() چک برگشتی (@p.BouncedChequesTotal.Money())
+                                        </div>
+                                    }
+                                    @if (p.OverdueInstallmentsCount > 0)
+                                    {
+                                        <div class="badge badge-soft-warning fs-8 mt-1" title="مشتری دارای اقساط معوق پرداخت نشده است!">
+                                            <i class="bi bi-clock-history"></i> @p.OverdueInstallmentsCount.Num() قسط معوق (@p.OverdueInstallmentsTotal.Money())
+                                        </div>
+                                    }
+                                </td>
+                                <td>
+                                    @if (p.IsActive)
+                                    {
+                                        <span class="badge badge-soft-success">فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-muted">غیرفعال</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    @if (CanUpdateCurrent)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(p)"><i class="bi bi-pencil text-primary"></i></button>
+                                    }
+                                    @if (CanDeleteCurrent)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(p)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var p in Paged)
+                {
+                    <div class="m-card @(p.Balance >= 0 ? "st-ready" : "st-cancelled")">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi @(type == PartyType.Customer ? "bi-person" : "bi-truck")"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="fw-700 text-truncate">@p.Name</div>
+                                <div class="fs-8 text-muted num">@(p.Mobile ?? p.Phone ?? "—")</div>
+                                @if (type == PartyType.Customer)
+                                {
+                                    @if (!string.IsNullOrWhiteSpace(p.RegisteredByName))
+                                    {
+                                        <div class="fs-8">
+                                            <i class="bi bi-person-check text-success"></i>
+                                            ثبت‌شده توسط <b>@p.RegisteredByName</b>
+                                        </div>
+                                    }
+                                    <div class="fs-8">
+                                        @if (string.IsNullOrWhiteSpace(p.ReferrerName))
+                                        {
+                                            <span class="text-muted">بدون معرف</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge badge-soft-primary fs-8">معرف: @p.ReferrerName</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">مانده حساب</div>
+                                <div class="num fw-800 @(p.Balance > 0 ? "text-success" : p.Balance < 0 ? "text-danger" : "")">@p.Balance.Money()</div>
+                                @if (p.BouncedChequesCount > 0)
+                                {
+                                    <div class="badge badge-soft-danger fs-9 mt-1"><i class="bi bi-x-octagon"></i> @p.BouncedChequesCount.Num() چک برگشتی</div>
+                                }
+                                @if (p.OverdueInstallmentsCount > 0)
+                                {
+                                    <div class="badge badge-soft-warning fs-9 mt-1"><i class="bi bi-clock-history"></i> @p.OverdueInstallmentsCount.Num() قسط معوق</div>
+                                }
+                            </div>
+                        </div>
+                        <div class="m-card-actions">
+                            @if (CanUpdateCurrent)
+                            {
+                                <button class="btn btn-light text-primary" @onclick="() => OpenEdit(p)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            }
+                            @if (CanDeleteCurrent)
+                            {
+                                <button class="btn btn-light text-danger" @onclick="() => Delete(p)"><i class="bi bi-trash"></i></button>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="ChangePage" />
+        }
+    </div>
+</div>
+
+@* فرم تعریف طرف حساب — همان فرم مشترکِ ماژول ویزیتوری (/parties) *@
+<PartyFormModal Visible="showModal"
+                Type="type"
+                Model="editSource"
+                AllowReferrerPicker="true"
+                OnSaved="OnPartySaved"
+                OnCancel="CloseModal" />
+
+@code {
+    private PartyType type = PartyType.Customer;
+    private List<Party> items = new();
+
+    // ==================== دسترسی‌ها (مشتری و تأمین‌کننده مستقل) ====================
+    private bool CanSeeCustomers => Auth.Has("Parties.Read") || Auth.HasModule("Customers");
+    private bool CanSeeSuppliers => Auth.Has("Parties.Read") || Auth.HasModule("Suppliers");
+
+    private string ModuleCurrent => type == PartyType.Supplier ? "Suppliers" : "Customers";
+
+    private bool CanCreateCurrent => Auth.Has("Parties.Create") || Auth.Has($"{ModuleCurrent}.Create");
+    private bool CanUpdateCurrent => Auth.Has("Parties.Update") || Auth.Has($"{ModuleCurrent}.Update");
+    private bool CanDeleteCurrent => Auth.Has("Parties.Delete") || Auth.Has($"{ModuleCurrent}.Delete");
+
+    private bool AnyAccess => CanSeeCustomers || CanSeeSuppliers;
+
+    private string PageTitleText => CanSeeSuppliers && !CanSeeCustomers ? "تأمین‌کنندگان" : "طرف حساب‌ها";
+
+    // ---------- صفحه‌بندی ----------
+    private int page = 1;
+    private const int PageSize = 12;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+    private List<Party> Paged => items;
+    private int total, loadVersion;
+    private async Task ChangePage(int value) { page = value; await Load(); }
+    private async Task SearchChanged() { page = 1; await Load(); }
+    private bool loading = true;
+    private Party? editSource;
+    private bool showModal;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle(PageTitleText);
+        // اگر کاربر فقط مجوز تأمین‌کننده دارد، همان زبانه پیش‌فرض می‌شود
+        if (!CanSeeCustomers && CanSeeSuppliers) type = PartyType.Supplier;
+        await Load();
+    }
+
+    private async Task SetType(PartyType t)
+    {
+        type = t;
+        page = 1;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        if (!AnyAccess) { loading = false; items = new(); total = 0; return; }
+        var version = ++loadVersion;
+        loading = true;
+        try
+        {
+            var result = await PartySvc.GetPagedAsync(type, (page - 1) * PageSize, PageSize);
+            if (version != loadVersion) return;
+            items = result.Items;
+            total = result.TotalCount;
+            if (page > PageCount) { page = PageCount; await Load(); }
+        }
+        catch (Exception ex) { if (version == loadVersion) Toast.Error(ex.Message); }
+        finally { if (version == loadVersion) loading = false; }
+    }
+
+    private void OpenNew()
+    {
+        editSource = null;
+        showModal = true;
+    }
+
+    private void OpenEdit(Party p)
+    {
+        editSource = p;
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    /// <summary>توضیح کامل ثبت‌کننده: کاربر + پروندهٔ معرف + تاریخ ثبت.</summary>
+    private static string RegistrarTitle(Party p)
+    {
+        var parts = new List<string> { $"ثبت‌کننده: {p.RegisteredByName}" };
+        if (!string.IsNullOrWhiteSpace(p.RegisteredByReferrerName)) parts.Add($"پروندهٔ معرف: {p.RegisteredByReferrerName}");
+        if (p.RegisteredAt.HasValue) parts.Add($"تاریخ ثبت: {p.RegisteredAt.Value.ToFa()}");
+        return string.Join(" | ", parts);
+    }
+
+    private async Task OnPartySaved(Party _)
+    {
+        showModal = false;
+        editSource = null;
+        await Load();
+    }
+
+    private async Task Delete(Party p)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف «{p.Name}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await PartySvc.DeleteAsync(p.Id);
+            Toast.Success("طرف حساب حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

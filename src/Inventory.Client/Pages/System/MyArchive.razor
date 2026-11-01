@@ -1,0 +1,265 @@
+@namespace Inventory.Client.Pages
+@page "/my-archive"
+@using System.Net.Http.Headers
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>بایگانی من</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>بایگانی شخصی</h1>
+        <p class="lead">بایگانی و طبقه‌بندی اسناد، نامه‌ها و سوابق ماژول‌های سازمانی در پوشه‌های سفارشی</p>
+    </div>
+</div>
+
+<div class="row g-3">
+    @* ================== درخت پوشه‌ها ================== *@
+    <div class="col-12 col-lg-4">
+        <div class="card h-100">
+            <div class="card-header d-flex align-items-center">
+                <i class="bi bi-folder2-open text-warning"></i>
+                <span class="card-title">پوشه‌ها</span>
+            </div>
+            <div class="card-body">
+                <div class="d-flex gap-2 mb-3">
+                    <input class="form-control form-control-sm" placeholder="نام پوشه جدید..." @bind="newName" />
+                    <button class="btn btn-primary btn-sm text-nowrap" @onclick="() => CreateFolder(null)">
+                        <i class="bi bi-folder-plus"></i> پوشه ریشه
+                    </button>
+                </div>
+                @if (folders.Count == 0)
+                {
+                    <div class="text-center text-muted py-4 fs-8"><i class="bi bi-folder-x d-block fs-3 mb-1"></i>هنوز پوشه‌ای ندارید</div>
+                }
+                @foreach (var f in Roots)
+                {
+                    @RenderFolder(f, 0)
+                }
+            </div>
+        </div>
+    </div>
+
+    @* ================== محتوای پوشه انتخابی ================== *@
+    <div class="col-12 col-lg-8">
+        <div class="card h-100">
+            <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div>
+                    <i class="bi bi-archive text-primary"></i>
+                    <span class="card-title">@(selected == null ? "یک پوشه انتخاب کنید" : $"محتوای «{selected.Name}»")</span>
+                </div>
+                @if (selected != null)
+                {
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => CreateFolder(selected.Id)">
+                            <i class="bi bi-folder-plus"></i> زیرپوشه
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="RenamePrompt">
+                            <i class="bi bi-pencil"></i> تغییر نام
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="DeleteFolder">
+                            <i class="bi bi-trash"></i> حذف پوشه
+                        </button>
+                    </div>
+                }
+            </div>
+            <div class="card-body">
+                @if (selected == null)
+                {
+                    <div class="text-center text-muted py-5 fs-8">
+                        <i class="bi bi-arrow-right-circle d-block fs-2 mb-2"></i>
+                        از سمت راست یک پوشه انتخاب کنید — رکوردها را از داخل هر فرم با دکمه «بایگانی» به این‌جا اضافه کنید.
+                    </div>
+                }
+                else if (items.Count == 0)
+                {
+                    <div class="text-center text-muted py-5 fs-8"><i class="bi bi-inbox d-block fs-2 mb-2"></i>این پوشه خالی است</div>
+                }
+                else
+                {
+                    @foreach (var i in items)
+                    {
+                        <div class="arch-item">
+                            <span class="arch-mod">@ModuleFa(i.Module)</span>
+                            <div class="flex-grow-1 min-w-0" style="cursor:pointer" @onclick="() => OpenItem(i)">
+                                <div class="fw-700 fs-8 text-truncate">@i.Title</div>
+                                <div class="fs-9 text-muted num">بایگانی: @i.CreatedAt.ToFa()</div>
+                            </div>
+                            <button class="btn btn-sm btn-light text-danger" title="حذف از بایگانی" @onclick="() => DeleteItem(i.Id)">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .arch-frow { display: flex; align-items: center; gap: .45rem; padding: .4rem .6rem; border-radius: 10px; cursor: pointer; transition: background .12s; font-size: .85rem; }
+    .arch-frow:hover { background: #f1f5f9; }
+    .arch-frow.sel { background: #eff6ff; border-right: 3px solid #2563eb; font-weight: 700; }
+    .arch-acts { display: inline-flex; gap: .45rem; opacity: 0; transition: opacity .12s; }
+    .arch-frow:hover .arch-acts { opacity: 1; }
+    .arch-acts i { cursor: pointer; font-size: .8rem; }
+    .arch-item { display: flex; align-items: center; gap: .7rem; padding: .6rem .8rem; border: 1px solid #eef2f7; border-radius: 12px; margin-bottom: .5rem; background: #fcfdfe; }
+    .arch-item:hover { border-color: #c7d7f5; }
+    .arch-mod { background: #eef4ff; color: #2563eb; border-radius: 8px; padding: .2rem .55rem; font-size: .68rem; font-weight: 800; flex-shrink: 0; }
+    .fs-9 { font-size: .68rem; }
+</style>
+
+@code {
+    private List<FolderItem> folders = new();
+    private List<ArchItem> items = new();
+    private FolderItem? selected;
+    private string newName = "";
+
+    private IEnumerable<FolderItem> Roots => folders.Where(f => f.ParentId == null);
+
+    public class FolderItem { public int Id { get; set; } public int? ParentId { get; set; } public string Name { get; set; } = ""; public int ItemCount { get; set; } }
+    public class ArchItem { public int Id { get; set; } public string Module { get; set; } = ""; public int RefId { get; set; } public string Title { get; set; } = ""; public string? Link { get; set; } public string? Note { get; set; } public DateTime CreatedAt { get; set; } }
+
+    private RenderFragment RenderFolder(FolderItem f, int depth) => @<div>
+        <div class="arch-frow @(selected?.Id == f.Id ? "sel" : "")" style="margin-right:@((depth * 16))px"
+             @onclick="() => SelectFolder(f)">
+            <i class="bi @(selected?.Id == f.Id ? "bi-folder2-open" : "bi-folder-fill") text-warning"></i>
+            <span class="text-truncate">@f.Name</span>
+            <span class="fs-9 text-muted">(@f.ItemCount)</span>
+            <span class="arch-acts me-auto" @onclick:stopPropagation="true">
+                <i class="bi bi-folder-plus text-primary" title="زیرپوشه" @onclick="() => QuickSub(f.Id)"></i>
+                <i class="bi bi-pencil text-secondary" title="تغییر نام" @onclick="() => QuickRename(f)"></i>
+                <i class="bi bi-trash text-danger" title="حذف" @onclick="() => QuickDelete(f)"></i>
+            </span>
+        </div>
+        @foreach (var c in folders.Where(x => x.ParentId == f.Id))
+        {
+            @RenderFolder(c, depth + 1)
+        }
+    </div>;
+
+    private async Task QuickSub(int parentId)
+    {
+        var name = await JS.InvokeAsync<string?>("prompt", "نام زیرپوشه:");
+        if (string.IsNullOrWhiteSpace(name)) return;
+        try { await Http.PostAsJsonAsync("/api/archive/folders", new { name, parentId = (int?)parentId }); await LoadFolders(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task QuickRename(FolderItem f)
+    {
+        var name = await JS.InvokeAsync<string?>("prompt", "نام جدید:", f.Name);
+        if (string.IsNullOrWhiteSpace(name)) return;
+        try { await Http.PutAsJsonAsync($"/api/archive/folders/{f.Id}", new { name, parentId = (int?)null }); await LoadFolders(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task QuickDelete(FolderItem f)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"پوشه «{f.Name}» و همه زیرپوشه‌ها و آیتم‌هایش حذف شود؟");
+        if (!ok) return;
+        try
+        {
+            await Http.DeleteAsync($"/api/archive/folders/{f.Id}");
+            if (selected?.Id == f.Id) { selected = null; items = new(); }
+            await LoadFolders();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("بایگانی من");
+        if (!string.IsNullOrWhiteSpace(Auth.Token))
+            Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Auth.Token);
+        await LoadFolders();
+    }
+
+    private async Task LoadFolders()
+    {
+        try { folders = await Http.GetFromJsonAsync<List<FolderItem>>("/api/archive/folders") ?? new(); }
+        catch { folders = new(); }
+        if (selected != null) selected = folders.FirstOrDefault(f => f.Id == selected.Id);
+    }
+
+    private async Task SelectFolder(FolderItem f)
+    {
+        selected = f;
+        try { items = await Http.GetFromJsonAsync<List<ArchItem>>($"/api/archive/items/{f.Id}") ?? new(); }
+        catch { items = new(); }
+    }
+
+    private async Task CreateFolder(int? parentId)
+    {
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            // برای زیرپوشه، اگر فیلد خالی بود از prompt بگیر
+            var name = await JS.InvokeAsync<string?>("prompt", parentId == null ? "نام پوشه:" : $"نام زیرپوشه:");
+            if (string.IsNullOrWhiteSpace(name)) return;
+            newName = name;
+        }
+        try
+        {
+            var resp = await Http.PostAsJsonAsync("/api/archive/folders", new { name = newName, parentId });
+            if (resp.IsSuccessStatusCode) { newName = ""; await LoadFolders(); Toast.Success("پوشه ساخته شد."); }
+            else Toast.Error(await resp.Content.ReadAsStringAsync());
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task RenamePrompt()
+    {
+        if (selected == null) return;
+        var name = await JS.InvokeAsync<string?>("prompt", "نام جدید پوشه:", selected.Name);
+        if (string.IsNullOrWhiteSpace(name)) return;
+        try
+        {
+            await Http.PutAsJsonAsync($"/api/archive/folders/{selected.Id}", new { name, parentId = (int?)null });
+            await LoadFolders();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteFolder()
+    {
+        if (selected == null) return;
+        var ok = await JS.InvokeAsync<bool>("confirm", $"پوشه «{selected.Name}» و همه زیرپوشه‌ها و آیتم‌هایش حذف شود؟");
+        if (!ok) return;
+        try
+        {
+            await Http.DeleteAsync($"/api/archive/folders/{selected.Id}");
+            selected = null; items = new();
+            await LoadFolders();
+            Toast.Success("پوشه حذف شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteItem(int id)
+    {
+        try
+        {
+            await Http.DeleteAsync($"/api/archive/items/{id}");
+            if (selected != null) await SelectFolder(selected);
+            await LoadFolders();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenItem(ArchItem i)
+    {
+        if (!string.IsNullOrWhiteSpace(i.Link)) Nav.NavigateTo(i.Link);
+    }
+
+    private static string ModuleFa(string m) => m switch
+    {
+        "WorkOrders" => "دستور کار",
+        "ItRequests" => "درخواست IT",
+        "Orders" => "فاکتور",
+        _ => m
+    };
+}

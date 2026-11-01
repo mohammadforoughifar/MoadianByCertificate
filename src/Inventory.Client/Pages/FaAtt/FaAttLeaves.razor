@@ -1,0 +1,264 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/leaves"
+@inject IFaAttService Svc
+@inject IHrCoreService EmpSvc
+@inject IHrMainService OrgSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>مدیریت مرخصی‌ها</PageTitle>
+
+<div class="page-head mb-3">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-calendar2-week"></i> مدیریت مرخصی‌ها</h1>
+            <div class="lead">تأیید نهایی منابع انسانی + ثبت از طرف پرسنل + تقویم مرخصی واحد</div>
+        </div>
+        @if (faManage)
+        {
+            <button class="btn btn-success" @onclick="() => showBehalf = true"><i class="bi bi-person-plus"></i> ثبت از طرف پرسنل</button>
+        }
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد منابع انسانی است.</div>
+    return;
+}
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item"><button class="nav-link @(tab == 0 ? "active" : "")" @onclick="() => tab = 0">همه درخواست‌ها</button></li>
+    <li class="nav-item"><button class="nav-link @(tab == 1 ? "active" : "")" @onclick="() => tab = 1">تقویم واحد</button></li>
+</ul>
+
+@if (tab == 0)
+{
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+            <div class="row g-2">
+                <div class="col-md-5"><label class="form-label small text-muted">پرسنل</label><select class="form-select" @bind="fEmp"><option value="">همه</option>@foreach (var e in emps){<option value="@e.Id">@e.FirstName @e.LastName</option>}</select></div>
+                <div class="col-md-3"><label class="form-label small text-muted">وضعیت</label><select class="form-select" @bind="fStatus"><option value="">همه</option><option value="0">در انتظار</option><option value="1">تأییدشده</option><option value="2">ردشده</option></select></div>
+                <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary" @onclick="Reload"><i class="bi bi-search"></i> جستجو</button></div>
+            </div>
+        </div>
+    </div>
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            @if (loading)
+            {
+                <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+            }
+            else if (leaves.Count == 0)
+            {
+                <div class="text-center text-muted py-5">درخواستی وجود ندارد.</div>
+            }
+            else
+            {
+                @if (selected.Count > 0)
+                {
+                    <div class="d-flex gap-2 align-items-center p-2 border-bottom bg-light">
+                        <span class="small text-muted">@FaAttUi.Num(selected.Count) انتخاب‌شده:</span>
+                        <button class="btn btn-sm btn-success" @onclick="() => BatchDecide(true)"><i class="bi bi-check-all"></i> تأیید نهایی گروهی</button>
+                        <button class="btn btn-sm btn-outline-warning" @onclick="() => BatchDecide(false)"><i class="bi bi-x-lg"></i> رد گروهی</button>
+                        <button class="btn btn-sm btn-light" @onclick="() => selected.Clear()">لغو انتخاب</button>
+                    </div>
+                }
+                <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th style="width:40px"><input class="form-check-input" type="checkbox" @onchange="ToggleAll" checked="@allChecked" title="انتخاب همه قابل‌اقدام" /></th><th>پرسنل</th><th>نوع</th><th>بازه</th><th>وضعیت</th><th>مرحله</th><th>تأیید مدیر</th><th style="width:170px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var l in leaves)
+                        {
+                            <tr class="@(selected.Contains(l.Id) ? "table-active" : "")">
+                                <td>
+                                    @if (l.Status == 0 && l.WorkflowStep == 1)
+                                    {
+                                        <input class="form-check-input" type="checkbox" checked="@selected.Contains(l.Id)" @onchange="() => Toggle(l.Id)" />
+                                    }
+                                </td>
+                                <td><b>@l.EmployeeName</b></td>
+                                <td>@l.LeaveTypeName</td>
+                                <td class="num">@l.FromDate.ToFa() تا @l.ToDate.ToFa()</td>
+                                <td><span class="badge @FaAttUi.ReqBadge(l.Status)">@FaAttUi.ReqStatus(l.Status)</span></td>
+                                <td><span class="badge @FaAttUi.WorkflowBadge(l.WorkflowStep)">@FaAttUi.WorkflowStep(l.WorkflowStep)</span></td>
+                                <td class="small">@(l.ManagerDecidedByName ?? "—")</td>
+                                <td class="text-end">
+                                    <div class="btn-group btn-group-sm">
+                                        @if (l.Status == 0 && l.WorkflowStep == 1)
+                                        {
+                                            <button class="btn btn-success" title="تأیید نهایی" @onclick="() => HrDecide(l, true)"><i class="bi bi-check-lg"></i></button>
+                                            <button class="btn btn-outline-warning" title="رد نهایی" @onclick="() => HrDecide(l, false)"><i class="bi bi-x-lg"></i></button>
+                                        }
+                                        <button class="btn btn-outline-danger" title="حذف" @onclick="() => Delete(l)"><i class="bi bi-trash"></i></button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table></div>
+            }
+        </div>
+    </div>
+}
+else
+{
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+            <div class="row g-2">
+                <div class="col-md-4"><label class="form-label small text-muted">واحد سازمانی</label><select class="form-select" @bind="uUnit">@foreach (var u in units){<option value="@u.Id">@u.Name</option>}</select></div>
+                <div class="col-md-3"><label class="form-label small text-muted">از تاریخ</label><DatePicker @bind-Value="uFrom" /></div>
+                <div class="col-md-3"><label class="form-label small text-muted">تا تاریخ</label><DatePicker @bind-Value="uTo" /></div>
+                <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary" @onclick="LoadUnit">نمایش</button></div>
+            </div>
+        </div>
+    </div>
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            @if (unitLeaves.Count == 0)
+            {
+                <div class="text-center text-muted py-5">مرخصی در این بازه برای واحد انتخاب‌شده ثبت نشده است.</div>
+            }
+            else
+            {
+                <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>پرسنل</th><th>نوع</th><th>بازه</th><th>وضعیت</th><th>مرحله</th></tr></thead>
+                    <tbody>
+                        @foreach (var l in unitLeaves)
+                        {
+                            <tr>
+                                <td><b>@l.EmployeeName</b></td>
+                                <td>@l.LeaveTypeName</td>
+                                <td class="num">@l.FromDate.ToFa() تا @l.ToDate.ToFa()</td>
+                                <td><span class="badge @FaAttUi.ReqBadge(l.Status)">@FaAttUi.ReqStatus(l.Status)</span></td>
+                                <td><span class="badge @FaAttUi.WorkflowBadge(l.WorkflowStep)">@FaAttUi.WorkflowStep(l.WorkflowStep)</span></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table></div>
+            }
+        </div>
+    </div>
+}
+
+<Modal Visible="showBehalf" Title="ثبت مرخصی از طرف پرسنل" OnClose="() => showBehalf = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-md-8"><label class="form-label">پرسنل</label><select class="form-select" @bind="form.EmployeeId">@foreach (var e in emps){<option value="@e.Id">@e.FirstName @e.LastName</option>}</select></div>
+        <div class="col-md-4"><label class="form-label">نوع</label><select class="form-select" @bind="form.LeaveTypeId">@foreach (var t in types){<option value="@t.Id">@t.Name</option>}</select></div>
+        <div class="col-md-6"><label class="form-label">از تاریخ</label><DatePicker @bind-Value="dFrom" /></div>
+        <div class="col-md-6"><label class="form-label">تا تاریخ</label><DatePicker @bind-Value="dTo" /></div>
+        <div class="col-md-6"><label class="form-label">ساعت در روز (خالی = تمام‌روز)</label><input type="number" step="0.5" class="form-control" @bind="form.HoursPerDay" /></div>
+        <div class="col-12"><label class="form-label">علت</label><textarea class="form-control" rows="2" @bind="form.Reason"></textarea></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showBehalf = false">انصراف</button>
+        <button class="btn btn-success" @onclick="SaveBehalf">ثبت</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faManage => Auth.Has("FaAtt.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private int tab;
+    private List<FaAttLeaveDto> leaves = new(), unitLeaves = new();
+    private List<HrEmployeeDto> emps = new();
+    private List<HrMainOrgNodeDto> units = new();
+    private List<FaAttLeaveTypeDto> types = new();
+    private string? fEmp, fStatus;
+    private bool showBehalf;
+    private FaAttLeaveSaveDto form = new();
+    private DateTime? dFrom = DateTime.Today, dTo = DateTime.Today;
+    private int uUnit;
+    private DateTime? uFrom = DateTime.Today, uTo = DateTime.Today.AddDays(30);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        try
+        {
+            emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items;
+            units = await OrgSvc.ListOrgNodesAsync();
+            types = (await Svc.GetLeaveTypesAsync()).Where(t => t.IsActive).ToList();
+            uUnit = units.FirstOrDefault()?.Id ?? 0;
+            form.EmployeeId = emps.FirstOrDefault()?.Id ?? 0;
+            form.LeaveTypeId = types.FirstOrDefault()?.Id ?? 0;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        selected.Clear();
+        try
+        {
+            int? e = int.TryParse(fEmp, out var x) ? x : null;
+            int? st = int.TryParse(fStatus, out var s) ? s : null;
+            leaves = await Svc.GetLeavesAsync(e, st);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task LoadUnit()
+    {
+        try { unitLeaves = await Svc.GetLeavesByUnitAsync(uUnit, uFrom ?? DateTime.Today, uTo ?? DateTime.Today); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task HrDecide(FaAttLeaveDto l, bool approve)
+    {
+        try { await Svc.HrDecideAsync(l.Id, approve); Toast.Success(approve ? "تأیید نهایی شد و از مانده کسر گردید." : "رد نهایی شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private HashSet<int> selected = new();
+    private bool allChecked => leaves.Any(l => l.Status == 0 && l.WorkflowStep == 1) && leaves.Where(l => l.Status == 0 && l.WorkflowStep == 1).All(l => selected.Contains(l.Id));
+
+    private void Toggle(int id)
+    {
+        if (!selected.Add(id)) selected.Remove(id);
+    }
+
+    private void ToggleAll(ChangeEventArgs e)
+    {
+        selected.Clear();
+        if ((bool)(e.Value ?? false))
+            foreach (var l in leaves.Where(l => l.Status == 0 && l.WorkflowStep == 1)) selected.Add(l.Id);
+    }
+
+    private async Task BatchDecide(bool approve)
+    {
+        if (selected.Count == 0) return;
+        if (!await JS.InvokeAsync<bool>("confirm", $"{FaAttUi.Num(selected.Count)} درخواست به‌صورت گروهی {(approve ? "تأیید نهایی" : "رد")} شود؟")) return;
+        try
+        {
+            var r = await Svc.HrDecideBatchAsync(selected.ToList(), approve);
+            if (r.Failed == 0) Toast.Success($"هر {FaAttUi.Num(r.Ok)} درخواست انجام شد.");
+            else Toast.Error($"{FaAttUi.Num(r.Ok)} موفق — {FaAttUi.Num(r.Failed)} ناموفق: {string.Join("؛ ", r.Errors.Take(3))}");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Delete(FaAttLeaveDto l)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "درخواست حذف شود؟ (در صورت تأییدشده بودن، مانده برمی‌گردد)")) return;
+        try { await Svc.DeleteLeaveAsync(l.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task SaveBehalf()
+    {
+        form.FromDate = dFrom ?? DateTime.Today;
+        form.ToDate = dTo ?? DateTime.Today;
+        try { await Svc.SaveLeaveAsync(null, form); Toast.Success("ثبت شد."); showBehalf = false; await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

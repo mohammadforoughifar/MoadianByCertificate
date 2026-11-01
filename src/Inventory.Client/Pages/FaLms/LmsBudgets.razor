@@ -1,0 +1,175 @@
+@namespace Inventory.Client.Pages
+@page "/fa-lms/budgets"
+@inject IFaLmsService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>بودجه آموزش</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-wallet2"></i> بودجه آموزش</h1>
+            <div class="lead">بودجه سالانه + هزینه‌کرد واقعی (ثبت‌نام تأییدشده × سرانه)</div>
+        </div>
+        @if (faManage)
+        {
+            <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> بودجه جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد آموزش است.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (budgets.Count == 0)
+        {
+            <div class="text-center text-muted py-5">بودجه‌ای ثبت نشده است.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>سال</th><th>مصوب (ریال)</th><th>هزینه‌شده</th><th>مانده</th><th>پیشرفت</th><th style="width:130px"></th></tr></thead>
+                <tbody>
+                    @foreach (var b in budgets)
+                    {
+                        var pct = b.Amount > 0 ? Math.Round(b.SpentAmount * 100 / b.Amount, 1) : 0;
+                        <tr>
+                            <td class="num fw-bold">@FaLmsUi.Num(b.Year)</td>
+                            <td class="num">@FaLmsUi.Money(b.Amount)</td>
+                            <td class="num">@FaLmsUi.Money(b.SpentAmount)</td>
+                            <td class="num">@FaLmsUi.Money(b.Amount - b.SpentAmount)</td>
+                            <td style="min-width:140px"><div class="progress" style="height:18px"><div class="progress-bar @(pct > 90 ? "bg-danger" : pct > 70 ? "bg-warning" : "bg-success")" style="@PctStyle(pct)">@FaLmsUi.Num(pct)٪</div></div></td>
+                            <td class="text-end">
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-info" title="گزارش هزینه‌کرد" @onclick="() => LoadReport(b.Year)"><i class="bi bi-graph-up"></i></button>
+                                    <button class="btn btn-outline-secondary" title="ویرایش" @onclick="() => OpenEdit(b)"><i class="bi bi-pencil"></i></button>
+                                    <button class="btn btn-outline-danger" title="حذف" @onclick="() => Delete(b)"><i class="bi bi-trash"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <b><i class="bi bi-graph-up"></i> گزارش هزینه‌کرد سال <span class="num">@FaLmsUi.Num(repYear)</span></b>
+        <div class="d-flex gap-2">
+            <input type="number" class="form-control form-control-sm" style="width:100px" @bind="repYear" />
+            <button class="btn btn-sm btn-primary" @onclick="() => LoadReport(repYear)">نمایش</button>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        @if (repLoading)
+        {
+            <div class="text-center text-muted py-4"><span class="spinner-border"></span></div>
+        }
+        else if (rep == null)
+        {
+            <div class="text-center text-muted py-4">سالی را انتخاب کنید.</div>
+        }
+        else if (rep.Rows.Count == 0)
+        {
+            <div class="text-center text-muted py-4">هزینه‌کردی در این سال ثبت نشده است.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>دوره</th><th>نفر تأییدشده</th><th>سرانه (ریال)</th><th>جمع (ریال)</th></tr></thead>
+                <tbody>
+                    @foreach (var r in rep.Rows)
+                    {
+                        <tr><td><a href="@CourseUrl(r.CourseId)">@r.CourseTitle</a></td><td class="num">@FaLmsUi.Num(r.ApprovedCount)</td><td class="num">@FaLmsUi.Money(r.CostPerPerson)</td><td class="num fw-bold">@FaLmsUi.Money(r.TotalCost)</td></tr>
+                    }
+                </tbody>
+                <tfoot class="table-light"><tr><th>جمع کل</th><th></th><th></th><th class="num">@FaLmsUi.Money(rep.SpentAmount)</th></tr></tfoot>
+            </table></div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="بودجه سالانه" OnClose="() => showEdit = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-md-4"><label class="form-label">سال *</label><input type="number" class="form-control" @bind="form.Year" /></div>
+        <div class="col-md-8"><label class="form-label">مبلغ مصوب (ریال) *</label><input type="number" class="form-control" @bind="form.Amount" /></div>
+        <div class="col-12"><label class="form-label">یادداشت</label><textarea class="form-control" rows="2" @bind="form.Note"></textarea></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" @onclick="Save">ذخیره</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private static string CourseUrl(int id) => "fa-lms/courses/" + id;
+    private static string PctStyle(double pct) => "width:" + pct + "%";
+    private bool faManage => Auth.Has("FaLms.Manage") || Auth.IsAdmin;
+    private bool loading = true, repLoading;
+    private List<FaLmsBudgetDto> budgets = new();
+    private bool showEdit;
+    private int? editId;
+    private FaLmsBudgetSaveDto form = new();
+    private int repYear = FaLmsUi.CurrentYear;
+    private FaLmsBudgetReportDto? rep;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        await Reload();
+        await LoadReport(repYear);
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { budgets = await Svc.ListBudgetsAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task LoadReport(int year)
+    {
+        repYear = year; repLoading = true;
+        try { rep = await Svc.BudgetReportAsync(year); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { repLoading = false; }
+    }
+
+    private void OpenEdit(FaLmsBudgetDto? b)
+    {
+        editId = b?.Id;
+        form = b == null ? new FaLmsBudgetSaveDto { Year = FaLmsUi.CurrentYear } : new FaLmsBudgetSaveDto { Year = b.Year, Amount = b.Amount, Note = b.Note };
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        try { await Svc.SaveBudgetAsync(editId, form); Toast.Success("ذخیره شد."); showEdit = false; await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Delete(FaLmsBudgetDto b)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "بودجه سال " + b.Year + " حذف شود؟")) return;
+        try { await Svc.DeleteBudgetAsync(b.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

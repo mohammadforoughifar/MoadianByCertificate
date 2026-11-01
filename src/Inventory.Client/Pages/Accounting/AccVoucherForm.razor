@@ -1,0 +1,430 @@
+@page "/acc/vouchers/new"
+@page "/acc/vouchers/edit/{Id:int}"
+@inject IAccVoucherService VoucherSvc
+@inject IAccAccountService AccountSvc
+@inject IPartyService PartySvc
+@inject IAccDimensionService DimSvc
+@inject NavigationManager Nav
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>@(Id is null ? "سند حسابداری جدید" : $"سند حسابداری {doc.Number}")</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>@(Id is null ? "سند حسابداری جدید" : $"سند حسابداری شماره {doc.Number.FaDigits()}")</h1>
+        <p class="lead">
+            @doc.FiscalYearTitle
+            @if (doc.Status != VoucherStatus.Draft)
+            {
+                <span class="badge @StatusBadge(doc.Status) ms-2">@doc.StatusTitle</span>
+            }
+            @if (doc.Source != VoucherSource.Manual)
+            {
+                <span class="badge badge-soft-info ms-1">@doc.SourceTitleFa</span>
+            }
+        </p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-light" href="/acc/vouchers"><i class="bi bi-arrow-right"></i> بازگشت</a>
+        @if (Editable)
+        {
+            <button class="btn btn-outline-primary" @onclick="Save" disabled="@saving">
+                @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                <i class="bi bi-save"></i> ذخیره پیش‌نویس
+            </button>
+            <button class="btn btn-primary" @onclick="SaveAndConfirm" disabled="@(saving || !Balanced)">
+                <i class="bi bi-check2-circle"></i> ثبت قطعی
+            </button>
+        }
+        else if (doc.Status == VoucherStatus.Confirmed)
+        {
+            <button class="btn btn-outline-warning" @onclick="Unconfirm">
+                <i class="bi bi-arrow-counterclockwise"></i> برگشت از قطعی
+            </button>
+        }
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else
+{
+    <!-- ================= سربرگ سند ================= -->
+    <div class="card mb-3">
+        <div class="card-header">
+            <i class="bi bi-card-heading text-primary"></i>
+            <span class="card-title">اطلاعات سند</span>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-6 col-md-2">
+                    <label class="form-label">شماره سند</label>
+                    <input type="number" class="form-control num" @bind="doc.Number" disabled="@(!Editable)" />
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label">تاریخ سند <span class="text-danger">*</span></label>
+                    <DatePicker Value="doc.Date" ValueChanged="OnDate" />
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label">شماره عطف</label>
+                    <input class="form-control" @bind="doc.RefNumber" disabled="@(!Editable)" placeholder="اختیاری" />
+                </div>
+                <div class="col-12 col-md-6">
+                    <label class="form-label">شرح سند</label>
+                    <input class="form-control" @bind="doc.Description" disabled="@(!Editable)"
+                           placeholder="مثلاً: بابت خرید نقدی کالا طی فاکتور شماره ۱۲۳" />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= آرتیکل‌های سند ================= -->
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-list-ol text-primary"></i>
+            <span class="card-title">آرتیکل‌های سند</span>
+            <span class="badge badge-soft-primary ms-auto">@doc.Lines.Count.Num() سطر</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive grid-desktop">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:44px">ردیف</th>
+                            <th style="width:23%">حساب <span class="text-danger">*</span></th>
+                            <th style="width:13%">طرف حساب</th>
+                            <th style="width:13%">بُعد تحلیلی</th>
+                            <th>شرح آرتیکل</th>
+                            <th style="width:11%" class="text-center">بدهکار</th>
+                            <th style="width:11%" class="text-center">بستانکار</th>
+                            <th style="width:56px"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @for (var i = 0; i < doc.Lines.Count; i++)
+                        {
+                            var idx = i;
+                            var line = doc.Lines[idx];
+                            <tr>
+                                <td class="num text-muted">@((idx + 1).FaDigits())</td>
+                                <td>
+                                    <SearchSelect Items="accountLookups" Value="line.AccountId"
+                                                  ValueChanged="v => OnAccount(idx, v)"
+                                                  Placeholder="کد یا نام حساب…" />
+                                </td>
+                                <td>
+                                    <SearchSelect Items="partyLookups" Value="@(line.PartyId ?? 0)"
+                                                  ValueChanged="v => OnParty(idx, v)"
+                                                  Placeholder="اختیاری…" />
+                                </td>
+                                <td>
+                                    <SearchSelect Items="dimLookups" Value="@(line.DimensionValueId ?? 0)"
+                                                  ValueChanged="v => OnDimValue(idx, v)"
+                                                  Placeholder="اختیاری…" />
+                                </td>
+                                <td>
+                                    <input class="form-control form-control-sm" @bind="line.Description"
+                                           disabled="@(!Editable)" placeholder="شرح این آرتیکل" />
+                                </td>
+                                <td>
+                                    <input type="number" step="any" class="form-control form-control-sm num text-center"
+                                           value="@line.Debit" @onchange="e => OnDebit(idx, e)" disabled="@(!Editable)" />
+                                </td>
+                                <td>
+                                    <input type="number" step="any" class="form-control form-control-sm num text-center"
+                                           value="@line.Credit" @onchange="e => OnCredit(idx, e)" disabled="@(!Editable)" />
+                                </td>
+                                <td class="text-center">
+                                    @if (Editable)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="حذف سطر" @onclick="() => RemoveLine(idx)">
+                                            <i class="bi bi-trash text-danger"></i>
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot class="table-light">
+                        <tr>
+                            <th colspan="5" class="text-end">جمع کل</th>
+                            <th class="text-center num text-success">@TotalDebit.Money()</th>
+                            <th class="text-center num text-danger">@TotalCredit.Money()</th>
+                            <th></th>
+                        </tr>
+                        <tr>
+                            <th colspan="4" class="text-end">اختلاف (بدهکار − بستانکار)</th>
+                            <th colspan="2" class="text-center num @(Balanced ? "text-success" : "text-danger")">
+                                @if (Balanced)
+                                {
+                                    <span><i class="bi bi-check-circle-fill"></i> سند تراز است</span>
+                                }
+                                else
+                                {
+                                    <span><i class="bi bi-exclamation-triangle-fill"></i> @Math.Abs(Difference).Money()</span>
+                                }
+                            </th>
+                            <th></th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @for (var i = 0; i < doc.Lines.Count; i++)
+                {
+                    var idx = i;
+                    var line = doc.Lines[idx];
+                    <div class="m-card">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi bi-dot"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <b class="text-truncate d-block">@(string.IsNullOrWhiteSpace(line.AccountName) ? "— انتخاب حساب —" : line.AccountName)</b>
+                                <div class="fs-8 text-muted num">@line.AccountCode.FaDigits()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-row">
+                                <span>حساب</span>
+                                <SearchSelect Items="accountLookups" Value="line.AccountId"
+                                              ValueChanged="v => OnAccount(idx, v)" Placeholder="کد یا نام حساب…" />
+                            </div>
+                            <div class="m-card-row">
+                                <span>بدهکار</span>
+                                <input type="number" step="any" class="form-control form-control-sm num"
+                                       value="@line.Debit" @onchange="e => OnDebit(idx, e)" disabled="@(!Editable)" />
+                            </div>
+                            <div class="m-card-row">
+                                <span>بستانکار</span>
+                                <input type="number" step="any" class="form-control form-control-sm num"
+                                       value="@line.Credit" @onchange="e => OnCredit(idx, e)" disabled="@(!Editable)" />
+                            </div>
+                        </div>
+                        @if (Editable)
+                        {
+                            <div class="m-card-actions">
+                                <button class="btn btn-light text-danger" @onclick="() => RemoveLine(idx)">
+                                    <i class="bi bi-trash"></i> حذف سطر
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
+            @if (Editable)
+            {
+                <div class="p-3 d-flex gap-2 flex-wrap border-top">
+                    <button class="btn btn-outline-primary btn-sm" @onclick="AddLine">
+                        <i class="bi bi-plus-lg"></i> افزودن آرتیکل
+                    </button>
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="BalanceLast" disabled="@(Balanced || doc.Lines.Count == 0)">
+                        <i class="bi bi-magic"></i> تراز کردن سطر آخر
+                    </button>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private AccVoucher doc = new();
+    private List<LookupItem> accountLookups = new();
+    private List<LookupItem> partyLookups = new();
+    private List<LookupItem> dimLookups = new();
+
+    private bool loading = true, saving;
+
+    private bool Editable => doc.Status == VoucherStatus.Draft;
+    private decimal TotalDebit => doc.Lines.Sum(l => l.Debit);
+    private decimal TotalCredit => doc.Lines.Sum(l => l.Credit);
+    private decimal Difference => TotalDebit - TotalCredit;
+    private bool Balanced => Difference == 0 && TotalDebit > 0;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        Layout.SetTitle(Id is null ? "سند حسابداری جدید" : "ویرایش سند حسابداری");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            accountLookups = await AccountSvc.GetLookupsAsync();
+            try
+            {
+                // طرف حساب‌ها = مشتریان + تأمین‌کنندگان
+                var customers = await PartySvc.GetLookupsAsync(PartyType.Customer, true);
+                var suppliers = await PartySvc.GetLookupsAsync(PartyType.Supplier, true);
+                partyLookups = customers.Concat(suppliers)
+                    .GroupBy(p => p.Id).Select(g => g.First())
+                    .OrderBy(p => p.Name).ToList();
+            }
+            catch { partyLookups = new(); }
+
+            try
+            {
+                var dims = await DimSvc.GetDimensionsAsync();
+                if (dims.Count > 0)
+                    dimLookups = await DimSvc.GetValueLookupsAsync(dims[0].Id);
+            }
+            catch { dimLookups = new(); }
+
+            doc = Id is null ? await VoucherSvc.NewAsync() : await VoucherSvc.GetAsync(Id.Value);
+
+            // حداقل دو سطر خالی برای شروع کار
+            while (doc.Status == VoucherStatus.Draft && doc.Lines.Count < 2) AddLine();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    // ---------- ویرایش سطرها ----------
+    private void AddLine() => doc.Lines.Add(new AccVoucherLine { RowNo = doc.Lines.Count + 1 });
+
+    private void RemoveLine(int idx)
+    {
+        if (idx < 0 || idx >= doc.Lines.Count) return;
+        doc.Lines.RemoveAt(idx);
+        Renumber();
+    }
+
+    private void Renumber()
+    {
+        for (var i = 0; i < doc.Lines.Count; i++) doc.Lines[i].RowNo = i + 1;
+    }
+
+    private void OnAccount(int idx, int accountId)
+    {
+        var line = doc.Lines[idx];
+        line.AccountId = accountId;
+        var acc = accountLookups.FirstOrDefault(a => a.Id == accountId);
+        line.AccountName = acc?.Name ?? "";
+    }
+
+    private void OnParty(int idx, int partyId)
+    {
+        var line = doc.Lines[idx];
+        line.PartyId = partyId > 0 ? partyId : null;
+        line.PartyName = partyLookups.FirstOrDefault(p => p.Id == partyId)?.Name;
+    }
+
+    private void OnDimValue(int idx, int dimValueId)
+    {
+        var line = doc.Lines[idx];
+        line.DimensionValueId = dimValueId > 0 ? dimValueId : null;
+        line.DimensionValueName = dimLookups.FirstOrDefault(d => d.Id == dimValueId)?.Name;
+    }
+
+    private void OnDebit(int idx, ChangeEventArgs e)
+    {
+        var v = Fa.ParseDecimal(e.Value?.ToString());
+        var line = doc.Lines[idx];
+        line.Debit = v < 0 ? 0 : v;
+        if (line.Debit > 0) line.Credit = 0;
+    }
+
+    private void OnCredit(int idx, ChangeEventArgs e)
+    {
+        var v = Fa.ParseDecimal(e.Value?.ToString());
+        var line = doc.Lines[idx];
+        line.Credit = v < 0 ? 0 : v;
+        if (line.Credit > 0) line.Debit = 0;
+    }
+
+    private void OnDate(DateTime? d) => doc.Date = d ?? doc.Date;
+
+    /// <summary>مبلغ اختلاف را روی سطر آخر می‌گذارد تا سند تراز شود.</summary>
+    private void BalanceLast()
+    {
+        if (doc.Lines.Count == 0) return;
+        var last = doc.Lines[^1];
+        var diff = Difference - (last.Debit - last.Credit);
+
+        if (diff > 0) { last.Credit = diff; last.Debit = 0; }
+        else if (diff < 0) { last.Debit = -diff; last.Credit = 0; }
+    }
+
+    // ---------- ذخیره ----------
+    private bool Validate()
+    {
+        var real = doc.Lines.Where(l => l.AccountId > 0 && (l.Debit > 0 || l.Credit > 0)).ToList();
+        if (real.Count < 2) { Toast.Error("سند باید حداقل دو آرتیکل داشته باشد."); return false; }
+        if (doc.Lines.Any(l => l.AccountId == 0 && (l.Debit > 0 || l.Credit > 0)))
+        {
+            Toast.Error("برای همه‌ی سطرهای دارای مبلغ، حساب را انتخاب کنید.");
+            return false;
+        }
+        return true;
+    }
+
+    private async Task<bool> DoSave()
+    {
+        if (!Validate()) return false;
+
+        // حذف سطرهای کاملاً خالی
+        doc.Lines = doc.Lines.Where(l => l.AccountId > 0 || l.Debit > 0 || l.Credit > 0).ToList();
+        Renumber();
+
+        saving = true;
+        try
+        {
+            var saved = await VoucherSvc.SaveAsync(doc);
+            doc = saved;
+            if (Id is null) Nav.NavigateTo($"/acc/vouchers/edit/{saved.Id}", replace: true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+            return false;
+        }
+        finally { saving = false; }
+    }
+
+    private async Task Save()
+    {
+        if (await DoSave()) Toast.Success("سند ذخیره شد.");
+    }
+
+    private async Task SaveAndConfirm()
+    {
+        if (!Balanced) { Toast.Error("سند تراز نیست؛ جمع بدهکار و بستانکار باید برابر باشد."); return; }
+        if (!await DoSave()) return;
+        if (!await JS.InvokeAsync<bool>("confirm", "سند به‌صورت قطعی ثبت شود؟ پس از آن در دفاتر و تراز منظور می‌شود.")) return;
+
+        try
+        {
+            doc = await VoucherSvc.ConfirmAsync(doc.Id);
+            Toast.Success("سند قطعی شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Unconfirm()
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "سند به حالت پیش‌نویس برگردد؟")) return;
+        try
+        {
+            doc = await VoucherSvc.UnconfirmAsync(doc.Id);
+            Toast.Success("سند به پیش‌نویس برگشت.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string StatusBadge(VoucherStatus s) => s switch
+    {
+        VoucherStatus.Draft => "badge-soft-warning",
+        VoucherStatus.Confirmed => "badge-soft-success",
+        _ => "badge-soft-muted"
+    };
+}

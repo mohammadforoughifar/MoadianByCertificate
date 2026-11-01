@@ -1,0 +1,391 @@
+@namespace Inventory.Client.Pages
+@page "/fa-com/polls"
+@inject IFaComService Svc
+@inject IHrCoreService OrgSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject RealtimeService Rt
+@implements IDisposable
+
+<PageTitle>نظرسنجی‌ها</PageTitle>
+
+<style>
+    .poll-card { border: 0; border-radius: 1rem; overflow: hidden; }
+    .poll-card.poll-closed { background: #f8fafc; }
+    .poll-topbar { height: 4px; background: linear-gradient(-90deg, #22c55e, #16a34a); }
+    .poll-closed .poll-topbar { background: #cbd5e1; }
+    .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .2rem .7rem; border-radius: 999px; font-size: .78rem; font-weight: 600; white-space: nowrap; }
+    .chip-open { background: #dcfce7; color: #166534; }
+    .chip-closed { background: #e2e8f0; color: #475569; }
+    .chip-aud { background: #e0f2fe; color: #075985; }
+    .chip-time { background: #fef3c7; color: #92400e; }
+    .chip-votes { background: #f1f5f9; color: #334155; }
+    .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; animation: pulse-dot 1.6s infinite; }
+    @@keyframes pulse-dot { 0% { box-shadow: 0 0 0 0 rgba(22,163,74,.5); } 70% { box-shadow: 0 0 0 7px rgba(22,163,74,0); } 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); } }
+    .poll-title { font-weight: 800; font-size: 1.15rem; margin: .6rem 0 .15rem; }
+    .poll-desc { color: #64748b; font-size: .88rem; margin-bottom: .9rem; }
+    .opt-card { display: flex; align-items: center; gap: .7rem; border: 1.5px solid #e2e8f0; border-radius: .8rem; padding: .7rem .9rem; cursor: pointer; transition: all .15s ease; background: #fff; height: 100%; }
+    .opt-card:hover { border-color: #93c5fd; box-shadow: 0 2px 10px rgba(59,130,246,.12); transform: translateY(-1px); }
+    .opt-card.selected { border-color: #2563eb; border-width: 2px; background: #eff6ff; box-shadow: 0 2px 12px rgba(37,99,235,.15); }
+    .opt-letter { flex: 0 0 auto; width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: #f1f5f9; color: #475569; font-weight: 800; font-size: .85rem; transition: all .15s ease; }
+    .opt-card.selected .opt-letter { background: #2563eb; color: #fff; }
+    .opt-text { flex: 1 1 auto; font-weight: 600; }
+    .opt-check { color: #2563eb; font-size: 1.2rem; visibility: hidden; }
+    .opt-card.selected .opt-check { visibility: visible; }
+    .res-row { background: #fff; border: 1px solid #f1f5f9; border-radius: .8rem; padding: .55rem .8rem; margin-bottom: .5rem; }
+    .res-row.mine { border-color: #86efac; background: #f0fdf4; }
+    .res-bar { height: 10px; border-radius: 999px; background: #eef2f7; overflow: hidden; }
+    .res-fill { height: 100%; border-radius: 999px; background: linear-gradient(-90deg, #60a5fa, #2563eb); transition: width .8s ease; }
+    .res-row.mine .res-fill { background: linear-gradient(-90deg, #4ade80, #16a34a); }
+    .res-pct { font-weight: 800; font-size: 1.05rem; color: #1e293b; }
+    .my-pill { font-size: .72rem; font-weight: 700; color: #166534; background: #dcfce7; border-radius: 999px; padding: .1rem .6rem; }
+    .seg-btn { border-radius: 999px !important; padding: .3rem 1rem; font-size: .85rem; font-weight: 600; }
+    .icon-btn { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: .55rem; border: 1px solid #e2e8f0; background: #fff; color: #64748b; transition: all .15s ease; }
+    .icon-btn:hover { color: #fff; border-color: transparent; }
+    .icon-btn.edit:hover { background: #2563eb; }
+    .icon-btn.del:hover { background: #dc2626; }
+</style>
+
+<div class="page-head mb-4">
+    <div>
+        <h1><i class="bi bi-bar-chart"></i> نظرسنجی‌ها</h1>
+        <div class="lead">رأی‌گیری + نتایج زنده</div>
+    </div>
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+        <div class="btn-group gap-1" role="group">
+            <button class="btn @(filter == 1 ? "btn-primary" : "btn-light") seg-btn" @onclick="() => SetFilter(1)">بازها</button>
+            <button class="btn @(filter == 2 ? "btn-primary" : "btn-light") seg-btn" @onclick="() => SetFilter(2)">بسته‌ها</button>
+            <button class="btn @(filter == 0 ? "btn-primary" : "btn-light") seg-btn" @onclick="() => SetFilter(0)">همه</button>
+        </div>
+        @if (faManage)
+        {
+            <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> نظرسنجی جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+    return;
+}
+@if (shown.Count == 0)
+{
+    <div class="text-center text-muted py-5">
+        <div class="fs-1"><i class="bi bi-inbox"></i></div>
+        <div class="mt-2">نظرسنجی‌ای یافت نشد.</div>
+    </div>
+}
+
+@foreach (var p in shown)
+{
+    <div class="card shadow-sm mb-3 poll-card @(p.IsOpen ? "" : "poll-closed")">
+        <div class="poll-topbar"></div>
+        <div class="card-body p-4">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                @if (p.IsOpen)
+                {
+                    <span class="chip chip-open"><span class="pulse-dot"></span> در حال رأی‌گیری</span>
+                }
+                else
+                {
+                    <span class="chip chip-closed"><i class="bi bi-lock"></i> بسته</span>
+                }
+                <span class="chip chip-aud"><i class="bi bi-people"></i> @FaComUi.Audience(p.Audience)@if (!string.IsNullOrEmpty(p.OrgUnitName)) { <span> — @p.OrgUnitName</span> }</span>
+                @if (p.CloseAt != null)
+                {
+                    <span class="chip chip-time"><i class="bi bi-hourglass-split"></i> مهلت <span class="num">@FaComUi.Dt(p.CloseAt)</span></span>
+                }
+                <span class="chip chip-votes"><i class="bi bi-check2-square"></i> <span class="num">@Digits(p.TotalVotes)</span> رأی</span>
+                @if (faManage)
+                {
+                    <span class="d-flex gap-1 ms-auto">
+                        <button class="icon-btn edit" title="ویرایش" @onclick="() => OpenEdit(p)"><i class="bi bi-pencil"></i></button>
+                        <button class="icon-btn del" title="حذف" @onclick="() => Delete(p.Id)"><i class="bi bi-trash"></i></button>
+                    </span>
+                }
+            </div>
+
+            <div class="poll-title">@p.Title</div>
+            @if (!string.IsNullOrWhiteSpace(p.Description))
+            {
+                <div class="poll-desc">@p.Description</div>
+            }
+
+            @if (p.IsOpen && p.MyOptionId == null && !revote.Contains(p.Id))
+            {
+                <div class="row g-2 mt-1">
+                    @for (var i = 0; i < p.Options.Count; i++)
+                    {
+                        var o = p.Options[i];
+                        <div class="col-md-6">
+                            <label class="opt-card @(Sel(p.Id) == o.Id ? "selected" : "")">
+                                <input type="radio" class="d-none" name="@QName(p.Id)" checked="@(Sel(p.Id) == o.Id)" @onchange="() => SetSel(p.Id, o.Id)" />
+                                <span class="opt-letter">@OptLetter(i)</span>
+                                <span class="opt-text">@o.Text</span>
+                                <i class="bi bi-check-circle-fill opt-check"></i>
+                            </label>
+                        </div>
+                    }
+                </div>
+                <div class="d-flex align-items-center gap-3 mt-3 flex-wrap">
+                    <button class="btn btn-primary px-4" disabled="@voting" @onclick="() => DoVote(p)"><i class="bi bi-check2-square"></i> ثبت رأی</button>
+                    <span class="text-muted small"><i class="bi bi-info-circle"></i> پس از ثبت، امکان تغییر رأی دارید.</span>
+                </div>
+            }
+            else
+            {
+                <div class="mt-1">
+                    @for (var i = 0; i < p.Options.Count; i++)
+                    {
+                        var o = p.Options[i];
+                        var mine = p.MyOptionId == o.Id;
+                        var lead = p.TotalVotes > 0 && o.VotesCount == p.Options.Max(x => x.VotesCount);
+                        <div class="res-row @(mine ? "mine" : "")">
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="fw-bold">@o.Text</span>
+                                @if (mine) { <span class="my-pill"><i class="bi bi-check-circle-fill"></i> رأی شما</span> }
+                                @if (lead) { <i class="bi bi-trophy-fill text-warning" title="پیشتاز"></i> }
+                                <span class="ms-auto text-nowrap"><span class="res-pct num">@Digits(o.Percent)٪</span> <span class="text-muted small num">(@Digits(o.VotesCount))</span></span>
+                            </div>
+                            <div class="res-bar mt-1">
+                                <div class="res-fill @(lead ? "progress-bar-striped progress-bar-animated" : "")" role="progressbar" style="width:@o.Percent.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)%"></div>
+                            </div>
+                        </div>
+                    }
+                    @if (p.IsOpen && p.MyOptionId != null)
+                    {
+                        @if (revote.Contains(p.Id))
+                        {
+                            <div class="row g-2 mt-2">
+                                @for (var i = 0; i < p.Options.Count; i++)
+                                {
+                                    var o = p.Options[i];
+                                    <div class="col-md-6">
+                                        <label class="opt-card @(Sel(p.Id) == o.Id ? "selected" : "")">
+                                            <input type="radio" class="d-none" name="@QName(p.Id)" checked="@(Sel(p.Id) == o.Id)" @onchange="() => SetSel(p.Id, o.Id)" />
+                                            <span class="opt-letter">@OptLetter(i)</span>
+                                            <span class="opt-text">@o.Text</span>
+                                            <i class="bi bi-check-circle-fill opt-check"></i>
+                                        </label>
+                                    </div>
+                                }
+                            </div>
+                            <div class="d-flex gap-2 mt-3">
+                                <button class="btn btn-primary" disabled="@voting" @onclick="() => DoVote(p)">ثبت رأی جدید</button>
+                                <button class="btn btn-light" @onclick="() => revote.Remove(p.Id)">انصراف</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <button class="btn btn-outline-secondary mt-2" @onclick="() => StartRevote(p)"><i class="bi bi-arrow-repeat"></i> تغییر رأی</button>
+                        }
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
+<Modal Visible="showEdit" Title="نظرسنجی" Size="modal-lg" OnClose="() => showEdit = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-12"><label class="form-label fw-bold">عنوان *</label><input class="form-control" @bind="form.Title" /></div>
+            <div class="col-12"><label class="form-label">توضیح</label><textarea class="form-control" rows="2" @bind="form.Description"></textarea></div>
+            <div class="col-md-4">
+                <label class="form-label">مخاطب</label>
+                <select class="form-select" @bind="form.Audience">
+                    <option value="0">همه پرسنل</option>
+                    <option value="1">واحد خاص</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">واحد سازمانی</label>
+                <select class="form-select" @bind="form.OrgUnitId" disabled="@(form.Audience != 1)">
+                    <option value="">—</option>
+                    @foreach (var u in units)
+                    {
+                        <option value="@u.Id">@u.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4"><label class="form-label">مهلت رأی‌گیری</label><DatePicker @bind-Value="form.CloseAt" AllowClear="true" /></div>
+            <div class="col-12"><div class="form-check"><input type="checkbox" class="form-check-input" @bind="form.IsActive" /><label class="form-check-label">فعال (قابل رأی)</label></div></div>
+            <div class="col-12">
+                <hr class="my-1" />
+                <label class="form-label fw-bold mt-1">گزینه‌ها (حداقل ۲، حداکثر ۱۰)</label>
+                @if (editVotes > 0)
+                {
+                    <div class="alert alert-warning small py-1">این نظرسنجی رأی دارد؛ گزینه‌ها قابل تغییر نیستند (عنوان، مخاطب، مهلت و وضعیت قابل ویرایش است).</div>
+                }
+                @for (var i = 0; i < optTexts.Count; i++)
+                {
+                    var idx = i;
+                    <div class="input-group mb-1">
+                        <span class="input-group-text num">@OptLetter(idx)</span>
+                        <input class="form-control" placeholder="@($"گزینه {idx + 1}")" @bind="optTexts[idx]" disabled="@(editVotes > 0)" />
+                        @if (editVotes == 0 && optTexts.Count > 2)
+                        {
+                            <button class="btn btn-outline-danger" @onclick="() => optTexts.RemoveAt(idx)"><i class="bi bi-x"></i></button>
+                        }
+                    </div>
+                }
+                @if (editVotes == 0 && optTexts.Count < 10)
+                {
+                    <button class="btn btn-sm btn-outline-primary" @onclick="AddOption"><i class="bi bi-plus"></i> گزینه جدید</button>
+                }
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" disabled="@saving" @onclick="Save">ذخیره</button>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faRead => Auth.Has("FaCom.Read") || Auth.IsAdmin;
+    private bool faManage => Auth.Has("FaCom.Manage") || Auth.IsAdmin;
+
+    private bool loading = true, saving, voting, showEdit;
+    private int filter = 1;
+    private List<FaComPollDto> polls = new();
+    private List<FaComPollDto> shown = new();
+    private List<HrOrgUnitDto> units = new();
+    private Dictionary<int, int> sels = new();
+    private HashSet<int> revote = new();
+    private int? editId;
+    private int editVotes;
+    private FaComPollSaveDto form = new();
+    private List<string> optTexts = new();
+
+    private static string Digits(object v) => Inventory.Shared.Fa.Digits(v.ToString() ?? "");
+    private static string QName(int pid) => "poll" + pid;
+    private int Sel(int pid) => sels.TryGetValue(pid, out var v) ? v : -1;
+    private void SetSel(int pid, int oid) => sels[pid] = oid;
+    private static string OptLetter(int i) => (i % 10) switch
+    {
+        0 => "الف", 1 => "ب", 2 => "ج", 3 => "د", 4 => "هـ",
+        5 => "و", 6 => "ز", 7 => "ح", 8 => "ط", _ => "ی"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        Rt.DataChanged += OnRtChanged;
+        if (!faRead) { loading = false; return; }
+        if (faManage)
+        {
+            try { units = await OrgSvc.GetOrgUnitsAsync(); } catch { }
+        }
+        await Reload();
+        loading = false;
+    }
+
+    private void SetFilter(int f)
+    {
+        filter = f;
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        shown = filter switch
+        {
+            1 => polls.Where(p => p.IsOpen).ToList(),
+            2 => polls.Where(p => !p.IsOpen).ToList(),
+            _ => polls.ToList()
+        };
+    }
+
+    private async Task Reload()
+    {
+        try
+        {
+            polls = faManage ? await Svc.ManagePollsAsync() : await Svc.ListPollsAsync();
+            polls = polls.OrderByDescending(p => p.IsOpen).ThenByDescending(p => p.Id).ToList();
+            ApplyFilter();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async void OnRtChanged(string scope)
+    {
+        if (scope != "facom-polls") return;
+        await InvokeAsync(Reload);
+    }
+
+    private void StartRevote(FaComPollDto p)
+    {
+        sels[p.Id] = p.MyOptionId ?? -1;
+        revote.Add(p.Id);
+    }
+
+    private async Task DoVote(FaComPollDto p)
+    {
+        if (Sel(p.Id) <= 0) { Toast.Info("یک گزینه انتخاب کنید."); return; }
+        voting = true;
+        try
+        {
+            var updated = await Svc.VoteAsync(p.Id, Sel(p.Id));
+            var ix = polls.FindIndex(x => x.Id == p.Id);
+            if (ix >= 0) polls[ix] = updated;
+            revote.Remove(p.Id);
+            ApplyFilter();
+            Toast.Success("رأی شما ثبت شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        voting = false;
+    }
+
+    private void AddOption()
+    {
+        if (optTexts.Count < 10) optTexts.Add("");
+    }
+
+    private void OpenEdit(FaComPollDto? p)
+    {
+        editId = p?.Id;
+        editVotes = p?.TotalVotes ?? 0;
+        form = p == null
+            ? new FaComPollSaveDto { IsActive = true }
+            : new FaComPollSaveDto { Title = p.Title, Description = p.Description, Audience = p.Audience, OrgUnitId = p.OrgUnitId, IsActive = p.IsActive, CloseAt = p.CloseAt };
+        optTexts = p == null
+            ? new List<string> { "", "" }
+            : p.Options.OrderBy(o => o.SortOrder).Select(o => o.Text).ToList();
+        if (optTexts.Count < 2) optTexts = new List<string> { "", "" };
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            form.Options = optTexts;
+            await Svc.SavePollAsync(editId, form);
+            Toast.Success("نظرسنجی ذخیره شد.");
+            showEdit = false;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+
+    private async Task Delete(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "نظرسنجی و همه رأی‌ها حذف شود؟")) return;
+        try { await Svc.DeletePollAsync(id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    public void Dispose()
+    {
+        Rt.DataChanged -= OnRtChanged;
+    }
+}

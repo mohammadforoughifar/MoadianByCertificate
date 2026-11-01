@@ -1,0 +1,330 @@
+@namespace Inventory.Client.Pages
+@page "/system/organizations"
+@inject HttpClient Http
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center flex-wrap gap-2" style="background:linear-gradient(135deg,#4f8cff,#8e5cff);color:#fff;border-radius:14px 14px 0 0;">
+        <span><i class="bi bi-building me-2"></i>تعریف واحدهای سازمانی</span>
+        <button class="btn btn-light btn-sm fw-700 shadow-sm" style="border-radius:8px;color:#4f5b8a;" @onclick="OpenForm"><i class="bi bi-plus-lg"></i> افزودن واحد</button>
+    </div>
+
+    <div class="mb-3">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-4">
+                <select class="form-select" @bind="selectedCompanyId">
+                    <option value="0">— همه شرکت‌ها —</option>
+                    @foreach (var c in companies.Where(c => c.IsActive).OrderBy(c => c.Name))
+                    {
+                        <option value="@c.Id">@c.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <input type="text" class="form-control" placeholder="جستجوی نام واحد..." @bind="searchText" @bind:event="oninput" />
+            </div>
+            <div class="col-md-4 text-end">
+                <span class="badge bg-secondary">@filteredItems.Count واحد</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>#</th>
+                    <th>نام واحد</th>
+                    <th>کد اختصاری (در شماره نامه)</th>
+                    <th>شرکت</th>
+                    <th>پیش‌فرض</th>
+                    <th>وضعیت</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (isLoading)
+                {
+                    <tr><td colspan="7" class="text-center py-4"><div class="spinner-border text-primary"></div></td></tr>
+                }
+                else if (!filteredItems.Any())
+                {
+                    <tr><td colspan="7" class="text-center text-muted py-4">واحد سازمانی یافت نشد.</td></tr>
+                }
+                else
+                {
+                    var i = 1;
+                    @foreach (var o in filteredItems)
+                    {
+                        <tr>
+                            <td>@(i++)</td>
+                            <td>@o.NameUnit</td>
+                            <td class="num" dir="ltr"><strong>@o.NameUniq</strong></td>
+                            <td>@GetCompanyName(o.CompanyId)</td>
+                            <td>
+                                @if (o.IsDefault)
+                                {
+                                    <span class="badge bg-success">✅ بله</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-light text-dark">خیر</span>
+                                }
+                            </td>
+                            <td>
+                                <span class="@(o.IsActive ? "badge bg-success" : "badge bg-secondary")">@(o.IsActive ? "فعال" : "غیرفعال")</span>
+                            </td>
+                            <td>
+                                <div class="d-flex gap-1 justify-content-center">
+                                    <button class="btn btn-sm btn-outline-primary ops-btn" title="ویرایش" @onclick="() => EditOrg(o)"><i class="bi bi-pencil-fill"></i></button>
+                                    <button class="btn btn-sm btn-outline-danger ops-btn" title="حذف" @onclick="() => DeleteOrg(o.OrganizationId)"><i class="bi bi-trash-fill"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@if (ShowForm)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+        <div class="modal-dialog modal-dialog-centered" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(editingOrg ? "ویرایش واحد سازمانی" : "افزودن واحد سازمانی جدید")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseForm"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrWhiteSpace(formError))
+                    {
+                        <div class="alert alert-danger py-2">@formError</div>
+                    }
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">شرکت <span class="text-danger">*</span></label>
+                            <select class="form-select" @bind="form.CompanyId">
+                                <option value="0">— انتخاب شرکت —</option>
+                                @foreach (var c in companies.Where(c => c.IsActive).OrderBy(c => c.Name))
+                                {
+                                    <option value="@c.Id">@c.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">نام واحد <span class="text-danger">*</span></label>
+                            <input class="form-control" @bind="form.NameUnit" placeholder="مثلاً: مدیریت کیفیت" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">کد اختصاری (در شماره نامه) <span class="text-danger">*</span></label>
+                            <input class="form-control" dir="ltr" @bind="form.NameUniq" placeholder="مثلاً: MQ" maxlength="20" />
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check form-switch mt-4 pt-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="isDefaultSwitch" @bind="form.IsDefault" />
+                                <label class="form-check-label" for="isDefaultSwitch">واحد پیش‌فرض باشد</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check form-switch mt-4 pt-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="isActiveSwitch" @bind="form.IsActive" />
+                                <label class="form-check-label" for="isActiveSwitch">واحد فعال باشد</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseForm">انصراف</button>
+                    <button class="btn btn-primary" disabled="@busy" @onclick="SaveOrg">
+                        @(editingOrg ? "ذخیره تغییرات" : "افزودن واحد")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<OrganizationDto> items = new();
+    private List<CompanyItem> companies = new();
+
+    private bool isLoading = true;
+    private bool ShowForm = false;
+    private bool editingOrg = false;
+    private bool busy = false;
+    private string formError = "";
+    private string searchText = "";
+    private int? selectedCompanyId = null;
+    private int editId = 0;
+
+    private OrganizationForm form = new();
+
+    private List<OrganizationDto> filteredItems =>
+        items.Where(o =>
+            string.IsNullOrWhiteSpace(searchText) ||
+            o.NameUnit.Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            o.NameUniq.Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase))
+        .Where(o => selectedCompanyId is null || selectedCompanyId == 0 || selectedCompanyId == o.CompanyId)
+        .ToList();
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try { items = await Http.GetFromJsonAsync<List<OrganizationDto>>("/api/SystemOrganizations") ?? new(); }
+        catch { items = new(); }
+        try { companies = await Http.GetFromJsonAsync<List<CompanyItem>>("/api/SystemCompanies") ?? new(); }
+        catch { companies = new(); }
+        finally { isLoading = false; }
+    }
+
+    private void OpenForm()
+    {
+        editingOrg = false; editId = 0; formError = "";
+        form = new OrganizationForm();
+        ShowForm = true;
+    }
+
+    private void EditOrg(OrganizationDto o)
+    {
+        editingOrg = true; editId = o.OrganizationId; formError = "";
+        form = new OrganizationForm
+        {
+            NameUnit = o.NameUnit,
+            NameUniq = o.NameUniq,
+            CompanyId = o.CompanyId,
+            IsDefault = o.IsDefault,
+            IsActive = o.IsActive
+        };
+        ShowForm = true;
+        StateHasChanged();
+    }
+
+    private void CloseForm()
+    {
+        ShowForm = false;
+    }
+
+    private async Task SaveOrg()
+    {
+        formError = "";
+
+        if (form.CompanyId is null or 0)
+        { formError = "یک شرکت انتخاب کنید."; return; }
+
+        if (string.IsNullOrWhiteSpace(form.NameUnit))
+        { formError = "نام واحد الزامی است."; return; }
+
+        if (string.IsNullOrWhiteSpace(form.NameUniq))
+        { formError = "کد اختصاری الزامی است."; return; }
+
+        busy = true;
+        try
+        {
+            var payload = new Organization
+            {
+                OrganizationId = editId,
+                NameUnit = form.NameUnit.Trim(),
+                NameUniq = form.NameUniq.Trim(),
+                CompanyId = form.CompanyId,
+                IsDefault = form.IsDefault,
+                IsActive = form.IsActive,
+                IsDelete = false,
+                CreatedAt = DateTime.Now
+            };
+
+            HttpResponseMessage resp;
+            if (editingOrg && editId > 0)
+                resp = await Http.PutAsJsonAsync($"/api/SystemOrganizations/{editId}", payload);
+            else
+                resp = await Http.PostAsJsonAsync("/api/SystemOrganizations", payload);
+
+            if (resp.IsSuccessStatusCode)
+            {
+                CloseForm();
+                await LoadAsync();
+            }
+            else
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                formError = $"سرور درخواست را نپذیرفت (کد {(int)resp.StatusCode}): {ExtractServerError(body)}";
+            }
+        }
+        catch (Exception ex)
+        {
+            formError = "ارتباط با API برقرار نشد. (" + ex.Message + ")";
+        }
+        finally { busy = false; }
+    }
+
+    private async Task DeleteOrg(int id)
+    {
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/SystemOrganizations/{id}");
+            if (resp.IsSuccessStatusCode) await LoadAsync();
+        }
+        catch { }
+    }
+
+    private string GetCompanyName(int? companyId) =>
+        companies.FirstOrDefault(c => c.Id == companyId)?.Name ?? "—";
+
+    private static string ExtractServerError(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "بدون جزئیات";
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("message", out var msg) && msg.ValueKind == System.Text.Json.JsonValueKind.String)
+                return msg.GetString() ?? json;
+        }
+        catch { }
+        return json.Length > 400 ? json[..400] + "…" : json;
+    }
+
+    private class OrganizationForm
+    {
+        public int? CompanyId { get; set; }
+        public string NameUnit { get; set; } = "";
+        public string NameUniq { get; set; } = "";
+        public bool IsDefault { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class OrganizationDto
+    {
+        public int OrganizationId { get; set; }
+        public string NameUnit { get; set; } = "";
+        public string NameUniq { get; set; } = "";
+        public int? CompanyId { get; set; }
+        public bool IsDefault { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class CompanyItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class Organization
+    {
+        public int OrganizationId { get; set; }
+        public int? CompanyId { get; set; }
+        public string NameUnit { get; set; } = "";
+        public string NameUniq { get; set; } = "";
+        public bool IsDefault { get; set; }
+        public bool IsActive { get; set; } = true;
+        public bool IsDelete { get; set; }
+        public DateTime CreatedAt { get; set; } = DateTime.Now;
+    }
+}
+
+<style>
+.ops-btn{width:34px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;border-radius:8px;}
+</style>

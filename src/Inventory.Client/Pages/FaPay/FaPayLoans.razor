@@ -1,0 +1,281 @@
+@namespace Inventory.Client.Pages
+@page "/fa-pay/loans"
+@inject IFaPayClientService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>وام و مساعده</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-cash-coin"></i> وام و مساعده اقساطی</h1>
+            <div class="lead">ثبت وام با جدول اقساط خودکار — هر قسط سر ماه از فیش همان ماه کسر می‌شود</div>
+        </div>
+        @if (faManage)
+        {
+            <button class="btn btn-success" @onclick="() => OpenCreate()"><i class="bi bi-plus-lg"></i> وام جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">به این بخش دسترسی ندارید.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-5">
+                <label class="form-label small text-muted">پرسنل</label>
+                <select class="form-select" @bind="fEmp">
+                    <option value="">همه</option>
+                    @foreach (var e in emps)
+                    {
+                        <option value="@e.Id">@e.FirstName @e.LastName (@e.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small text-muted">وضعیت</label>
+                <select class="form-select" @bind="fStatus">
+                    <option value="">همه</option>
+                    <option value="0">فعال</option>
+                    <option value="1">تسویه‌شده</option>
+                    <option value="2">لغوشده</option>
+                </select>
+            </div>
+            <div class="col-md-3"><button class="btn btn-primary w-100" @onclick="Reload"><i class="bi bi-search"></i> جستجو</button></div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>پرسنل</th>
+                        <th>عنوان</th>
+                        <th>مبلغ کل (ریال)</th>
+                        <th>قسط ماهانه</th>
+                        <th>پیشرفت</th>
+                        <th>مانده (ریال)</th>
+                        <th>وضعیت</th>
+                        <th style="width:130px">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var l in rows)
+                    {
+                        <tr>
+                            <td><strong>@l.EmployeeName</strong><div class="small text-muted">@l.EmployeeCode</div></td>
+                            <td>@l.Title<div class="small text-muted">شروع: @FaPayUi.YearMonth(l.StartYear, l.StartMonth)</div></td>
+                            <td>@FaPayUi.Money(l.TotalAmount)</td>
+                            <td>@FaPayUi.Money(l.InstallmentAmount)<div class="small text-muted">@FaPayUi.Num(l.InstallmentCount) قسط</div></td>
+                            <td>
+                                <div class="progress" style="height:8px;min-width:90px">
+                                    <div class="progress-bar bg-success" style="width:@(l.InstallmentCount == 0 ? 0 : l.PaidCount * 100 / l.InstallmentCount)%"></div>
+                                </div>
+                                <div class="small text-muted mt-1">@FaPayUi.Num(l.PaidCount) از @FaPayUi.Num(l.InstallmentCount)</div>
+                            </td>
+                            <td>@FaPayUi.Money(l.RemainingAmount)</td>
+                            <td><span class="badge @FaPayUi.LoanBadge(l.Status)">@FaPayUi.LoanStatus(l.Status)</span></td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button class="btn btn-outline-primary" title="جدول اقساط" @onclick="() => OpenDetail(l)"><i class="bi bi-eye"></i></button>
+                                    @if (faManage && l.Status == 0)
+                                    {
+                                        <button class="btn btn-outline-warning" title="لغو وام" @onclick="() => Cancel(l)"><i class="bi bi-x-circle"></i></button>
+                                        @if (l.PaidCount == 0)
+                                        {
+                                            <button class="btn btn-outline-danger" title="حذف" @onclick="() => Del(l)"><i class="bi bi-trash"></i></button>
+                                        }
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0)
+                    {
+                        <tr><td colspan="8" class="text-center text-muted py-4">وامی یافت نشد.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@if (faManage)
+{
+    <Modal Visible="showCreate" Title="وام جدید" Size="modal-lg" OnClose="() => showCreate = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label">پرسنل</label>
+                <select class="form-select" @bind="form.EmployeeId">
+                    @foreach (var e in emps)
+                    {
+                        <option value="@e.Id">@e.FirstName @e.LastName (@e.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-6"><label class="form-label">عنوان وام</label><input class="form-control" placeholder="مثلاً وام ضروری / مساعده" @bind="form.Title" /></div>
+            <div class="col-md-4"><label class="form-label">مبلغ کل (ریال)</label><input class="form-control" type="number" min="0" step="any" @bind="form.TotalAmount" /></div>
+            <div class="col-md-4"><label class="form-label">تعداد اقساط</label><input class="form-control" type="number" min="1" max="120" @bind="form.InstallmentCount" /></div>
+            <div class="col-md-4 d-flex align-items-end pb-2">
+                <span class="text-muted small">هر قسط: <b>@FaPayUi.Money(PerInstallment)</b> ریال</span>
+            </div>
+            <div class="col-md-6"><label class="form-label">سال شروع کسر</label><input class="form-control" type="number" @bind="form.StartYear" /></div>
+            <div class="col-md-6">
+                <label class="form-label">ماه شروع کسر</label>
+                <select class="form-select" @bind="form.StartMonth">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        <option value="@m">@FaPayUi.MonthName(m)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-12"><label class="form-label">یادداشت</label><input class="form-control" @bind="form.Note" /></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <div class="d-flex justify-content-end gap-2 mt-3">
+            <button class="btn btn-secondary" @onclick="() => showCreate = false">انصراف</button>
+            <button class="btn btn-success" @onclick="SaveCreate"><i class="bi bi-check-lg"></i> ثبت وام و ساخت اقساط</button>
+        </div>
+    </Footer>
+    </Modal>
+}
+
+<Modal Visible="showDetail" Title="@DetailTitle" Size="modal-lg" OnClose="() => showDetail = false">
+<ChildContent>
+    @if (detail != null)
+    {
+        <div class="alert alert-info small">
+            @detail.Title — @detail.EmployeeName |
+            مبلغ کل: <b>@FaPayUi.Money(detail.TotalAmount)</b> ریال |
+            پرداخت‌شده: <b>@FaPayUi.Money(detail.PaidAmount)</b> ریال |
+            مانده: <b>@FaPayUi.Money(detail.RemainingAmount)</b> ریال
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light"><tr><th>قسط</th><th>ماه سررسید</th><th>مبلغ (ریال)</th><th>وضعیت</th></tr></thead>
+                <tbody>
+                    @foreach (var i in detail.Installments)
+                    {
+                        <tr>
+                            <td>@FaPayUi.Num(i.SeqNo)</td>
+                            <td>@FaPayUi.YearMonth(i.Year, i.Month)</td>
+                            <td>@FaPayUi.Money(i.Amount)</td>
+                            <td>
+                                @if (i.IsPaid)
+                                {
+                                    <span class="badge text-bg-success">پرداخت‌شده از فیش</span>
+                                }
+                                else
+                                {
+                                    <span class="badge text-bg-secondary">در انتظار</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-light" @onclick="() => showDetail = false">بستن</button>
+    </div>
+</Footer>
+</Modal>
+
+@code {
+    private bool faRead => Auth.Has("FaPay.Read") || faManage;
+    private bool faManage => Auth.Has("FaPay.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaPayLoanDto> rows = new();
+    private List<HrEmployeeDto> emps = new();
+    private string? fEmp;
+    private string? fStatus = "0";
+
+    private bool showCreate;
+    private FaPayLoanSaveDto form = new();
+    private double PerInstallment => form.InstallmentCount <= 0 ? 0 : Math.Round(form.TotalAmount / form.InstallmentCount);
+
+    private bool showDetail;
+    private FaPayLoanDto? detail;
+    private string DetailTitle => detail == null ? "جدول اقساط" : $"جدول اقساط — {detail.Title}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        try { emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items; }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            int? empId = int.TryParse(fEmp, out var v) ? v : null;
+            int? st = int.TryParse(fStatus, out var s) ? s : null;
+            rows = await Svc.ListLoansAsync(empId, st);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void OpenCreate()
+    {
+        form = new FaPayLoanSaveDto
+        {
+            EmployeeId = emps.FirstOrDefault()?.Id ?? 0,
+            StartYear = FaPayUi.CurrentYear, StartMonth = FaPayUi.CurrentMonth, InstallmentCount = 12
+        };
+        showCreate = true;
+    }
+
+    private async Task SaveCreate()
+    {
+        try
+        {
+            await Svc.CreateLoanAsync(form);
+            showCreate = false;
+            Toast.Success("وام ثبت و جدول اقساط ساخته شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenDetail(FaPayLoanDto l) { detail = l; showDetail = true; }
+
+    private async Task Cancel(FaPayLoanDto l)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"وام «{l.Title}» برای {l.EmployeeName} لغو شود؟ اقساط پرداخت‌نشده دیگر کسر نمی‌شوند.")) return;
+        try { await Svc.CancelLoanAsync(l.Id); Toast.Info("وام لغو شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Del(FaPayLoanDto l)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"وام «{l.Title}» برای {l.EmployeeName} حذف شود؟")) return;
+        try { await Svc.DeleteLoanAsync(l.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

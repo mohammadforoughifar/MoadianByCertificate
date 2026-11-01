@@ -1,0 +1,200 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/job-history"
+@page "/hr-core/job-history/{EmpId:int}"
+@inject IHrTalentService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>سوابق شغلی</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-clock-history"></i> تاریخچه شغلی پرسنل</h1>
+    <div class="lead">ترکیب خودکار احکام و قراردادها + سوابق دستی (قبل از استخدام)</div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به ماژول کارگزینی برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body d-flex flex-wrap gap-2 align-items-end">
+        <div style="min-width:280px">
+            <label class="form-label small text-muted">پرسنل</label>
+            <select class="form-select" @bind="empId" @bind:after="Reload">
+                @foreach (var m in employees)
+                {
+                    <option value="@m.Id">@m.FirstName @m.LastName (@m.Code)</option>
+                }
+            </select>
+        </div>
+        <div class="ms-auto">
+            @if (canCreate)
+            {
+                <button class="btn btn-success" @onclick="() => showNew = true"><i class="bi bi-plus-lg"></i> سابقه دستی</button>
+            }
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+}
+else if (rows.Count == 0)
+{
+    <div class="alert alert-light text-center">رکوردی یافت نشد.</div>
+}
+else
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-body">
+            <div class="tl">
+                @foreach (var h in rows)
+                {
+                    <div class="tl-item">
+                        <div class="tl-dot @SrcClass(h.Source)"></div>
+                        <div class="tl-body">
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <strong>@h.Title</strong>
+                                <span class="badge @SrcBadge(h.Source)">@SrcName(h.Source)</span>
+                                @if (h.Source == 0 && canDelete)
+                                {
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(h.Id)"><i class="bi bi-trash text-danger"></i></button>
+                                }
+                            </div>
+                            <div class="small text-muted num">@h.FromDate.ToFa() @(h.ToDate == null ? "تا اکنون" : "تا " + h.ToDate.Value.ToFa())</div>
+                            @if (!string.IsNullOrWhiteSpace(h.Subtitle))
+                            {
+                                <div class="small">@h.Subtitle</div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<Modal Visible="showNew" Title="ثبت سابقه دستی" OnClose="() => showNew = false">
+<ChildContent>
+    <div class="row g-2">
+        <div class="col-md-6">
+            <label class="form-label">عنوان سمت</label>
+            <input class="form-control" @bind="mTitle" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">واحد / شرکت</label>
+            <input class="form-control" @bind="mUnit" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">از تاریخ</label>
+            <DatePicker @bind-Value="mFrom" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">تا تاریخ</label>
+            <DatePicker @bind-Value="mTo" AllowClear="true" />
+        </div>
+        <div class="col-12">
+            <label class="form-label">توضیح</label>
+            <textarea class="form-control" rows="2" @bind="mNote"></textarea>
+        </div>
+    </div>
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-light" @onclick="() => showNew = false">انصراف</button>
+        <button class="btn btn-success" disabled="@saving" @onclick="Create">ثبت</button>
+    </div>
+</Footer>
+</Modal>
+
+<style>
+    .tl { position: relative; padding-right: 18px; }
+    .tl::before { content: ""; position: absolute; right: 5px; top: 6px; bottom: 6px; width: 2px; background: #dee2e6; }
+    .tl-item { position: relative; padding: 10px 14px 10px 0; }
+    .tl-dot { position: absolute; right: -18px; top: 14px; width: 12px; height: 12px; border-radius: 50%; }
+    .tl-body { background: #f8f9fa; border-radius: 8px; padding: 8px 12px; }
+</style>
+
+@code {
+    [Parameter] public int EmpId { get; set; }
+
+    private bool canRead => Auth.Has("HrCore.Read") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrCore.Create") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrCore.Delete") || Auth.IsAdmin;
+
+    private bool loading = true, saving, showNew;
+    private List<HrJobHistoryDto> rows = new();
+    private List<HrEmployeeDto> employees = new();
+    private int empId;
+
+    private string mTitle = "";
+    private string? mUnit, mNote;
+    private DateTime? mFrom = DateTime.Today;
+    private DateTime? mTo;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) { loading = false; return; }
+        try
+        {
+            employees = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items;
+            empId = EmpId > 0 ? EmpId : employees.FirstOrDefault()?.Id ?? 0;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); loading = false; }
+    }
+
+    private async Task Reload()
+    {
+        if (empId <= 0) { rows.Clear(); loading = false; return; }
+        loading = true;
+        try { rows = await Svc.GetHistoryAsync(empId); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private async Task Create()
+    {
+        saving = true;
+        try
+        {
+            await Svc.SaveHistoryAsync(new HrJobHistorySaveDto
+            {
+                EmployeeId = empId, FromDate = mFrom ?? DateTime.Today, ToDate = mTo,
+                PostTitle = mTitle, OrgUnitName = mUnit, Note = mNote
+            });
+            showNew = false;
+            mTitle = ""; mUnit = null; mNote = null; mTo = null;
+            Toast.Success("سابقه ثبت شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+
+    private async Task Delete(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "این سابقه دستی حذف شود؟")) return;
+        try
+        {
+            await Svc.DeleteHistoryAsync(id);
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string SrcName(int s) => s switch { 0 => "دستی", 1 => "حکم", 2 => "قرارداد", _ => "—" };
+    private static string SrcBadge(int s) => s switch
+    {
+        0 => "text-bg-secondary", 1 => "text-bg-primary", 2 => "text-bg-success", _ => "text-bg-light"
+    };
+    private static string SrcClass(int s) => s switch
+    {
+        0 => "bg-secondary", 1 => "bg-primary", 2 => "bg-success", _ => "bg-light"
+    };
+}

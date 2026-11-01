@@ -1,0 +1,332 @@
+@page "/stk/scan/{Id:int}"
+@inject IStkSessionService SessionSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>اسکنر انبارگردانی</PageTitle>
+
+@if (loading)
+{
+    <div class="card"><div class="card-body text-center py-5"><div class="spinner-border text-primary"></div></div></div>
+}
+else
+{
+<div class="page-head">
+    <div>
+        <h1><i class="bi bi-upc-scan"></i> اسکنر شمارش</h1>
+        <p class="lead">@doc.Title • @doc.WarehouseName</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-outline-secondary" href="/stk/sessions/@doc.Id">
+            <i class="bi bi-card-checklist"></i> لیست شمارش
+        </a>
+    </div>
+</div>
+
+@if (doc.Status != StocktakeStatus.Counting)
+{
+    <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle"></i>
+        این دوره در مرحله شمارش نیست (وضعیت فعلی: <strong>@doc.StatusTitle</strong>) و امکان اسکن وجود ندارد.
+    </div>
+}
+else
+{
+    <!-- ============ ورودی اسکن ============ -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-12 col-md-6">
+                    <label class="form-label fw-500">
+                        <i class="bi bi-upc"></i> بارکد یا کد کالا
+                    </label>
+                    <input @ref="scanInput" class="form-control form-control-lg num"
+                           placeholder="بارکد را اسکن کنید یا کد کالا را تایپ کنید…"
+                           @bind="scanCode" @bind:event="oninput"
+                           @onkeyup="OnScanKey" autocomplete="off" />
+                    <div class="form-text">پس از هر اسکن، مکان‌نما خودکار در همین کادر می‌ماند.</div>
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <label class="form-label">مقدار</label>
+                    <input class="form-control form-control-lg text-center num" @bind="qty" />
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <label class="form-label">حالت</label>
+                    <select class="form-select form-select-lg" value="@(accumulate ? "1" : "0")" @onchange="OnMode">
+                        <option value="1">تجمعی (+)</option>
+                        <option value="0">جایگزینی</option>
+                    </select>
+                </div>
+
+                <div class="col-12 col-md-2">
+                    <button class="btn btn-primary btn-lg w-100" @onclick="DoScan" disabled="@busy">
+                        <i class="bi bi-check-lg"></i> ثبت
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ بازخورد آخرین اسکن ============ -->
+    @if (last is not null)
+    {
+        <div class="card mb-3 border-@(lastOk ? "success" : "danger")">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="stat-icon bg-soft-@(lastOk ? "success" : "danger")" style="width:56px;height:56px;font-size:1.6rem">
+                    <i class="bi @(lastOk ? "bi-check-circle" : "bi-x-circle")"></i>
+                </div>
+                <div class="flex-grow-1">
+                    @if (lastOk && last.Line is not null)
+                    {
+                        <div class="fw-500 fs-5">@last.Line.ProductName</div>
+                        <div class="fs-8 text-muted num">
+                            @last.Line.ProductCode
+                            @if (!string.IsNullOrEmpty(last.Line.Barcode)) { <text> • @last.Line.Barcode</text> }
+                            @if (!string.IsNullOrEmpty(last.Line.ShelfCode)) { <text> • قفسه @last.Line.ShelfCode</text> }
+                        </div>
+                        @if (last.LineAdded)
+                        {
+                            <span class="badge badge-soft-warning fs-8 mt-1">
+                                <i class="bi bi-plus-circle"></i> این کالا در لیست نبود و اضافه شد
+                            </span>
+                        }
+                    }
+                    else
+                    {
+                        <div class="fw-500 fs-5 text-danger">@lastMessage</div>
+                    }
+                </div>
+
+                @if (lastOk && last.Line is not null)
+                {
+                    <div class="text-center px-3">
+                        <div class="fs-8 text-muted">سیستم</div>
+                        <div class="fs-4 num">@last.Line.SystemQty.Num()</div>
+                    </div>
+                    <div class="text-center px-3">
+                        <div class="fs-8 text-muted">شمارش</div>
+                        <div class="fs-4 num fw-500 text-primary">@last.Line.CountedQty.Num()</div>
+                    </div>
+                    <div class="text-center px-3">
+                        <div class="fs-8 text-muted">مغایرت</div>
+                        <div class="fs-4 num @(last.Line.Diff > 0 ? "text-success" : last.Line.Diff < 0 ? "text-danger" : "text-muted")">
+                            @(last.Line.Diff > 0 ? "+" : "")@last.Line.Diff.Num()
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <!-- ============ آمار زنده ============ -->
+    <div class="row g-3 mb-3">
+        <div class="col-12 col-sm-4">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-primary"><i class="bi bi-list-ol"></i></div>
+                <div>
+                    <div class="stat-label">کل اقلام</div>
+                    <div class="stat-value num">@doc.TotalLines.ToString().FaDigits()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-4">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-success"><i class="bi bi-check2-square"></i></div>
+                <div>
+                    <div class="stat-label">شمارش شده</div>
+                    <div class="stat-value num">@doc.CountedLines.ToString().FaDigits()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-4">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-warning"><i class="bi bi-exclamation-triangle"></i></div>
+                <div>
+                    <div class="stat-label">مغایر</div>
+                    <div class="stat-value num">@doc.DiffLines.ToString().FaDigits()</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ تاریخچه اسکن این نشست ============ -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title"><i class="bi bi-clock-history"></i> اسکن‌های این نشست</span>
+            @if (history.Count > 0)
+            {
+                <button class="btn btn-sm btn-outline-secondary ms-auto" @onclick="() => history.Clear()">
+                    <i class="bi bi-eraser"></i> پاک کردن نمایش
+                </button>
+            }
+        </div>
+
+        @if (history.Count == 0)
+        {
+            <div class="card-body">
+                <div class="empty-state">
+                    <i class="bi bi-upc-scan"></i>
+                    <h5>هنوز چیزی اسکن نشده است</h5>
+                    <p>بارکد کالا را با اسکنر بخوانید یا کد آن را در کادر بالا وارد کنید.</p>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:60px">#</th>
+                            <th>کالا</th>
+                            <th style="width:110px" class="text-end">سیستم</th>
+                            <th style="width:110px" class="text-end">شمارش</th>
+                            <th style="width:100px" class="text-end">مغایرت</th>
+                            <th style="width:80px" class="text-center">دفعات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{ var n = history.Count; }
+                        @foreach (var l in history)
+                        {
+                            <tr>
+                                <td class="num fs-8 text-muted">@((n--).ToString().FaDigits())</td>
+                                <td>
+                                    <div class="fw-500">@l.ProductName</div>
+                                    <div class="fs-8 text-muted num">@l.ProductCode</div>
+                                </td>
+                                <td class="text-end num">@l.SystemQty.Num()</td>
+                                <td class="text-end num fw-500">@l.CountedQty.Num()</td>
+                                <td class="text-end num @(l.Diff > 0 ? "text-success" : l.Diff < 0 ? "text-danger" : "text-muted")">
+                                    @(l.Diff == 0 ? "۰" : (l.Diff > 0 ? "+" : "") + l.Diff.Num())
+                                </td>
+                                <td class="text-center num fs-8">@l.ScanCount.ToString().FaDigits()</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+}
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private StkSession doc = new();
+    private ElementReference scanInput;
+
+    private bool loading = true, busy = false;
+    private string? scanCode;
+    private string qty = "1";
+    private bool accumulate = true;
+
+    private StkCountResult? last;
+    private bool lastOk;
+    private string? lastMessage;
+
+    /// <summary>آخرین اقلام لمس‌شده در این نشست — جدیدترین بالا.</summary>
+    private List<StkLine> history = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            doc = await SessionSvc.GetAsync(Id);
+            Layout.SetTitle("اسکنر شمارش");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool first)
+    {
+        if (!loading && doc.Status == StocktakeStatus.Counting)
+        {
+            try { await scanInput.FocusAsync(); } catch { /* المان هنوز رندر نشده */ }
+        }
+    }
+
+    private void OnMode(ChangeEventArgs e) => accumulate = e.Value?.ToString() == "1";
+
+    private async Task OnScanKey(KeyboardEventArgs e)
+    {
+        // اسکنرهای USB معمولاً پس از بارکد یک Enter می‌فرستند
+        if (e.Key == "Enter") await DoScan();
+    }
+
+    private async Task DoScan()
+    {
+        if (string.IsNullOrWhiteSpace(scanCode)) return;
+
+        busy = true;
+        var code = scanCode.Trim();
+
+        try
+        {
+            var amount = Fa.ParseDecimal(qty);
+            if (amount <= 0) amount = 1;
+
+            var res = await SessionSvc.CountAsync(new StkCountCommand
+            {
+                SessionId = doc.Id,
+                Barcode = code,
+                Quantity = amount,
+                Accumulate = accumulate
+            });
+
+            last = res;
+            lastOk = res.Success;
+            lastMessage = res.Message;
+
+            if (res.Success && res.Line is not null)
+            {
+                doc.TotalLines = res.TotalLines;
+                doc.CountedLines = res.CountedLines;
+                doc.DiffLines = res.DiffLines;
+
+                // سطر را در تاریخچه بالا نگه می‌داریم و تکراری نمی‌سازیم
+                history.RemoveAll(x => x.Id == res.Line.Id);
+                history.Insert(0, res.Line);
+                if (history.Count > 50) history.RemoveAt(history.Count - 1);
+
+                // لیست اصلی هم به‌روز شود تا برگشت به فرم، مقدار درست را نشان دهد
+                var idx = doc.Lines.FindIndex(x => x.Id == res.Line.Id);
+                if (idx >= 0) doc.Lines[idx] = res.Line; else doc.Lines.Add(res.Line);
+
+                await Beep(true);
+            }
+            else
+            {
+                await Beep(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            lastOk = false;
+            lastMessage = ex.Message;
+            last = new StkCountResult { Success = false, Message = ex.Message };
+            await Beep(false);
+        }
+        finally
+        {
+            scanCode = "";
+            busy = false;
+            // مقدار پس از هر اسکن به ۱ برمی‌گردد تا اسکن پیاپی ساده بماند
+            if (accumulate) qty = "1";
+            StateHasChanged();
+            try { await scanInput.FocusAsync(); } catch { }
+        }
+    }
+
+    /// <summary>بوق کوتاه موفق/ناموفق با Web Audio — بدون فایل صوتی.</summary>
+    private async Task Beep(bool ok)
+    {
+        try { await JS.InvokeVoidAsync("stkBeep", ok); } catch { /* مرورگر اجازه نداد */ }
+    }
+}

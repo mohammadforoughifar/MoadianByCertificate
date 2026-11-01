@@ -1,0 +1,222 @@
+@page "/dashboard-cctv"
+@inject IAuthState Auth
+@using Microsoft.AspNetCore.SignalR.Client
+@inject ApiOptions ApiCfg
+@inject HttpClient Http
+@implements IDisposable
+
+@if (!Auth.Has("Dashboards.Management"))
+{
+    <div class="alert alert-warning mt-3">
+        <i class="bi bi-shield-exclamation"></i>
+        شما به «داشبورد مدیریت» دسترسی ندارید. برای دریافت دسترسی با مدیر سیستم تماس بگیرید.
+    </div>
+}
+else
+{
+<PageTitle>داشبورد مدیریت — بلادرنگ</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <h5 class="mb-0 fw-bold"><i class="bi bi-graph-up-arrow"></i> داشبورد مدیریت</h5>
+    <span class="badge @(connected ? "bg-success" : "bg-secondary") rounded-pill px-3 py-2">
+        @(connected ? "🟢 برخط — بلادرنگ (SignalR)" : "⚪ در حال اتصال…")
+    </span>
+</div>
+
+@if (stats == null)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" style="width:3rem;height:3rem;"></div>
+        <div class="mt-3 text-muted">در حال دریافت آمار…</div>
+    </div>
+}
+else
+{
+    @* ---------- کارت‌های آماری ---------- *@
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-4 col-lg-2">
+            <div class="kpi kpi-blue"><div class="kpi-num">@stats.SystemsTotal</div><div class="kpi-lbl"><i class="bi bi-pc-display"></i> سیستم‌ها</div></div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+            <div class="kpi kpi-orange"><div class="kpi-num">@stats.SystemsPending</div><div class="kpi-lbl"><i class="bi bi-hourglass-split"></i> در انتظار تایید</div></div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+            <div class="kpi kpi-red"><div class="kpi-num">@stats.SystemsWithChanges</div><div class="kpi-lbl"><i class="bi bi-arrow-left-right"></i> با تغییرات</div></div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+            <div class="kpi kpi-green"><div class="kpi-num">@stats.CamerasTotal</div><div class="kpi-lbl"><i class="bi bi-camera-video-fill"></i> دوربین‌ها</div></div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+            <div class="kpi kpi-teal"><div class="kpi-num">@stats.NvrsTotal</div><div class="kpi-lbl"><i class="bi bi-hdd-stack-fill"></i> دستگاه NVR</div></div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-2">
+            <div class="kpi kpi-purple"><div class="kpi-num">@stats.CamerasActive</div><div class="kpi-lbl"><i class="bi bi-check-circle-fill"></i> دوربین فعال</div></div>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        @* ---------- دونات وضعیت سیستم‌ها ---------- *@
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-800"><i class="bi bi-pie-chart-fill"></i> وضعیت سیستم‌ها</div>
+                <div class="card-body text-center">
+                    @if (stats.SystemsTotal == 0)
+                    {
+                        <div class="text-muted py-4">سیستمی ثبت نشده</div>
+                    }
+                    else
+                    {
+                        var okPct = (int)(stats.SystemsApproved * 100.0 / stats.SystemsTotal);
+                        <svg viewBox="0 0 120 120" style="width:150px;height:150px;">
+                            <circle cx="60" cy="60" r="50" fill="none" stroke="#eef0f7" stroke-width="16" />
+                            <circle cx="60" cy="60" r="50" fill="none" stroke="#2ec47e" stroke-width="16"
+                                    stroke-dasharray="@(okPct * 3.1416) 999" stroke-linecap="round"
+                                    transform="rotate(-90 60 60)" />
+                            <text x="60" y="66" text-anchor="middle" font-size="22" font-weight="800" fill="#1c2130">@okPct٪</text>
+                        </svg>
+                        <div class="small mt-2">
+                            <span class="badge bg-success">تاییدشده: @stats.SystemsApproved</span>
+                            <span class="badge bg-warning text-dark ms-1">در انتظار: @stats.SystemsPending</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        @* ---------- نمودار میله‌ای: دوربین بر اساس محل ---------- *@
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-800"><i class="bi bi-geo-alt-fill"></i> دوربین‌ها بر اساس محل استقرار</div>
+                <div class="card-body">
+                    @if (stats.CamerasByLocation.Count == 0)
+                    { <div class="text-muted text-center py-4">دوربینی ثبت نشده</div> }
+                    else
+                    {
+                        var maxLoc = Math.Max(1, stats.CamerasByLocation.Max(x => x.Count));
+                        foreach (var item in stats.CamerasByLocation)
+                        {
+                            <div class="bar-row">
+                                <div class="bar-label" title="@item.Label">@item.Label</div>
+                                <div class="bar-track"><div class="bar-fill bg-grad-blue" style="width:@(item.Count * 100 / maxLoc)%;">@item.Count</div></div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+
+        @* ---------- نمودار میله‌ای: دوربین بر اساس NVR ---------- *@
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-800"><i class="bi bi-hdd-stack-fill"></i> دوربین‌ها بر اساس دستگاه NVR</div>
+                <div class="card-body">
+                    @if (stats.CamerasByNvr.Count == 0)
+                    { <div class="text-muted text-center py-4">دوربینی ثبت نشده</div> }
+                    else
+                    {
+                        var maxNvr = Math.Max(1, stats.CamerasByNvr.Max(x => x.Count));
+                        foreach (var item in stats.CamerasByNvr)
+                        {
+                            <div class="bar-row">
+                                <div class="bar-label" title="@item.Label">@item.Label</div>
+                                <div class="bar-track"><div class="bar-fill bg-grad-purple" style="width:@(item.Count * 100 / maxNvr)%;">@item.Count</div></div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="text-muted small mt-3 text-start" dir="ltr">
+        <i class="bi bi-clock"></i> آخرین به‌روزرسانی: @stats.GeneratedAt.ToString("yyyy/MM/dd HH:mm:ss")
+    </div>
+}
+
+<style>
+.kpi{border-radius:16px;padding:1rem .6rem;text-align:center;border:1px solid #e2e6f1;background:#fff;box-shadow:0 4px 14px rgba(45,55,110,.08);border-top:4px solid #8e5cff;}
+.kpi-num{font-size:1.9rem;font-weight:900;line-height:1.2;}
+.kpi-lbl{font-size:.78rem;font-weight:700;color:#5f688a;margin-top:.25rem;}
+.kpi-blue{border-top-color:#3f8cff;} .kpi-blue .kpi-num{color:#1d5fc2;}
+.kpi-orange{border-top-color:#f4a23c;} .kpi-orange .kpi-num{color:#b06a00;}
+.kpi-red{border-top-color:#e0245e;} .kpi-red .kpi-num{color:#b21b4c;}
+.kpi-green{border-top-color:#2ec47e;} .kpi-green .kpi-num{color:#0e8a55;}
+.kpi-teal{border-top-color:#14b8a6;} .kpi-teal .kpi-num{color:#0e8577;}
+.kpi-purple{border-top-color:#8e5cff;} .kpi-purple .kpi-num{color:#5b21b6;}
+.bar-row{display:flex;align-items:center;gap:.6rem;margin-bottom:.55rem;}
+.bar-label{width:38%;font-size:.78rem;font-weight:700;color:#3c4358;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bar-track{flex:1;background:#eef0f7;border-radius:8px;height:24px;overflow:hidden;}
+.bar-fill{height:100%;border-radius:8px 0 0 8px;color:#fff;font-size:.72rem;font-weight:800;display:flex;align-items:center;justify-content:center;min-width:26px;transition:width .4s ease;}
+.bg-grad-blue{background:linear-gradient(90deg,#3f8cff,#6d4dff);}
+.bg-grad-purple{background:linear-gradient(90deg,#8e5cff,#e0245e);}
+</style>
+
+}
+
+@code {
+    private HubConnection? hub;
+    private DashboardStats? stats;
+    private bool connected;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // ۱) دریافت اولیه از REST (فوری)
+        try { stats = await Http.GetFromJsonAsync<DashboardStats>($"{ApiCfg.BaseUrl}/api/Dashboard/stats"); }
+        catch { stats = new DashboardStats(); }
+
+        // ۲) اتصال بلادرنگ SignalR
+        try
+        {
+            hub = new HubConnectionBuilder()
+                .WithUrl($"{ApiCfg.BaseUrl}/hubs/dashboard")
+                .WithAutomaticReconnect()
+                .Build();
+
+            hub.On<System.Text.Json.JsonElement>("ReceiveStats", el =>
+            {
+                try
+                {
+                    stats = System.Text.Json.JsonSerializer.Deserialize<DashboardStats>(el.GetRawText(),
+                        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                }
+                catch { }
+                _ = InvokeAsync(StateHasChanged);
+            });
+
+            hub.Closed += (ex) => { connected = false; _ = InvokeAsync(StateHasChanged); return Task.CompletedTask; };
+            hub.Reconnected += arg => { connected = true; _ = InvokeAsync(StateHasChanged); return Task.CompletedTask; };
+
+            await hub.StartAsync();
+            connected = true;
+            StateHasChanged();
+        }
+        catch
+        {
+            connected = false;
+        }
+    }
+
+    public void Dispose() { try { _ = hub?.DisposeAsync(); } catch { } }
+
+    // ---------- مدل‌ها ----------
+    public class ChartItem
+    {
+        public string Label { get; set; } = "";
+        public int Count { get; set; }
+    }
+
+    public class DashboardStats
+    {
+        public int SystemsTotal { get; set; }
+        public int SystemsApproved { get; set; }
+        public int SystemsPending { get; set; }
+        public int SystemsWithChanges { get; set; }
+        public int CamerasTotal { get; set; }
+        public int CamerasActive { get; set; }
+        public int NvrsTotal { get; set; }
+        public int NvrsActive { get; set; }
+        public List<ChartItem> CamerasByLocation { get; set; } = new();
+        public List<ChartItem> CamerasByNvr { get; set; } = new();
+        public DateTime GeneratedAt { get; set; }
+    }
+}

@@ -1,0 +1,1655 @@
+@page "/doc-archive/documents/{Id:int}"
+@using System.Net.Http.Headers
+@inject IDocArchiveService Svc
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject LayoutState Layout
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject HttpClient Http
+
+<PageTitle>مدرک @doc.Code</PageTitle>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else if (accessDenied)
+{
+    @* ---------- کاربر به مدرک دسترسی ندارد — فرم درخواست دسترسی ---------- *@
+    <div class="doc-archive-shell">
+        <div class="card shadow-sm mx-auto" style="max-width:580px">
+            <div class="card-body p-4 text-center">
+                <i class="bi bi-shield-lock" style="font-size:2.4rem;color:#f59e0b"></i>
+                <h6 class="fw-700 mt-2">به این مدرک دسترسی ندارید</h6>
+                <p class="fs-8 text-muted mb-3">اگر برای کار خود به این مدرک نیاز دارید، می‌توانید از مدیران آن (دارندگان دسترسی کامل) درخواست دسترسی کنید؛ نتیجه با نوتیفیکیشن به شما اطلاع داده می‌شود.</p>
+
+                <div class="text-start">
+                    <label class="form-label fs-8 fw-700">سطح دسترسی درخواستی</label>
+                    <select class="form-select form-select-sm" @bind="reqLevel">
+                        <option value="2">خواندن</option>
+                        <option value="3">نوشتن</option>
+                        <option value="4">دسترسی کامل</option>
+                    </select>
+                    <label class="form-label fs-8 fw-700 mt-2">دلیل / توضیح</label>
+                    <textarea class="form-control form-control-sm" rows="3" @bind="reqNote"
+                              placeholder="مثلاً: برای رسیدگی به پرونده این مشتری به مدرک نیاز دارم."></textarea>
+                    <button class="btn btn-primary btn-sm w-100 mt-3 fw-700" @onclick="SendAccessRequest" disabled="@reqBusy">
+                        @if (reqBusy) { <span class="spinner-border spinner-border-sm"></span> }
+                        <i class="bi bi-send"></i> ارسال درخواست دسترسی
+                    </button>
+                </div>
+
+                @if (myRequests.Count > 0)
+                {
+                    <hr />
+                    <div class="fw-700 fs-8 text-start mb-1"><i class="bi bi-clock-history ms-1"></i> درخواست‌های شما برای این مدرک:</div>
+                    @foreach (var r in myRequests)
+                    {
+                        <div class="d-flex justify-content-between align-items-center border rounded-3 p-2 mb-1">
+                            <div class="fs-8 text-start">
+                                <b>@LevelFa(r.RequestedLevel)</b>
+                                <span class="text-muted"> — @r.CreatedAt.ToFa()</span>
+                                @if (!string.IsNullOrWhiteSpace(r.HandlerNote))
+                                {
+                                    <div class="text-muted fs-9 mt-1"><b>پاسخ:</b> @r.HandlerNote</div>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(r.HandledByName))
+                                {
+                                    <div class="text-muted fs-9">(توسط @r.HandledByName)</div>
+                                }
+                            </div>
+                            <div class="d-flex align-items-center gap-1">
+                                <span class="badge @StatusBadgeClass(r.Status)">@StatusFa(r.Status)</span>
+                                @if (r.Status == 0)
+                                {
+                                    <button class="btn btn-sm btn-light py-0" title="لغو درخواست" @onclick="() => CancelRequest(r.Id)">
+                                        <i class="bi bi-x-lg text-danger"></i>
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+                <button class="btn btn-outline-secondary btn-sm mt-3" @onclick="GoBack">
+                    <i class="bi bi-arrow-right"></i> بازگشت
+                </button>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+<div class="doc-archive-shell">
+@if (doc.MyLevel >= DocAccessLevelDto.Full)
+{
+    <DocManagementTools @key="Id" DocumentId="Id" Users="lookups.Users" />
+}
+<div class="card shadow-sm mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2"
+         style="background:linear-gradient(135deg,#4338ca,#0369a1);color:#fff;border-radius:14px 14px 0 0;">
+        <span class="fw-700">
+            <i class="bi bi-file-earmark-text me-2"></i>@doc.Code — @doc.Title
+            @if (doc.IsPublic) { <span class="badge bg-light text-dark ms-2">نمایش برای همه</span> }
+            @if (doc.RequireDownloadConfirm) { <span class="badge bg-warning text-dark ms-2" title="دانلود/مشاهده فایل‌های این مدرک با تایید مجدد رمز است"><i class="bi bi-shield-lock"></i> محرمانه</span> }
+            @if (doc.WatermarkPreview) { <span class="badge bg-info text-dark ms-2" title="پیش‌نمایش فایل‌های این مدرک با واترمارک نام کاربر نمایش داده می‌شود"><i class="bi bi-droplet-half"></i> واترمارک</span> }
+            @if (!doc.IsActive) { <span class="badge bg-dark ms-2"><i class="bi bi-lock-fill"></i> غیرفعال</span> }
+        </span>
+        <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-light btn-sm" @onclick="GoBack">
+                <i class="bi bi-arrow-right"></i> بازگشت
+            </button>
+            <button class="btn btn-light btn-sm fw-700" style="color:#6d28d9" title="پرسش آزاد از متن استخراج‌شدهٔ این سند"
+                    @onclick="() => showChat = true">
+                <i class="bi bi-chat-left-text"></i> گفتگو با سند
+            </button>
+            @if (doc.MyLevel >= DocAccessLevelDto.Write && doc.IsActive)
+            {
+                <button class="btn btn-light btn-sm fw-700" style="color:#065f46" @onclick="() => showVersion = true">
+                    <i class="bi bi-plus-circle"></i> ورژن جدید
+                </button>
+            }
+            @* هر کاربری که مدرک را می‌بیند (Read به بالا) و مجوز صدور دستور کار دارد، می‌تواند برای پرسنل دستور کار صادر کند *@
+            @if (doc.MyLevel >= DocAccessLevelDto.Read && doc.IsActive && Auth.Has("WorkOrders.Create"))
+            {
+                <button class="btn btn-light btn-sm fw-700" style="color:#0369a1" @onclick="GoWorkOrder"
+                        title="صدور دستور کار جدید برای این مدرک">
+                    <i class="bi bi-card-checklist"></i> صدور دستور کار
+                    @if (docWorkOrders.Count > 0)
+                    {
+                        <span class="badge bg-warning text-dark ms-1">@docWorkOrders.Count.Num()</span>
+                    }
+                </button>
+            }
+            @if (doc.MyLevel >= DocAccessLevelDto.Full)
+            {
+                @if (doc.IsActive)
+                {
+                    <button class="btn btn-light btn-sm" @onclick="() => showEdit = true">
+                        <i class="bi bi-pencil"></i> ویرایش مدرک
+                    </button>
+                }
+                <button class="btn btn-light btn-sm fw-700"
+                        style="@(doc.IsActive ? "color:#b91c1c" : "color:#065f46")" @onclick="() => showToggle = true">
+                    <i class="bi @(doc.IsActive ? "bi-toggle-off" : "bi-toggle-on")"></i>
+                    @(doc.IsActive ? "غیرفعال کردن" : "فعال کردن")
+                </button>
+            }
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="row g-3 fs-8">
+            <div class="col-md-3"><span class="text-muted">پوشه:</span> <b>@doc.FolderName</b></div>
+            <div class="col-md-3">
+                <span class="text-muted">شماره مدرک مشتری:</span>
+                <b class="num">@(string.IsNullOrWhiteSpace(doc.CustomerCode) ? "—" : doc.CustomerCode)</b>
+            </div>
+            <div class="col-md-3">
+                <span class="text-muted">تاریخ انقضا:</span>
+                <b class="@(IsExpired ? "text-danger" : "")">@(doc.ExpireDate?.ToFa() ?? "—")</b>
+                @if (IsExpired)
+                {
+                    <span class="badge bg-danger ms-1">@((-DaysToExpire!.Value).Num()) روز است منقضی شده</span>
+                }
+                else if (DaysToExpire is int dte)
+                {
+                    <span class="badge ms-1 @(dte <= 7 ? "bg-danger" : dte <= 30 ? "bg-warning text-dark" : dte <= 60 ? "bg-info text-dark" : "bg-light text-secondary")">
+                        @(dte == 0 ? "امروز منقضی می‌شود" : $"{dte.Num()} روز تا انقضا")
+                    </span>
+                }
+            </div>
+            <div class="col-md-3">
+                <span class="text-muted">سیاست ورژن:</span>
+                <b>@(doc.AllowMultipleActiveVersions ? "چند ورژن فعال هم‌زمان" : "فقط یک ورژن فعال")</b>
+            </div>
+            <div class="col-md-3"><span class="text-muted">دسترسی شما:</span> <b>@LevelName(doc.MyLevel)</b></div>
+            <div class="col-md-6 d-flex align-items-center gap-1 flex-wrap">
+                <span class="text-muted">تگ‌ها:</span>
+                @if (doc.Tags.Count == 0)
+                {
+                    <span class="text-muted">—</span>
+                }
+                else
+                {
+                    @foreach (var t in doc.Tags)
+                    {
+                        <span class="badge rounded-pill shadow-sm" style="@t.Color.ReadableBadgeStyle();padding:4px 8px;">
+                            <i class="bi bi-tag-fill me-1"></i>@t.Name
+                        </span>
+                    }
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(doc.Description))
+            {
+                <div class="col-12"><span class="text-muted">توضیحات:</span> @doc.Description</div>
+            }
+        </div>
+    </div>
+</div>
+
+@if (!doc.IsActive)
+{
+    <div class="alert alert-dark d-flex align-items-center gap-2">
+        <i class="bi bi-lock-fill fs-5"></i>
+        <div>
+            <b>این مدرک غیرفعال است و فقط‌خواندنی می‌باشد.</b>
+            ثبت ورژن جدید، ویرایش، لینک کردن و گردش تایید روی آن ممکن نیست.
+            @if (!string.IsNullOrWhiteSpace(doc.DeactivateReason))
+            {
+                <div class="fs-8 mt-1">دلیل: @doc.DeactivateReason</div>
+            }
+            @if (doc.DeactivatedAt.HasValue)
+            {
+                <div class="fs-9 text-muted">توسط @doc.DeactivatedByName در @doc.DeactivatedAt.Value.ToFa()</div>
+            }
+        </div>
+    </div>
+}
+
+@if (doc.MyLevel == DocAccessLevelDto.View)
+{
+    <div class="alert alert-warning">
+        دسترسی شما روی این مدرک در سطح «مشاهده» است؛ محتوا، ورژن‌ها و پیوست‌ها نمایش داده نمی‌شود.
+    </div>
+}
+else
+{
+<div class="row g-3">
+    @* ------------------- ورژن‌ها ------------------- *@
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header fw-700 fs-8 d-flex justify-content-between align-items-center">
+                <span>
+                    <i class="bi bi-layers ms-1"></i> ورژن‌ها
+                    <span class="badge bg-secondary ms-1">@doc.Versions.Count.Num()</span>
+                </span>
+                @if (doc.Versions.Count >= 2)
+                {
+                    <button class="btn btn-sm btn-outline-primary" @onclick="OpenCompare"
+                            title="مقایسه دو ورژن">
+                        <i class="bi bi-arrow-left-right"></i>
+                        <span class="ms-1">مقایسه</span>
+                    </button>
+                }
+            </div>
+            <div class="card-body p-2">
+                @foreach (var v in doc.Versions)
+                {
+                    <div class="ver-card @(v.IsActive ? "active" : "") @(v.IsFrozen ? "frozen" : "")">
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-1">
+                            <div class="fw-700">
+                                <span class="badge bg-primary">ورژن @v.VersionNo.Num()</span>
+                                @if (v.IsActive) { <span class="badge bg-success ms-1"><i class="bi bi-check-circle"></i> فعال</span> }
+                                @if (v.IsFrozen) { <span class="badge bg-warning text-dark ms-1"><i class="bi bi-snow"></i> فریز — در گردش</span> }
+                                @StatusBadge(v.Status)
+                                <span class="fs-8 text-muted ms-2">@v.CreatedByName — @v.CreatedAt.ToFa()</span>
+                            </div>
+                            <div class="d-flex gap-1">
+                                @if (v.IsMyTurn && doc.IsActive)
+                                {
+                                    <button class="btn btn-sm btn-success" @onclick="() => OpenApproval(v, true)">
+                                        <i class="bi bi-check-lg"></i> تایید
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => OpenApproval(v, false)">
+                                        <i class="bi bi-x-lg"></i> رد
+                                    </button>
+                                }
+                                @if (doc.MyLevel >= DocAccessLevelDto.Full && doc.IsActive && !v.IsFrozen && v.Status == DocVersionStatusDto.Approved)
+                                {
+                                    <button class="btn btn-sm btn-light" title="@(v.IsActive ? "غیرفعال کردن" : "فعال کردن")"
+                                            @onclick="() => ToggleActive(v)">
+                                        <i class="bi @(v.IsActive ? "bi-toggle-on text-success" : "bi-toggle-off text-secondary")"></i>
+                                    </button>
+                                }
+                            </div>
+                        </div>
+
+                        @if (!string.IsNullOrWhiteSpace(v.ChangeNote))
+                        {
+                            <div class="fs-8 mt-1"><span class="text-muted">شرح تغییرات:</span> @v.ChangeNote</div>
+                        }
+                        @if (v.ExpireDate.HasValue)
+                        {
+                            <div class="fs-8"><span class="text-muted">انقضای ورژن:</span> @v.ExpireDate.Value.ToFa()</div>
+                        }
+
+                        @if (v.Approvers.Count > 0)
+                        {
+                            <div class="mt-2 d-flex flex-wrap gap-1">
+                                <span class="fs-9 text-muted">گردش:</span>
+                                @foreach (var a in v.Approvers)
+                                {
+                                    <span class="badge @(a.Status == 1 ? "bg-success" : a.Status == 2 ? "bg-danger" : "bg-secondary")"
+                                          title="@(a.Comment ?? "")">
+                                        @a.UserName
+                                        @(a.Status == 1 ? " ✔" : a.Status == 2 ? " ✘" : " …")
+                                    </span>
+                                }
+                            </div>
+                        }
+
+                        <div class="mt-2">
+                            <AttachmentBox Module="DocVersion" RefId="@v.Id"
+                                           TextPreviewApi="/api/doc-archive/attachments"
+                                           CanUpload="@(doc.MyLevel >= DocAccessLevelDto.Write && doc.IsActive && !v.IsFrozen)" />
+                        </div>
+                    </div>
+                }
+                @if (doc.Versions.Count == 0)
+                {
+                    <div class="empty-state"><i class="bi bi-layers"></i><h5>ورژنی ثبت نشده است</h5></div>
+                }
+            </div>
+        </div>
+
+        @* ------------------- تاریخچه (بسته در حالت پیش‌فرض) ------------------- *@
+        <details class="card mt-3 doc-secondary-panel" @key="(Id, 1)" data-document-panel="history">
+            <summary class="card-header fw-700 fs-8 d-flex justify-content-between align-items-center gap-2 doc-secondary-summary">
+                <span><i class="bi bi-clock-history ms-1"></i> تاریخچه رویدادها <span class="badge bg-secondary ms-1">@doc.Logs.Count.Num()</span></span>
+                <i class="bi bi-chevron-down doc-secondary-chevron" aria-hidden="true"></i>
+            </summary>
+            <div class="card-body p-0">
+                <div class="d-flex justify-content-end align-items-center flex-wrap gap-1 p-2 border-bottom">
+                    @if (doc.MyCanDownload)
+                    {
+                        <ExportButtons ReportKey="doc-history" ShowText="false"
+                                       Query="@(new { id = Id })" />
+                    }
+                    <select class="form-select form-select-sm fs-8" style="width:auto" @bind="logFilter">
+                        <option value="">همه رویدادها (@doc.Logs.Count.Num())</option>
+                        @foreach (var g in doc.Logs.GroupBy(x => x.Action).OrderByDescending(x => x.Count()))
+                        {
+                            <option value="@g.Key">@ActionName(g.Key) (@g.Count().Num())</option>
+                        }
+                    </select>
+                </div>
+                <div style="max-height:340px;overflow:auto;">
+                    @if (FilteredLogs.Count == 0)
+                    {
+                        <div class="text-center text-muted py-3 fs-8">رویدادی ثبت نشده است.</div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm table-hover mb-0 fs-8 align-middle">
+                            <tbody>
+                                @foreach (var l in FilteredLogs)
+                                {
+                                    <tr>
+                                        <td style="width:118px" class="num text-muted" title="@l.CreatedAt.ToString("yyyy/MM/dd HH:mm:ss")">
+                                            @l.CreatedAt.ToFa()
+                                            <div class="fs-9">@l.CreatedAt.ToString("HH:mm")</div>
+                                        </td>
+                                        <td style="width:108px">
+                                            <span class="badge @ActionClass(l.Action)">@ActionName(l.Action)</span>
+                                        </td>
+                                        <td style="width:112px" class="text-truncate" title="@l.UserName">
+                                            <i class="bi bi-person-circle text-muted ms-1"></i>@l.UserName
+                                        </td>
+                                        <td>
+                                            @l.Detail
+                                            @if (l.VersionId is int vid && VersionNoOf(vid) is int vno)
+                                            {
+                                                <span class="badge bg-light text-secondary ms-1">v@(vno.Num())</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </details>
+
+        @* ------------------- متن استخراج‌شده و OCR (بسته در حالت پیش‌فرض) ------------------- *@
+        <details class="card mt-3 doc-secondary-panel" @key="(Id, 2)" data-document-panel="extracted-text">
+            <summary class="card-header fw-700 fs-8 d-flex justify-content-between align-items-center gap-2 doc-secondary-summary">
+                <span>
+                    <i class="bi bi-file-earmark-font ms-1"></i> متن استخراج‌شده و نتایج OCR پیوست‌ها
+                    <span class="badge bg-secondary ms-1">@extractedTexts.Count.Num()</span>
+                </span>
+                <i class="bi bi-chevron-down doc-secondary-chevron" aria-hidden="true"></i>
+            </summary>
+            <div class="card-body p-2">
+                <div class="d-flex justify-content-end mb-2">
+                    <button type="button" class="btn btn-sm btn-outline-primary py-0 fs-8" @onclick="LoadExtractedTexts">
+                        <i class="bi bi-arrow-clockwise"></i> تازه‌سازی
+                    </button>
+                </div>
+                @if (loadingExtracted)
+                {
+                    <div class="text-center py-3"><div class="spinner-border spinner-border-sm text-primary"></div></div>
+                }
+                else if (extractedTexts.Count == 0)
+                {
+                    <div class="text-center text-muted py-3 fs-8">
+                        هنوز متنی استخراج نشده است. پس از آپلود پیوست‌های PDF، Word، Excel یا تصاویر اسکن‌شده، متن به‌طور خودکار استخراج می‌شود.
+                    </div>
+                }
+                else
+                {
+                    <div class="list-group list-group-flush fs-8">
+                        @foreach (var e in extractedTexts)
+                        {
+                            <div class="list-group-item d-flex justify-content-between align-items-center py-2 px-1 flex-wrap gap-2">
+                                <div>
+                                    <div class="fw-700">
+                                        <i class="bi @SourceTypeIcon(e.SourceType) me-1"></i> @e.FileName
+                                        <span class="badge @SourceTypeClass(e.SourceType) ms-1">@SourceTypeName(e.SourceType)</span>
+                                        <span class="badge @(e.Status == "Indexed" ? "bg-success" : "bg-danger") ms-1">
+                                            @(e.Status == "Indexed" ? "ایندکس‌شده" : "خطا")
+                                        </span>
+                                    </div>
+                                    <div class="text-muted fs-9 mt-1">
+                                        <span>تعداد حروف: @e.CharacterCount.Num()</span>
+                                        <span class="ms-2">تاریخ: @e.IndexedAt.ToFa()</span>
+                                        @if (!string.IsNullOrWhiteSpace(e.ErrorMessage))
+                                        {
+                                            <span class="text-danger ms-2">خطا: @e.ErrorMessage</span>
+                                        }
+                                    </div>
+                                </div>
+                                <div class="d-flex gap-1">
+                                    @if (e.Status == "Indexed")
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary" title="مشاهده متن کامل"
+                                                @onclick="() => ViewExtractedText(e)">
+                                            <i class="bi bi-eye"></i> متن
+                                        </button>
+                                    }
+                                    @if (doc.MyLevel >= DocAccessLevelDto.Write && doc.IsActive)
+                                    {
+                                        <button class="btn btn-sm btn-outline-primary" title="اجرای مجدد OCR / استخراج متن"
+                                                @onclick="() => RunOcr(e.AttachmentId)">
+                                            <i class="bi bi-cpu"></i> اجرای مجدد OCR
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </details>
+    </div>
+
+    @* ------------------- کناری: لینک‌ها و دسترسی‌ها ------------------- *@
+    <div class="col-lg-4">
+        <div class="card mb-3">
+            <div class="card-header fw-700 fs-8 d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-link-45deg ms-1"></i> مدارک مرتبط</span>
+                <span class="badge bg-secondary">@doc.Links.Count.Num()</span>
+            </div>
+            <div class="card-body p-2">
+                @foreach (var l in doc.Links)
+                {
+                    <div class="d-flex justify-content-between align-items-center border-bottom py-1 fs-8">
+                        <a href="doc-archive/documents/@l.LinkedDocumentId" class="text-decoration-none">
+                            <b class="num">@l.Code</b> — @l.Title
+                            @if (!string.IsNullOrWhiteSpace(l.CustomerCode))
+                            {
+                                <span class="fs-9 text-muted">(مشتری: @l.CustomerCode)</span>
+                            }
+                            @if (l.ActiveVersionNo > 0) { <span class="badge bg-success ms-1">v@(l.ActiveVersionNo.Num())</span> }
+                            @if (!l.IsActive) { <span class="badge bg-secondary ms-1">غیرفعال</span> }
+                        </a>
+                        @if (doc.MyLevel >= DocAccessLevelDto.Write && doc.IsActive)
+                        {
+                            <button class="btn btn-sm btn-light" @onclick="() => Unlink(l.LinkedDocumentId)">
+                                <i class="bi bi-x-lg text-danger"></i>
+                            </button>
+                        }
+                    </div>
+                }
+                @if (doc.Links.Count == 0)
+                {
+                    <div class="fs-8 text-muted py-2">مدرک مرتبطی ثبت نشده است.</div>
+                }
+
+                @if (doc.MyLevel >= DocAccessLevelDto.Write && doc.IsActive)
+                {
+                    <div class="mt-2 pt-2 border-top">
+                        <label class="form-label fs-8">لینک به چند مدرک (چندانتخابی)</label>
+                        <MultiSearchSelect Items="LinkableDocs" Values="linkIds" ValuesChanged="v => linkIds = v"
+                                           Placeholder="کد یا عنوان مدرک را تایپ کنید…"
+                                           EmptyText="مدرکی انتخاب نشده است." />
+                        <input class="form-control form-control-sm mt-1" @bind="linkNote" placeholder="یادداشت (اختیاری)" />
+                        <button class="btn btn-sm btn-primary w-100 mt-1" @onclick="LinkMany" disabled="@(linkIds.Count == 0)">
+                            <i class="bi bi-link"></i> لینک کن (@linkIds.Count.Num() مدرک)
+                        </button>
+                        <div class="form-text fs-9">
+                            با ورژن خوردن این مدرک، در کارتابل صاحبان مدارک مرتبط، کار «بررسی/به‌روزرسانی» ایجاد می‌شود.
+                            فقط مدارک فعال قابل لینک هستند.
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        @* ------------------- دستورهای کار این مدرک ------------------- *@
+        @if (Auth.HasModule("WorkOrders"))
+        {
+            <div class="card mb-3">
+                <div class="card-header fw-700 fs-8 d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-card-checklist ms-1 wo-archive-ico"></i> دستورهای کار</span>
+                    <span class="badge bg-secondary">@docWorkOrders.Count.Num()</span>
+                </div>
+                <div class="card-body p-2">
+                    @if (woLoading)
+                    {
+                        <div class="text-center py-2"><div class="spinner-border spinner-border-sm text-primary"></div></div>
+                    }
+                    else if (docWorkOrders.Count == 0)
+                    {
+                        <div class="fs-8 text-muted py-2">برای این مدرک دستور کاری صادر نشده است.</div>
+                    }
+                    else
+                    {
+                        @foreach (var w in docWorkOrders)
+                        {
+                            <div class="d-flex justify-content-between align-items-center border-bottom py-1 fs-8">
+                                <div>
+                                    <a href="@($"work-orders?open={w.Id}")" class="text-decoration-none fw-700">
+                                        <span class="num">@w.Number</span> — @w.Title
+                                    </a>
+                                    <div class="fs-9 text-muted">توسط @w.OwnerName</div>
+                                </div>
+                                <span class="badge @(w.Status == "Closed" ? "bg-secondary" : "bg-success")">@(w.Status == "Closed" ? "بسته" : "باز")</span>
+                            </div>
+                        }
+                    }
+                    @if (doc.MyLevel >= DocAccessLevelDto.Read && doc.IsActive && Auth.Has("WorkOrders.Create"))
+                    {
+                        <button class="btn btn-sm w-100 mt-2 wo-archive-btn" @onclick="GoWorkOrder">
+                            <i class="bi bi-card-checklist"></i> صدور دستور کار جدید برای این مدرک
+                        </button>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (doc.MyLevel >= DocAccessLevelDto.Full && doc.IsActive)
+        {
+            <div class="card mb-3">
+                <div class="card-header fw-700 fs-8"><i class="bi bi-shield-lock ms-1"></i> دسترسی‌ها</div>
+                <div class="card-body p-2">
+                    <div class="form-check form-switch mb-1">
+                        <input class="form-check-input" type="checkbox" id="vPub" @bind="doc.IsPublic" />
+                        <label class="form-check-label fw-700 fs-8" for="vPub">نمایش برای همه</label>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="vPubDl" @bind="doc.PublicCanDownload"
+                               disabled="@(!doc.IsPublic)" />
+                        <label class="form-check-label fs-8" for="vPubDl">دانلود عمومی</label>
+                    </div>
+                    <DocPermissionEditor Users="lookups.Users" Roles="lookups.Roles" Items="doc.Permissions" />
+                    @* نکته: روی عنصر form-switch نباید از کلاس‌های p یا px بوت‌استرپ استفاده کرد؛
+                       بوت‌استرپ با padding-left برابر 2.5em و margin-left منفی سوئیچ را جا می‌اندازد
+                       و utility (با important) آن را خراب و روی متن می‌اندازد. *@
+                    <div class="form-check form-switch mt-2 border rounded-3 py-1 pe-2 bg-light">
+                        <input class="form-check-input" type="checkbox" id="vConf" @bind="doc.RequireDownloadConfirm" />
+                        <label class="form-check-label fs-8 fw-700 text-danger" for="vConf"><i class="bi bi-shield-lock ms-1"></i> محرمانه — فایل‌ها با تایید مجدد رمز</label>
+                    </div>
+                    <div class="form-check form-switch mt-1 border rounded-3 py-1 pe-2 bg-light">
+                        <input class="form-check-input" type="checkbox" id="vWm" @bind="doc.WatermarkPreview" />
+                        <label class="form-check-label fs-8 fw-700" for="vWm"><i class="bi bi-droplet-half ms-1" style="color:#0284c7"></i> واترمارک پیش‌نمایش فایل‌ها</label>
+                    </div>
+                    <button class="btn btn-sm btn-primary w-100 mt-2" @onclick="SavePerms">
+                        <i class="bi bi-check-lg"></i> ذخیره دسترسی‌ها
+                    </button>
+                </div>
+            </div>
+
+            @* ---------- کارت درخواست‌های دسترسی (مدیران مدرک) ---------- *@
+            <div class="card mb-3">
+                <div class="card-header fw-700 fs-8 d-flex justify-content-between align-items-center">
+                    <span>
+                        <i class="bi bi-person-plus ms-1" style="color:#2563eb"></i> درخواست‌های دسترسی
+                        @if (accessRequests.Any(r => r.Status == 0))
+                        {
+                            <span class="badge bg-warning text-dark ms-1">@accessRequests.Count(r => r.Status == 0).Num() در انتظار</span>
+                        }
+                    </span>
+                    <button class="btn btn-sm btn-light py-0" title="به‌روزرسانی" @onclick="LoadAccessRequests">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+                <div class="card-body p-1" style="max-height:300px;overflow-y:auto">
+                    @if (accessRequests.Count == 0)
+                    {
+                        <div class="fs-8 text-muted p-2">درخواستی برای این مدرک ثبت نشده است.</div>
+                    }
+                    else
+                    {
+                        @foreach (var r in accessRequests)
+                        {
+                            <div class="border rounded-3 p-2 mb-1">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div class="fs-8 fw-700">@r.RequesterName</div>
+                                    <span class="badge @StatusBadgeClass(r.Status)">@StatusFa(r.Status)</span>
+                                </div>
+                                <div class="fs-9 text-muted mt-1">
+                                    سطح درخواستی: <b>@LevelFa(r.RequestedLevel)</b> — @r.CreatedAt.ToFa() @r.CreatedAt.ToString("HH:mm")
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(r.Note))
+                                {
+                                    <div class="fs-9 mt-1" title="@r.Note">«@r.Note»</div>
+                                }
+                                @if (r.Status == 0 && actingReqId != r.Id)
+                                {
+                                    <div class="d-flex gap-1 mt-2">
+                                        <button class="btn btn-sm btn-success py-0 px-2 fs-8" @onclick="() => StartAct(r, false)">
+                                            <i class="bi bi-check-lg"></i> پذیرش
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger py-0 px-2 fs-8" @onclick="() => StartAct(r, true)">
+                                            <i class="bi bi-x-lg"></i> رد
+                                        </button>
+                                    </div>
+                                }
+                                @if (r.Status == 0 && actingReqId == r.Id)
+                                {
+                                    <div class="mt-2 border-top pt-2">
+                                        @if (!rejectMode)
+                                        {
+                                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                <select class="form-select form-select-sm" style="width:auto" @bind="approveLevel">
+                                                    <option value="1">مشاهده</option>
+                                                    <option value="2">خواندن</option>
+                                                    <option value="3">نوشتن</option>
+                                                    <option value="4">دسترسی کامل</option>
+                                                </select>
+                                                <div class="form-check form-switch mb-0">
+                                                    <input class="form-check-input" type="checkbox" id="apr-@r.Id" @bind="approveDownload" />
+                                                    <label class="form-check-label fs-8" for="apr-@r.Id">دانلود</label>
+                                                </div>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <input class="form-control form-control-sm" placeholder="دلیل رد (اختیاری)…" @bind="rejectNote" />
+                                        }
+                                        <div class="d-flex gap-1 mt-2">
+                                            <button class="btn btn-sm @(rejectMode ? "btn-danger" : "btn-success") py-0 px-2 fs-8 fw-700" @onclick="ApplyRequest" disabled="@reqActBusy">
+                                                @if (reqActBusy) { <span class="spinner-border spinner-border-sm"></span> }
+                                                @(rejectMode ? "رد درخواست" : "اعطای دسترسی")
+                                            </button>
+                                            <button class="btn btn-sm btn-light py-0 px-2 fs-8" @onclick="() => { actingReqId = 0; rejectNote = null; }">انصراف</button>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+
+            @* ---------- کارت گزارش دانلود و مشاهده فایل‌ها ---------- *@
+            <div class="card mb-3">
+                <div class="card-header fw-700 fs-8 d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-cloud-download ms-1" style="color:#0ea5e9"></i> گزارش دانلود و مشاهده فایل‌ها</span>
+                    <button class="btn btn-sm btn-light py-0" title="بارگذاری / به‌روزرسانی" @onclick="LoadAccessLogs" disabled="@accessLogsLoading">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+                <div class="card-body p-1" style="max-height:280px;overflow-y:auto">
+                    @if (!accessLogsLoaded && !accessLogsLoading)
+                    {
+                        <div class="fs-8 text-muted p-2">برای مشاهده گزارش، دکمه به‌روزرسانی را بزنید.</div>
+                    }
+                    else if (accessLogsLoading)
+                    {
+                        <div class="fs-8 text-muted p-2"><span class="spinner-border spinner-border-sm"></span> در حال بارگذاری…</div>
+                    }
+                    else if (accessLogs.Count == 0)
+                    {
+                        <div class="fs-8 text-muted p-2">هنوز دانلود یا مشاهده‌ای از فایل‌های این مدرک ثبت نشده است.</div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm align-middle mb-0">
+                            <thead class="table-light">
+                                <tr class="fs-9">
+                                    <th>کاربر</th>
+                                    <th>فایل</th>
+                                    <th>عمل</th>
+                                    <th>زمان</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var l in accessLogs)
+                                {
+                                    <tr class="fs-9">
+                                        <td>@l.UserName</td>
+                                        <td class="text-truncate" style="max-width:130px" title="@l.FileName">@l.FileName</td>
+                                        <td>
+                                            @if (l.Action == "Download")
+                                            {
+                                                <span class="badge rounded-pill text-bg-success"><i class="bi bi-download"></i> دانلود</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge rounded-pill text-bg-info"><i class="bi bi-eye"></i> مشاهده</span>
+                                            }
+                                        </td>
+                                        <td class="text-muted" title="@(l.Ip ?? "")">@l.At.ToFa() @l.At.ToString("HH:mm")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+
+            @* ---------- کارت لاگ چاپ فایل‌ها (چاپ‌کننده + تاریخ روی خروجی) ---------- *@
+            <div class="card mb-3">
+                <div class="card-header fw-700 fs-8 d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-printer ms-1" style="color:#0ea5e9"></i> لاگ چاپ فایل‌ها</span>
+                    <button class="btn btn-sm btn-light py-0" title="بارگذاری / به‌روزرسانی" @onclick="LoadPrintLogs" disabled="@printLogsLoading">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+                <div class="card-body p-1" style="max-height:280px;overflow-y:auto">
+                    @if (!printLogsLoaded && !printLogsLoading)
+                    {
+                        <div class="fs-8 text-muted p-2">برای مشاهده لاگ چاپ، دکمه به‌روزرسانی را بزنید.</div>
+                    }
+                    else if (printLogsLoading)
+                    {
+                        <div class="fs-8 text-muted p-2"><span class="spinner-border spinner-border-sm"></span> در حال بارگذاری…</div>
+                    }
+                    else if (printLogs.Count == 0)
+                    {
+                        <div class="fs-8 text-muted p-2">هنوز چاپی از فایل‌های این مدرک ثبت نشده است.</div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm align-middle mb-0">
+                            <thead class="table-light">
+                                <tr class="fs-9">
+                                    <th>چاپ‌کننده</th>
+                                    <th>فایل</th>
+                                    <th>ورژن</th>
+                                    <th>زمان چاپ</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var p in printLogs)
+                                {
+                                    <tr class="fs-9" title="واترمارک حک‌شده: @p.WatermarkText">
+                                        <td>@p.UserName</td>
+                                        <td class="text-truncate" style="max-width:130px" title="@p.FileName">@p.FileName</td>
+                                        <td class="num">@(p.VersionNo > 0 ? $"ورژن {p.VersionNo.ToString()}" : "—")</td>
+                                        <td class="text-muted" title="@(p.Ip ?? "")">@p.At.ToFa() @p.At.ToString("HH:mm")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+            }
+            <div class="card mb-3">
+                <div class="card-body p-2">
+                    <DocCommentsThread DocumentId="Id" Users="lookups.Users" />
+                </div>
+            </div>
+            <div class="card mb-3 border-warning">
+                <div class="card-header fw-700 fs-8 d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-shield-lock ms-1" style="color:#d97706"></i> ردیاب نشت <span class="badge bg-warning text-dark">نامرئی</span></span>
+                    <button class="btn btn-sm btn-light py-0" @onclick="LoadLeakTraces" disabled="@leakLoading"><i class="bi bi-arrow-clockwise"></i></button>
+                </div>
+                <div class="card-body p-1" style="max-height:240px;overflow-y:auto">
+                    @if (!leakLoaded && !leakLoading) { <div class="fs-8 text-muted p-2">برای دیدن رد چاپ/دانلود، به‌روزرسانی بزن.</div> }
+                    else if (leakLoading) { <div class="fs-8 text-muted p-2"><span class="spinner-border spinner-border-sm"></span></div> }
+                    else if (leakTraces.Count==0) { <div class="fs-8 text-muted p-2">هنوز رد نشتی ثبت نشده.</div> }
+                    else {
+                      <table class="table table-sm mb-0 fs-9">
+                        <thead class="table-light"><tr><th>کاربر</th><th>واترمارک مرئی</th><th>هش</th><th>زمان</th></tr></thead>
+                        <tbody>
+                        @foreach(var t in leakTraces){<tr><td>@t.UserName</td><td class="text-truncate" style="max-width:150px" title="@t.VisibleWatermark">@t.VisibleWatermark</td><td class="num">@t.FileHash</td><td>@t.CreatedAt.ToFa()</td></tr>}
+                        </tbody>
+                      </table>
+                      <div class="fs-9 text-muted p-1">هر فایل یک هش + payload نامرئی دارد — حتی اسکرین‌شات قابل ردیابی است.</div>
+                    }
+                </div>
+            </div>
+    </div>
+</div>
+}
+</div>
+}
+
+@* ==================== مودال ورژن جدید ==================== *@
+<Modal Visible="showVersion" Title="ثبت ورژن جدید" Size="modal-lg" OnClose="() => showVersion = false">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-8">
+                <label class="form-label">عنوان ورژن</label>
+                <input class="form-control" @bind="verForm.Title" placeholder="پیش‌فرض: عنوان مدرک" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">تاریخ انقضای ورژن</label>
+                <DatePicker @bind-Value="verForm.ExpireDate" AllowClear="true" />
+            </div>
+            <div class="col-12">
+                <label class="form-label">شرح تغییرات <span class="text-danger">*</span></label>
+                <textarea class="form-control" rows="2" @bind="verForm.ChangeNote"></textarea>
+            </div>
+            <div class="col-12">
+                <label class="form-label fw-700">نفرات گردش این ورژن</label>
+                <MultiSearchSelect Items="lookups.Users" Values="verApprovers" ValuesChanged="v => verApprovers = v"
+                                   Placeholder="نام نفر را تایپ کنید…"
+                                   EmptyText="خالی = استفاده از نفرات پیش‌فرض مدرک" />
+            </div>
+            <div class="col-12">
+                <label class="form-label fw-700"><i class="bi bi-paperclip ms-1"></i> پیوست‌های این ورژن</label>
+                <div class="ver-drop @(verDragOver ? "drag" : "")"
+                     @ondragenter="VerDragEnter" @ondragenter:preventDefault
+                     @ondragover:preventDefault
+                     @ondragleave="VerDragLeave"
+                     @ondrop="VerDropReset" @ondrop:preventDefault>
+                    <div class="ver-drop-inner">
+                        <i class="bi bi-cloud-arrow-up ver-drop-icon"></i>
+                        <div class="fw-700 fs-8">فایل‌ها را اینجا رها کنید یا کلیک کنید</div>
+                        <div class="fs-9 text-muted">بدون محدودیت تعداد و حجم — پس از ثبت ورژن، خودکار آپلود می‌شوند</div>
+                    </div>
+                    <InputFile class="ver-file-overlay" OnChange="OnVersionFiles" multiple />
+                </div>
+                @if (verFiles.Count > 0)
+                {
+                    <div class="d-flex flex-wrap gap-1 mt-2">
+                        @foreach (var f in verFiles)
+                        {
+                            <span class="badge bg-light text-dark border d-inline-flex align-items-center gap-1 fs-8 py-1 px-2">
+                                <i class="bi bi-file-earmark text-primary"></i>
+                                <span class="text-truncate" style="max-width:180px">@f.Name</span>
+                                <span class="text-muted num">(@FormatSize(f.Size))</span>
+                                <i class="bi bi-x-circle-fill text-danger" style="cursor:pointer" @onclick="() => verFiles.Remove(f)"></i>
+                            </span>
+                        }
+                    </div>
+                }
+                <div class="mt-2 d-flex gap-2">
+                  <button type="button" class="btn btn-sm @(showScanner ? "btn-primary" : "btn-outline-primary")" @onclick="() => showScanner = !showScanner"><i class="bi bi-camera ms-1"></i> اسکن هوشمند با دوربین 📸</button>
+                  @if (scannedImages.Count > 0) { <span class="badge bg-success align-self-center">@scannedImages.Count اسکن آماده</span> }
+                </div>
+                @if (showScanner)
+                {
+                  <div class="mt-2"><DocSmartScanner OnScanned="OnScanned" OnClose="() => showScanner=false" /></div>
+                }
+                @if (scannedImages.Count > 0)
+                {
+                  <div class="d-flex flex-wrap gap-2 mt-2">
+                    @foreach (var s in scannedImages)
+                    {
+                      <div class="border rounded p-1 bg-white position-relative" style="width:120px">
+                        <img src="@s.dataUrl" style="width:100%;height:90px;object-fit:cover;border-radius:6px" />
+                        <div class="fs-9 text-truncate mt-1">@s.fileName</div>
+                        <i class="bi bi-x-circle-fill text-danger position-absolute" style="top:4px;left:4px;cursor:pointer" @onclick="() => scannedImages.Remove(s)"></i>
+                      </div>
+                    }
+                  </div>
+                }
+            </div>
+            <div class="col-md-6">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="sndFlow" @bind="verForm.SendToFlow" />
+                    <label class="form-check-label fw-700" for="sndFlow">ارسال به گردش تایید</label>
+                    <span class="fs-9 text-muted d-block">ورژن فریز شده و تا تایید کامل، فعال نمی‌شود.</span>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="actAppr" @bind="verForm.ActivateOnApprove" />
+                    <label class="form-check-label fw-700" for="actAppr">پس از تایید، خودکار فعال شود</label>
+                </div>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showVersion = false">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" @onclick="SaveVersion" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            <i class="bi bi-check-lg ms-1"></i> ثبت ورژن (F1)
+        </button>
+    </Footer>
+</Modal>
+
+@* ==================== مودال تایید / رد ==================== *@
+<Modal Visible="showApproval" Title="@(approveMode ? "تایید ورژن" : "رد ورژن")" Size="modal-lg" OnClose="() => showApproval = false">
+    <ChildContent>
+        <label class="form-label">توضیح / نظر</label>
+        <textarea class="form-control" rows="3" @bind="approvalComment" placeholder="نظر خود را بنویسید..."></textarea>
+        @if (!approveMode)
+        {
+            <div class="alert alert-warning mt-2 fs-8 mb-0">
+                با رد کردن، ورژن از حالت فریز خارج شده و برای اصلاح به ثبت‌کننده برمی‌گردد.
+            </div>
+        }
+        <hr class="my-3" />
+        <DocSignaturePad @ref="sigPad" />
+        <div class="mt-2 d-flex align-items-center gap-2">
+            <span class="badge @(isOnline ? "bg-success" : "bg-warning text-dark")"><i class="bi @(isOnline ? "bi-wifi" : "bi-wifi-off")"></i> @(isOnline ? "آنلاین" : "آفلاین — در صف ذخیره می‌شود")</span>
+            @if (offlineQueueCount>0)
+            {
+                <span class="badge bg-primary">@offlineQueueCount در صف آفلاین</span>
+            }
+        </div>
+        @if (!isOnline)
+        {
+            <div class="alert alert-info fs-8 mt-2 mb-0"><i class="bi bi-cloud-upload"></i> شما آفلاین هستید — تایید شما با امضا در دستگاه ذخیره و به محض آنلاین شدن خودکار همگام می‌شود.</div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showApproval = false">انصراف</button>
+        <button class="btn @(approveMode ? "btn-success" : "btn-danger")" @onclick="DoApproval" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            else { <i class="bi @(approveMode ? "bi-check-lg" : "bi-x-lg") ms-1"></i> }
+            @(approveMode ? "تایید" : "رد") @(isOnline ? "" : "(آفلاین)")
+        </button>
+    </Footer>
+</Modal>
+
+@* ==================== مودال فعال/غیرفعال کردن مدرک ==================== *@
+<Modal Visible="showToggle" Title="@(doc.IsActive ? "غیرفعال کردن مدرک" : "فعال کردن مدرک")" OnClose="() => showToggle = false">
+    <ChildContent>
+        <p class="mb-2">مدرک <b class="num">@doc.Code</b> — @doc.Title</p>
+        @if (doc.IsActive)
+        {
+            <div class="alert alert-warning fs-8">
+                با غیرفعال کردن، این مدرک <b>فقط‌خواندنی</b> می‌شود و به زیرمنوی «مدارک غیرفعال» منتقل می‌گردد.
+                کارهای باز آن در کارتابل‌ها بسته می‌شوند.
+            </div>
+            <label class="form-label">دلیل غیرفعال‌سازی</label>
+            <textarea class="form-control" rows="2" @bind="toggleReason"
+                      placeholder="مثلاً: منسوخ شده و با مدرک جدید جایگزین گردید"></textarea>
+        }
+        else
+        {
+            <div class="alert alert-info fs-8">مدرک دوباره فعال شده و همه عملیات روی آن مجاز می‌شود.</div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showToggle = false">انصراف (Esc)</button>
+        <button class="btn @(doc.IsActive ? "btn-danger" : "btn-success")" @onclick="DoToggleActive" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            <i class="bi @(doc.IsActive ? "bi-toggle-off" : "bi-toggle-on") ms-1"></i>
+            @(doc.IsActive ? "غیرفعال کن" : "فعال کن")
+        </button>
+    </Footer>
+</Modal>
+
+@* ==================== مودال نمایش متن استخراج‌شده / OCR ==================== *@
+<Modal Visible="showTextModal" Title="@($"متن استخراج‌شده — {selectedText?.FileName}")" Size="modal-lg" OnClose="() => showTextModal = false">
+    <ChildContent>
+        @if (selectedText != null)
+        {
+            <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
+                <div>
+                    <span class="badge @SourceTypeClass(selectedText.SourceType) me-1">@SourceTypeName(selectedText.SourceType)</span>
+                    <span class="text-muted fs-8">تعداد حروف: @selectedText.CharacterCount.Num() | تاریخ استخراج: @selectedText.IndexedAt.ToFa()</span>
+                </div>
+                <button class="btn btn-sm btn-outline-primary" @onclick="CopyExtractedText">
+                    <i class="bi bi-clipboard me-1"></i> کپی متن
+                </button>
+            </div>
+            <div class="p-3 bg-light rounded-3 border" style="max-height:450px;overflow:auto;white-space:pre-wrap;font-family:'Shabnam','Vazirmatn',Tahoma,sans-serif;font-size:1.05rem;line-height:2;">
+                @(string.IsNullOrWhiteSpace(selectedText.ExtractedText) ? "متنی در این فایل یافت نشد." : selectedText.ExtractedText)
+            </div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showTextModal = false">بستن</button>
+    </Footer>
+</Modal>
+
+@* ==================== مودال ویرایش مدرک ==================== *@
+<VersionCompareModal @ref="compareModal" />
+
+<DocumentFormModal Visible="showEdit" EditId="Id" Folders="FolderLookup" Users="lookups.Users" Documents="lookups.Documents" Roles="lookups.Roles"
+                   NumberingEnabled="lookups.CodeNumberingEnabled"
+                   CanManageAccess="doc.MyLevel >= DocAccessLevelDto.Full"
+                   OnClose="() => showEdit = false" OnSaved="OnEdited" />
+
+<DocChatModal Visible="showChat" DocumentId="Id" DocumentTitle="@(doc?.Title ?? "")" OnClose="() => showChat = false" />
+
+<style>
+    .doc-secondary-summary { cursor:pointer; list-style:none; user-select:none; }
+    .doc-secondary-summary::-webkit-details-marker { display:none; }
+    .doc-secondary-summary::marker { content:""; }
+    .doc-secondary-summary:focus-visible { outline:2px solid #4338ca; outline-offset:-3px; }
+    .doc-secondary-chevron { flex-shrink:0; transition:transform .15s ease; }
+    .doc-secondary-panel[open] > .doc-secondary-summary .doc-secondary-chevron { transform:rotate(180deg); }
+    .doc-secondary-panel:not([open]) > .card-body { display:none; }
+    .ver-card { border:1px solid #e8edf3; border-radius:12px; padding:.7rem .85rem; margin-bottom:.6rem; background:#fff; }
+    .ver-card.active { border-color:#22c55e; background:#f0fdf4; }
+    .ver-card.frozen { border-color:#f59e0b; background:#fffbeb; }
+    .fs-9 { font-size:.68rem; }
+    .ver-drop { position:relative; border:2px dashed #c7d7f5; border-radius:12px; background:#f8fbff; overflow:hidden; transition:all .15s ease; }
+    .ver-drop-inner { padding:.9rem .75rem; text-align:center; color:#475569; pointer-events:none; }
+    .ver-drop-icon { font-size:1.6rem; color:#2563eb; display:block; margin-bottom:.2rem; }
+    .ver-file-overlay { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
+    .ver-drop.drag { border-color:#2563eb; background:#eff6ff; box-shadow:0 0 0 4px rgba(37,99,235,.12); }
+</style>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private DocumentDto doc = new();
+    private DocArchiveLookups lookups = new();
+    private List<DocFolderDto> folders = new();
+    private List<DocExtractedTextDto> extractedTexts = new();
+    private DocExtractedTextDto? selectedText;
+
+    private bool loading = true, loadingExtracted, saving, showTextModal;
+
+    private bool showVersion, showApproval, showEdit, showChat;
+    private DocSignaturePad? sigPad;
+    private bool isOnline = true;
+    private int offlineQueueCount;
+    private DocVersionCreateDto verForm = new();
+    private List<int> verApprovers = new();
+
+    // پیوست‌های فرم ورژن جدید (درگ اند دراپ + انتخاب)
+    private List<IBrowserFile> verFiles = new();
+    private List<(string dataUrl, string fileName)> scannedImages = new();
+    private bool showScanner;
+    private bool verDragOver;
+    private int verDragDepth;
+
+    private void OnVersionFiles(InputFileChangeEventArgs e)
+    {
+        verDragDepth = 0; verDragOver = false;
+        verFiles = e.GetMultipleFiles(int.MaxValue).ToList();
+    }
+    private void OnScanned((string dataUrl, string fileName) e)
+    {
+        scannedImages.Add(e);
+        showScanner = false;
+    }
+    private void VerDragEnter() { verDragDepth++; verDragOver = true; }
+    private void VerDragLeave() { if (--verDragDepth <= 0) { verDragDepth = 0; verDragOver = false; } }
+    private void VerDropReset() { verDragDepth = 0; verDragOver = false; }
+
+    private static string FormatSize(long b) =>
+        b < 1024 ? $"{b}B" : b < 1024 * 1024 ? $"{b / 1024}KB" : $"{b / 1024 / 1024:0.#}MB";
+
+    private DocVersionDto? approvalTarget;
+    private bool approveMode = true;
+    private string approvalComment = "";
+
+    private List<int> linkIds = new();
+    private string linkNote = "";
+
+    private bool showToggle;
+    private string toggleReason = "";
+
+    private bool IsExpired => doc.ExpireDate.HasValue && doc.ExpireDate.Value.Date < DateTime.Today;
+    private int? DaysToExpire => doc.ExpireDate.HasValue ? (doc.ExpireDate.Value.Date - DateTime.Today).Days : null;
+
+    private VersionCompareModal? compareModal;
+
+    // ---------- دستورهای کار صادرشده برای این مدرک ----------
+    public const string WoSourceModule = "Document";
+    private List<WoSourceItem> docWorkOrders = new();
+    private bool woLoading;
+
+    private void GoWorkOrder() => Nav.NavigateTo($"/work-orders?sourceModule={WoSourceModule}&sourceId={Id}");
+
+    private async Task LoadDocWorkOrdersAsync()
+    {
+        docWorkOrders = new();
+        woLoading = true;
+        try
+        {
+            docWorkOrders = await Http.GetFromJsonAsync<List<WoSourceItem>>(
+                $"/api/workorders/for-source?module={WoSourceModule}&sourceId={Id}") ?? new();
+        }
+        catch { docWorkOrders = new(); }
+        finally { woLoading = false; }
+    }
+
+    public class WoSourceItem
+    {
+        public int Id { get; set; }
+        public string Number { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string OwnerName { get; set; } = "";
+        public string Status { get; set; } = "Open";
+    }
+
+    private async Task OpenCompare()
+    {
+        if (compareModal is not null)
+            await compareModal.ShowAsync(Id, doc.Versions);
+    }
+
+    // ---------- تاریخچه ----------
+    private string logFilter = "";
+
+    private List<DocLogDto> FilteredLogs =>
+        string.IsNullOrEmpty(logFilter)
+            ? doc.Logs
+            : doc.Logs.Where(l => l.Action == logFilter).ToList();
+
+    private int? VersionNoOf(int versionId) =>
+        doc.Versions.FirstOrDefault(v => v.Id == versionId)?.VersionNo;
+
+    private static string ActionName(string a) => a switch
+    {
+        "Create" => "ایجاد",
+        "Update" => "ویرایش",
+        "NewVersion" => "ورژن جدید",
+        "Approve" => "تایید",
+        "Approved" => "تایید نهایی",
+        "Reject" => "رد",
+        "Activate" => "فعال‌سازی ورژن",
+        "Link" => "لینک",
+        "Unlink" => "حذف لینک",
+        "RelatedUpdate" => "مدرک مرتبط",
+        "Deactivate" => "غیرفعال‌سازی",
+        "Permissions" => "دسترسی‌ها",
+        "ExpiryAlert" => "هشدار انقضا",
+        "Delete" => "حذف",
+        "Restore" => "بازگردانی",
+        "Print" => "چاپ",
+        _ => a
+    };
+
+    private static string ActionClass(string a) => a switch
+    {
+        "Create" => "bg-primary",
+        "NewVersion" => "bg-info text-dark",
+        "Approved" or "Approve" or "Activate" or "Restore" => "bg-success",
+        "Reject" or "Delete" => "bg-danger",
+        "Deactivate" or "ExpiryAlert" => "bg-warning text-dark",
+        "Permissions" => "bg-dark",
+        "Link" or "Unlink" or "RelatedUpdate" => "bg-secondary",
+        "Print" => "text-bg-info",
+        _ => "bg-light text-secondary"
+    };
+
+    private List<LookupItem> FolderLookup =>
+        folders.Select(f => new LookupItem { Id = f.Id, Name = f.Name }).ToList();
+
+    private List<LookupItem> LinkableDocs =>
+        lookups.Documents.Where(d => d.Id != Id && !doc.Links.Any(l => l.LinkedDocumentId == d.Id)).ToList();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        Layout.SetTitle("مدرک");
+        await Load();
+        PollOfflineStatus();
+    }
+    private async void PollOfflineStatus()
+    {
+        while (true)
+        {
+            await Task.Delay(3500);
+            try { isOnline = await JS.InvokeAsync<bool>("eval", "navigator.onLine"); } catch {}
+            try { offlineQueueCount = await JS.InvokeAsync<int>("docArchiveQueueCount"); } catch {}
+            try { await InvokeAsync(StateHasChanged); } catch { break; }
+            if (!isOnline) continue;
+        }
+    }
+
+    private void GoBack() => Nav.NavigateTo("doc-archive");
+
+    private async Task Load()
+    {
+        loading = true;
+        accessDenied = false;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(Auth.Token))
+                Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Auth.Token);
+            doc = await Svc.GetDocumentAsync(Id);
+            lookups = await Svc.GetLookupsAsync();
+            folders = await Svc.GetFoldersAsync();
+            Layout.SetTitle($"{doc.Code} — {doc.Title}");
+            await LoadExtractedTexts();
+            await LoadDocWorkOrdersAsync();
+            if (doc.MyLevel >= DocAccessLevelDto.Full)
+                await LoadAccessRequests();
+        }
+        catch (ApiException ex) when (ex.Message.Contains("دسترسی ندارید"))
+        {
+            // کاربر به این مدرک دسترسی ندارد — صفحه درخواست دسترسی نمایش داده می‌شود
+            accessDenied = true;
+            await LoadMyRequests();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task LoadExtractedTexts()
+    {
+        loadingExtracted = true;
+        try
+        {
+            extractedTexts = await Svc.GetExtractedTextsAsync(Id);
+        }
+        catch { extractedTexts = new(); }
+        finally { loadingExtracted = false; }
+    }
+
+    private void ViewExtractedText(DocExtractedTextDto item)
+    {
+        selectedText = item;
+        showTextModal = true;
+    }
+
+    private async Task CopyExtractedText()
+    {
+        if (selectedText != null && !string.IsNullOrEmpty(selectedText.ExtractedText))
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", selectedText.ExtractedText);
+            Toast.Success("متن در حافظه کپی شد.");
+        }
+    }
+
+    private async Task RunOcr(int attachmentId)
+    {
+        try
+        {
+            Toast.Info("در حال پردازش OCR و استخراج متن...");
+            var res = await Svc.RunOcrAsync(attachmentId);
+            if (res.Success)
+            {
+                Toast.Success(res.Message);
+                await LoadExtractedTexts();
+            }
+            else
+            {
+                Toast.Error(res.Message);
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string SourceTypeIcon(string st) => st switch
+    {
+        "Pdf" or "PdfOcr" => "bi-filetype-pdf text-danger",
+        "Word" => "bi-file-earmark-word text-primary",
+        "Excel" => "bi-file-earmark-excel text-success",
+        "ImageOcr" => "bi-file-earmark-image text-info",
+        _ => "bi-file-earmark-text text-secondary"
+    };
+
+    private static string SourceTypeClass(string st) => st switch
+    {
+        "Pdf" or "PdfOcr" => "bg-danger",
+        "Word" => "bg-primary",
+        "Excel" => "bg-success",
+        "ImageOcr" => "bg-info text-dark",
+        _ => "bg-secondary"
+    };
+
+    private static string SourceTypeName(string st) => st switch
+    {
+        "Pdf" => "PDF (متن دیجیتال)",
+        "PdfOcr" => "PDF (اسکن OCR)",
+        "Word" => "Word (docx)",
+        "Excel" => "Excel (xlsx)",
+        "ImageOcr" => "OCR تصویر (فارسی/انگلیسی)",
+        _ => "فایل متنی"
+    };
+
+    // ---------- ورژن ----------
+    private async Task SaveVersion()
+    {
+        if (string.IsNullOrWhiteSpace(verForm.ChangeNote)) { Toast.Error("شرح تغییرات را وارد کنید."); return; }
+        saving = true;
+        try
+        {
+            verForm.DocumentId = Id;
+            verForm.ApproverUserIds = verApprovers;
+            var versionId = await Svc.CreateVersionAsync(verForm);
+
+            // آپلود پیوست‌های انتخاب‌شده روی ورژن تازه‌ساخته‌شده
+            if (verFiles.Count > 0 && versionId > 0)
+            {
+                if (!string.IsNullOrWhiteSpace(Auth.Token))
+                    Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Auth.Token);
+                var ok = 0;
+                foreach (var f in verFiles)
+                {
+                    try
+                    {
+                        using var content = new MultipartFormDataContent();
+                        var sc = new StreamContent(f.OpenReadStream(long.MaxValue));
+                        sc.Headers.ContentType = new MediaTypeHeaderValue(
+                            string.IsNullOrWhiteSpace(f.ContentType) ? "application/octet-stream" : f.ContentType);
+                        content.Add(sc, "file", f.Name);
+                        var resp = await Http.PostAsync($"/api/attachments/DocVersion/{versionId}", content);
+                        if (resp.IsSuccessStatusCode) ok++;
+                        else Toast.Error($"بارگذاری {f.Name} ناموفق بود.");
+                    }
+                    catch (Exception ex) { Toast.Error($"بارگذاری {f.Name}: {ex.Message}"); }
+                }
+                if (ok > 0) Toast.Success($"{ok.Num()} پیوست روی ورژن جدید بارگذاری شد.");
+            }
+            // آپلود اسکن‌های هوشمند (dataUrl -> bytes)
+            if (scannedImages.Count > 0 && versionId > 0)
+            {
+                if (!string.IsNullOrWhiteSpace(Auth.Token))
+                    Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Auth.Token);
+                var ok2 = 0;
+                foreach (var s in scannedImages)
+                {
+                    try
+                    {
+                        var b64 = s.dataUrl.Contains(",") ? s.dataUrl.Split(',')[1] : s.dataUrl;
+                        var bytes = Convert.FromBase64String(b64);
+                        using var content = new MultipartFormDataContent();
+                        var sc = new ByteArrayContent(bytes);
+                        sc.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+                        content.Add(sc, "file", s.fileName);
+                        var resp = await Http.PostAsync($"/api/attachments/DocVersion/{versionId}", content);
+                        if (resp.IsSuccessStatusCode) ok2++;
+                    }
+                    catch (Exception ex) { Toast.Error($"اسکن {s.fileName}: {ex.Message}"); }
+                }
+                if (ok2 > 0) Toast.Success($"{ok2.Num()} اسکن هوشمند بارگذاری شد — OCR خودکار شروع می‌شود.");
+            }
+
+            Toast.Success("ورژن جدید ثبت شد.");
+            showVersion = false;
+            verForm = new DocVersionCreateDto();
+            verApprovers = new();
+            verFiles = new();
+            scannedImages = new();
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task ToggleActive(DocVersionDto v)
+    {
+        try { await Svc.SetVersionActiveAsync(v.Id, !v.IsActive); Toast.Success("وضعیت ورژن تغییر کرد."); await Load(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- تایید ----------
+    private void OpenApproval(DocVersionDto v, bool approve)
+    {
+        approvalTarget = v;
+        approveMode = approve;
+        approvalComment = "";
+        showApproval = true;
+    }
+
+    private async Task DoApproval()
+    {
+        if (approvalTarget == null) return;
+        saving = true;
+        string? sigData = null;
+        bool bioVerified = false;
+        try { sigData = sigPad != null ? await sigPad.GetDataUrlAsync() : null; } catch {}
+        try { bioVerified = sigPad?.IsBiometricVerified ?? false; } catch {}
+        var payload = new DocApprovalActionDto
+        {
+            VersionId = approvalTarget.Id,
+            Approve = approveMode,
+            Comment = approvalComment,
+            SignatureDataUrl = sigData,
+            BiometricVerified = bioVerified,
+            DeviceInfo = await GetDeviceInfoAsync(),
+            ClientTimestamp = DateTime.Now
+        };
+        // تشخیص آفلاین
+        bool offline = false;
+        try { offline = !(await JS.InvokeAsync<bool>("eval", "navigator.onLine")); } catch {}
+        if (offline)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("docArchiveOffline.queueApproval", payload);
+                offlineQueueCount = await JS.InvokeAsync<int>("docArchiveQueueCount");
+                Toast.Success("آفلاین — تایید در صف ذخیره شد و بعداً همگام می‌شود." + (sigData != null ? " (با امضا)" : ""));
+                showApproval = false;
+                // بستن کارتابل محلی برای UX
+                try { await JS.InvokeVoidAsync("docArchiveOffline.updateBadge"); } catch {}
+                return;
+            }
+            catch (Exception ex) { Toast.Error("ذخیره آفلاین ناموفق: " + ex.Message); }
+        }
+        try
+        {
+            await Svc.ApprovalAsync(payload);
+            Toast.Success(approveMode ? "ورژن تایید شد." + (sigData != null ? " (امضا ثبت شد)" : "") : "ورژن رد شد.");
+            showApproval = false;
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            // اگر خطا شبکه بود، در صف آفلاین بگذار
+            var msg = ex.Message ?? "";
+            bool isNetwork = msg.Contains("Network") || msg.Contains("Failed to fetch") || msg.Contains("TypeError") || msg.Contains("offline");
+            if (!offline && isNetwork)
+            {
+                try
+                {
+                    await JS.InvokeVoidAsync("docArchiveOffline.queueApproval", payload);
+                    offlineQueueCount = await JS.InvokeAsync<int>("docArchiveQueueCount");
+                    Toast.Success("اتصال قطع شد — در صف آفلاین ذخیره شد.");
+                    showApproval = false;
+                    return;
+                }
+                catch {}
+            }
+            Toast.Error(msg);
+        }
+        finally { saving = false; }
+    }
+    private async Task<string> GetDeviceInfoAsync()
+    {
+        try { return await JS.InvokeAsync<string>("eval", "navigator.userAgent.slice(0,120)") ?? ""; } catch { return ""; }
+    }
+
+    // ---------- لینک ----------
+    private async Task LinkMany()
+    {
+        if (linkIds.Count == 0) return;
+        try
+        {
+            await Svc.LinkManyAsync(new DocLinkSaveDto
+            {
+                DocumentId = Id,
+                LinkedDocumentIds = linkIds,
+                Note = linkNote
+            });
+            Toast.Success($"{linkIds.Count} مدرک لینک شد.");
+            linkIds = new(); linkNote = "";
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- فعال / غیرفعال ----------
+    private async Task DoToggleActive()
+    {
+        saving = true;
+        try
+        {
+            await Svc.SetDocumentActiveAsync(Id, new DocSetActiveDto { IsActive = !doc.IsActive, Reason = toggleReason });
+            Toast.Success(doc.IsActive ? "مدرک غیرفعال شد." : "مدرک فعال شد.");
+            showToggle = false;
+            toggleReason = "";
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Unlink(int otherId)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", "لینک این دو مدرک حذف شود؟");
+        if (!ok) return;
+        try { await Svc.UnlinkAsync(Id, otherId); await Load(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- دسترسی ----------
+    private async Task SavePerms()
+    {
+        try
+        {
+            await Svc.SaveDocumentPermissionsAsync(Id, new DocPermissionsSaveDto
+            {
+                IsPublic = doc.IsPublic,
+                PublicCanDownload = doc.PublicCanDownload,
+                RequireDownloadConfirm = doc.RequireDownloadConfirm,
+                WatermarkPreview = doc.WatermarkPreview,
+                Items = doc.Permissions
+            });
+            Toast.Success("دسترسی‌ها ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- گزارش دانلود و مشاهده فایل‌ها ----------
+    private List<DocAttachmentAccessLogDto> accessLogs = new();
+    private bool accessLogsLoaded, accessLogsLoading;
+
+    private async Task LoadAccessLogs()
+    {
+        accessLogsLoading = true;
+        try
+        {
+            accessLogs = await Svc.GetAccessLogsAsync(Id);
+            accessLogsLoaded = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { accessLogsLoading = false; }
+    }
+
+    // ---------- Print logs ----------
+    private List<DocPrintLogDto> printLogs = new();
+    private bool printLogsLoaded, printLogsLoading;
+
+    private async Task LoadPrintLogs()
+    {
+        printLogsLoading = true;
+        try
+        {
+            printLogs = await Svc.GetPrintLogsAsync(Id);
+            printLogsLoaded = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { printLogsLoading = false; }
+    }
+
+    // ---------- Leak trace ----------
+    private List<DocLeakTraceDto> leakTraces = new();
+    private bool leakLoaded, leakLoading;
+    private async Task LoadLeakTraces()
+    {
+        leakLoading = true;
+        try { leakTraces = await Svc.GetLeakTracesAsync(Id); leakLoaded = true; }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { leakLoading = false; }
+    }
+
+    // ---------- درخواست دسترسی ----------
+    private bool accessDenied, reqBusy;
+    private int reqLevel = 2;
+    private string? reqNote;
+    private List<DocAccessRequestDto> myRequests = new();
+    private List<DocAccessRequestDto> accessRequests = new();
+    private int actingReqId, approveLevel = 2;
+    private bool approveDownload, rejectMode, reqActBusy;
+    private string? rejectNote;
+
+    private static string LevelFa(DocAccessLevelDto lvl) => lvl switch
+    {
+        DocAccessLevelDto.Read => "خواندن",
+        DocAccessLevelDto.Write => "نوشتن",
+        DocAccessLevelDto.Full => "دسترسی کامل",
+        _ => "مشاهده"
+    };
+
+    private static string StatusFa(int s) => s switch
+    {
+        0 => "در انتظار بررسی",
+        1 => "پذیرفته شد",
+        2 => "رد شد",
+        3 => "لغو شده",
+        _ => "نامشخص"
+    };
+
+    private static string StatusBadgeClass(int s) => s switch
+    {
+        0 => "bg-warning text-dark",
+        1 => "bg-success",
+        2 => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    private async Task LoadMyRequests()
+    {
+        try { myRequests = await Svc.GetMyAccessRequestsAsync(Id); }
+        catch { myRequests = new(); }
+    }
+
+    private async Task LoadAccessRequests()
+    {
+        try { accessRequests = await Svc.GetAccessRequestsAsync(Id); }
+        catch { accessRequests = new(); }
+    }
+
+    private async Task SendAccessRequest()
+    {
+        reqBusy = true;
+        try
+        {
+            await Svc.RequestAccessAsync(Id, new DocAccessRequestSaveDto
+            {
+                Level = (DocAccessLevelDto)reqLevel,
+                Note = reqNote
+            });
+            Toast.Success("درخواست دسترسی ثبت شد؛ پس از بررسی مدیر مدرک، نتیجه به شما اطلاع داده می‌شود.");
+            reqNote = null;
+            await LoadMyRequests();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { reqBusy = false; }
+    }
+
+    private async Task CancelRequest(int requestId)
+    {
+        try
+        {
+            await Svc.CancelAccessRequestAsync(requestId);
+            Toast.Success("درخواست لغو شد.");
+            await LoadMyRequests();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void StartAct(DocAccessRequestDto r, bool reject)
+    {
+        actingReqId = r.Id;
+        rejectMode = reject;
+        rejectNote = null;
+        approveLevel = Math.Max((int)r.RequestedLevel, 1);
+        approveDownload = false;
+    }
+
+    private async Task ApplyRequest()
+    {
+        if (actingReqId == 0) return;
+        reqActBusy = true;
+        try
+        {
+            if (rejectMode)
+                await Svc.RejectAccessRequestAsync(actingReqId, rejectNote);
+            else
+                await Svc.ApproveAccessRequestAsync(actingReqId, new DocAccessRequestApproveDto
+                {
+                    Level = (DocAccessLevelDto)approveLevel,
+                    CanDownload = approveDownload
+                });
+
+            Toast.Success(rejectMode ? "درخواست رد شد." : "درخواست پذیرفته شد و دسترسی داده شد.");
+            actingReqId = 0;
+            rejectNote = null;
+            if (rejectMode) await LoadAccessRequests();
+            else await Load(); // ردیف دسترسی جدید در کارت «دسترسی‌ها» هم آمده باشد تا ذخیره بعدی آن را بازنویسی نکند
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { reqActBusy = false; }
+    }
+
+    private async Task OnEdited()
+    {
+        showEdit = false;
+        await Load();
+    }
+
+    private static string LevelName(DocAccessLevelDto l) => l switch
+    {
+        DocAccessLevelDto.View => "مشاهده",
+        DocAccessLevelDto.Read => "خواندن",
+        DocAccessLevelDto.Write => "نوشتن",
+        DocAccessLevelDto.Full => "کامل",
+        _ => "ندارد"
+    };
+
+    private static RenderFragment StatusBadge(DocVersionStatusDto s) => builder =>
+    {
+        var (cls, txt) = s switch
+        {
+            DocVersionStatusDto.Draft => ("bg-secondary", "پیش‌نویس"),
+            DocVersionStatusDto.InReview => ("bg-warning text-dark", "در گردش"),
+            DocVersionStatusDto.Approved => ("bg-success", "تایید شده"),
+            DocVersionStatusDto.Rejected => ("bg-danger", "رد شده"),
+            _ => ("bg-dark", "بایگانی")
+        };
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", "badge ms-1 " + cls);
+        builder.AddContent(2, txt);
+        builder.CloseElement();
+    };
+}

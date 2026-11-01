@@ -1,0 +1,1240 @@
+@page "/payroll"
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>حقوق و دستمزد</PageTitle>
+
+<div class="card shadow-sm mb-3" dir="rtl">
+    <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-cash-stack"></i>
+        <strong>حقوق و دستمزد</strong>
+    </div>
+    <div class="card-body">
+        <ul class="nav nav-tabs mb-3">
+            <li class="nav-item"><button class="nav-link @(tab=="myfish"?"active":"")" @onclick='() => SetTab("myfish")'>فیش من</button></li>
+            @if (canRead)
+            {
+                <li class="nav-item"><button class="nav-link @(tab=="runs"?"active":"")" @onclick='() => SetTab("runs")'>دوره‌ها</button></li>
+                <li class="nav-item"><button class="nav-link @(tab=="slips"?"active":"")" @onclick='() => SetTab("slips")'>فیش‌ها</button></li>
+                <li class="nav-item"><button class="nav-link @(tab=="items"?"active":"")" @onclick='() => SetTab("items")'>آیتم‌ها و فرمول</button></li>
+                <li class="nav-item"><button class="nav-link @(tab=="loans"?"active":"")" @onclick='() => SetTab("loans")'>وام و مساعده</button></li>
+                <li class="nav-item"><button class="nav-link @(tab=="profiles"?"active":"")" @onclick='() => SetTab("profiles")'>پروفایل</button></li>
+                <li class="nav-item"><button class="nav-link @(tab=="tax"?"active":"")" @onclick='() => SetTab("tax")'>مالیات و قوانین</button></li>
+                <li class="nav-item"><button class="nav-link @(tab=="settle"?"active":"")" @onclick='() => SetTab("settle")'>تسویه</button></li>
+                <li class="nav-item"><button class="nav-link @(tab=="exports"?"active":"")" @onclick='() => SetTab("exports")'>خروجی‌ها</button></li>
+            }
+        </ul>
+
+        @if (tab == "myfish")
+        {
+            @if (mySlips.Count == 0)
+            {
+                <div class="alert alert-info">فیشی برای شما ثبت نشده است.</div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-striped table-sm align-middle">
+                        <thead><tr><th>دوره</th><th>ناخالص</th><th>مالیات</th><th>بیمه</th><th>سایر کسور</th><th>خالص</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var s in mySlips)
+                            {
+                                var x = s;
+                                <tr>
+                                    <td>@Fa.Digits($"{x.Year}/{x.Month:D2}")</td>
+                                    <td>@Fa.Digits(x.GrossEarnings.ToString("N0"))</td>
+                                    <td>@Fa.Digits(x.TaxAmount.ToString("N0"))</td>
+                                    <td>@Fa.Digits(x.InsuranceAmount.ToString("N0"))</td>
+                                    <td>@Fa.Digits(x.OtherDeductions.ToString("N0"))</td>
+                                    <td><strong>@Fa.Digits(x.NetPay.ToString("N0"))</strong></td>
+                                    <td><button class="btn btn-sm btn-outline-primary" @onclick="() => OpenSlip(x.Id)">مشاهده و چاپ</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+        else if (tab == "runs" && canRead)
+        {
+            @if (isMgr)
+            {
+                <div class="d-flex gap-2 mb-2 align-items-end">
+                    <div><label class="form-label small">سال</label><input type="number" class="form-control form-control-sm" style="width:90px" @bind="newYear" /></div>
+                    <div><label class="form-label small">ماه</label><input type="number" class="form-control form-control-sm" style="width:70px" @bind="newMonth" /></div>
+                    <div><label class="form-label small">نوع</label><select class="form-select form-select-sm" @bind="newKind"><option value="Monthly">حقوق ماه</option><option value="Eydi">عیدی پایان سال</option></select></div>
+                    <button class="btn btn-sm btn-primary" @onclick="CreateRun" disabled="@busy">دوره جدید</button>
+                    <button class="btn btn-sm btn-outline-secondary ms-auto" @onclick="LoadRuns">به‌روزرسانی</button>
+                </div>
+            }
+            <div class="table-responsive">
+                <table class="table table-striped table-sm align-middle">
+                    <thead><tr><th>دوره</th><th>نوع</th><th>وضعیت</th><th>فیش</th><th>ناخالص</th><th>خالص</th><th>مالیات</th><th>بیمه کارگر/کارفرما</th><th>سند</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var r in runs)
+                        {
+                            var x = r;
+                            <tr>
+                                <td>@Fa.Digits($"{x.Year}/{x.Month:D2}")</td>
+                                <td>@(x.Kind == "Eydi" ? "عیدی" : "ماهانه")</td>
+                                <td><span class="badge @RunCls(x.Status)">@RunFa(x.Status)</span></td>
+                                <td>@Fa.Digits(x.SlipCount.ToString())</td>
+                                <td>@Fa.Digits(x.TotalGross.ToString("N0"))</td>
+                                <td><strong>@Fa.Digits(x.TotalNet.ToString("N0"))</strong></td>
+                                <td>@Fa.Digits(x.TotalTax.ToString("N0"))</td>
+                                <td>@Fa.Digits(x.TotalInsuranceEmp.ToString("N0")) / @Fa.Digits(x.TotalInsuranceEr.ToString("N0"))</td>
+                                <td>@(x.VoucherId == null ? "—" : $"#{x.VoucherId}")</td>
+                                <td class="text-nowrap">
+                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => GotoSlips(x.Id)">فیش‌ها</button>
+                                    <button class="btn btn-sm btn-outline-info" @onclick="() => OpenCompare(x)">مغایرت</button>
+                                    @if (isMgr)
+                                    {
+                                        @if (x.Status != "Locked")
+                                        {
+                                            <button class="btn btn-sm btn-outline-success" @onclick="() => CalcRun(x.Id)" disabled="@busy">محاسبه</button>
+                                        }
+                                        @if (x.Status == "Draft")
+                                        {
+                                            <button class="btn btn-sm btn-outline-warning" @onclick='() => RunStatus(x.Id, "Approved")'>تأیید</button>
+                                        }
+                                        @if (x.Status == "Approved")
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger" @onclick='() => RunStatus(x.Id, "Locked")'>قفل</button>
+                                        }
+                                        @if (x.Status == "Locked")
+                                        {
+                                            <button class="btn btn-sm btn-outline-secondary" @onclick='() => RunStatus(x.Id, "Draft")'>بازکردن</button>
+                                        }
+                                        @if (x.Status != "Draft" && x.VoucherId == null)
+                                        {
+                                            <button class="btn btn-sm btn-outline-dark" @onclick="() => IssueVoucher(x.Id)" disabled="@busy">سند</button>
+                                        }
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (tab == "slips" && canRead)
+        {
+            <div class="d-flex gap-2 mb-2 align-items-end">
+                <div>
+                    <label class="form-label small">دوره</label>
+                    <select class="form-select form-select-sm" @bind="slipRunId">
+                        @foreach (var r in runs)
+                        {
+                            <option value="@r.Id">@r.Year/@r.Month:D2 (@RunFa(r.Status))</option>
+                        }
+                    </select>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary" @onclick="LoadSlips">نمایش</button>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-striped table-sm align-middle">
+                    <thead><tr><th>پرسنل</th><th>روزکرد</th><th>پایه</th><th>ناخالص</th><th>مالیات</th><th>بیمه</th><th>سایر</th><th>خالص</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var s in slips)
+                        {
+                            var x = s;
+                            <tr>
+                                <td>@x.EmployeeName</td>
+                                <td>@Fa.Digits(x.DaysPaid.ToString("0.##"))</td>
+                                <td>@Fa.Digits(x.BaseAmount.ToString("N0"))</td>
+                                <td>@Fa.Digits(x.GrossEarnings.ToString("N0"))</td>
+                                <td>@Fa.Digits(x.TaxAmount.ToString("N0"))</td>
+                                <td>@Fa.Digits(x.InsuranceAmount.ToString("N0"))</td>
+                                <td>@Fa.Digits(x.OtherDeductions.ToString("N0"))</td>
+                                <td><strong>@Fa.Digits(x.NetPay.ToString("N0"))</strong></td>
+                                <td><button class="btn btn-sm btn-outline-primary" @onclick="() => OpenSlip(x.Id)">فیش</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (tab == "items" && canRead)
+        {
+            @if (isMgr)
+            {
+                <div class="d-flex gap-2 mb-2">
+                    <button class="btn btn-sm btn-primary" @onclick="() => OpenItem(null)">آیتم جدید</button>
+                    <span class="small text-muted">متغیرها: BASE, DAILY_WAGE, HOURLY_WAGE, MIN_WAGE, MIN_DAILY, DAYS_PAID, DAYS_WORKED, OT_H, OT_H_HOL, OT_H_NIGHT, MISSION_DAYS, LEAVE_UNPAID, CHILDREN, BON, MASKAN, EYAB, OT_COEF_N/H/NT + کد آیتم‌ها — توابع: ROUND, MIN, MAX, IF</span>
+                </div>
+            }
+            <div class="table-responsive">
+                <table class="table table-striped table-sm align-middle">
+                    <thead><tr><th>کد</th><th>عنوان</th><th>نوع</th><th>دسته</th><th>فرمول / مبلغ</th><th>مالیات</th><th>بیمه</th><th>ذخیره</th><th>ترتیب</th>@if (isMgr){<th></th>}</tr></thead>
+                    <tbody>
+                        @foreach (var i in items)
+                        {
+                            var x = i;
+                            <tr>
+                                <td><code dir="ltr">@x.Code</code></td>
+                                <td>@x.Title</td>
+                                <td>@(x.Kind == "Earning" ? "مزایا" : "کسور")</td>
+                                <td>@CatFa(x.Category)</td>
+                                <td class="small" dir="ltr">@(string.IsNullOrWhiteSpace(x.Formula) ? x.DefaultAmount.ToString("N0") : x.Formula)</td>
+                                <td>@(x.IsTaxable ? "✓" : "—")</td>
+                                <td>@(x.IsInsuranceable ? "✓" : "—")</td>
+                                <td>@(x.IsAccrual ? "✓" : "—")</td>
+                                <td>@Fa.Digits(x.SortOrder.ToString())</td>
+                                @if (isMgr)
+                                {
+                                    <td class="text-nowrap">
+                                        <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenItem(x)">ویرایش</button>
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteItem(x.Id)">حذف</button>
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (tab == "loans" && canRead)
+        {
+            <div class="row g-3">
+                <div class="col-lg-6">
+                    <div class="d-flex gap-2 mb-2 align-items-center">
+                        <strong>وام و مساعده</strong>
+                        @if (isMgr){<button class="btn btn-sm btn-outline-primary ms-auto" @onclick="() => showLoan = true">جدید</button>}
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-sm align-middle">
+                            <thead><tr><th>پرسنل</th><th>نوع</th><th>مبلغ</th><th>قسط</th><th>شروع</th><th>پرداخت‌شده</th><th>وضعیت</th>@if (isMgr){<th></th>}</tr></thead>
+                            <tbody>
+                                @foreach (var l in loans)
+                                {
+                                    var x = l;
+                                    <tr>
+                                        <td>@x.EmployeeName</td>
+                                        <td>@(x.Kind == "Advance" ? "مساعده" : "وام")</td>
+                                        <td>@Fa.Digits(x.Amount.ToString("N0"))</td>
+                                        <td>@Fa.Digits(x.MonthlyAmount.ToString("N0")) × @Fa.Digits(x.Installments.ToString())</td>
+                                        <td>@Fa.Digits($"{x.StartYear}/{x.StartMonth}")</td>
+                                        <td>@Fa.Digits(x.PaidCount.ToString())</td>
+                                        <td>@LoanFa(x.Status)</td>
+                                        @if (isMgr && x.Status == "Active")
+                                        {
+                                            <td><button class="btn btn-sm btn-outline-danger" @onclick="() => CancelLoan(x.Id)">ابطال</button></td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="col-lg-6">
+                    <div class="d-flex gap-2 mb-2 align-items-center">
+                        <strong>معوقه / علی‌الحساب (@Fa.Digits($"{aoYear}/{aoMonth}"))</strong>
+                        <input type="number" class="form-control form-control-sm ms-auto" style="width:80px" @bind="aoYear" />
+                        <input type="number" class="form-control form-control-sm" style="width:60px" @bind="aoMonth" />
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="LoadArrears">نمایش</button>
+                    </div>
+                    <div class="table-responsive mb-2">
+                        <table class="table table-striped table-sm align-middle">
+                            <thead><tr><th>نوع</th><th>پرسنل</th><th>مبلغ</th><th>وضعیت</th>@if (isMgr){<th></th>}</tr></thead>
+                            <tbody>
+                                @foreach (var a in arrears)
+                                {
+                                    var x = a;
+                                    <tr><td>معوقه</td><td>@x.EmployeeName</td><td>@Fa.Digits(x.Amount.ToString("N0"))</td><td>@LoanFa(x.Status)</td>
+                                    @if (isMgr && x.Status == "Pending"){<td><button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteArrear(x.Id)">حذف</button></td>}</tr>
+                                }
+                                @foreach (var o in onaccs)
+                                {
+                                    var x = o;
+                                    <tr><td>علی‌الحساب</td><td>@x.EmployeeName</td><td>@Fa.Digits(x.Amount.ToString("N0"))</td><td>@LoanFa(x.Status)</td>
+                                    @if (isMgr && x.Status == "Pending"){<td><button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteOnAcc(x.Id)">حذف</button></td>}</tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    @if (isMgr)
+                    {
+                        <div class="card"><div class="card-body">
+                            <div class="row g-2">
+                                <div class="col-12 col-sm-4">
+                                    <label class="form-label small">نوع</label>
+                                    <select class="form-select form-select-sm" @bind="aoKind"><option value="arrear">معوقه</option><option value="onacc">علی‌الحساب</option></select>
+                                </div>
+                                <div class="col-12 col-sm-8">
+                                    <label class="form-label small">پرسنل</label>
+                                    <select class="form-select form-select-sm" @bind="aoEmp"><option value="0">—</option>@foreach (var e in employees){<option value="@e.Id">@e.FirstName @e.LastName</option>}</select>
+                                </div>
+                                <div class="col-12 col-sm-6"><label class="form-label small">مبلغ</label><input type="number" class="form-control form-control-sm" @bind="aoAmount" /></div>
+                                <div class="col-12 col-sm-6"><label class="form-label small">عنوان (معوقه)</label><input class="form-control form-control-sm" @bind="aoTitle" /></div>
+                                <div class="col-12"><button class="btn btn-sm btn-primary w-100" @onclick="SubmitArrear" disabled="@busy">ثبت</button></div>
+                            </div>
+                        </div></div>
+                    }
+                </div>
+            </div>
+        }
+        else if (tab == "profiles" && canRead)
+        {
+            <div class="row g-3">
+                <div class="col-lg-6">
+                    <strong>پروفایل حقوقی</strong>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-sm align-middle">
+                            <thead><tr><th>پرسنل</th><th>اولاد</th><th>شماره بیمه</th><th>بانک/شبا</th>@if (isMgr){<th></th>}</tr></thead>
+                            <tbody>
+                                @foreach (var e in employees)
+                                {
+                                    var x = e;
+                                    var p = profiles.FirstOrDefault(v => v.EmployeeId == x.Id);
+                                    <tr>
+                                        <td>@x.FirstName @x.LastName</td>
+                                        <td>@Fa.Digits((p?.ChildrenCount ?? 0).ToString())</td>
+                                        <td class="small">@(p?.InsuranceNo ?? "—")</td>
+                                        <td class="small" dir="ltr">@(p?.Iban ?? "—")</td>
+                                        @if (isMgr){<td><button class="btn btn-sm btn-outline-primary" @onclick="() => OpenProfile(x.Id)">ویرایش</button></td>}
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="col-lg-6">
+                    <div class="d-flex gap-2 mb-2 align-items-center">
+                        <strong>مبالغ اختصاصی آیتم‌ها</strong>
+                        @if (isMgr){<button class="btn btn-sm btn-outline-primary ms-auto" @onclick="() => showEmpItem = true">جدید</button>}
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-sm align-middle">
+                            <thead><tr><th>پرسنل</th><th>آیتم</th><th>مبلغ</th>@if (isMgr){<th></th>}</tr></thead>
+                            <tbody>
+                                @foreach (var v in empItems)
+                                {
+                                    var x = v;
+                                    <tr>
+                                        <td>@EmpName(x.EmployeeId)</td>
+                                        <td>@x.ItemTitle</td>
+                                        <td>@Fa.Digits(x.Amount.ToString("N0"))</td>
+                                        @if (isMgr){<td><button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteEmpItem(x.Id)">حذف</button></td>}
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        }
+        else if (tab == "tax" && canRead)
+        {
+            <div class="row g-3">
+                <div class="col-lg-5">
+                    <div class="d-flex gap-2 mb-2 align-items-end">
+                        <strong>پلکان مالیات @Fa.Digits(brYear.ToString())</strong>
+                        <input type="number" class="form-control form-control-sm ms-auto" style="width:90px" @bind="brYear" />
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="LoadBrackets">نمایش</button>
+                        @if (isMgr){<button class="btn btn-sm btn-outline-primary" @onclick="() => showBracket = true">افزودن</button>}
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-sm align-middle">
+                            <thead><tr><th>از</th><th>تا</th><th>نرخ ٪</th>@if (isMgr){<th></th>}</tr></thead>
+                            <tbody>
+                                @foreach (var b in brackets)
+                                {
+                                    var x = b;
+                                    <tr>
+                                        <td>@Fa.Digits(x.FromAmount.ToString("N0"))</td>
+                                        <td>@(x.ToAmount <= 0 ? "∞" : Fa.Digits(x.ToAmount.ToString("N0")))</td>
+                                        <td>@Fa.Digits(x.Rate.ToString("0.##"))</td>
+                                        @if (isMgr){<td><button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteBracket(x.Id)">حذف</button></td>}
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="alert alert-warning small">پلکان پیش‌فرض صرفاً نمونه است — حتماً مطابق قانون بودجه همان سال تنظیم شود.</div>
+                </div>
+                <div class="col-lg-7">
+                    <strong>قوانین حقوق</strong>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-sm align-middle">
+                            <thead><tr><th>عنوان</th><th>مقدار</th></tr></thead>
+                            <tbody>
+                                @foreach (var k in ruleKeys)
+                                {
+                                    var key = k;
+                                    <tr>
+                                        <td>@PayRuleTitle(key)<br /><code class="small" dir="ltr">@key</code></td>
+                                        <td style="max-width:200px"><input class="form-control form-control-sm" dir="ltr" @bind="ruleVals[key]" disabled="@(!isMgr)" /></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    @if (isMgr){<button class="btn btn-sm btn-primary" @onclick="SaveRules" disabled="@busy">ذخیره قوانین</button>}
+                </div>
+            </div>
+        }
+        else if (tab == "settle" && canRead)
+        {
+            <div class="d-flex gap-2 mb-2 align-items-center">
+                <strong>تسویه خروج</strong>
+                @if (isMgr){<button class="btn btn-sm btn-outline-primary ms-auto" @onclick="() => showSettle = true">محاسبه تسویه</button>}
+            </div>
+            <div class="table-responsive">
+                <table class="table table-striped table-sm align-middle">
+                    <thead><tr><th>پرسنل</th><th>تاریخ خروج</th><th>سابقه</th><th>سنوات</th><th>بازخرید مرخصی</th><th>عیدی نسبی</th><th>جمع</th><th>وضعیت</th>@if (isMgr){<th></th>}</tr></thead>
+                    <tbody>
+                        @foreach (var s in settlements)
+                        {
+                            var x = s;
+                            <tr>
+                                <td>@x.EmployeeName</td>
+                                <td>@x.LeaveDate.ToString("yyyy/MM/dd")</td>
+                                <td>@Fa.Digits(x.YearsOfService.ToString("0.##")) سال</td>
+                                <td>@Fa.Digits(x.SeveranceAmount.ToString("N0"))</td>
+                                <td>@Fa.Digits(x.LeaveRefund.ToString("N0"))</td>
+                                <td>@Fa.Digits(x.EydiProrata.ToString("N0"))</td>
+                                <td><strong>@Fa.Digits(x.TotalAmount.ToString("N0"))</strong></td>
+                                <td>@SettleFa(x.Status)</td>
+                                @if (isMgr)
+                                {
+                                    <td class="text-nowrap">
+                                        @if (x.Status == "Draft"){<button class="btn btn-sm btn-outline-warning" @onclick='() => SettleStatus(x.Id, "Approved")'>تأیید</button>}
+                                        @if (x.Status == "Approved"){<button class="btn btn-sm btn-outline-success" @onclick='() => SettleStatus(x.Id, "Paid")'>پرداخت شد</button>}
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (tab == "exports" && canRead)
+        {
+            <div class="d-flex gap-2 mb-3 align-items-end">
+                <div>
+                    <label class="form-label small">دوره</label>
+                    <select class="form-select form-select-sm" @bind="expRunId">
+                        @foreach (var r in runs)
+                        {
+                            <option value="@r.Id">@r.Year/@r.Month:D2 (@RunFa(r.Status))</option>
+                        }
+                    </select>
+                </div>
+            </div>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <div class="card"><div class="card-body">
+                        <h6>فایل بیمه (دیسکت)</h6>
+                        <button class="btn btn-sm btn-outline-primary me-1" @onclick='() => DownloadExp("insurance", "txt")'>متنی</button>
+                        <button class="btn btn-sm btn-outline-primary" @onclick='() => DownloadExp("insurance", "csv")'>CSV</button>
+                    </div></div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card"><div class="card-body">
+                        <h6>فایل مالیات حقوق</h6>
+                        <button class="btn btn-sm btn-outline-primary me-1" @onclick='() => DownloadExp("tax", "txt")'>متنی</button>
+                        <button class="btn btn-sm btn-outline-primary" @onclick='() => DownloadExp("tax", "csv")'>CSV</button>
+                    </div></div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card"><div class="card-body">
+                        <h6>لیست پرداخت بانکی</h6>
+                        <button class="btn btn-sm btn-outline-success me-1" @onclick='() => DownloadExp("bank", "xlsx")'>Excel</button>
+                        <button class="btn btn-sm btn-outline-success" @onclick='() => DownloadExp("bank", "csv")'>CSV</button>
+                    </div></div>
+                </div>
+            </div>
+            <div class="row g-3 mt-1">
+                <div class="col-md-5">
+                    <div class="card"><div class="card-body">
+                        <h6>کنترل پیش از ارسال</h6>
+                        <div class="d-flex gap-2 align-items-end flex-wrap">
+                            <div><label class="form-label small">نوع لیست</label><select class="form-select form-select-sm" @bind="filPreKind"><option value="Insurance">بیمه</option><option value="Tax">مالیات</option><option value="Bank">بانک</option></select></div>
+                            <button class="btn btn-sm btn-outline-primary" @onclick="LoadPreflight" disabled="@busy">بررسی</button>
+                        </div>
+                        @if (filPre != null)
+                        {
+                            @if (filPre.Errors.Count == 0){<div class="alert alert-success small py-1 mt-2 mb-1">آماده ارسال است.</div>}
+                            @foreach (var e in filPre.Errors){<div class="alert alert-danger small py-1 mt-1 mb-1">@e</div>}
+                            @foreach (var w in filPre.Warnings){<div class="alert alert-warning small py-1 mt-1 mb-1">@w</div>}
+                        }
+                    </div></div>
+                </div>
+                @if (isMgr)
+                {
+                    <div class="col-md-7">
+                        <div class="card"><div class="card-body">
+                            <h6>ثبت ارسال لیست</h6>
+                            <div class="d-flex gap-2 align-items-end flex-wrap">
+                                <div><label class="form-label small">نوع لیست</label><select class="form-select form-select-sm" @bind="filKind"><option value="Insurance">بیمه</option><option value="Tax">مالیات</option><option value="Bank">بانک</option></select></div>
+                                <div><label class="form-label small">شماره رسید</label><input class="form-control form-control-sm" style="width:130px" @bind="filReceipt" /></div>
+                                <div><label class="form-label small">یادداشت</label><input class="form-control form-control-sm" @bind="filNote" /></div>
+                                <button class="btn btn-sm btn-success" @onclick="FileList" disabled="@busy">ثبت ارسال</button>
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="LoadFilings">به‌روزرسانی</button>
+                            </div>
+                        </div></div>
+                    </div>
+                }
+            </div>
+            <div class="card mt-3"><div class="card-body">
+                <h6>بایگانی ارسال‌ها</h6>
+                <div class="table-responsive">
+                    <table class="table table-striped table-sm align-middle">
+                        <thead><tr><th>نوع</th><th>فایل</th><th>هش</th><th>فیش</th><th>ناخالص/خالص</th><th>توسط</th><th>رسید</th><th>نسخه</th><th>صحت</th></tr></thead>
+                        <tbody>
+                            @foreach (var f in filings.Where(x => x.RunId == expRunId))
+                            {
+                                var v = f;
+                                <tr>
+                                    <td>@FilingKindFa(v.Kind)</td>
+                                    <td dir="ltr" class="small">@v.FileName</td>
+                                    <td dir="ltr" class="small">@(v.Sha256.Length > 12 ? v.Sha256.Substring(0, 12) + "…" : v.Sha256)</td>
+                                    <td>@Fa.Digits(v.SlipCount)</td>
+                                    <td>@Fa.Digits(v.TotalGross.ToString("N0")) / @Fa.Digits(v.TotalNet.ToString("N0"))</td>
+                                    <td>@v.FiledBy <span class="text-muted small">@Fa.Digits(v.FiledAt.ToString("MM/dd HH:mm"))</span></td>
+                                    <td>@(v.ReceiptNo ?? "—")</td>
+                                    <td>@Fa.Digits(v.Version)</td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-info" @onclick="() => VerifyFiling(v.Kind)" disabled="@busy">بررسی صحت</button>
+                                        @if (verKind == v.Kind && verMatch != null)
+                                        {
+                                            <span class="badge @(verMatch.Value ? "bg-success" : "bg-danger") ms-1">@(verMatch.Value ? "سالم" : "تغییر کرده")</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                            @if (!filings.Any(x => x.RunId == expRunId)){<tr><td colspan="9" class="text-muted text-center">ارسالی ثبت نشده است.</td></tr>}
+                        </tbody>
+                    </table>
+                </div>
+                @if (!string.IsNullOrEmpty(verDiff)){<div class="alert alert-danger small py-1 mt-2 mb-0">@verDiff</div>}
+            </div></div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showSlip" Title="فیش حقوقی" Size="modal-lg" OnClose="() => showSlip = false">
+    <ChildContent>
+    @if (slipDetail != null)
+    {
+        <h5 class="text-center">فیش حقوقی @Fa.Digits($"{slipDetail.RunYear}/{slipDetail.RunMonth:D2}")</h5>
+        <p class="text-center">@slipDetail.Slip.EmployeeName — روزکرد: @Fa.Digits(slipDetail.Slip.DaysPaid.ToString("0.##"))</p>
+        <div class="table-responsive">
+            <table class="table table-bordered table-sm">
+                <thead><tr><th>شرح</th><th>مبلغ (ریال)</th></tr></thead>
+                <tbody>
+                    @foreach (var l in slipDetail.Lines.Where(x => x.Kind == "Earning"))
+                    {
+                        <tr><td>@l.Title</td><td>@Fa.Digits(l.Amount.ToString("N0"))</td></tr>
+                    }
+                    <tr class="table-info"><td><strong>جمع حقوق و مزایا</strong></td><td><strong>@Fa.Digits(slipDetail.Slip.GrossEarnings.ToString("N0"))</strong></td></tr>
+                    @foreach (var l in slipDetail.Lines.Where(x => x.Kind == "Deduction"))
+                    {
+                        <tr><td>@l.Title</td><td>@Fa.Digits(l.Amount.ToString("N0"))</td></tr>
+                    }
+                    <tr class="table-warning"><td><strong>خالص پرداختی</strong></td><td><strong>@Fa.Digits(slipDetail.Slip.NetPay.ToString("N0"))</strong></td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-sm btn-outline-dark" @onclick="PrintSlip"><i class="bi bi-printer"></i> چاپ</button>
+            <button class="btn btn-sm btn-secondary" @onclick="() => showSlip = false">بستن</button>
+        </div>
+    }
+    </ChildContent>
+</Modal>
+
+<Modal Visible="showCompare" Title="مغایرت‌گیری ماهانه" Size="modal-lg" OnClose="() => showCompare = false">
+    <ChildContent>
+    <div class="table-responsive">
+        <table class="table table-striped table-sm align-middle">
+            <thead><tr><th>پرسنل</th><th>ماه قبل</th><th>این ماه</th><th>اختلاف</th><th>٪</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var c in compare)
+                {
+                    <tr class="@(c.Flag ? "table-danger" : "")">
+                        <td>@c.Name</td>
+                        <td>@Fa.Digits(c.PrevNet.ToString("N0"))</td>
+                        <td>@Fa.Digits(c.CurNet.ToString("N0"))</td>
+                        <td>@Fa.Digits(c.Diff.ToString("N0"))</td>
+                        <td>@Fa.Digits(c.Pct.ToString("0.0"))٪</td>
+                        <td>@(c.Flag ? "⚠" : "")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    </ChildContent>
+</Modal>
+
+<Modal Visible="showItem" Title="آیتم حقوقی" Size="modal-lg" OnClose="() => showItem = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-12 col-sm-4"><label class="form-label small">کد (انگلیسی)</label><input class="form-control form-control-sm" dir="ltr" @bind="itCode" disabled="@(itId != 0)" /></div>
+        <div class="col-12 col-sm-8"><label class="form-label small">عنوان</label><input class="form-control form-control-sm" @bind="itTitle" /></div>
+        <div class="col-12 col-sm-4"><label class="form-label small">نوع</label><select class="form-select form-select-sm" @bind="itKind"><option value="Earning">مزایا</option><option value="Deduction">کسور</option></select></div>
+        <div class="col-12 col-sm-4"><label class="form-label small">دسته</label><select class="form-select form-select-sm" @bind="itCat"><option value="Hokmi">حکمی</option><option value="Mazaya">مزایا</option><option value="Kosoor">کسور</option><option value="Other">سایر</option></select></div>
+        <div class="col-12 col-sm-4"><label class="form-label small">ترتیب</label><input type="number" class="form-control form-control-sm" @bind="itSort" /></div>
+        <div class="col-12"><label class="form-label small">فرمول (خالی = مبلغ ثابت)</label><input class="form-control form-control-sm" dir="ltr" @bind="itFormula" placeholder="OT_H*HOURLY_WAGE*OT_COEF_N" /></div>
+        <div class="col-12 col-sm-6"><label class="form-label small">مبلغ ثابت</label><input type="number" class="form-control form-control-sm" @bind="itAmount" /></div>
+        <div class="col-12 col-sm-6 d-flex gap-3 align-items-end pb-1">
+            <div class="form-check"><input class="form-check-input" type="checkbox" @bind="itTax" id="it1" /><label class="form-check-label small" for="it1">مشمول مالیات</label></div>
+            <div class="form-check"><input class="form-check-input" type="checkbox" @bind="itIns" id="it2" /><label class="form-check-label small" for="it2">مشمول بیمه</label></div>
+            <div class="form-check"><input class="form-check-input" type="checkbox" @bind="itAcc" id="it3" /><label class="form-check-label small" for="it3">ذخیره</label></div>
+        </div>
+        <div class="col-12 d-flex gap-2 align-items-end">
+            <button class="btn btn-sm btn-outline-info" @onclick="TestItemFormula">تست فرمول</button>
+            @if (testResult != null){<span class="small">@testResult</span>}
+        </div>
+    </div>
+    <div class="d-flex gap-2 mt-3">
+        <button class="btn btn-sm btn-primary" @onclick="SubmitItem" disabled="@busy">ذخیره</button>
+        <button class="btn btn-sm btn-secondary" @onclick="() => showItem = false">انصراف</button>
+    </div>
+    </ChildContent>
+</Modal>
+
+<Modal Visible="showLoan" Title="وام / مساعده" OnClose="() => showLoan = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-12"><label class="form-label small">پرسنل</label><select class="form-select form-select-sm" @bind="lnEmp"><option value="0">—</option>@foreach (var e in employees){<option value="@e.Id">@e.FirstName @e.LastName</option>}</select></div>
+        <div class="col-12 col-sm-6"><label class="form-label small">نوع</label><select class="form-select form-select-sm" @bind="lnKind"><option value="Loan">وام</option><option value="Advance">مساعده</option></select></div>
+        <div class="col-12 col-sm-6"><label class="form-label small">مبلغ</label><input type="number" class="form-control form-control-sm" @bind="lnAmount" /></div>
+        <div class="col-12 col-sm-4"><label class="form-label small">تعداد اقساط</label><input type="number" class="form-control form-control-sm" @bind="lnN" /></div>
+        <div class="col-12 col-sm-4"><label class="form-label small">مبلغ قسط (0=خودکار)</label><input type="number" class="form-control form-control-sm" @bind="lnMonthly" /></div>
+        <div class="col-12 col-sm-2"><label class="form-label small">سال شروع</label><input type="number" class="form-control form-control-sm" @bind="lnY" /></div>
+        <div class="col-12 col-sm-2"><label class="form-label small">ماه شروع</label><input type="number" class="form-control form-control-sm" @bind="lnM" /></div>
+    </div>
+    <div class="d-flex gap-2 mt-3">
+        <button class="btn btn-sm btn-primary" @onclick="SubmitLoan" disabled="@busy">ثبت</button>
+        <button class="btn btn-sm btn-secondary" @onclick="() => showLoan = false">انصراف</button>
+    </div>
+    </ChildContent>
+</Modal>
+
+<Modal Visible="showProfile" Title="پروفایل حقوقی" OnClose="() => showProfile = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-12 col-sm-4"><label class="form-label small">تعداد اولاد</label><input type="number" class="form-control form-control-sm" @bind="pfChildren" /></div>
+        <div class="col-12 col-sm-8"><label class="form-label small">شماره بیمه</label><input class="form-control form-control-sm" @bind="pfIns" /></div>
+        <div class="col-12 col-sm-4"><label class="form-label small">بانک</label><input class="form-control form-control-sm" @bind="pfBank" /></div>
+        <div class="col-12 col-sm-8"><label class="form-label small">شبا</label><input class="form-control form-control-sm" dir="ltr" @bind="pfIban" /></div>
+        <div class="col-12 col-sm-6"><label class="form-label small">شماره حساب</label><input type="number" class="form-control form-control-sm" @bind="pfAcc" /></div>
+        <div class="col-12 col-sm-6"><label class="form-label small">معافیت مالیاتی اضافه</label><input type="number" class="form-control form-control-sm" @bind="pfExempt" /></div>
+        <div class="col-12 col-sm-6 d-flex align-items-end"><div class="form-check"><input type="checkbox" class="form-check-input" id="pfHard" @bind="pfHard" /><label class="form-check-label small" for="pfHard">شغل سخت و زیان‌آور (۴٪ بیمه اضافه)</label></div></div>
+    </div>
+    <div class="d-flex gap-2 mt-3">
+        <button class="btn btn-sm btn-primary" @onclick="SubmitProfile" disabled="@busy">ذخیره</button>
+        <button class="btn btn-sm btn-secondary" @onclick="() => showProfile = false">انصراف</button>
+    </div>
+    </ChildContent>
+</Modal>
+
+<Modal Visible="showEmpItem" Title="مبلغ اختصاصی" OnClose="() => showEmpItem = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-12"><label class="form-label small">پرسنل</label><select class="form-select form-select-sm" @bind="eiEmp"><option value="0">—</option>@foreach (var e in employees){<option value="@e.Id">@e.FirstName @e.LastName</option>}</select></div>
+        <div class="col-12 col-sm-8"><label class="form-label small">آیتم</label><select class="form-select form-select-sm" @bind="eiItem"><option value="0">—</option>@foreach (var i in items){<option value="@i.Id">@i.Title (@i.Code)</option>}</select></div>
+        <div class="col-12 col-sm-4"><label class="form-label small">مبلغ</label><input type="number" class="form-control form-control-sm" @bind="eiAmount" /></div>
+    </div>
+    <div class="d-flex gap-2 mt-3">
+        <button class="btn btn-sm btn-primary" @onclick="SubmitEmpItem" disabled="@busy">ذخیره</button>
+        <button class="btn btn-sm btn-secondary" @onclick="() => showEmpItem = false">انصراف</button>
+    </div>
+    </ChildContent>
+</Modal>
+
+<Modal Visible="showBracket" Title="پلکان مالیاتی" OnClose="() => showBracket = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-12 col-sm-4"><label class="form-label small">از</label><input type="number" class="form-control form-control-sm" @bind="brFrom" /></div>
+        <div class="col-12 col-sm-4"><label class="form-label small">تا (0=∞)</label><input type="number" class="form-control form-control-sm" @bind="brTo" /></div>
+        <div class="col-12 col-sm-4"><label class="form-label small">نرخ ٪</label><input type="number" step="0.1" class="form-control form-control-sm" @bind="brRate" /></div>
+    </div>
+    <div class="d-flex gap-2 mt-3">
+        <button class="btn btn-sm btn-primary" @onclick="SubmitBracket" disabled="@busy">ذخیره</button>
+        <button class="btn btn-sm btn-secondary" @onclick="() => showBracket = false">انصراف</button>
+    </div>
+    </ChildContent>
+</Modal>
+
+<Modal Visible="showSettle" Title="محاسبه تسویه" OnClose="() => showSettle = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-12"><label class="form-label small">پرسنل</label><select class="form-select form-select-sm" @bind="stEmp"><option value="0">—</option>@foreach (var e in employees){<option value="@e.Id">@e.FirstName @e.LastName</option>}</select></div>
+        <div class="col-12 col-sm-6"><label class="form-label small">تاریخ خروج</label><input type="date" class="form-control form-control-sm" @bind="stDate" /></div>
+        <div class="col-12 col-sm-6"><label class="form-label small">مرخصی استفاده‌نشده (خالی=خودکار)</label><input type="number" step="0.5" class="form-control form-control-sm" @bind="stUnused" /></div>
+    </div>
+    <div class="d-flex gap-2 mt-3">
+        <button class="btn btn-sm btn-primary" @onclick="SubmitSettle" disabled="@busy">محاسبه</button>
+        <button class="btn btn-sm btn-secondary" @onclick="() => showSettle = false">انصراف</button>
+    </div>
+    </ChildContent>
+</Modal>
+
+@code {
+    private bool canRead => Auth.Has("HrPay.Read") || Auth.Has("HrPay.Manage") || Auth.IsAdmin;
+    private bool isMgr => Auth.Has("HrPay.Manage") || Auth.IsAdmin;
+
+    private string tab = "myfish";
+    private bool busy;
+    private async Task SetTab(string t) { tab = t; await LoadTab(); }
+    private async Task GotoSlips(int runId) { slipRunId = runId; await SetTab("slips"); }
+    private async Task LoadTab()
+    {
+        if (tab == "myfish") await LoadMySlips();
+        else if (tab == "runs") await LoadRuns();
+        else if (tab == "slips") { if (runs.Count == 0) await LoadRuns(); if (slipRunId == 0 && runs.Count > 0) slipRunId = runs[0].Id; await LoadSlips(); }
+        else if (tab == "items") await LoadItems();
+        else if (tab == "loans") { await EnsureEmployees(); await LoadLoans(); await LoadArrears(); }
+        else if (tab == "profiles") { await EnsureEmployees(); await LoadProfiles(); await LoadEmpItems(); }
+        else if (tab == "tax") { await LoadBrackets(); await LoadRules(); }
+        else if (tab == "settle") { await EnsureEmployees(); await LoadSettlements(); }
+        else if (tab == "exports") { if (runs.Count == 0) await LoadRuns(); if (expRunId == 0 && runs.Count > 0) expRunId = runs[0].Id; await LoadFilings(); }
+    }
+    protected override async Task OnInitializedAsync() => await LoadMySlips();
+
+    private static string RunFa(string s) => s switch { "Draft" => "پیش‌نویس", "Approved" => "تأییدشده", "Locked" => "قفل", _ => s };
+    private static string RunCls(string s) => s switch { "Approved" => "bg-info text-dark", "Locked" => "bg-success", _ => "bg-secondary" };
+    private static string CatFa(string c) => c switch { "Hokmi" => "حکمی", "Mazaya" => "مزایا", "Kosoor" => "کسور", _ => "سایر" };
+    private static string LoanFa(string s) => s switch { "Active" => "فعال", "Paid" => "تسویه", "Cancelled" => "ابطال", "Pending" => "در انتظار", "Applied" => "اعمال‌شده", _ => s };
+    private static string SettleFa(string s) => s switch { "Draft" => "پیش‌نویس", "Approved" => "تأییدشده", "Paid" => "پرداخت‌شده", _ => s };
+    private static string PayRuleTitle(string k) => k switch
+    {
+        "pay.min_wage" => "حداقل مزد ماهانه (ریال)", "pay.bon" => "بن کارگری (ریال)", "pay.maskan" => "حق مسکن (ریال)", "pay.eyab" => "ایاب پیش‌فرض (ریال)",
+        "pay.ins.employee" => "بیمه کارگر ٪", "pay.ins.employer" => "بیمه کارفرما ٪", "pay.ins.unemployment" => "بیمه بیکاری ٪", "pay.ins.ceiling" => "سقف بیمه (ریال)",
+        "pay.workshop.code" => "کد کارگاه", "pay.workshop.name" => "نام کارگاه", "pay.variance.pct" => "آستانه مغایرت ٪",
+        "pay.acc.salaryExpense" => "کد حساب هزینه حقوق", "pay.acc.insuranceExpense" => "کد حساب هزینه بیمه کارفرما",
+        "pay.acc.accrualExpense" => "کد حساب هزینه ذخیره سنوات", "pay.acc.payable" => "کد حساب حقوق پرداختنی",
+        "pay.acc.taxPayable" => "کد حساب مالیات پرداختنی", "pay.acc.insurancePayable" => "کد حساب بیمه پرداختنی",
+        "pay.acc.accrualPayable" => "کد حساب ذخیره سنوات", "pay.acc.otherDed" => "کد حساب سایر کسورات",
+        _ => k
+    };
+
+    private async Task<string?> Err(System.Net.Http.HttpResponseMessage r)
+    {
+        try
+        {
+            var d = await r.Content.ReadFromJsonAsync<Dictionary<string, object>>();
+            if (d != null && d.TryGetValue("message", out var m)) return m?.ToString();
+        }
+        catch { }
+        return $"خطا: {(int)r.StatusCode}";
+    }
+
+    private List<EmpDto> employees = new();
+    private async Task EnsureEmployees()
+    {
+        if (!canRead || employees.Count > 0) return;
+        try { employees = await Http.GetFromJsonAsync<List<EmpDto>>("/api/hr-pay/employees") ?? new(); } catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private string EmpName(int id) => employees.FirstOrDefault(e => e.Id == id) is { } e ? $"{e.FirstName} {e.LastName}" : $"#{id}";
+
+    private List<MySlipDto> mySlips = new();
+    private async Task LoadMySlips()
+    {
+        try { mySlips = await Http.GetFromJsonAsync<List<MySlipDto>>("/api/hr-pay/slips/my") ?? new(); } catch { }
+    }
+
+    private List<RunDto> runs = new();
+    private int newYear = 1405; private int newMonth = 6; private string newKind = "Monthly";
+    private async Task LoadRuns()
+    {
+        try { runs = await Http.GetFromJsonAsync<List<RunDto>>("/api/hr-pay/runs") ?? new(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task CreateRun()
+    {
+        busy = true;
+        try
+        {
+            var r = newKind == "Eydi"
+                ? await Http.PostAsJsonAsync("/api/hr-pay/runs/eydi", new { year = newYear })
+                : await Http.PostAsJsonAsync("/api/hr-pay/runs", new { year = newYear, month = newMonth });
+            if (r.IsSuccessStatusCode) { Toast.Success("دوره ساخته شد."); await LoadRuns(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private async Task CalcRun(int id)
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsync($"/api/hr-pay/runs/{id}/calculate", null);
+            if (r.IsSuccessStatusCode) { Toast.Success("محاسبه انجام شد."); await LoadRuns(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private async Task RunStatus(int id, string st)
+    {
+        var r = await Http.PostAsJsonAsync($"/api/hr-pay/runs/{id}/status", new { status = st });
+        if (r.IsSuccessStatusCode) { Toast.Success("ثبت شد."); await LoadRuns(); }
+        else Toast.Error(await Err(r) ?? "خطا");
+    }
+    private async Task IssueVoucher(int id)
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsync($"/api/hr-pay/runs/{id}/voucher", null);
+            if (r.IsSuccessStatusCode) { Toast.Success("سند صادر شد."); await LoadRuns(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private bool showCompare; private List<CompareDto> compare = new();
+    private async Task OpenCompare(RunDto r)
+    {
+        try
+        {
+            compare = await Http.GetFromJsonAsync<List<CompareDto>>($"/api/hr-pay/runs/{r.Id}/compare") ?? new();
+            showCompare = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private List<SlipDto> slips = new();
+    private int slipRunId;
+    private async Task LoadSlips()
+    {
+        if (slipRunId == 0) return;
+        try { slips = await Http.GetFromJsonAsync<List<SlipDto>>($"/api/hr-pay/runs/{slipRunId}/slips") ?? new(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private bool showSlip; private SlipDetailDto? slipDetail;
+    private async Task OpenSlip(int id)
+    {
+        try
+        {
+            slipDetail = await Http.GetFromJsonAsync<SlipDetailDto>($"/api/hr-pay/slips/{id}");
+            showSlip = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task PrintSlip()
+    {
+        if (slipDetail == null) return;
+        var s = slipDetail.Slip;
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<h3>فیش حقوقی {slipDetail.RunYear}/{slipDetail.RunMonth:D2}</h3><h4>{s.EmployeeName}</h4>");
+        sb.Append($"<p>روزکرد: {s.DaysPaid:0.##} — پایه حکم: {s.BaseAmount:N0} ریال</p>");
+        sb.Append("<table><tr><th>شرح</th><th>مبلغ (ریال)</th></tr>");
+        foreach (var l in slipDetail.Lines.Where(x => x.Kind == "Earning"))
+            sb.Append($"<tr><td>{l.Title}</td><td>{l.Amount:N0}</td></tr>");
+        sb.Append($"<tr><td><b>جمع حقوق و مزایا</b></td><td><b>{s.GrossEarnings:N0}</b></td></tr>");
+        foreach (var l in slipDetail.Lines.Where(x => x.Kind == "Deduction"))
+            sb.Append($"<tr><td>{l.Title}</td><td>{l.Amount:N0}</td></tr>");
+        sb.Append($"<tr><td><b>خالص پرداختی</b></td><td><b>{s.NetPay:N0}</b></td></tr></table>");
+        sb.Append($"<p>مالیات: {s.TaxAmount:N0} — بیمه کارگر: {s.InsuranceAmount:N0} — بیمه کارفرما: {s.EmployerInsurance:N0}</p>");
+        await JS.InvokeVoidAsync("printHtml", "فیش حقوقی", sb.ToString());
+    }
+
+    private List<ItemDto> items = new();
+    private async Task LoadItems()
+    {
+        try { items = await Http.GetFromJsonAsync<List<ItemDto>>("/api/hr-pay/items") ?? new(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private bool showItem; private int itId; private string itCode = ""; private string itTitle = "";
+    private string itKind = "Earning"; private string itCat = "Mazaya"; private string? itFormula;
+    private decimal itAmount; private bool itTax = true; private bool itIns = true; private bool itAcc; private int itSort = 50;
+    private string? testResult;
+    private void OpenItem(ItemDto? it)
+    {
+        itId = it?.Id ?? 0; itCode = it?.Code ?? ""; itTitle = it?.Title ?? "";
+        itKind = it?.Kind ?? "Earning"; itCat = it?.Category ?? "Mazaya"; itFormula = it?.Formula;
+        itAmount = it?.DefaultAmount ?? 0; itTax = it?.IsTaxable ?? true; itIns = it?.IsInsuranceable ?? true;
+        itAcc = it?.IsAccrual ?? false; itSort = it?.SortOrder ?? 50; testResult = null;
+        showItem = true;
+    }
+    private async Task TestItemFormula()
+    {
+        var r = await Http.PostAsJsonAsync("/api/hr-pay/items/test", new { formula = itFormula ?? "" });
+        testResult = r.IsSuccessStatusCode
+            ? "نتیجه نمونه: " + ((await r.Content.ReadFromJsonAsync<Dictionary<string, object>>())?["value"]?.ToString() ?? "?")
+            : await Err(r);
+    }
+    private async Task SubmitItem()
+    {
+        busy = true;
+        try
+        {
+            var body = new { code = itCode, title = itTitle, kind = itKind, category = itCat, formula = itFormula, defaultAmount = itAmount, isTaxable = itTax, isInsuranceable = itIns, isAccrual = itAcc, isActive = true, sortOrder = itSort };
+            System.Net.Http.HttpResponseMessage r = itId == 0
+                ? await Http.PostAsJsonAsync("/api/hr-pay/items", body)
+                : await Http.PutAsJsonAsync($"/api/hr-pay/items/{itId}", body);
+            if (r.IsSuccessStatusCode) { Toast.Success("ذخیره شد."); showItem = false; await LoadItems(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private async Task DeleteItem(int id)
+    {
+        var r = await Http.DeleteAsync($"/api/hr-pay/items/{id}");
+        if (r.IsSuccessStatusCode) { Toast.Success("حذف شد."); await LoadItems(); }
+        else Toast.Error(await Err(r) ?? "خطا");
+    }
+
+    private List<LoanDto> loans = new();
+    private List<ArrearDto> arrears = new();
+    private List<ArrearDto> onaccs = new();
+    private int aoYear = 1405; private int aoMonth = 6;
+    private async Task LoadLoans()
+    {
+        try { loans = await Http.GetFromJsonAsync<List<LoanDto>>("/api/hr-pay/loans") ?? new(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task LoadArrears()
+    {
+        try
+        {
+            arrears = await Http.GetFromJsonAsync<List<ArrearDto>>($"/api/hr-pay/arrears?year={aoYear}&month={aoMonth}") ?? new();
+            onaccs = await Http.GetFromJsonAsync<List<ArrearDto>>($"/api/hr-pay/onaccounts?year={aoYear}&month={aoMonth}") ?? new();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task CancelLoan(int id)
+    {
+        var r = await Http.PostAsync($"/api/hr-pay/loans/{id}/cancel", null);
+        if (r.IsSuccessStatusCode) { Toast.Success("ثبت شد."); await LoadLoans(); }
+        else Toast.Error(await Err(r) ?? "خطا");
+    }
+    private async Task DeleteArrear(int id)
+    {
+        var r = await Http.DeleteAsync($"/api/hr-pay/arrears/{id}");
+        if (r.IsSuccessStatusCode) { Toast.Success("حذف شد."); await LoadArrears(); }
+        else Toast.Error(await Err(r) ?? "خطا");
+    }
+    private async Task DeleteOnAcc(int id)
+    {
+        var r = await Http.DeleteAsync($"/api/hr-pay/onaccounts/{id}");
+        if (r.IsSuccessStatusCode) { Toast.Success("حذف شد."); await LoadArrears(); }
+        else Toast.Error(await Err(r) ?? "خطا");
+    }
+    private bool showLoan; private int lnEmp; private string lnKind = "Loan";
+    private decimal lnAmount; private int lnN = 12; private decimal lnMonthly; private int lnY = 1405; private int lnM = 6;
+    private async Task SubmitLoan()
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync("/api/hr-pay/loans", new { employeeId = lnEmp, kind = lnKind, amount = lnAmount, installments = lnN, monthlyAmount = lnMonthly, startYear = lnY, startMonth = lnM });
+            if (r.IsSuccessStatusCode) { Toast.Success("ثبت شد."); showLoan = false; await LoadLoans(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private string aoKind = "arrear"; private int aoEmp; private decimal aoAmount; private string? aoTitle;
+    private async Task SubmitArrear()
+    {
+        busy = true;
+        try
+        {
+            var url = aoKind == "arrear" ? "/api/hr-pay/arrears" : "/api/hr-pay/onaccounts";
+            var r = await Http.PostAsJsonAsync(url, new { employeeId = aoEmp, year = aoYear, month = aoMonth, amount = aoAmount, title = aoTitle });
+            if (r.IsSuccessStatusCode) { Toast.Success("ثبت شد."); await LoadArrears(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+
+    private List<ProfileDto> profiles = new();
+    private List<EmpItemDto> empItems = new();
+    private async Task LoadProfiles()
+    {
+        try { profiles = await Http.GetFromJsonAsync<List<ProfileDto>>("/api/hr-pay/profiles") ?? new(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task LoadEmpItems()
+    {
+        try
+        {
+            items = await Http.GetFromJsonAsync<List<ItemDto>>("/api/hr-pay/items") ?? new();
+            empItems = await Http.GetFromJsonAsync<List<EmpItemDto>>("/api/hr-pay/empitems") ?? new();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task DeleteEmpItem(int id)
+    {
+        var r = await Http.DeleteAsync($"/api/hr-pay/empitems/{id}");
+        if (r.IsSuccessStatusCode) { Toast.Success("حذف شد."); await LoadEmpItems(); }
+        else Toast.Error(await Err(r) ?? "خطا");
+    }
+    private bool showProfile; private int pfEmp; private int pfChildren; private string? pfIns, pfBank, pfIban, pfAcc;
+    private decimal pfExempt; private bool pfHard;
+    private void OpenProfile(int empId)
+    {
+        pfEmp = empId;
+        var p = profiles.FirstOrDefault(v => v.EmployeeId == empId);
+        pfChildren = p?.ChildrenCount ?? 0; pfIns = p?.InsuranceNo; pfBank = p?.BankName;
+        pfIban = p?.Iban; pfAcc = p?.AccountNo; pfExempt = p?.ExtraTaxExempt ?? 0; pfHard = p?.IsHardJob ?? false;
+        showProfile = true;
+    }
+    private async Task SubmitProfile()
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync("/api/hr-pay/profiles", new { employeeId = pfEmp, childrenCount = pfChildren, insuranceNo = pfIns, bankName = pfBank, iban = pfIban, accountNo = pfAcc, extraTaxExempt = pfExempt, isHardJob = pfHard });
+            if (r.IsSuccessStatusCode) { Toast.Success("ذخیره شد."); showProfile = false; await LoadProfiles(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private bool showEmpItem; private int eiEmp, eiItem; private decimal eiAmount;
+    private async Task SubmitEmpItem()
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync("/api/hr-pay/empitems", new { employeeId = eiEmp, itemId = eiItem, amount = eiAmount });
+            if (r.IsSuccessStatusCode) { Toast.Success("ذخیره شد."); showEmpItem = false; await LoadEmpItems(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+
+    private List<BracketDto> brackets = new();
+    private int brYear = 1405;
+    private async Task LoadBrackets()
+    {
+        try { brackets = await Http.GetFromJsonAsync<List<BracketDto>>($"/api/hr-pay/brackets?year={brYear}") ?? new(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task DeleteBracket(int id)
+    {
+        var r = await Http.DeleteAsync($"/api/hr-pay/brackets/{id}");
+        if (r.IsSuccessStatusCode) { Toast.Success("حذف شد."); await LoadBrackets(); }
+        else Toast.Error(await Err(r) ?? "خطا");
+    }
+    private bool showBracket; private decimal brFrom, brTo, brRate;
+    private async Task SubmitBracket()
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync("/api/hr-pay/brackets", new { year = brYear, fromAmount = brFrom, toAmount = brTo, rate = brRate });
+            if (r.IsSuccessStatusCode) { Toast.Success("ذخیره شد."); showBracket = false; await LoadBrackets(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private List<string> ruleKeys = new();
+    private Dictionary<string, string> ruleVals = new();
+    private async Task LoadRules()
+    {
+        try
+        {
+            ruleVals = await Http.GetFromJsonAsync<Dictionary<string, string>>("/api/hr-pay/rules") ?? new();
+            ruleKeys = ruleVals.Keys.OrderBy(k => k).ToList();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task SaveRules()
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PutAsJsonAsync("/api/hr-pay/rules", ruleVals);
+            if (r.IsSuccessStatusCode) Toast.Success("ذخیره شد.");
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+
+    private List<SettleDto> settlements = new();
+    private async Task LoadSettlements()
+    {
+        try { settlements = await Http.GetFromJsonAsync<List<SettleDto>>("/api/hr-pay/settlements") ?? new(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task SettleStatus(int id, string st)
+    {
+        var r = await Http.PostAsJsonAsync($"/api/hr-pay/settlements/{id}/status", new { status = st });
+        if (r.IsSuccessStatusCode) { Toast.Success("ثبت شد."); await LoadSettlements(); }
+        else Toast.Error(await Err(r) ?? "خطا");
+    }
+    private bool showSettle; private int stEmp; private DateTime stDate = DateTime.Today; private double? stUnused;
+    private async Task SubmitSettle()
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync("/api/hr-pay/settlements/calculate", new { employeeId = stEmp, leaveDate = stDate, unusedLeaveDays = stUnused });
+            if (r.IsSuccessStatusCode) { Toast.Success("محاسبه شد."); showSettle = false; await LoadSettlements(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+
+    private int expRunId;
+    private async Task DownloadExp(string kind, string fmt)
+    {
+        var ext = fmt;
+        var name = kind == "insurance" ? $"Bimeh_{expRunId}.{ext}" : kind == "tax" ? $"Tax_{expRunId}.{ext}" : $"Bank_{expRunId}.{ext}";
+        await Download($"exports/{kind}?runId={expRunId}&format={fmt}", name);
+    }
+    private async Task Download(string url, string fileName)
+    {
+        try
+        {
+            var bytes = await Http.GetByteArrayAsync("/api/hr-pay/" + url);
+            await JS.InvokeVoidAsync("saveAsFile", fileName, Convert.ToBase64String(bytes));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string FilingKindFa(string k) => k switch { "Insurance" => "بیمه", "Tax" => "مالیات", "Bank" => "بانک", _ => k };
+    private List<FilingDto> filings = new();
+    private string filPreKind = "Insurance"; private PreflightDto? filPre;
+    private string filKind = "Insurance"; private string? filReceipt; private string? filNote;
+    private string? verKind; private bool? verMatch; private string? verDiff;
+    private async Task LoadFilings()
+    {
+        try { filings = await Http.GetFromJsonAsync<List<FilingDto>>($"/api/hr-pay/filings?runId={expRunId}") ?? new(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task LoadPreflight()
+    {
+        busy = true; filPre = null;
+        try { filPre = await Http.GetFromJsonAsync<PreflightDto>($"/api/hr-pay/filings/preflight?runId={expRunId}&kind={filPreKind}"); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private async Task FileList()
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync("/api/hr-pay/filings", new { runId = expRunId, kind = filKind, receiptNo = filReceipt, note = filNote });
+            if (r.IsSuccessStatusCode) { Toast.Success("ارسال ثبت شد."); filReceipt = null; filNote = null; await LoadFilings(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private async Task VerifyFiling(string kind)
+    {
+        busy = true; verKind = kind; verMatch = null; verDiff = null;
+        try
+        {
+            var v = await Http.GetFromJsonAsync<VerifyDto>($"/api/hr-pay/filings/verify?runId={expRunId}&kind={kind}");
+            if (v != null) { verMatch = v.Match; if (!v.Match) verDiff = string.Join(" | ", v.Diffs); }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private class FilingDto
+    {
+        public int RunId { get; set; } public string Kind { get; set; } = "";
+        public string FileName { get; set; } = ""; public string Sha256 { get; set; } = "";
+        public int SlipCount { get; set; } public decimal TotalGross { get; set; } public decimal TotalNet { get; set; }
+        public string FiledBy { get; set; } = ""; public DateTime FiledAt { get; set; }
+        public string? ReceiptNo { get; set; } public int Version { get; set; }
+    }
+    private class PreflightDto { public List<string> Errors { get; set; } = new(); public List<string> Warnings { get; set; } = new(); public bool CanFile { get; set; } }
+    private class VerifyDto { public bool Match { get; set; } public string CurrentHash { get; set; } = ""; public List<string> Diffs { get; set; } = new(); }
+
+    private class MySlipDto
+    {
+        public int Id { get; set; } public int RunId { get; set; } public int Year { get; set; } public int Month { get; set; }
+        public decimal GrossEarnings { get; set; } public decimal TaxAmount { get; set; }
+        public decimal InsuranceAmount { get; set; } public decimal OtherDeductions { get; set; } public decimal NetPay { get; set; }
+    }
+    private class RunDto
+    {
+        public int Id { get; set; } public int Year { get; set; } public int Month { get; set; } public string Kind { get; set; } = "";
+        public string Status { get; set; } = ""; public int SlipCount { get; set; }
+        public decimal TotalGross { get; set; } public decimal TotalNet { get; set; } public decimal TotalTax { get; set; }
+        public decimal TotalInsuranceEmp { get; set; } public decimal TotalInsuranceEr { get; set; }
+        public int? VoucherId { get; set; }
+    }
+    private class SlipDto
+    {
+        public int Id { get; set; } public string EmployeeName { get; set; } = "";
+        public double DaysPaid { get; set; } public decimal BaseAmount { get; set; }
+        public decimal GrossEarnings { get; set; } public decimal TaxAmount { get; set; }
+        public decimal InsuranceAmount { get; set; } public decimal OtherDeductions { get; set; } public decimal NetPay { get; set; }
+    }
+    private class SlipDetailDto
+    {
+        public SlipFullDto Slip { get; set; } = new();
+        public int RunYear { get; set; } public int RunMonth { get; set; }
+        public List<SlipLineDto> Lines { get; set; } = new();
+    }
+    private class SlipFullDto
+    {
+        public string EmployeeName { get; set; } = ""; public double DaysPaid { get; set; }
+        public decimal BaseAmount { get; set; } public decimal GrossEarnings { get; set; }
+        public decimal TaxAmount { get; set; } public decimal InsuranceAmount { get; set; }
+        public decimal EmployerInsurance { get; set; } public decimal NetPay { get; set; }
+    }
+    private class SlipLineDto
+    {
+        public string Code { get; set; } = ""; public string Title { get; set; } = "";
+        public string Kind { get; set; } = ""; public decimal Amount { get; set; }
+    }
+    private class CompareDto
+    {
+        public string Name { get; set; } = ""; public decimal PrevNet { get; set; }
+        public decimal CurNet { get; set; } public decimal Diff { get; set; } public double Pct { get; set; } public bool Flag { get; set; }
+    }
+    private class ItemDto
+    {
+        public int Id { get; set; } public string Code { get; set; } = ""; public string Title { get; set; } = "";
+        public string Kind { get; set; } = ""; public string Category { get; set; } = "";
+        public string? Formula { get; set; } public decimal DefaultAmount { get; set; }
+        public bool IsTaxable { get; set; } public bool IsInsuranceable { get; set; }
+        public bool IsAccrual { get; set; } public int SortOrder { get; set; }
+    }
+    private class LoanDto
+    {
+        public int Id { get; set; } public string? EmployeeName { get; set; } public string Kind { get; set; } = "";
+        public decimal Amount { get; set; } public int Installments { get; set; } public decimal MonthlyAmount { get; set; }
+        public int PaidCount { get; set; } public int StartYear { get; set; } public int StartMonth { get; set; } public string Status { get; set; } = "";
+    }
+    private class ArrearDto
+    {
+        public int Id { get; set; } public string? EmployeeName { get; set; } public decimal Amount { get; set; } public string Status { get; set; } = "";
+    }
+    private class EmpDto
+    {
+        public int Id { get; set; } public string FirstName { get; set; } = ""; public string LastName { get; set; } = "";
+    }
+    private class ProfileDto
+    {
+        public int EmployeeId { get; set; } public int ChildrenCount { get; set; }
+        public string? InsuranceNo { get; set; } public string? BankName { get; set; }
+        public string? Iban { get; set; } public string? AccountNo { get; set; } public decimal ExtraTaxExempt { get; set; } public bool IsHardJob { get; set; }
+    }
+    private class EmpItemDto
+    {
+        public int Id { get; set; } public int EmployeeId { get; set; } public string? ItemTitle { get; set; } public decimal Amount { get; set; }
+    }
+    private class BracketDto
+    {
+        public int Id { get; set; } public decimal FromAmount { get; set; } public decimal ToAmount { get; set; } public decimal Rate { get; set; }
+    }
+    private class SettleDto
+    {
+        public int Id { get; set; } public string? EmployeeName { get; set; } public DateTime LeaveDate { get; set; }
+        public double YearsOfService { get; set; } public decimal SeveranceAmount { get; set; }
+        public decimal LeaveRefund { get; set; } public decimal EydiProrata { get; set; }
+        public decimal TotalAmount { get; set; } public string Status { get; set; } = "";
+    }
+}

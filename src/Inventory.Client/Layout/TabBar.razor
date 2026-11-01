@@ -1,0 +1,225 @@
+@* ============================================================
+   نوار تب‌های کاری
+   • هر بخش یک تب: آیکون + عنوان + دکمهٔ بستن
+   • راست‌کلیک: بازسازی / سنجاق / بستن بقیه / بستن همه / بستن
+   • کشیدن و رها کردن برای تغییر ترتیب
+   • تبِ خانه سنجاق است و بسته نمی‌شود
+   ============================================================ *@
+@inject TabService Tabs
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="tabbar">
+    <button class="tabnav" title="به راست" @onclick="() => Scroll(220)">
+        <i class="bi bi-chevron-right"></i>
+    </button>
+
+    <div class="tabstrip" @ref="strip">
+        @foreach (var t in Tabs.Tabs)
+        {
+            var tab = t;
+            <div class="tab @(tab.IsActive ? "on" : "") @(tab.Pinned ? "pinned" : "") @(dragOver == tab ? "dragover" : "") @(dragging == tab ? "dragging" : "")"
+                 title="@tab.Title"
+                 draggable="true"
+                 @onclick="() => Activate(tab)"
+                 @oncontextmenu="(MouseEventArgs e) => OpenMenu(tab, e)"
+                 @oncontextmenu:preventDefault="true"
+                 @ondragstart="() => dragging = tab"
+                 @ondragend="() => dragging = null"
+                 @ondragover:preventDefault="true"
+                 @ondragenter="() => dragOver = tab"
+                 @ondrop="() => Drop(tab)"
+                 @ondrop:preventDefault="true">
+
+                <i class="bi @tab.Icon tab-ico"></i>
+                <span class="tab-title">@tab.Title</span>
+
+                @if (tab.Pinned)
+                {
+                    <i class="bi bi-pin-angle-fill tab-pin" title="سنجاق‌شده"></i>
+                }
+                else
+                {
+                    <button class="tab-x" title="بستن تب"
+                            @onclick:stopPropagation="true"
+                            @onclick="() => Close(tab)">
+                        <i class="bi bi-x"></i>
+                    </button>
+                }
+            </div>
+        }
+    </div>
+
+    <button class="tabnav" title="به چپ" @onclick="() => Scroll(-220)">
+        <i class="bi bi-chevron-left"></i>
+    </button>
+
+    <div class="tabtools">
+        <button class="tabtool" title="بازسازی این تب" @onclick="RefreshActive"
+                disabled="@(Tabs.Active is null)">
+            <i class="bi bi-arrow-clockwise"></i>
+        </button>
+
+        <div class="tabmenu-wrap">
+            <button class="tabtool" title="فهرست تب‌ها" @onclick="() => listOpen = !listOpen">
+                <i class="bi bi-list-ul"></i>
+                <span class="tabcnt">@Tabs.Tabs.Count</span>
+            </button>
+
+            @if (listOpen)
+            {
+                <div class="tabmenu">
+                    <div class="tabmenu-head">
+                        <span>تب‌های باز (@Tabs.Tabs.Count.FaDigits())</span>
+                        <button class="tabmenu-act" @onclick="CloseAll">بستن همه</button>
+                    </div>
+                    <div class="tabmenu-body">
+                        @foreach (var t in Tabs.Tabs)
+                        {
+                            var tab = t;
+                            <div class="tabmenu-row @(tab.IsActive ? "on" : "")" @onclick="() => Activate(tab)">
+                                <i class="bi @tab.Icon"></i>
+                                <span class="tabmenu-t">@tab.Title</span>
+                                @if (tab.Pinned) { <i class="bi bi-pin-angle-fill tab-pin"></i> }
+                                <span class="grow"></span>
+                                @if (tab.Closable)
+                                {
+                                    <button class="tab-x" title="بستن"
+                                            @onclick:stopPropagation="true"
+                                            @onclick="() => Close(tab)">
+                                        <i class="bi bi-x"></i>
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@* ---------- منوی راست‌کلیک ---------- *@
+@if (menuTab is not null)
+{
+    <div class="tabctx-backdrop" @onclick="() => menuTab = null"
+         @oncontextmenu:preventDefault="true" @oncontextmenu="() => menuTab = null"></div>
+    <div class="tabctx" style="left:@(menuX)px; top:@(menuY)px">
+        <button class="tabctx-i" @onclick="() => Refresh(menuTab)">
+            <i class="bi bi-arrow-clockwise"></i> بازسازی این تب
+        </button>
+        <button class="tabctx-i" @onclick="() => Pin(menuTab)" disabled="@(!menuTab.Closable && menuTab.Pinned)">
+            <i class="bi @(menuTab.Pinned ? "bi-pin-angle" : "bi-pin-angle-fill")"></i>
+            @(menuTab.Pinned ? "برداشتن سنجاق" : "سنجاق کردن")
+        </button>
+        <div class="tabctx-sep"></div>
+        <button class="tabctx-i" @onclick="() => CloseOthers(menuTab)">
+            <i class="bi bi-x-circle"></i> بستن بقیه
+        </button>
+        <button class="tabctx-i" @onclick="CloseAll">
+            <i class="bi bi-x-square"></i> بستن همه
+        </button>
+        <div class="tabctx-sep"></div>
+        <button class="tabctx-i danger" @onclick="() => Close(menuTab)" disabled="@(!menuTab.Closable)">
+            <i class="bi bi-x-lg"></i> بستن این تب
+        </button>
+    </div>
+}
+
+@code {
+    private ElementReference strip;
+    private bool listOpen;
+    private TabItem? dragging;
+    private TabItem? dragOver;
+
+    private TabItem? menuTab;
+    private double menuX, menuY;
+
+    protected override void OnInitialized() => Tabs.Changed += OnChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try { await JS.InvokeVoidAsync("appTabs.enableWheel", strip); } catch { }
+        }
+        try { await JS.InvokeVoidAsync("appTabs.scrollToActive", strip); } catch { }
+    }
+
+    private void OnChanged()
+    {
+        listOpen = false;
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => Tabs.Changed -= OnChanged;
+
+    // ---------- عملیات ----------
+
+    private void Activate(TabItem t)
+    {
+        menuTab = null;
+        Tabs.Activate(t);
+    }
+
+    private async Task Close(TabItem t)
+    {
+        menuTab = null;
+        await Tabs.CloseAsync(t);
+    }
+
+    private async Task CloseOthers(TabItem t)
+    {
+        menuTab = null;
+        await Tabs.CloseOthersAsync(t);
+    }
+
+    private async Task CloseAll()
+    {
+        menuTab = null;
+        listOpen = false;
+        await Tabs.CloseAllAsync();
+    }
+
+    private void Refresh(TabItem t)
+    {
+        menuTab = null;
+        Tabs.Refresh(t);
+    }
+
+    private void RefreshActive()
+    {
+        if (Tabs.Active is { } a) Tabs.Refresh(a);
+    }
+
+    private async Task Pin(TabItem t)
+    {
+        menuTab = null;
+        await Tabs.TogglePinAsync(t);
+    }
+
+    // ---------- کشیدن و رها کردن ----------
+
+    private async Task Drop(TabItem target)
+    {
+        dragOver = null;
+        if (dragging is null || ReferenceEquals(dragging, target)) { dragging = null; return; }
+        await Tabs.MoveAsync(dragging, target);
+        dragging = null;
+    }
+
+    // ---------- منو و پیمایش ----------
+
+    private void OpenMenu(TabItem t, MouseEventArgs e)
+    {
+        menuTab = t;
+        menuX = e.ClientX;
+        menuY = e.ClientY;
+        listOpen = false;
+    }
+
+    private async Task Scroll(int dx)
+    {
+        try { await JS.InvokeVoidAsync("appTabs.scrollBy", strip, dx); } catch { }
+    }
+}

@@ -1,0 +1,368 @@
+@page "/stk/barcodes"
+@inject IBcdBarcodeService BarcodeSvc
+@inject IInvProductService ProductSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+
+<PageTitle>بارکد کالا</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>بارکد کالا</h1>
+        <p class="lead">مدیریت و تخصیص بارکدهای کالا و بسته‌بندی با ضرایب شمارش</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-outline-primary" href="/stk/labels"><i class="bi bi-printer"></i> چاپ برچسب</a>
+        <button class="btn btn-outline-success" @onclick="() => showGenerate = true">
+            <i class="bi bi-magic"></i> تولید خودکار
+        </button>
+        <button class="btn btn-primary" @onclick="() => OpenForm(null)"><i class="bi bi-plus-lg"></i> بارکد جدید</button>
+    </div>
+</div>
+
+<!-- ---------- جستجو ---------- -->
+<div class="card mb-3">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-6">
+                <label class="form-label">جستجو</label>
+                <input class="form-control" placeholder="بارکد، نام یا کد کالا…"
+                       @bind="search" @bind:event="oninput" @onkeyup="OnSearchKey" />
+            </div>
+            <div class="col-6 col-md-2">
+                <button class="btn btn-outline-primary w-100" @onclick="Load"><i class="bi bi-search"></i> جستجو</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="card"><div class="card-body text-center py-5"><div class="spinner-border text-primary"></div></div></div>
+}
+else if (rows.Count == 0)
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="bi bi-upc"></i>
+                <h5>بارکدی ثبت نشده است</h5>
+                <p>می‌توانید بارکد را دستی وارد کنید یا با «تولید خودکار» برای همه کالاها کد داخلی EAN-13 بسازید.</p>
+                <button class="btn btn-primary" @onclick="() => OpenForm(null)"><i class="bi bi-plus-lg"></i> افزودن بارکد</button>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <div class="card">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:170px">پیش‌نمایش</th>
+                        <th style="width:150px">بارکد</th>
+                        <th>کالا</th>
+                        <th style="width:100px">استاندارد</th>
+                        <th style="width:110px">واحد / ضریب</th>
+                        <th style="width:80px" class="text-center">اصلی</th>
+                        <th style="width:80px" class="text-center">وضعیت</th>
+                        <th style="width:100px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var b in rows)
+                    {
+                        <tr>
+                            <td>@((MarkupString)Barcode.ToSvg(b.Code, b.Type, 36, 1.1, false))</td>
+                            <td class="num fw-500">@b.Code</td>
+                            <td>
+                                <div class="fw-500">@b.ProductName</div>
+                                <div class="fs-8 text-muted num">@b.ProductCode</div>
+                            </td>
+                            <td><span class="badge badge-soft-secondary fs-8">@b.TypeTitle</span></td>
+                            <td class="fs-8">
+                                @(b.Unit ?? "—")
+                                @if (b.PackQty != 1)
+                                {
+                                    <span class="badge badge-soft-info num ms-1">×@b.PackQty.Num()</span>
+                                }
+                            </td>
+                            <td class="text-center">
+                                @if (b.IsPrimary)
+                                {
+                                    <i class="bi bi-star-fill text-warning" title="بارکد اصلی"></i>
+                                }
+                            </td>
+                            <td class="text-center">
+                                <span class="badge badge-soft-@(b.IsActive ? "success" : "secondary") fs-8">
+                                    @(b.IsActive ? "فعال" : "غیرفعال")
+                                </span>
+                            </td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenForm(b)" title="ویرایش">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(b)" title="حذف">
+                                    <i class="bi bi-trash3"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- ============ فرم بارکد ============ -->
+<Modal Visible="showForm" Title="@(edit.Id == 0 ? "بارکد جدید" : "ویرایش بارکد")" Size="lg" OnClose="Close">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label">کالا <span class="text-danger">*</span></label>
+                <SearchSelect Items="products" Value="edit.ProductId" ValueChanged="OnProduct"
+                              Placeholder="نام یا کد کالا را بنویسید…" />
+            </div>
+
+            <div class="col-12 col-md-4">
+                <label class="form-label">استاندارد بارکد</label>
+                <select class="form-select" value="@edit.Type" @onchange="OnType">
+                    <option value="Code128">Code 128 — حروف و عدد</option>
+                    <option value="Ean13">EAN-13 — سیزده رقم</option>
+                    <option value="Ean8">EAN-8 — هشت رقم</option>
+                    <option value="Internal">کد داخلی</option>
+                </select>
+            </div>
+
+            <div class="col-12 col-md-8">
+                <label class="form-label">محتوای بارکد <span class="text-danger">*</span></label>
+                <div class="input-group">
+                    <input class="form-control num" @bind="edit.Code" @bind:event="oninput" />
+                    @if (edit.Type is BarcodeType.Ean13 or BarcodeType.Ean8)
+                    {
+                        <button class="btn btn-outline-secondary" type="button" @onclick="AddCheckDigit"
+                                title="محاسبه و افزودن رقم کنترلی">
+                            <i class="bi bi-calculator"></i> رقم کنترلی
+                        </button>
+                    }
+                </div>
+                <div class="form-text">@TypeHint()</div>
+            </div>
+
+            <!-- پیش‌نمایش زنده -->
+            <div class="col-12">
+                <div class="card bg-light">
+                    <div class="card-body text-center py-3">
+                        @if (string.IsNullOrWhiteSpace(edit.Code))
+                        {
+                            <span class="text-muted fs-8">محتوای بارکد را وارد کنید تا پیش‌نمایش نمایش داده شود.</span>
+                        }
+                        else
+                        {
+                            @((MarkupString)Barcode.ToSvg(edit.Code, edit.Type, 56, 1.6, true))
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-6 col-md-4">
+                <label class="form-label">واحد این بارکد</label>
+                <input class="form-control" @bind="edit.Unit" placeholder="عدد / بسته / کارتن" />
+            </div>
+
+            <div class="col-6 col-md-4">
+                <label class="form-label">ضریب بسته</label>
+                <input class="form-control num" @bind="packText" />
+                <div class="form-text">اسکن یک کارتن ۱۲تایی یعنی ۱۲ واحد.</div>
+            </div>
+
+            <div class="col-12 col-md-4 d-flex align-items-center gap-3 pt-4">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="bcPrimary" @bind="edit.IsPrimary" />
+                    <label class="form-check-label" for="bcPrimary">بارکد اصلی</label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="bcActive" @bind="edit.IsActive" />
+                    <label class="form-check-label" for="bcActive">فعال</label>
+                </div>
+            </div>
+
+            <div class="col-12">
+                <label class="form-label">توضیحات</label>
+                <input class="form-control" @bind="edit.Description" />
+            </div>
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button class="btn btn-outline-secondary" @onclick="Close">انصراف</button>
+        <button class="btn btn-primary" @onclick="Save" disabled="@saving"><i class="bi bi-save"></i> ذخیره</button>
+    </Footer>
+</Modal>
+
+<!-- ============ تولید خودکار ============ -->
+<Modal Visible="showGenerate" Title="تولید خودکار بارکد داخلی" OnClose="() => showGenerate = false">
+    <ChildContent>
+        <p>
+            برای همه کالاهای فعالی که هنوز بارکد اصلی ندارند، یک کد
+            <strong>EAN-13</strong> داخلی و یکتا ساخته می‌شود.
+            کدهای داخلی معمولاً با پیشوند <span class="num">۲۰۰</span> تا <span class="num">۲۹۹</span> شروع می‌شوند
+            که در استاندارد جهانی برای استفاده درون‌سازمانی رزرو شده است.
+        </p>
+
+        <div class="row g-3">
+            <div class="col-12 col-sm-6">
+                <label class="form-label">پیشوند</label>
+                <input class="form-control num" @bind="genPrefix" />
+            </div>
+            <div class="col-12 col-sm-6">
+                <label class="form-label">نمونه خروجی</label>
+                <div class="form-control-plaintext num">@SamplePreview()</div>
+            </div>
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button class="btn btn-outline-secondary" @onclick="() => showGenerate = false">انصراف</button>
+        <button class="btn btn-success" @onclick="Generate" disabled="@saving">
+            <i class="bi bi-magic"></i> تولید کن
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<BcdBarcode> rows = new();
+    private List<LookupItem> products = new();
+
+    private bool loading = true, saving = false, showForm = false, showGenerate = false;
+    private string? search;
+    private string genPrefix = "200";
+
+    private BcdBarcode edit = new();
+    private string packText = "1";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("بارکد کالا");
+        products = await ProductSvc.GetLookupsAsync();
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try { rows = await BarcodeSvc.GetAllAsync(null, search); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Load();
+    }
+
+    private void OpenForm(BcdBarcode? b)
+    {
+        edit = b is null
+            ? new BcdBarcode { Type = BarcodeType.Code128, PackQty = 1, IsActive = true, IsPrimary = true }
+            : new BcdBarcode
+            {
+                Id = b.Id, ProductId = b.ProductId, ProductCode = b.ProductCode, ProductName = b.ProductName,
+                Code = b.Code, Type = b.Type, Unit = b.Unit, PackQty = b.PackQty,
+                IsPrimary = b.IsPrimary, IsActive = b.IsActive, Description = b.Description
+            };
+
+        packText = edit.PackQty.Num();
+        showForm = true;
+    }
+
+    private void Close() => showForm = false;
+
+    private void OnProduct(int id) => edit.ProductId = id;
+
+    private void OnType(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<BarcodeType>(e.Value?.ToString(), out var t)) edit.Type = t;
+    }
+
+    private void AddCheckDigit()
+    {
+        var code = (edit.Code ?? "").Trim();
+        var want = edit.Type == BarcodeType.Ean13 ? 12 : 7;
+
+        if (code.Length == want && code.All(char.IsDigit))
+        {
+            edit.Code = code + Barcode.CheckDigit(code);
+            Toast.Success($"رقم کنترلی افزوده شد: {edit.Code}");
+        }
+        else
+        {
+            Toast.Error($"برای محاسبه رقم کنترلی، دقیقاً {want} رقم وارد کنید.");
+        }
+    }
+
+    private string TypeHint() => edit.Type switch
+    {
+        BarcodeType.Ean13 => "سیزده رقم که رقم آخر، رقم کنترلی است. دوازده رقم بدهید تا خودکار محاسبه شود.",
+        BarcodeType.Ean8 => "هشت رقم که رقم آخر، رقم کنترلی است.",
+        BarcodeType.Code128 => "حروف و ارقام انگلیسی — طول آزاد.",
+        _ => "کد آزاد داخلی سازمان."
+    };
+
+    private string SamplePreview()
+    {
+        var p = string.IsNullOrWhiteSpace(genPrefix) ? "200" : genPrefix.Trim();
+        return !p.All(char.IsDigit) || p.Length is < 2 or > 4
+            ? "پیشوند نامعتبر"
+            : Barcode.BuildInternalEan13(1, p);
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            edit.PackQty = Fa.ParseDecimal(packText);
+            if (edit.PackQty <= 0) edit.PackQty = 1;
+
+            await BarcodeSvc.SaveAsync(edit);
+            Toast.Success("بارکد ذخیره شد.");
+            showForm = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Generate()
+    {
+        saving = true;
+        try
+        {
+            var all = await ProductSvc.GetAllAsync(activeOnly: true, page: 1, pageSize: 5000);
+            var ids = all.Items.Where(p => !p.IsService).Select(p => p.Id).ToList();
+
+            var count = await BarcodeSvc.GenerateAsync(ids, genPrefix);
+
+            showGenerate = false;
+            if (count == 0) Toast.Info("همه کالاها از قبل بارکد اصلی داشتند.");
+            else Toast.Success($"برای {count.ToString().FaDigits()} کالا بارکد ساخته شد.");
+
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(BcdBarcode b)
+    {
+        try
+        {
+            await BarcodeSvc.DeleteAsync(b.Id);
+            Toast.Success("بارکد حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

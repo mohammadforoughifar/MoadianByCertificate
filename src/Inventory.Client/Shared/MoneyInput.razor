@@ -1,0 +1,59 @@
+@* ================== ورودی مبلغ ریالی با جداکنندهٔ سه‌رقمی ==================
+   حین تایپ، عدد سه‌رقمی‌سه‌رقمی جدا می‌شود (ارقام فارسی هم پذیرفته می‌شود) و مقدار عددی
+   پاک به‌صورت decimal به والد برگشت داده می‌شود. همهٔ مبالغ این سامانه به «ریال» است.
+   ======================================================================== *@
+<input class="@CssClass" value="@_text" @oninput="OnInput" @onblur="OnBlur"
+       type="text" inputmode="numeric" dir="ltr" autocomplete="off"
+       placeholder="@Placeholder" disabled="@Disabled" readonly="@ReadOnly" />
+
+@code {
+    /// <summary>مقدار عددی (ریال).</summary>
+    [Parameter] public decimal Value { get; set; }
+    [Parameter] public EventCallback<decimal> ValueChanged { get; set; }
+    /// <summary>مقدار خالی مجاز باشد (برای فیلدهای اختیاری).</summary>
+    [Parameter] public bool AllowEmpty { get; set; } = true;
+    [Parameter] public string CssClass { get; set; } = "form-control form-control-sm num text-center";
+    [Parameter] public string? Placeholder { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool ReadOnly { get; set; }
+
+    private string _text = "";
+
+    protected override void OnParametersSet()
+    {
+        // فقط وقتی مقدار بیرونی با متن فعلی نمی‌خواند، متن را بازسازی کن (تا حین تایپ پرش نداشته باشیم).
+        if (Parse(_text) != Value)
+            _text = Value <= 0 && AllowEmpty ? "" : Format(Value);
+    }
+
+    private async Task OnInput(ChangeEventArgs e)
+    {
+        _text = Fa.FormatTyping(e.Value?.ToString());
+        var value = Parse(_text);
+        if (value != Value) await ValueChanged.InvokeAsync(value);
+    }
+
+    private async Task OnBlur()
+    {
+        if (string.IsNullOrWhiteSpace(_text))
+        {
+            if (!AllowEmpty && Value != 0) await ValueChanged.InvokeAsync(0);
+            return;
+        }
+        _text = Format(Parse(_text));
+        var value = Parse(_text);
+        if (value != Value) await ValueChanged.InvokeAsync(value);
+    }
+
+    private static string Format(decimal value)
+        => Fa.FormatTyping(decimal.Round(value, MidpointRounding.AwayFromZero)
+            .ToString("#,##0", System.Globalization.CultureInfo.InvariantCulture));
+
+    private static decimal Parse(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return 0;
+        var raw = Fa.ToEn(text).Replace(",", "").Trim();
+        return decimal.TryParse(raw, System.Globalization.NumberStyles.Number,
+            System.Globalization.CultureInfo.InvariantCulture, out var value) ? value : 0;
+    }
+}

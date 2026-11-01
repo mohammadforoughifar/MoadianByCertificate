@@ -1,0 +1,356 @@
+@page "/outgoing-letters/view/{LetterId:int}"
+@using Inventory.Shared.Security
+@inject IOutgoingLetterService OutgoingSvc
+@inject LetterPrintWorkflow PrintWorkflow
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+@* ============================================================
+   نمایش نامه صادره — صفحه اختصاصی مشاهده نامه
+   • نمایش کامل نامه (شماره، گیرنده بیرونی، متن، امضا کنندگان، پیوست‌ها)
+   • چاپ نامه در سایز A4 و A5 روی سربرگ شرکت (PDF از سرور)
+   • وضعیت دبیرخانه (شماره ثبت مقصد + روش ارسال)
+   ============================================================ *@
+
+<PageTitle>نمایش نامه صادره</PageTitle>
+
+<div class="ltx" style="animation:none;transform:none">
+    @if (loading)
+    {
+        <div class="empty" style="padding:60px"><i class="bi bi-hourglass-split"></i> در حال بارگذاری نامه…</div>
+    }
+    else if (letter == null)
+    {
+        <div class="empty" style="padding:60px">
+            <i class="bi bi-envelope-x"></i> نامه پیدا نشد یا شما به آن دسترسی ندارید
+            <div style="margin-top:12px"><button class="lbtn ghost" @onclick="GoCartable"><i class="bi bi-arrow-right"></i> بازگشت به کارتابل</button></div>
+        </div>
+    }
+    else
+    {
+        <div style="max-width:940px;margin:0 auto;padding:14px">
+
+            <div class="rd-top" style="border-radius:12px;margin-bottom:12px">
+                <span class="t"><i class="bi bi-envelope-paper" style="color:var(--p2)"></i> @letter.Title</span>
+                <button class="icb" title="بازگشت به کارتابل" @onclick="GoCartable"><i class="bi bi-arrow-right-circle"></i></button>
+                <span class="print-wr">
+                    <button type="button" class="lbtn ghost" title="چاپ نامٔ صادره روی سربرگ" aria-haspopup="true" aria-expanded="@printMenuOpen" disabled="@printing" @onclick="TogglePrintSelected"><i class="bi bi-printer"></i> چاپ</button>
+                    @if (printMenuOpen)
+                    {
+                        <div class="ltmenu" @onclick:stopPropagation="true">
+                            <label class="print-letterhead-toggle"><input type="checkbox" @bind="printWithLetterhead" /> چاپ با سربرگ شرکت</label>
+                            <div class="mdiv"></div>
+                            <button type="button" data-ltx-print-option @onclick="async () => { await PrintSelected(SizeA4, true); }"><i class="bi bi-file-earmark"></i> A4 — با هامش</button>
+                            <button type="button" data-ltx-print-option @onclick="async () => { await PrintSelected(SizeA4, false); }"><i class="bi bi-file-earmark"></i> A4 — بدون هامش</button>
+                            <div class="mdiv"></div>
+                            <button type="button" data-ltx-print-option @onclick="async () => { await PrintSelected(SizeA5, true); }"><i class="bi bi-file-earmark"></i> A5 — با هامش</button>
+                            <button type="button" data-ltx-print-option @onclick="async () => { await PrintSelected(SizeA5, false); }"><i class="bi bi-file-earmark"></i> A5 — بدون هامش</button>
+                            <div class="mdiv"></div>
+                            <button type="button" @onclick="() => ShowPrintDiagnosticsAsync(SizeA4)">
+                                <i class="bi bi-search"></i> تشخیص چاپ (چرا سربرگ درست نیست؟)
+                            </button>
+                        </div>
+                    }
+                </span>
+                @if (letter.CanSign)
+                {
+                    <button class="lbtn grn" @onclick="SignAsync"><i class="bi bi-pen"></i> امضای نامه</button>
+                }
+            </div>
+
+            @if (printDiagnostics is { } diag)
+            {
+                <div class="fcard" style="margin-bottom:12px;border:1px solid #cbd5e1;border-radius:10px;padding:12px;background:#f8fafc">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                        <i class="bi bi-search" style="color:var(--p2)"></i>
+                        <b>تشخیص چاپ — سربرگ و طرح شرکت</b>
+                        <button type="button" class="icb" style="margin-right:auto" title="بستن" @onclick="() => printDiagnostics = null">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                    <div style="font-size:13px;line-height:2">
+                        <div><b>شرکت ثبت‌شده روی نامه:</b> @(diag.LetterCompanyId?.ToString() ?? "— ثبت نشده —")</div>
+                        <div><b>شرکت مؤثر برای چاپ:</b> @(diag.EffectiveCompanyId?.ToString() ?? "—") @(string.IsNullOrWhiteSpace(diag.CompanyName) ? "" : $"({diag.CompanyName})")</div>
+                        <div><b>پوشهٔ طرح:</b> @(diag.TemplateDesignId?.ToString() ?? "—") @(diag.CompanyTemplateMapApplied ? "— با CompanyTemplateMap" : "")</div>
+                        <div><b>فایل قالب:</b> <span style="word-break:break-all">@(diag.TemplatePath ?? "پیدا نشد")</span></div>
+                        <div>
+                            <b>تصویر سربرگ داخل قالب:</b>
+                            @(diag.TemplateImageBytes is > 0 ? $"{diag.TemplateImageBytes} بایت" : (diag.TemplateError ?? "ندارد"))
+                        </div>
+                        <div><b>فایل ثبت‌شدهٔ شرکت:</b> <span style="word-break:break-all">@(diag.RegisteredLetterheadPath ?? "—")</span></div>
+                        <div><b>منبع واقعی چاپ:</b> @diag.LetterheadSource @(diag.PreferTemplateLetterhead ? "(اولویت طرح قالب)" : "(اولویت فایل ثبت‌شده)")</div>
+                        <div><b>پوشه‌های طرح موجود:</b> <span style="word-break:break-all">@diag.AvailableDesigns</span></div>
+                        <div style="margin-top:8px;padding:8px;background:#fff7ed;border-radius:8px"><b>نتیجه:</b> @diag.Hint</div>
+                    </div>
+                </div>
+            }
+
+            <div class="paper">
+                <div class="paper-h">
+                    <div class="avt">@AvatarText(letter.SenderName)</div>
+                    <div class="ph-meta">
+                        <div class="n1">@letter.SenderName</div>
+                        <div class="n2">فرستنده — ثبت: @letter.DateSabt.ToFaDateTime()</div>
+                    </div>
+                    <div class="ind">
+                        <div class="no num"># @letter.LetterNumber.FaDigits()</div>
+                        @if (!string.IsNullOrWhiteSpace(letter.SadereNumber))
+                        {
+                            <div class="no num" style="color:#16a34a;font-weight:700">صادره: @letter.SadereNumber.FaDigits()</div>
+                        }
+                        @if (letter.DateSadere is { } ds)
+                        {
+                            <div class="dt" style="color:#16a34a">تاریخ صدور: @ds.ToFaDateTime()</div>
+                        }
+                    </div>
+                </div>
+
+                <div style="padding:10px 16px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;flex-wrap:wrap;gap:12px;font-size:13px">
+                    <span><b>به:</b> @letter.ReceiverOrganization @(letter.ReceiverName != null ? $"— {letter.ReceiverName}" : "")</span>
+                    @if (!string.IsNullOrWhiteSpace(letter.ReceiverTitle)) { <span><b>سمت:</b> @letter.ReceiverTitle</span> }
+                    @if (!string.IsNullOrWhiteSpace(letter.ReceiverAddress)) { <span><b>آدرس:</b> @letter.ReceiverAddress</span> }
+                    @if (!string.IsNullOrWhiteSpace(letter.CopyTo)) { <span><b>رونوشت:</b> @letter.CopyTo</span> }
+                    @if (!string.IsNullOrWhiteSpace(letter.ExternalRefNumber)) { <span><b>عطف به:</b> @letter.ExternalRefNumber</span> }
+                    @if (!string.IsNullOrWhiteSpace(letter.CompanyName)) { <span><b>شرکت صادرکننده (سربرگ):</b> @letter.CompanyName</span> }
+                    <span class="tg blue">@StatusTitle</span>
+                    <span class="tg">فوریت: @letter.Foriat</span>
+                    <span class="tg">محرمانگی: @letter.Mahramanegi</span>
+                </div>
+
+                <div class="paper-body letter-body">@((MarkupString)RichLetterHtml.Sanitize(letter.Text ?? "—"))</div>
+
+                @if (letter.Signers.Count > 0)
+                {
+                    <div class="signature-preview-section">
+                        <h3><i class="bi bi-pen-fill"></i> امضا کنندگان — @letter.Signers.Count(s => s.IsSigned).FaDigits()/@letter.Signers.Count.FaDigits() امضا شده</h3>
+                        <div class="signature-preview-grid">
+                            @foreach (var s in letter.Signers.OrderBy(x => x.Order))
+                            {
+                                <div class="signature-preview-card">
+                                    <div class="signature-preview-image">
+                                        @if (s.IsSigned && signaturePreviewUrls.TryGetValue(s.UserId, out var imageUrl))
+                                        {
+                                            <img src="@imageUrl" alt="امضای @s.DisplayName" />
+                                        }
+                                        else
+                                        {
+                                            <i class="bi @(s.IsSigned ? "bi-image" : "bi-hourglass-split")"></i>
+                                        }
+                                    </div>
+                                    <strong>@s.DisplayName</strong>
+                                    @if (!string.IsNullOrWhiteSpace(s.SematTitle))
+                                    {
+                                        <small><i class="bi bi-briefcase"></i> @s.SematTitle</small>
+                                    }
+                                    @if (s.IsSigned)
+                                    {
+                                        <small class="signature-preview-state signed">@s.DateSigned?.ToFaDateTime() ✓</small>
+                                    }
+                                    else
+                                    {
+                                        <small class="signature-preview-state pending">در انتظار امضا</small>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+
+                @if (attachments.Count > 0)
+                {
+                    <div class="paper-foot">
+                        @foreach (var a in attachments)
+                        {
+                            var aa = a;
+                            <a class="att" href="@OutgoingSvc.AttachmentDownloadUrl(aa.Id)" target="_blank">
+                                <div class="ic"><i class="bi bi-paperclip"></i></div>
+                                <div>@aa.FileName<small>@FmtSize(aa.Size) — @aa.UploaderName</small></div>
+                            </a>
+                        }
+                    </div>
+                }
+            </div>
+
+            @* ---------- وضعیت دبیرخانه ---------- *@
+            <div class="scard" style="margin-top:12px">
+                <h3><i class="bi bi-mailbox"></i> دبیرخانه</h3>
+                @if (string.IsNullOrWhiteSpace(letter.SadereNumber))
+                {
+                    <div style="color:#d97706;font-size:13px"><i class="bi bi-hourglass"></i> نامه هنوز امضا نشده است — بعد از امضای همه امضا کنندگان، وارد دبیرخانه می‌شود.</div>
+                }
+                else if (!letter.DabirkhaneSabt)
+                {
+                    <div style="color:#2563eb;font-size:13px"><i class="bi bi-clock-history"></i> امضا شده — در انتظار ثبت و ارسال توسط دبیرخانه.</div>
+                }
+                else
+                {
+                    <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px">
+                        <span class="tg green"><i class="bi bi-patch-check-fill"></i> ثبت شده در دبیرخانه</span>
+                        @if (letter.DateDabirkhane is { } dd) { <span><b>تاریخ ثبت:</b> @dd.ToFaDateTime()</span> }
+                        @if (!string.IsNullOrWhiteSpace(letter.SendMethod)) { <span><b>روش ارسال:</b> @letter.SendMethod</span> }
+                        @if (!string.IsNullOrWhiteSpace(letter.DestRegNumber)) { <span><b>شماره ثبت مقصد:</b> @letter.DestRegNumber.FaDigits()</span> }
+                        @if (!string.IsNullOrWhiteSpace(letter.DabirkhaneUserName)) { <span><b>ثبت توسط:</b> @letter.DabirkhaneUserName</span> }
+                        @if (!string.IsNullOrWhiteSpace(letter.DabirkhaneNote)) { <span><b>توضیح:</b> @letter.DabirkhaneNote</span> }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@* ---------- مدالِ گردش نامه ---------- *@
+<OutgoingGardeshModal @ref="gardesh" />
+
+<style>
+.print-letterhead-toggle{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:13px;cursor:pointer;white-space:nowrap}
+.signature-preview-section{padding:12px 16px;border-top:1px solid #e2e8f0;background:#fff}
+.signature-preview-section h3{font-size:14px;font-weight:700;margin:0;color:#334155}
+.signature-preview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:10px}
+.signature-preview-card{min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:3px;padding:10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;text-align:center}
+.signature-preview-image{width:100%;max-height:96px;display:flex;align-items:center;justify-content:center;color:#94a3b8;line-height:0}
+.signature-preview-image img{display:block;width:auto;height:auto;max-width:100%;max-height:96px;object-fit:contain}
+.signature-preview-card strong{font-size:13px;line-height:1.4}
+.signature-preview-card small{font-size:11px;color:#475569}
+.signature-preview-state.signed{color:#16a34a}.signature-preview-state.pending{color:#d97706}
+</style>
+
+@code {
+    // اندازهٔ چاپ — به‌صورت ثابت تعریف می‌شود تا داخل صفت‌های HTML
+    // نیازی به نوشتن رشتهٔ داخل کوتیشن نباشیم (در Razor بک‌اسلش داخل صفت HTML معتبر نیست).
+    private const string SizeA4 = "A4";
+    private const string SizeA5 = "A5";
+
+    [Parameter] public int LetterId { get; set; }
+
+    private OutgoingLetterDetailDto? letter;
+    private List<LetterAttachmentDto> attachments = new();
+    private Dictionary<int, string> signaturePreviewUrls = new();
+    private bool loading = true;
+    private bool printing, printMenuOpen;
+    private bool printWithLetterhead = true;
+    private OutgoingGardeshModal? gardesh;
+
+    /// <summary>باز کردنِ پنجرهٔ گردشِ همین نامه از صفحهٔ نمایشِ نامه صادره</summary>
+    private void OpenGardesh()
+    {
+        if (letter == null) return;
+        _ = gardesh?.Open(letter.LetterId, letter.Title, letter.LetterNumber,
+            string.IsNullOrWhiteSpace(letter.SenderName) ? "شما" : letter.SenderName, letter.DateSabt);
+    }
+
+    /// <summary>نتیجهٔ تشخیص چاپ — با دکمهٔ «تشخیص چاپ» در منوی چاپ پر می‌شود.</summary>
+    private OutgoingLetterPrintDiagnosticsDto? printDiagnostics;
+    private bool printDiagnosticsBusy;
+
+    private async Task ShowPrintDiagnosticsAsync(string size)
+    {
+        if (letter == null || printDiagnosticsBusy) return;
+        printDiagnosticsBusy = true;
+        printMenuOpen = false;
+        try { printDiagnostics = await OutgoingSvc.GetPrintDiagnosticsAsync(letter.LetterId, size); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { printDiagnosticsBusy = false; }
+    }
+
+    private void TogglePrintSelected() => printMenuOpen = !printMenuOpen;
+
+    private void ClosePrintMenu() => printMenuOpen = false;
+
+    private async Task PrintSelected(string size, bool withHamesh)
+    {
+        ClosePrintMenu();
+        await PrintPdf(size, withHamesh);
+    }
+
+    private string StatusTitle => letter?.Status switch
+    {
+        0 => "پیش‌نویس",
+        1 => "در گردش",
+        2 => "تایید شده",
+        3 => "صادر شده",
+        _ => "—"
+    };
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            letter = await OutgoingSvc.GetDetailAsync(LetterId);
+            // باز کردن نامه = خوانده شدن (مستقل از امضا کردن)
+            if (letter != null)
+            {
+                try { await OutgoingSvc.MarkLetterReadAsync(LetterId); } catch { }
+            }
+            try { attachments = await OutgoingSvc.GetAttachmentsAsync(LetterId); } catch { attachments = new(); }
+            signaturePreviewUrls.Clear();
+            if (letter != null)
+            {
+                foreach (var signer in letter.Signers.Where(s => s.IsSigned).GroupBy(s => s.UserId).Select(g => g.First()))
+                {
+                    try
+                    {
+                        var image = await OutgoingSvc.GetUserSignatureDataUrlAsync(signer.UserId);
+                        if (!string.IsNullOrWhiteSpace(image)) signaturePreviewUrls[signer.UserId] = image;
+                    }
+                    catch { /* Missing signature preview must not prevent displaying the letter. */ }
+                }
+            }
+
+            // ثبت خوانده‌شدن ارجاع من
+            if (letter?.MyErja is { IsRead: false } my)
+            {
+                try { await OutgoingSvc.MarkReadAsync(my.ErjaId); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            letter = null;
+            Toast.Error(ex.Message);
+        }
+        finally { loading = false; }
+    }
+
+    private void GoCartable() => Nav.NavigateTo("outgoing-letters");
+
+    /// <summary>چاپ نامه روی سربرگ شرکت — دریافت PDF از سرور و باز کردن صفحهٔ چاپ</summary>
+    private async Task PrintPdf(string size, bool withMargin)
+    {
+        if (letter == null || printing) return;
+        printMenuOpen = false;
+        printing = true;
+        try
+        {
+            var number = letter.SadereNumber ?? letter.LetterNumber ?? letter.LetterId.ToString();
+            var name = $"letter-{number.Replace('/', '-')}-{size}.pdf";
+            await PrintWorkflow.PrintPdfAsync(
+                ct => OutgoingSvc.GetPrintPdfAsync(letter.LetterId, size, withCopy: true,
+                    withMargin: withMargin, withLetterhead: printWithLetterhead, cancellationToken: ct), name);
+        }
+        finally { printing = false; }
+    }
+
+    private async Task SignAsync()
+    {
+        try
+        {
+            await OutgoingSvc.SignAsync(LetterId);
+            Toast.Success("نامه با موفقیت امضا شد.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string AvatarText(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "؟";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 ? $"{parts[0][0]}{parts[1][0]}" : name[..1];
+    }
+
+    private static string FmtSize(long b) =>
+        b >= 1024 * 1024 ? $"{b / 1024.0 / 1024.0:0.#} MB" : $"{b / 1024.0:0.#} KB";
+}

@@ -1,0 +1,140 @@
+@* ================== دکمه‌های خروجی PDF و Excel ==================
+   استفاده در هر صفحه گزارش:
+     <ExportButtons ReportKey="inv-products" Query="@(new { search = term, activeOnly = true })" />
+   پارامتر Query یک شیء ساده است که به query string تبدیل می‌شود.
+*@
+@inject IApiClient Api
+@inject IJSRuntime JS
+@inject IToastService Toast
+
+<div class="btn-group @CssClass" role="group">
+    <button class="btn @ButtonClass" @onclick="@(() => Download("pdf"))" disabled="@busy"
+            title="@PdfTitle">
+        @if (busy && current == "pdf")
+        {
+            <span class="spinner-border spinner-border-sm"></span>
+        }
+        else
+        {
+            <i class="bi @(PdfLabel == "PDF" ? "bi-file-earmark-pdf text-danger" : "bi-printer text-primary")"></i>
+        }
+        @if (ShowText)
+        {
+            <span class="ms-1">@PdfLabel</span>
+        }
+    </button>
+    <button class="btn @ButtonClass" @onclick="@(() => Download("xlsx"))" disabled="@busy"
+            title="@ExcelTitle">
+        @if (busy && current == "xlsx")
+        {
+            <span class="spinner-border spinner-border-sm"></span>
+        }
+        else
+        {
+            <i class="bi bi-file-earmark-excel text-success"></i>
+        }
+        @if (ShowText)
+        {
+            <span class="ms-1">@ExcelLabel</span>
+        }
+    </button>
+</div>
+
+@code {
+    /// <summary>کلید گزارش در کاتالوگ — مثل inv-products یا doc-list</summary>
+    [Parameter, EditorRequired] public string ReportKey { get; set; } = "";
+
+    /// <summary>فیلترهای گزارش — شیء ساده یا Dictionary</summary>
+    [Parameter] public object? Query { get; set; }
+
+    [Parameter] public string CssClass { get; set; } = "";
+    [Parameter] public string ButtonClass { get; set; } = "btn-sm btn-light";
+    [Parameter] public bool ShowText { get; set; } = true;
+    [Parameter] public string PdfLabel { get; set; } = "PDF";
+    [Parameter] public string PdfTitle { get; set; } = "خروجی PDF";
+    [Parameter] public string ExcelLabel { get; set; } = "Excel";
+    [Parameter] public string ExcelTitle { get; set; } = "خروجی اکسل";
+
+    /// <summary>پس از دانلود موفق</summary>
+    [Parameter] public EventCallback OnExported { get; set; }
+
+    private bool busy;
+    private string current = "";
+
+    private async Task Download(string format)
+    {
+        if (busy || string.IsNullOrWhiteSpace(ReportKey)) return;
+
+        busy = true;
+        current = format;
+        StateHasChanged();
+
+        try
+        {
+            var url = $"api/exp/report/{ReportKey}?format={format}{BuildQuery()}";
+            var (data, fileName, contentType) = await Api.GetFileAsync(url);
+
+            if (data.Length == 0)
+            {
+                Toast.Info("گزارش داده‌ای برای نمایش ندارد.");
+                return;
+            }
+
+            var ok = await JS.InvokeAsync<bool>("downloadBlob",
+                fileName, contentType, Convert.ToBase64String(data));
+
+            if (ok)
+            {
+                Toast.Success($"فایل «{fileName}» دانلود شد.");
+                await OnExported.InvokeAsync();
+            }
+            else
+            {
+                Toast.Error("دانلود فایل انجام نشد.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            busy = false;
+            current = "";
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>تبدیل شیء فیلتر به query string — مقادیر خالی حذف می‌شوند.</summary>
+    private string BuildQuery()
+    {
+        if (Query is null) return "";
+
+        var parts = new List<string>();
+
+        void Add(string key, object? value)
+        {
+            if (value is null) return;
+            var s = value switch
+            {
+                bool b => b ? "true" : null,        // false را نمی‌فرستیم
+                DateTime dt => dt.ToString("yyyy-MM-dd"),
+                _ => value.ToString()
+            };
+            if (string.IsNullOrWhiteSpace(s)) return;
+            parts.Add($"{Uri.EscapeDataString(key)}={Uri.EscapeDataString(s)}");
+        }
+
+        if (Query is IDictionary<string, object?> dict)
+        {
+            foreach (var kv in dict) Add(kv.Key, kv.Value);
+        }
+        else
+        {
+            foreach (var p in Query.GetType().GetProperties())
+                Add(p.Name, p.GetValue(Query));
+        }
+
+        return parts.Count == 0 ? "" : "&" + string.Join("&", parts);
+    }
+}

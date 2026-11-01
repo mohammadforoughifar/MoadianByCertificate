@@ -1,0 +1,325 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/employees"
+@inject IHrCoreService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>پرسنل</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-person-lines-fill"></i> پرسنل</h1>
+    <div class="lead">جستجو و مدیریت پرونده پرسنل</div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به ماژول کارگزینی برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label small text-muted">جستجو (نام / کد / کد ملی / پست)</label>
+                <input class="form-control" @bind="q" @bind:event="oninput" @onkeyup="OnSearchKey" placeholder="تایپ کنید و Enter بزنید…" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small text-muted">واحد سازمانی</label>
+                <select class="form-select" @bind="fOrg" @bind:after="ReloadFirst">
+                    <option value="0">همه واحدها</option>
+                    @foreach (var u in units)
+                    {
+                        <option value="@u.Id">@u.Name (@HrCoreUi.OrgType(u.Type))</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">وضعیت</label>
+                <select class="form-select" @bind="fStatus" @bind:after="ReloadFirst">
+                    <option value="-1">همه</option>
+                    <option value="0">فعال</option>
+                    <option value="1">مرخصی بلندمدت</option>
+                    <option value="2">معلق</option>
+                    <option value="3">قطع همکاری</option>
+                    <option value="4">بازنشسته</option>
+                </select>
+            </div>
+            <div class="col-md-3 d-flex gap-2">
+                <button class="btn btn-primary flex-grow-1" @onclick="ReloadFirst"><i class="bi bi-search"></i> جستجو</button>
+                <button class="btn btn-outline-success" title="خروجی اکسل" @onclick="ExportExcel"><i class="bi bi-file-earmark-excel"></i></button>
+                @if (canCreate)
+                {
+                    <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> جدید</button>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="text-center text-muted py-5"><i class="bi bi-inbox fs-3"></i><div>موردی یافت نشد.</div></div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr><th></th><th>کد</th><th>نام و نام خانوادگی</th><th>واحد</th><th>پست</th><th>استخدام</th><th>وضعیت</th><th>قرارداد فعال</th><th style="width:130px"></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var e in items)
+                        {
+                            <tr class="@(!e.IsActive ? "opacity-50" : "")">
+                                <td><span class="hr-avatar" style="background:@HrCoreUi.AvatarColor(e.Code)">@HrCoreUi.Initials(e.FirstName, e.LastName)</span></td>
+                                <td class="num fw-bold">@e.Code</td>
+                                <td><a href="hr-core/employees/@e.Id" class="fw-bold text-decoration-none">@e.FullName</a><div class="small text-muted num">@e.NationalCode</div></td>
+                                <td>@(e.OrgUnitName ?? "—")</td>
+                                <td>@(e.PostTitle ?? "—")</td>
+                                <td><span class="badge rounded-pill text-bg-light border">@HrCoreUi.EmpType(e.EmploymentType)</span></td>
+                                <td><span class="badge @HrCoreUi.StatusBadge(e.Status)">@HrCoreUi.EmpStatus(e.Status)</span></td>
+                                <td class="small">@(e.ActiveContractNo ?? "—")</td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <a class="btn btn-light" title="پرونده" href="hr-core/employees/@e.Id"><i class="bi bi-folder2-open text-primary"></i></a>
+                                        @if (canUpdate)
+                                        {
+                                            <button class="btn btn-light" title="ویرایش" @onclick="() => OpenEdit(e)"><i class="bi bi-pencil text-warning"></i></button>
+                                        }
+                                        @if (canDelete)
+                                        {
+                                            <button class="btn btn-light" title="@(e.IsActive ? "غیرفعال" : "فعال")" @onclick="() => ToggleActive(e)"><i class="bi @(e.IsActive ? "bi-toggle-on text-success" : "bi-toggle-off text-secondary")"></i></button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="d-flex justify-content-between align-items-center p-2 border-top">
+                <span class="small text-muted num">مجموع: @total.Num() نفر</span>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-light" disabled="@(skip == 0)" @onclick="Prev">قبلی</button>
+                    <button class="btn btn-light" disabled="@(skip + take >= total)" @onclick="Next">بعدی</button>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="@(editId == null ? "پرسنل جدید" : "ویرایش پرسنل")" Size="modal-xl" OnClose="() => showEdit = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-2">
+                <label class="form-label">کد پرسنلی</label>
+                <div class="input-group">
+                    <input class="form-control num" @bind="form.Code" placeholder="خودکار" />
+                    <button class="btn btn-outline-secondary" title="کد بعدی" @onclick="FillCode"><i class="bi bi-magic"></i></button>
+                </div>
+            </div>
+            <div class="col-md-2"><label class="form-label">نام <span class="text-danger">*</span></label><input class="form-control" @bind="form.FirstName" /></div>
+            <div class="col-md-3"><label class="form-label">نام خانوادگی <span class="text-danger">*</span></label><input class="form-control" @bind="form.LastName" /></div>
+            <div class="col-md-2"><label class="form-label">کد ملی <span class="text-danger">*</span></label><input class="form-control num" maxlength="10" @bind="form.NationalCode" /></div>
+            <div class="col-md-3">
+                <label class="form-label">جنسیت</label>
+                <select class="form-select" @bind="form.Gender"><option value="0">مرد</option><option value="1">زن</option></select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">تأهل</label>
+                <select class="form-select" @bind="form.MaritalStatus"><option value="0">مجرد</option><option value="1">متاهل</option></select>
+            </div>
+            <div class="col-md-3"><label class="form-label">موبایل</label><input class="form-control num" @bind="form.Mobile" /></div>
+            <div class="col-md-3"><label class="form-label">ایمیل</label><input class="form-control" dir="ltr" @bind="form.Email" /></div>
+            <div class="col-md-3"><label class="form-label">تاریخ تولد</label><DatePicker @bind-Value="birthDate" MinYear="1300" /></div>
+            <div class="col-md-3"><label class="form-label">تاریخ استخدام</label><DatePicker @bind-Value="hireDate" /></div>
+            <div class="col-md-3">
+                <label class="form-label">واحد سازمانی</label>
+                <select class="form-select" @bind="form.OrgUnitId">
+                    <option value="">—</option>
+                    @foreach (var u in units)
+                    {
+                        <option value="@u.Id">@u.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3"><label class="form-label">پست سازمانی</label><input class="form-control" @bind="form.PostTitle" /></div>
+            <div class="col-md-3">
+                <label class="form-label">مدیر مستقیم</label>
+                <select class="form-select" @bind="form.ManagerId">
+                    <option value="">—</option>
+                    @foreach (var m in managers)
+                    {
+                        <option value="@m.Id">@m.FullName (@m.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">نوع استخدام</label>
+                <select class="form-select" @bind="form.EmploymentType">
+                    <option value="0">رسمی</option><option value="1">قراردادی</option><option value="2">پیمانی</option>
+                    <option value="3">ساعتی</option><option value="4">مشاوره‌ای</option>
+                    <option value="5">تمام‌وقت</option><option value="6">پاره‌وقت</option>
+                    <option value="7">پروژه‌ای</option><option value="8">آزمایشی</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">وضعیت</label>
+                <select class="form-select" @bind="form.Status">
+                    <option value="0">فعال</option><option value="1">مرخصی بلندمدت</option><option value="2">معلق</option>
+                    <option value="3">قطع همکاری</option><option value="4">بازنشسته</option>
+                </select>
+            </div>
+            <div class="col-md-3"><label class="form-label">حقوق پایه (ریال)</label><input class="form-control num" type="number" min="0" @bind="form.BaseSalary" /></div>
+            <div class="col-md-3 d-flex align-items-end">
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="eact" @bind="form.IsActive" /><label class="form-check-label" for="eact">فعال</label></div>
+            </div>
+            <div class="col-md-3"><label class="form-label">تلفن ثابت</label><input class="form-control num" @bind="form.Landline" /></div>
+            <div class="col-md-3"><label class="form-label">محل کار</label><input class="form-control" @bind="form.Workplace" /></div>
+            <div class="col-md-3"><label class="form-label">مدرک تحصیلی</label><input class="form-control" @bind="form.Degree" /></div>
+            <div class="col-md-3"><label class="form-label">رشته تحصیلی</label><input class="form-control" @bind="form.FieldOfStudy" /></div>
+            <div class="col-md-4"><label class="form-label">تماس اضطراری — نام</label><input class="form-control" @bind="form.EmergencyContactName" /></div>
+            <div class="col-md-4"><label class="form-label">تماس اضطراری — نسبت</label><input class="form-control" @bind="form.EmergencyContactRelation" /></div>
+            <div class="col-md-4"><label class="form-label">تماس اضطراری — تلفن</label><input class="form-control num" @bind="form.EmergencyContactPhone" /></div>
+            <div class="col-12"><label class="form-label">آدرس</label><input class="form-control" @bind="form.Address" /></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="Save">
+            @if (saving)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+<style>
+    .hr-avatar { display: inline-flex; width: 34px; height: 34px; border-radius: 50%; color: #fff; font-weight: 800; align-items: center; justify-content: center; font-size: .8rem; }
+</style>
+
+@code {
+    private bool canRead => Auth.Has("HrCore.Read") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrCore.Create") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrCore.Update") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrCore.Delete") || Auth.IsAdmin;
+
+    private string? q;
+    private int fOrg;
+    private int fStatus = -1;
+    private int skip, take = 20, total;
+    private bool loading = true;
+    private List<HrEmployeeDto> items = new();
+    private List<HrOrgUnitDto> units = new();
+    private List<HrEmployeeDto> managers = new();
+
+    private bool showEdit, saving;
+    private int? editId;
+    private HrEmployeeSaveDto form = new();
+    private DateTime? birthDate, hireDate = DateTime.Today;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) return;
+        try { units = await Svc.GetOrgUnitsAsync(); } catch { }
+        try { managers = (await Svc.SearchEmployeesAsync(null, null, 0, 0, 200)).Items; } catch { }
+        await Reload();
+    }
+
+    private async Task ExportExcel()
+    {
+        try
+        {
+            var f = await Svc.ExportEmployeesExcelAsync(q);
+            await JS.InvokeVoidAsync("saveAsFile", f.FileName, System.Convert.ToBase64String(f.Data));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task ReloadFirst() { skip = 0; await Reload(); }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await ReloadFirst();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            var r = await Svc.SearchEmployeesAsync(q, fOrg == 0 ? null : fOrg, fStatus < 0 ? null : fStatus, skip, take);
+            items = r.Items; total = r.Total;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Prev() { skip = Math.Max(0, skip - take); await Reload(); }
+    private async Task Next() { skip += take; await Reload(); }
+
+    private async Task FillCode()
+    {
+        try { form.Code = await Svc.NextEmployeeCodeAsync(); } catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenEdit(HrEmployeeDto? e)
+    {
+        editId = e?.Id;
+        form = e is null
+            ? new HrEmployeeSaveDto { HireDate = DateTime.Today }
+            : new HrEmployeeSaveDto
+            {
+                Code = e.Code, FirstName = e.FirstName, LastName = e.LastName, NationalCode = e.NationalCode,
+                BirthDate = e.BirthDate, Gender = e.Gender, MaritalStatus = e.MaritalStatus,
+                Mobile = e.Mobile, Email = e.Email, Address = e.Address, HireDate = e.HireDate,
+                Landline = e.Landline, EmergencyContactName = e.EmergencyContactName,
+                EmergencyContactRelation = e.EmergencyContactRelation, EmergencyContactPhone = e.EmergencyContactPhone,
+                Workplace = e.Workplace, Degree = e.Degree, FieldOfStudy = e.FieldOfStudy,
+                OrgUnitId = e.OrgUnitId, PostTitle = e.PostTitle, ManagerId = e.ManagerId,
+                EmploymentType = e.EmploymentType, Status = e.Status, SystemUserId = e.SystemUserId,
+                BaseSalary = e.BaseSalary, IsActive = e.IsActive
+            };
+        birthDate = form.BirthDate;
+        hireDate = form.HireDate;
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            form.BirthDate = birthDate;
+            form.HireDate = hireDate ?? DateTime.Today;
+            await Svc.SaveEmployeeAsync(editId, form);
+            showEdit = false;
+            Toast.Success("ذخیره شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task ToggleActive(HrEmployeeDto e)
+    {
+        try
+        {
+            await Svc.SetEmployeeActiveAsync(e.Id, !e.IsActive);
+            e.IsActive = !e.IsActive;
+            Toast.Success(e.IsActive ? "فعال شد." : "غیرفعال شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

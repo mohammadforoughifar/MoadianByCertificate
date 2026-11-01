@@ -1,0 +1,491 @@
+@page "/acc/fixed-assets"
+@inject IFixedAssetCategoryService CatSvc
+@inject IFixedAssetService AssetSvc
+@inject IAccDimensionService DimSvc
+@inject IAccAccountService AccSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>دارایی ثابت</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>دارایی ثابت</h1>
+        <p class="lead">ثبت اموال، گروه‌بندی و استهلاک ماهانه</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-primary" @onclick="OpenNewAsset">
+            <i class="bi bi-plus-lg"></i> دارایی جدید
+        </button>
+    </div>
+</div>
+
+<div class="row g-3">
+    <!-- گروه‌ها -->
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-boxes text-primary"></i>
+                <span class="card-title">گروه‌های دارایی</span>
+                <button class="btn btn-sm btn-primary ms-auto" @onclick="OpenNewCat">
+                    <i class="bi bi-plus-lg"></i>
+                </button>
+            </div>
+            <div class="card-body">
+                @if (loadingCats)
+                {
+                    <div class="text-center py-3"><div class="spinner-border spinner-border-sm text-primary"></div></div>
+                }
+                else if (cats.Count == 0)
+                {
+                    <div class="empty-state">
+                        <i class="bi bi-boxes"></i>
+                        <h6>گروهی تعریف نشده</h6>
+                    </div>
+                }
+                else
+                {
+                    <div class="list-group">
+                        @foreach (var c in cats)
+                        {
+                            <div class="list-group-item p-2 d-flex align-items-center gap-2">
+                                <div class="min-w-0 flex-grow-1">
+                                    <b>@c.Name</b>
+                                    <div class="fs-8 text-muted num">@c.Code — @c.AssetCount.Num() دارایی</div>
+                                </div>
+                                <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEditCat(c)">
+                                    <i class="bi bi-pencil text-primary"></i>
+                                </button>
+                                <button class="btn btn-sm btn-light" title="حذف" @onclick="() => DeleteCat(c)">
+                                    <i class="bi bi-trash text-danger"></i>
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- دارایی‌ها -->
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-box-seam text-primary"></i>
+                <span class="card-title">فهرست دارایی‌ها</span>
+                <span class="badge badge-soft-primary ms-auto">@assets.Count.Num() مورد</span>
+            </div>
+            <div class="card-body pb-2">
+                <div class="row g-2 mb-3">
+                    <div class="col-md-4">
+                        <input class="form-control" placeholder="جستجو (کد/نام/سریال)…" @bind="search" @bind:event="oninput" @bind:after="LoadAssets" />
+                    </div>
+                    <div class="col-md-4">
+                        <select class="form-select" @bind="filterCat" @bind:event="onchange" @bind:after="LoadAssets">
+                            <option value="0">همه‌ی گروه‌ها</option>
+                            @foreach (var c in cats)
+                            {
+                                <option value="@c.Id">@c.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <select class="form-select" @bind="filterStatus" @bind:event="onchange" @bind:after="LoadAssets">
+                            <option value="0">همه‌ی وضعیت‌ها</option>
+                            <option value="1">@("به‌ره‌برداری")</option>
+                            <option value="2">@("متوقف")</option>
+                            <option value="3">@("فروخته")</option>
+                            <option value="4">@("امحاء")</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body pt-0">
+                @if (loadingAssets)
+                {
+                    <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+                }
+                else if (assets.Count == 0)
+                {
+                    <div class="empty-state">
+                        <i class="bi bi-box-seam"></i>
+                        <h6>دارایی‌ای ثبت نشده است</h6>
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead>
+                                <tr>
+                                    <th>کد / نام</th>
+                                    <th class="text-center">گروه</th>
+                                    <th class="text-center">تاریخ خرید</th>
+                                    <th class="text-center">قیمت خرید</th>
+                                    <th class="text-center">استهلاک انباشته</th>
+                                    <th class="text-center">ارزش دفتری</th>
+                                    <th class="text-center">وضعیت</th>
+                                    <th class="text-center" style="width:110px">عملیات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var a in assets)
+                                {
+                                    <tr>
+                                        <td>
+                                            <b>@a.Name</b>
+                                            <div class="fs-8 text-muted num">@a.Code @(!string.IsNullOrWhiteSpace(a.SerialNo) ? $" — {a.SerialNo}" : "")</div>
+                                        </td>
+                                        <td class="text-center text-muted">@a.CategoryName</td>
+                                        <td class="text-center num">@a.PurchaseDate.ToFaDate()</td>
+                                        <td class="text-center num">@a.PurchasePrice.Money()</td>
+                                        <td class="text-center num text-danger">@a.AccumulatedDepreciation.Money()</td>
+                                        <td class="text-center num text-success"><b>@a.BookValue.Money()</b></td>
+                                        <td class="text-center">
+                                            <span class="badge @(a.Status switch
+                                            { FixedAssetStatus.Active => "badge-soft-success",
+                                              FixedAssetStatus.Idle => "badge-soft-warning",
+                                              FixedAssetStatus.Sold => "badge-soft-secondary",
+                                              _ => "badge-soft-danger" })">
+                                                @(a.Status switch
+                                                {
+                                                    FixedAssetStatus.Active => "به‌ره‌برداری",
+                                                    FixedAssetStatus.Idle => "متوقف",
+                                                    FixedAssetStatus.Sold => "فروخته",
+                                                    _ => "امحاء"
+                                                })
+                                            </span>
+                                        </td>
+                                        <td class="text-center">
+                                            <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEditAsset(a)">
+                                                <i class="bi bi-pencil text-primary"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-light" title="حذف" @onclick="() => DeleteAsset(a)">
+                                                <i class="bi bi-trash text-danger"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- مودال گروه -->
+<Modal Visible="showCatModal" Title="گروه دارایی" OnClose="CloseCatModal">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">کد <span class="text-danger">*</span></label>
+                <input class="form-control num" @bind="catForm.Code" placeholder="مثلاً EQ" />
+            </div>
+            <div class="col-md-8">
+                <label class="form-label">نام <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="catForm.Name" placeholder="مثلاً تجهیزات اداری" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">عمر مفید (ماه)</label>
+                <input class="form-control num" type="number" @bind="catForm.DefaultUsefulLifeMonths" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">روش استهلاک</label>
+                <select class="form-select" @bind="catForm.DefaultMethod">
+                    <option value="@DepreciationMethod.StraightLine">مستقیم (خط مستقیم)</option>
+                    <option value="@DepreciationMethod.DecliningBalance">نزولی</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">٪ ارزش اسقاط</label>
+                <input class="form-control num" type="number" @bind="catForm.DefaultResidualPercent" />
+            </div>
+            <div class="col-12">
+                <label class="form-label">توضیح</label>
+                <textarea class="form-control" rows="2" @bind="catForm.Description"></textarea>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseCatModal">انصراف</button>
+        <button class="btn btn-primary" @onclick="SaveCat" disabled="@savingC">@(savingC ? "در حال ذخیره..." : "ذخیره")</button>
+    </Footer>
+</Modal>
+
+<!-- مودال دارایی -->
+<Modal Visible="showAssetModal" Title="ثبت دارایی" Size="modal-lg" OnClose="CloseAssetModal">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">کد <span class="text-danger">*</span></label>
+                <input class="form-control num" @bind="assetForm.Code" placeholder="مثلاً FA-001" />
+            </div>
+            <div class="col-md-8">
+                <label class="form-label">نام <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="assetForm.Name" placeholder="مثلاً لپ‌تاپ HP" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">گروه <span class="text-danger">*</span></label>
+                <select class="form-select" @bind="assetForm.CategoryId">
+                    <option value="0">انتخاب گروه…</option>
+                    @foreach (var c in cats)
+                    {
+                        <option value="@c.Id">@c.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-8">
+                <label class="form-label">محل استقرار</label>
+                <input class="form-control" @bind="assetForm.Location" placeholder="مثلاً طبقه ۲ — اتاق ۲۰۱" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">شماره سریال / پلاک</label>
+                <input class="form-control" @bind="assetForm.SerialNo" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">تأمین‌کننده</label>
+                <input class="form-control" @bind="assetForm.Vendor" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">تاریخ خرید <span class="text-danger">*</span></label>
+                <DatePicker @bind-Value="purchaseDate" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">قیمت خرید <span class="text-danger">*</span></label>
+                <input class="form-control num" type="number" @bind="assetForm.PurchasePrice" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">ارزش اسقاط</label>
+                <input class="form-control num" type="number" @bind="assetForm.SalvageValue" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">عمر مفید (ماه)</label>
+                <input class="form-control num" type="number" @bind="assetForm.UsefulLifeMonths" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">روش استهلاک</label>
+                <select class="form-select" @bind="assetForm.DepreciationMethod">
+                    <option value="@DepreciationMethod.StraightLine">مستقیم</option>
+                    <option value="@DepreciationMethod.DecliningBalance">نزولی</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">وضعیت</label>
+                <select class="form-select" @bind="assetForm.Status">
+                    <option value="@FixedAssetStatus.Active">به‌ره‌برداری</option>
+                    <option value="@FixedAssetStatus.Idle">متوقف</option>
+                    <option value="@FixedAssetStatus.Sold">فروخته</option>
+                    <option value="@FixedAssetStatus.Disposed">امحاء</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">مرکز هزینه / شعبه</label>
+                <SearchSelect Items="dimLookups" Value="assetForm.DimensionValueId ?? 0"
+                              ValueChanged="OnDimChanged" Placeholder="(اختیاری)" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">حساب هزینه استهلاک</label>
+                <SearchSelect Items="accLookups" Value="assetForm.ExpenseAccAccountId ?? 0"
+                              ValueChanged="OnExpenseAccChanged" Placeholder="(اختیاری — از گروه)" />
+            </div>
+            <div class="col-12">
+                <label class="form-label">یادداشت</label>
+                <textarea class="form-control" rows="2" @bind="assetForm.Notes"></textarea>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseAssetModal">انصراف</button>
+        <button class="btn btn-primary" @onclick="SaveAsset" disabled="@savingA">@(savingA ? "در حال ذخیره..." : "ذخیره")</button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<FixedAssetCategory> cats = new();
+    private List<FixedAsset> assets = new();
+    private List<LookupItem> dimLookups = new();
+    private List<LookupItem> accLookups = new();
+
+    private bool loadingCats = true, loadingAssets, showCatModal, showAssetModal, savingC, savingA;
+
+    private FixedAssetCategory catForm = new();
+    private FixedAsset assetForm = new();
+    private DateTime? purchaseDate;
+
+    private string search = "";
+    private int filterCat, filterStatus;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("دارایی ثابت");
+        await LoadCats();
+        await LoadAssets();
+        await LoadLookups();
+    }
+
+    private async Task LoadCats()
+    {
+        loadingCats = true;
+        try { cats = await CatSvc.GetAllAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loadingCats = false; }
+    }
+
+    private async Task LoadAssets()
+    {
+        loadingAssets = true;
+        try
+        {
+            var status = filterStatus == 0 ? (FixedAssetStatus?)null : (FixedAssetStatus)(filterStatus - 1);
+            var cat = filterCat == 0 ? (int?)null : filterCat;
+            assets = await AssetSvc.GetAllAsync(status, cat, search);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loadingAssets = false; }
+    }
+
+    private async Task LoadLookups()
+    {
+        try
+        {
+            var dims = await DimSvc.GetDimensionsAsync();
+            if (dims.Count > 0)
+                dimLookups = await DimSvc.GetValueLookupsAsync(dims[0].Id);
+            accLookups = await AccSvc.GetLookupsAsync();
+        }
+        catch { /* lookups are optional */ }
+    }
+
+    // ---------- گروه ----------
+    private void OpenNewCat()
+    {
+        catForm = new FixedAssetCategory { IsActive = true };
+        showCatModal = true;
+    }
+
+    private void OpenEditCat(FixedAssetCategory c)
+    {
+        catForm = new FixedAssetCategory
+        {
+            Id = c.Id, Code = c.Code, Name = c.Name,
+            DefaultUsefulLifeMonths = c.DefaultUsefulLifeMonths,
+            DefaultMethod = c.DefaultMethod, DefaultResidualPercent = c.DefaultResidualPercent,
+            IsActive = c.IsActive, Description = c.Description
+        };
+        showCatModal = true;
+    }
+
+    private void CloseCatModal() => showCatModal = false;
+
+    private async Task SaveCat()
+    {
+        if (string.IsNullOrWhiteSpace(catForm.Code) || string.IsNullOrWhiteSpace(catForm.Name))
+        {
+            Toast.Error("کد و نام گروه را وارد کنید.");
+            return;
+        }
+        savingC = true;
+        try
+        {
+            await CatSvc.SaveAsync(catForm);
+            Toast.Success("گروه ذخیره شد.");
+            showCatModal = false;
+            await LoadCats();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { savingC = false; }
+    }
+
+    private async Task DeleteCat(FixedAssetCategory c)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"آیا از حذف گروه «{c.Name}» مطمئن هستید؟")) return;
+        try
+        {
+            await CatSvc.DeleteAsync(c.Id);
+            Toast.Success("حذف شد.");
+            await LoadCats();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- دارایی ----------
+    private void OpenNewAsset()
+    {
+        assetForm = new FixedAsset
+        {
+            Code = $"FA-{DateTime.Now:MMdd}-{(assets.Count + 1):000}",
+            IsActive = true, Status = FixedAssetStatus.Active,
+            UsefulLifeMonths = 60, DepreciationMethod = DepreciationMethod.StraightLine,
+            PurchaseDate = DateTime.Now
+        };
+        purchaseDate = DateTime.Now;
+        showAssetModal = true;
+    }
+
+    private void OpenEditAsset(FixedAsset a)
+    {
+        assetForm = new FixedAsset
+        {
+            Id = a.Id, Code = a.Code, Name = a.Name, EnName = a.EnName,
+            CategoryId = a.CategoryId, Location = a.Location, Vendor = a.Vendor,
+            SerialNo = a.SerialNo, PurchaseDate = a.PurchaseDate, PurchasePrice = a.PurchasePrice,
+            SalvageValue = a.SalvageValue, UsefulLifeMonths = a.UsefulLifeMonths,
+            DepreciationMethod = a.DepreciationMethod, Status = a.Status,
+            DimensionValueId = a.DimensionValueId, ExpenseAccAccountId = a.ExpenseAccAccountId,
+            IsActive = a.IsActive, Notes = a.Notes
+        };
+        purchaseDate = a.PurchaseDate;
+        showAssetModal = true;
+    }
+
+    private void CloseAssetModal() => showAssetModal = false;
+
+    private void OnDimChanged(int id) => assetForm.DimensionValueId = id > 0 ? id : null;
+    private void OnExpenseAccChanged(int id) => assetForm.ExpenseAccAccountId = id > 0 ? id : null;
+
+    private async Task SaveAsset()
+    {
+        if (string.IsNullOrWhiteSpace(assetForm.Code) || string.IsNullOrWhiteSpace(assetForm.Name))
+        {
+            Toast.Error("کد و نام دارایی را وارد کنید.");
+            return;
+        }
+        if (assetForm.CategoryId == 0)
+        {
+            Toast.Error("گروه دارایی را انتخاب کنید.");
+            return;
+        }
+        if (purchaseDate is null)
+        {
+            Toast.Error("تاریخ خرید را مشخص کنید.");
+            return;
+        }
+        assetForm.PurchaseDate = purchaseDate.Value;
+        savingA = true;
+        try
+        {
+            await AssetSvc.SaveAsync(assetForm);
+            Toast.Success("دارایی ذخیره شد.");
+            showAssetModal = false;
+            await LoadAssets();
+            await LoadCats();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { savingA = false; }
+    }
+
+    private async Task DeleteAsset(FixedAsset a)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"آیا از حذف دارایی «{a.Name}» مطمئن هستید؟")) return;
+        try
+        {
+            await AssetSvc.DeleteAsync(a.Id);
+            Toast.Success("حذف شد.");
+            await LoadAssets();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

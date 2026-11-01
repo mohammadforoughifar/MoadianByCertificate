@@ -1,0 +1,319 @@
+@inject IIncomingLetterService IncomingSvc
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject IAuthState Auth
+
+@* ============================================================
+   شیت ارجاع و پاسخ به نامه وارده
+   • ارجاع انفرادی و گروهی (LetterPickCombo)
+   • انتخاب عملگر اقدام (Amalgar)
+   ============================================================ *@
+
+@if (visible)
+{
+<div class="ltx" style="animation:none;transform:none">
+    <div class="ov" @onclick="Close"></div>
+    <div class="sheet" style="width:min(580px,96vw)" @onclick:stopPropagation="true">
+        <div class="sheet-h">
+            <b><i class="bi bi-arrow-left-right" style="color:var(--p)"></i> @(isAnswer ? "ثبت پاسخ به ارجاع" : "ارجاع نامه وارده")</b>
+            <span class="dt num">ثبت: # @sabtNumber.FaDigits()</span>
+            <button class="x" @onclick="Close"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="sheet-b">
+            @if (isAnswer)
+            {
+                <div class="fcard">
+                    <label>پاسخ / توضیحات اقدام انجام‌شده</label>
+                    <textarea class="tin" placeholder="نتیجه اقدام یا توضیحات پاسخ به ارجاع…" @bind="matn" style="min-height:100px"></textarea>
+                </div>
+            }
+            else
+            {
+                <LetterPickCombo @ref="combo" Label="گیرندگان ارجاع (انفرادی / گروهی)" Icon="bi-person-plus" Required="true"
+                                 Users="users" Groups="groups"
+                                 SelectedUsers="selUsers" SelectedGroups="selGroups"
+                                 HasError="errRcv" Changed="OnRcvChanged" />
+
+                @if (CanSelfErja)
+                {
+                    <div class="self-erja-hint">
+                        <i class="bi bi-person-check-fill"></i>
+                        <span>
+                            شما مسئول دبیرخانه هستید؛ می‌توانید این نامه را <b>به خودتان هم ارجاع</b> دهید
+                            (در فهرست گیرندگان با برچسب «خودم — دبیرخانه» دیده می‌شوید).
+                        </span>
+                    </div>
+                }
+
+                <div class="fcard @(errAmal ? "err" : "")">
+                    <div class="fhd">
+                        <label>عملگر اقدام (نحوه پیگیری) <span class="req">*</span></label>
+                        <button type="button" class="amal-add" title="افزودن عملگر جدید"
+                                @onclick="ToggleNewAmal">
+                            <i class="bi bi-plus-lg"></i>
+                        </button>
+                    </div>
+                    <select class="tin" @bind="amalgarId">
+                        <option value="0">— انتخاب عملگر —</option>
+                        @foreach (var a in amalgars)
+                        {
+                            <option value="@a.AmalgarId">@a.Title</option>
+                        }
+                    </select>
+                    @if (errAmal)
+                    {
+                        <div class="ferr"><i class="bi bi-exclamation-circle"></i> انتخاب عملگر الزامی است</div>
+                    }
+                    @if (newAmalOpen)
+                    {
+                        <div class="amal-new">
+                            <input class="tin" placeholder="عنوان عملگر جدید…" maxlength="100"
+                                   @bind="newAmalTitle" @bind:event="oninput" @onkeydown="OnNewAmalKeyAsync" />
+                            <button type="button" class="amal-ok" disabled="@newAmalBusy" @onclick="AddAmalAsync">
+                                @if (newAmalBusy) { <span class="spinner-border spinner-border-sm"></span> }
+                                <i class="bi bi-plus-lg"></i> افزودن
+                            </button>
+                            <button type="button" class="amal-x" title="انصراف" @onclick="ToggleNewAmal"><i class="bi bi-x-lg"></i></button>
+                        </div>
+                    }
+                </div>
+
+                <div class="fcard">
+                    <label>دستور / متن ارجاع (پاراف)</label>
+                    <textarea class="tin" placeholder="دستور، راهنمایی یا توضیحات ارجاع…" @bind="matn" style="min-height:90px"></textarea>
+                </div>
+
+                <div class="fcard">
+                    <label>مهلت پاسخ <span class="opt">اختیاری</span></label>
+                    <DatePicker @bind-Value="mohlatPasokh" AllowClear="true" CssClass="tin" Placeholder="انتخاب مهلت پاسخ…" />
+                </div>
+            }
+        </div>
+
+        <div class="sheet-f">
+            <button class="btn-sec" @onclick="Close">انصراف</button>
+            <button class="btn-main" disabled="@saving" @onclick="SubmitAsync">
+                @if (saving)
+                {
+                    <span class="spinner-border spinner-border-sm"></span> <span>در حال ثبت…</span>
+                }
+                else
+                {
+                    <i class="bi bi-send-fill"></i> <span>@(isAnswer ? "ثبت پاسخ" : "ارسال ارجاع")</span>
+                }
+            </button>
+        </div>
+    </div>
+</div>
+}
+
+@code {
+    [Parameter] public EventCallback OnSubmitted { get; set; }
+
+    private bool visible = false;
+    private bool saving = false;
+    private bool allowDuplicateRecipients;
+    private bool isAnswer = false;
+
+    private int letterId = 0;
+    private int erjaId = 0;
+    private int sabtNumber = 0;
+    private int amalgarId = 0;
+
+    // افزودن عملگر تازه از داخل فرم (دکمهٔ «+»)
+    private bool newAmalOpen;
+    private bool newAmalBusy;
+    private string newAmalTitle = "";
+
+    private LetterPickCombo? combo;
+    private List<LetterReciverDto> users = new();
+    private List<LetterGroupDto> groups = new();
+    private List<AmalgarDto> amalgars = new();
+    private HashSet<int> selUsers = new();
+    private HashSet<int> selGroups = new();
+
+    /// <summary>مسئول دبیرخانه: می‌تواند نامه را به خودش هم ارجاع دهد (سرور هم همین را اجازه می‌دهد).</summary>
+    private bool CanSelfErja => Auth.Has("IncomingLetters.Dabirkhane") || Auth.Has("OutgoingLetters.Dabirkhane") || Auth.Has("Admin");
+
+    private string matn = "";
+    private DateTime? mohlatPasokh;
+    private bool errRcv = false;
+    private bool errAmal = false;
+
+    public async Task OpenErja(int letterId, int sabtNumber)
+    {
+        this.letterId = letterId;
+        this.erjaId = 0;
+        this.sabtNumber = sabtNumber;
+        this.isAnswer = false;
+        this.matn = "";
+        this.amalgarId = 0;
+        newAmalOpen = false; newAmalTitle = "";
+        this.mohlatPasokh = null;
+        this.selUsers.Clear();
+        this.selGroups.Clear();
+        this.errRcv = false;
+        this.errAmal = false;
+        // تأیید «ارسال تکراری» مربوط به همین ارجاع است؛ اگر ریست نشود، از ارجاع
+        // بعدی به بعد بی‌صدا اجازهٔ ارسال تکراری داده می‌شود و هشدار نمایش نمی‌یابد.
+        this.allowDuplicateRecipients = false;
+
+        visible = true;
+        await LoadLookups();
+        StateHasChanged();
+    }
+
+    public Task OpenAnswer(int erjaId, int sabtNumber)
+    {
+        this.letterId = 0;
+        this.erjaId = erjaId;
+        this.sabtNumber = sabtNumber;
+        this.isAnswer = true;
+        this.matn = "";
+        this.mohlatPasokh = null;
+        this.selUsers.Clear();
+        this.selGroups.Clear();
+        this.errRcv = false;
+
+        visible = true;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private async Task LoadLookups()
+    {
+        try
+        {
+            if (users.Count == 0) users = await IncomingSvc.GetReciversAsync();
+            groups = await IncomingSvc.GetGroupsAsync();
+            if (amalgars.Count == 0) amalgars = await IncomingSvc.GetAmalgarsAsync();
+            if (amalgarId == 0) amalgarId = amalgars.FirstOrDefault()?.AmalgarId ?? 0;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OnRcvChanged()
+    {
+        if (selUsers.Count + selGroups.Count > 0) errRcv = false;
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (!isAnswer)
+        {
+            errRcv = selUsers.Count + selGroups.Count == 0;
+            errAmal = amalgarId <= 0;
+            if (errRcv || errAmal)
+            {
+                Toast.Error(errRcv ? "لطفاً حداقل یک گیرنده انتخاب کنید." : "لطفاً عملگر اقدام را انتخاب کنید.");
+                return;
+            }
+
+            saving = true;
+            try
+            {
+                // گروه‌ها در سمت سرور به اعضایشان باز می‌شوند (ExpandToUserIdsAsync)
+                var dto = new AddErjaDto
+                {
+                    LetterId = letterId,
+                    ReciversGirandegan = selUsers.ToList(),
+                    GroupsGirandegan = selGroups.ToList(),
+                    AmalgarId = amalgarId,
+                    MatnErja = matn.Trim(),
+                    MohlatPasokh = mohlatPasokh,
+                    AllowDuplicateRecipients = allowDuplicateRecipients
+                };
+                await IncomingSvc.AddErjaAsync(dto);
+                Toast.Success("نامه وارده با موفقیت ارجاع گردید.");
+                visible = false;
+                await OnSubmitted.InvokeAsync();
+            }
+            catch (Exception ex)
+            {
+                if (!allowDuplicateRecipients && ex.Message.Contains("قبلاً در گردش"))
+                {
+                    allowDuplicateRecipients = await JS.InvokeAsync<bool>("confirm", "برخی گیرندگان قبلاً در گردش این نامه هستند. آیا ارسال تکراری انجام شود؟");
+                    if (allowDuplicateRecipients) { await SubmitAsync(); return; }
+                }
+                Toast.Error(ex.Message);
+            }
+            finally
+            {
+                saving = false;
+                StateHasChanged();
+            }
+        }
+        else
+        {
+            // پاسخ خالی ثبت نمی‌شود (سرور هم همین را رد می‌کند؛ این‌جا برای پیام فوری‌تر)
+            var answerText = (matn ?? "").Trim();
+            if (answerText.Length == 0)
+            {
+                Toast.Error("متن پاسخ را وارد کنید.");
+                return;
+            }
+
+            saving = true;
+            try
+            {
+                var dto = new AnswerErjaDto
+                {
+                    MatnPasokh = answerText
+                };
+                await IncomingSvc.AnswerAsync(erjaId, dto);
+                Toast.Success("پاسخ به ارجاع ثبت گردید.");
+                visible = false;
+                await OnSubmitted.InvokeAsync();
+            }
+            catch (Exception ex)
+            {
+                Toast.Error(ex.Message);
+            }
+            finally
+            {
+                saving = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private void ToggleNewAmal()
+    {
+        newAmalOpen = !newAmalOpen;
+        newAmalTitle = "";
+    }
+
+    private async Task OnNewAmalKeyAsync(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" or "NumpadEnter") await AddAmalAsync();
+    }
+
+    /// <summary>ثبت عملگر تازه در سرور و انتخاب فوری آن در همین فرم.</summary>
+    private async Task AddAmalAsync()
+    {
+        var title = (newAmalTitle ?? "").Trim();
+        if (title.Length == 0) { Toast.Error("عنوان عملگر را وارد کنید."); return; }
+        if (title.Length > 100) { Toast.Error("عنوان عملگر حداکثر ۱۰۰ کاراکتر است."); return; }
+        if (newAmalBusy) return;
+
+        newAmalBusy = true;
+        try
+        {
+            var created = await IncomingSvc.CreateAmalgarAsync(title);
+            if (created is null || created.AmalgarId <= 0) { Toast.Error("افزودن عملگر انجام نشد."); return; }
+
+            var idx = amalgars.FindIndex(a => a.AmalgarId == created.AmalgarId);
+            if (idx >= 0) amalgars[idx] = created; else amalgars.Add(created);
+
+            amalgarId = created.AmalgarId;
+            errAmal = false;
+            newAmalOpen = false;
+            newAmalTitle = "";
+            Toast.Success($"عملگر «{created.Title}» اضافه شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { newAmalBusy = false; }
+    }
+
+    private void Close() => visible = false;
+}

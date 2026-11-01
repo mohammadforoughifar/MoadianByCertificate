@@ -1,0 +1,229 @@
+@* =====================================================================
+   نمایش پاسخ دستیار: رندر سبک مارک‌داون فارسی (پررنگ، لیست، لینک داخلی)
+   امن در برابر XSS: اول Encode کامل، بعد قالب‌بندی روی متن امن.
+   ===================================================================== *@
+<span class="ai-msg">@((MarkupString)Html)</span>
+
+<style>
+    .ai-table-wrap { overflow-x: auto; margin: .4rem 0; border: 1px solid #e2e8f0; border-radius: .6rem; background: #fff; }
+    .ai-table { width: 100%; border-collapse: collapse; font-size: .76rem; }
+    .ai-table th { background: #eef2ff; color: #3730a3; padding: .35rem .5rem; border-bottom: 2px solid #c7d2fe; white-space: nowrap; }
+    .ai-table td { padding: .3rem .5rem; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+    .ai-table tr:last-child td { border-bottom: none; }
+    .ai-table tbody tr:nth-child(even) { background: #f8fafc; }
+    .ai-chart { margin: .35rem 0 .5rem; background: #fff; border: 1px solid #e2e8f0; border-radius: .6rem; padding: .35rem .6rem .25rem; }
+    .ai-chart-title { font-size: .72rem; color: #475569; margin-bottom: .1rem; }
+    .ai-chart svg { width: 100%; height: auto; display: block; }
+    .ai-chart text { font-family: inherit; }
+</style>
+
+@code {
+    [Parameter] public string Text { get; set; } = "";
+
+    private string Html => Render(Text ?? "");
+
+    private static string Render(string text)
+    {
+        // ۱) امن‌سازی کامل
+        var enc = System.Net.WebUtility.HtmlEncode(text);
+
+        // ۲) پررنگ: **متن**
+        enc = System.Text.RegularExpressions.Regex.Replace(enc, @"\*\*(.+?)\*\*", "<strong>$1</strong>");
+
+        // ۳) لینک [متن](مسیر) — فقط داخلی (/) یا http(s)
+        enc = System.Text.RegularExpressions.Regex.Replace(enc, @"\[([^\]]+)\]\(([^)]+)\)", m =>
+        {
+            var label = m.Groups[1].Value;
+            var url = m.Groups[2].Value;
+            var raw = System.Net.WebUtility.HtmlDecode(url);
+            if (raw.StartsWith("/") && !raw.StartsWith("//"))
+                return $"<a href=\"{url}\" class=\"ai-link\">{label}</a>";
+            if (raw.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || raw.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                return $"<a href=\"{url}\" target=\"_blank\" rel=\"noopener\" class=\"ai-link\">{label} ⧉</a>";
+            return label;
+        });
+
+        // ۴) لیست‌ها و پاراگراف‌ها (خط‌به‌خط)
+        var sb = new System.Text.StringBuilder();
+        var inList = false;
+        var lines = enc.Replace("\r\n", "\n").Split('\n');
+        for (var li = 0; li < lines.Length; li++)
+        {
+            var line = lines[li].Trim();
+            // جدول مارک‌داون: سرستون + خط جداکننده (| --- |)
+            if (line.StartsWith("|") && li + 1 < lines.Length && IsTableSeparator(lines[li + 1]))
+            {
+                if (inList) { sb.Append("</ul>"); inList = false; }
+                var header = SplitRowCells(line);
+                sb.Append("<div class=\"ai-table-wrap\"><table class=\"ai-table\"><thead><tr>");
+                foreach (var cell in header)
+                    sb.Append("<th>").Append(cell).Append("</th>");
+                sb.Append("</tr></thead><tbody>");
+                li += 2; // رد شدن از سرستون و جداکننده
+                var bodyRows = new List<List<string>>();
+                for (; li < lines.Length && lines[li].Trim().StartsWith("|"); li++)
+                {
+                    var cells = SplitRowCells(lines[li]);
+                    bodyRows.Add(cells);
+                    sb.Append("<tr>");
+                    foreach (var cell in cells)
+                        sb.Append("<td>").Append(cell).Append("</td>");
+                    sb.Append("</tr>");
+                }
+                sb.Append("</tbody></table></div>");
+                sb.Append(BuildChart(header, bodyRows)); // نمودار میله‌ای خودکار (§۱۶)
+                li--; // جبران افزایش حلقه بیرونی
+                continue;
+            }
+            var isBullet = line.StartsWith("- ") || line.StartsWith("* ") || line.StartsWith("• ");
+            var isNumbered = System.Text.RegularExpressions.Regex.IsMatch(line, @"^[۰-۹0-9]+[.)] ");
+            if (isBullet || isNumbered)
+            {
+                if (!inList) { sb.Append("<ul class=\"ai-list\">"); inList = true; }
+                var item = isBullet ? line[2..] : System.Text.RegularExpressions.Regex.Replace(line, @"^[۰-۹0-9]+[.)] ", "");
+                sb.Append("<li>").Append(item).Append("</li>");
+            }
+            else
+            {
+                if (inList) { sb.Append("</ul>"); inList = false; }
+                if (line.Length == 0) sb.Append("<div class=\"ai-gap\"></div>");
+                else sb.Append("<div>").Append(line).Append("</div>");
+            }
+        }
+        if (inList) sb.Append("</ul>");
+        return sb.ToString();
+    }
+
+    private static bool IsTableSeparator(string line)
+    {
+        var t = line.Trim();
+        return t.Length >= 3 && t.StartsWith("|") && t.Trim('|', '-', ':', ' ', '\t').Length == 0;
+    }
+
+    private static List<string> SplitRowCells(string line) =>
+        line.Trim().Trim('|').Split('|').Select(c => c.Trim()).ToList();
+
+    // ==================== نمودار میله‌ای خودکار (§۱۶) ====================
+    // زیر هر جدول که ستون عددی داشته باشد، یک نمودار SVG راست‌به‌چپ می‌کشد.
+    // ستون اول = برچسب؛ از میان ستون‌های عددی، ستونی با بیشترین جمع انتخاب می‌شود.
+
+    private static string BuildChart(List<string> header, List<List<string>> rows)
+    {
+        try
+        {
+            if (header.Count < 2 || rows.Count == 0) return "";
+            var data = rows.Where(r => r.Count > 0 && !IsTotalRow(r[0])).ToList();
+            if (data.Count < 2 || data.Count > 12) return "";
+            var colCount = Math.Min(data.Min(r => r.Count), header.Count);
+            if (colCount < 2) return "";
+            int best = -1;
+            decimal bestSum = 0;
+            List<decimal>? bestVals = null;
+            for (var c = 1; c < colCount; c++)
+            {
+                var vals = new List<decimal>();
+                var ok = true;
+                foreach (var r in data)
+                {
+                    var v = ParseFaNumber(r[c]);
+                    if (v == null) { ok = false; break; }
+                    vals.Add(v.Value);
+                }
+                if (!ok || vals.Count != data.Count) continue;
+                var s = vals.Sum();
+                if (best < 0 || s > bestSum) { best = c; bestSum = s; bestVals = vals; }
+            }
+            if (best < 0 || bestVals == null) return "";
+            var max = bestVals.Max();
+            if (max <= 0) return "";
+            var labels = data.Select(r => TruncateLabel(CleanCell(r[0]), 20)).ToList();
+            var title = CleanCell(header[best]);
+            var n = data.Count;
+            var rowH = 30;
+            var top = 30;
+            var h = top + n * rowH + 6;
+            var sb = new System.Text.StringBuilder();
+            sb.Append("<div class=\"ai-chart\"><div class=\"ai-chart-title\">📊 نمودار — ")
+                .Append(System.Net.WebUtility.HtmlEncode(title)).Append("</div>");
+            sb.Append("<svg viewBox=\"0 0 600 ").Append(h).Append("\" role=\"img\">");
+            for (var i = 0; i < n; i++)
+            {
+                var y = top + i * rowH;
+                var frac = bestVals[i] <= 0 ? 0 : (double)(bestVals[i] / max);
+                var w = Math.Max(4, 380 * frac);
+                var bx = 388 - w;
+                sb.Append("<rect x=\"8\" y=\"").Append(y).Append("\" width=\"380\" height=\"15\" rx=\"4\" fill=\"#eef2ff\"/>");
+                sb.Append("<rect x=\"").Append(bx.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)).Append("\" y=\"").Append(y)
+                    .Append("\" width=\"").Append(w.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)).Append("\" height=\"15\" rx=\"4\" fill=\"#4f46e5\"/>");
+                var vtxt = FormatFaNumber(bestVals[i]);
+                if (w > 64)
+                    sb.Append("<text x=\"382\" y=\"").Append(y + 12).Append("\" text-anchor=\"end\" font-size=\"11\" fill=\"#fff\">")
+                        .Append(vtxt).Append("</text>");
+                else
+                    sb.Append("<text x=\"").Append((bx - 5).ToString("F1", System.Globalization.CultureInfo.InvariantCulture)).Append("\" y=\"").Append(y + 12)
+                        .Append("\" text-anchor=\"end\" font-size=\"11\" fill=\"#475569\">").Append(vtxt).Append("</text>");
+                sb.Append("<text x=\"594\" y=\"").Append(y + 12).Append("\" text-anchor=\"end\" font-size=\"12\" fill=\"#1e293b\">")
+                    .Append(System.Net.WebUtility.HtmlEncode(labels[i])).Append("</text>");
+            }
+            sb.Append("</svg></div>");
+            return sb.ToString();
+        }
+        catch { return ""; } // نمودار هیچ‌وقت نباید پیام را خراب کند
+    }
+
+    private static bool IsTotalRow(string encodedFirstCell)
+    {
+        var t = CleanCell(encodedFirstCell);
+        return t.Contains("جمع کل") || t == "جمع" || t.StartsWith("جمع ") || t.Contains("مجموع");
+    }
+
+    /// <summary>تمیزسازی سلول برای نمودار: حذف تگ‌های احتمالی + دیکد HTML.</summary>
+    private static string CleanCell(string encoded)
+    {
+        var noTags = System.Text.RegularExpressions.Regex.Replace(encoded, @"<[^>]+>", "");
+        return System.Net.WebUtility.HtmlDecode(noTags).Trim();
+    }
+
+    /// <summary>پارس عدد فارسی/لاتین با جداکننده هزارگان؛ تاریخ و متن → null.</summary>
+    private static decimal? ParseFaNumber(string encodedCell)
+    {
+        var s = CleanCell(encodedCell);
+        if (s == "" || s == "—" || s == "-") return null;
+        var sb = new System.Text.StringBuilder();
+        var hasDigit = false;
+        foreach (var ch in s)
+        {
+            if (ch >= '۰' && ch <= '۹') { sb.Append((char)('0' + ch - '۰')); hasDigit = true; }
+            else if (ch >= '٠' && ch <= '٩') { sb.Append((char)('0' + ch - '٠')); hasDigit = true; }
+            else if (ch >= '0' && ch <= '9') { sb.Append(ch); hasDigit = true; }
+            else if (ch == '.' || ch == '-' || ch == '+') sb.Append(ch);
+            else if (ch == '٫') sb.Append('.');
+            else if (ch == ',' || ch == '٬' || ch == ' ' || ch == ' ' || ch == '%' || ch == '٪') { }
+            else if ((ch >= '\u0600' && ch <= '\u06ff') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')) { } // واحد (تومان، عدد…) نادیده
+            else return null; // / : ( و… → تاریخ یا متن، غیرعددی
+        }
+        if (!hasDigit) return null;
+        var num = sb.ToString();
+        if (num == "" || num == "." || num == "-" || num == "+") return null;
+        return decimal.TryParse(num, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
+    }
+
+    private static string TruncateLabel(string label, int max)
+        => label.Length > max ? label[..max] + "…" : label;
+
+    private static string FormatFaNumber(decimal v)
+    {
+        var fmt = v % 1 == 0 ? "N0" : "N1";
+        var s = v.ToString(fmt, System.Globalization.CultureInfo.InvariantCulture);
+        var sb = new System.Text.StringBuilder();
+        foreach (var ch in s)
+        {
+            if (ch >= '0' && ch <= '9') sb.Append((char)('۰' + ch - '0'));
+            else if (ch == ',') sb.Append('٬');
+            else if (ch == '.') sb.Append('٫');
+            else sb.Append(ch);
+        }
+        return sb.ToString();
+    }
+}

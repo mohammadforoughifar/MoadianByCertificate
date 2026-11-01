@@ -1,0 +1,70 @@
+@inject IDocArchiveService Svc
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<div class="d-flex justify-content-end flex-wrap gap-2 mb-3">
+    <button class="btn btn-sm btn-outline-secondary" @onclick="OpenGrants"><i class="bi bi-clock-history"></i> دسترسی موقت</button>
+    <button class="btn btn-sm btn-outline-secondary" @onclick="OpenRenewal"><i class="bi bi-arrow-repeat"></i> پیگیری تمدید</button>
+</div>
+<Modal Visible="grantsOpen" Title="دسترسی موقت" OnClose="Close">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-12"><label class="form-label">کاربر</label><SearchSelect Items="Users" @bind-Value="targetUser" /></div>
+            <div class="col-12 col-sm-7"><label class="form-label">تاریخ پایان (تهران)</label><DatePicker @bind-Value="untilDate" AllowClear="true" /></div>
+            <div class="col-12 col-sm-5"><label class="form-label" for="grant-time">ساعت پایان</label><input id="grant-time" type="time" class="form-control" value="@untilTime" @onchange="TimeChanged" /></div>
+            <div class="col-12"><label><input type="checkbox" @bind="canDownload" /> اجازه دانلود</label></div>
+        </div>
+        <p class="small text-muted mt-3">فقط خواندن تا زمان تعیین‌شده؛ لغو این مجوز، دسترسی دائمی یا فایل قبلاً دریافت‌شده را حذف نمی‌کند.</p>
+        <button class="btn btn-sm btn-light mb-2" @onclick="CopyLink">کپی پیوند مدرک</button>
+        <div class="table-responsive"><table class="table table-sm"><thead><tr><th>کاربر</th><th>پایان</th><th>وضعیت</th><th></th></tr></thead><tbody>
+            @foreach(var grant in grants)
+            {
+                <tr><td>@grant.UserName @if(grant.CanDownload){<i class="bi bi-download" title="دانلود مجاز"></i>}</td><td>@grant.ExpiresAtUtc.AddHours(3.5).ToFa() @grant.ExpiresAtUtc.AddHours(3.5).ToString("HH:mm")</td>
+                    <td>@(grant.RevokedAtUtc != null ? "لغوشده" : grant.ExpiresAtUtc <= DateTime.UtcNow ? "منقضی" : "فعال")</td>
+                    <td>@if(grant.RevokedAtUtc == null && grant.ExpiresAtUtc > DateTime.UtcNow){<button class="btn btn-sm btn-outline-danger" disabled="@busy" @onclick="() => Revoke(grant.Id)">لغو</button>}</td></tr>
+            }
+        </tbody></table></div>
+    </ChildContent>
+    <Footer><button class="btn btn-light" @onclick="Close">بستن</button><button class="btn btn-primary" disabled="@busy" @onclick="SaveGrant">ثبت دسترسی</button></Footer>
+</Modal>
+<Modal Visible="renewalOpen" Title="پیگیری خودکار تمدید" OnClose="Close">
+    <ChildContent>
+        <label class="form-check mb-3"><input class="form-check-input" type="checkbox" @bind="policy.Enabled" /> فعال</label>
+        <label class="form-label">مسئول تمدید</label><SearchSelect Items="Users" @bind-Value="policy.AssigneeUserId" />
+        <label class="form-label mt-3" for="renewal-days">چند روز قبل از انقضا</label><input id="renewal-days" type="number" min="0" max="365" class="form-control" @bind="policy.LeadDays" />
+        <p class="small text-muted mt-3">برای هر تاریخ انقضا یک دستور کار ساخته می‌شود. خاموش‌کردن پیگیری، دستورهای قبلی را حذف نمی‌کند.</p>
+        @foreach(var order in policy.Orders)
+        {
+            <div class="d-flex justify-content-between border-top py-2">
+                @if(order.Status == "Deleted"){<span>@order.Number — حذف‌شده</span>}
+                else {<a href="@($"/work-orders?open={order.Id}")">@order.Number</a><span>@(order.Status == "Closed" ? "بسته" : "باز")</span>}
+                <span>@order.ExpiryDate.ToFa()</span>
+            </div>
+        }
+    </ChildContent>
+    <Footer><button class="btn btn-light" @onclick="Close">بستن</button><button class="btn btn-primary" disabled="@busy" @onclick="SaveRenewal">ذخیره</button></Footer>
+</Modal>
+@code {
+    [Parameter] public int DocumentId {get;set;}
+    [Parameter] public List<LookupItem> Users {get;set;} = new();
+    private bool grantsOpen, renewalOpen, busy;
+    private int targetUser, loadedId;
+    private bool canDownload;
+    private DateTime? untilDate = DateTime.Today.AddDays(7);
+    private string untilTime="17:00";
+    private List<DocTemporaryGrantDto> grants = new();
+    private DocRenewalPolicyDto policy = new();
+    protected override void OnParametersSet() { if(loadedId != DocumentId) { loadedId=DocumentId; Close(); } }
+    private void TimeChanged(ChangeEventArgs e) => untilTime = e.Value?.ToString() ?? "";
+    private void Close(){ grantsOpen=false; renewalOpen=false; }
+    private async Task OpenGrants(){var id=DocumentId;try {var data=await Svc.GetTemporaryGrantsAsync(id);if(id!=DocumentId)return;grants=data;targetUser=0;canDownload=false;grantsOpen=true;}catch(Exception ex){Toast.Error(ex.Message);}}
+    private async Task OpenRenewal(){var id=DocumentId;try {var data=await Svc.GetRenewalAsync(id);if(id!=DocumentId)return;policy=data;renewalOpen=true;}catch(Exception ex){Toast.Error(ex.Message);}}
+    private async Task CopyLink(){try{await JS.InvokeVoidAsync("navigator.clipboard.writeText",Nav.ToAbsoluteUri($"/doc-archive/documents/{DocumentId}").ToString());Toast.Success("پیوند کپی شد.");}catch{Toast.Info(Nav.ToAbsoluteUri($"/doc-archive/documents/{DocumentId}").ToString());}}
+    private async Task SaveGrant(){
+        if(targetUser<=0 || untilDate==null || !TimeSpan.TryParse(untilTime,out var time)){Toast.Error("کاربر و زمان پایان را مشخص کنید.");return;}
+        busy=true;var id=DocumentId;
+        try{await Svc.SaveTemporaryGrantAsync(id,new(){UserId=targetUser,CanDownload=canDownload,ExpiresAtUtc=new DateTimeOffset(DateTime.SpecifyKind(untilDate.Value.Date.Add(time),DateTimeKind.Unspecified),TimeSpan.FromHours(3.5)).UtcDateTime});if(id==DocumentId)grants=await Svc.GetTemporaryGrantsAsync(id);Toast.Success("دسترسی ثبت شد.");}catch(Exception ex){Toast.Error(ex.Message);}finally{busy=false;}}
+    private async Task Revoke(int grantId){busy=true;var id=DocumentId;try{await Svc.RevokeTemporaryGrantAsync(id,grantId);if(id==DocumentId)grants=await Svc.GetTemporaryGrantsAsync(id);}catch(Exception ex){Toast.Error(ex.Message);}finally{busy=false;}}
+    private async Task SaveRenewal(){busy=true;try{await Svc.SaveRenewalAsync(DocumentId,policy);Toast.Success("تنظیمات تمدید ذخیره شد.");renewalOpen=false;}catch(Exception ex){Toast.Error(ex.Message);}finally{busy=false;}}
+}

@@ -1,0 +1,271 @@
+@inject IOutgoingLetterService OutgoingSvc
+@inject IToastService Toast
+
+@* ============================================================
+   گردش نامه صادره — سه نمای لیستی | درختواره | فلوچارتی
+   • علاوه بر ایستگاه‌های ارجاع، «امضا کنندگان نامه صادره» هم مشخص و
+     قابل پیگیری‌اند (ترتیب امضا، امضا شده/در انتظار، تاریخ و توضیح امضا)
+   ============================================================ *@
+
+@if (visible)
+{
+<div class="ltx" style="animation:none;transform:none">
+    <div class="gov">
+        <div class="gmodal" @onclick:stopPropagation="true">
+            <div class="gm-h">
+                <div class="avt" style="width:38px;height:38px"><i class="bi bi-diagram-3"></i></div>
+                <div class="ttl">
+                    <b>گردش نامه صادره — @title</b>
+                    <small class="num"># @letterNumber.FaDigits() · @CountAll().FaDigits() ایستگاه</small>
+                </div>
+                <button class="x" @onclick="Close"><i class="bi bi-x-lg"></i></button>
+            </div>
+            <div class="gm-seg">
+                <button class="@(view == 0 ? "on" : "")" @onclick="() => view = 0"><i class="bi bi-list-ul"></i> لیستی</button>
+                <button class="@(view == 1 ? "on" : "")" @onclick="() => view = 1"><i class="bi bi-diagram-2"></i> درختواره</button>
+                <button class="@(view == 2 ? "on" : "")" @onclick="() => view = 2"><i class="bi bi-diagram-3"></i> فلوچارتی</button>
+            </div>
+            <div class="gm-b">
+                @if (loading)
+                {
+                    <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+                }
+                else if (roots.Count == 0 && signers.Count == 0)
+                {
+                    <div class="empty"><i class="bi bi-diagram-3"></i>گردشی ثبت نشده است</div>
+                }
+                else if (view == 0)
+                {
+                    <div class="tl">
+                        <div class="tl-i start">
+                            <div class="tl-t">@senderName</div>
+                            <div class="tl-s">فرستنده · ثبت نامه @letterDate.ToFaDateTime() · شروع گردش</div>
+                        </div>
+
+                        @* ---------- امضا کنندگان نامه صادره ---------- *@
+                        @if (signers.Count > 0)
+                        {
+                            @foreach (var sg in signers)
+                            {
+                                var s1 = sg;
+                                <div class="tl-i @(s1.IsSigned ? "done" : "")">
+                                    <div class="tl-t">
+                                        <i class="bi bi-pen" style="font-size:12px;margin-inline-end:4px"></i>@s1.DisplayName
+                                        <span class="tg @(s1.IsSigned ? "green" : "amber")" style="margin-inline-start:6px">امضا کننده @s1.Order</span>
+                                    </div>
+                                    <div class="tl-s">
+                                        @(s1.IsSigned ? $"امضا شده — {s1.DateSigned?.ToFaDateTime()}" : "در انتظار امضا")
+                                        @if (!string.IsNullOrWhiteSpace(s1.SignNote))
+                                        {
+                                            <span> · توضیح: @s1.SignNote</span>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        }
+
+                        @foreach (var n in Flat())
+                        {
+                            var nn = n;
+                            <div class="tl-i @(IsDone(nn) ? "done" : "") gnode-click" @onclick="() => SelectNode(nn)">
+                                <div class="tl-t">@nn.Reciver @(selectedNode == nn ? "◀" : "")</div>
+                                <div class="tl-s">@NodeSub(nn) · @StLabel(nn)</div>
+                                @if (!string.IsNullOrWhiteSpace(nn.Answer))
+                                {
+                                    <div class="tl-ans"><i class="bi bi-reply"></i> @nn.Answer @(nn.DateAnswer is { } da ? "— " + da.ToFaDateTime() : "")</div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+                else if (view == 1)
+                {
+                    @* ---------- امضا کنندگان (درختواره) ---------- *@
+                    @if (signers.Count > 0)
+                    {
+                        <div class="scard" style="margin-bottom:10px">
+                            <h3><i class="bi bi-pen-fill"></i> امضا کنندگان — @signers.Count(s => s.IsSigned).FaDigits() از @signers.Count.FaDigits() امضا شده</h3>
+                            <div class="ppl">
+                                @foreach (var sg in signers)
+                                {
+                                    var s2 = sg;
+                                    <span class="pp" style="@(s2.IsSigned ? "background:#dcfce7" : "background:#fef3c7")">
+                                        <span class="mini"><i class="bi @(s2.IsSigned ? "bi-check2-all" : "bi-pen")"></i></span>
+                                        @s2.DisplayName (امضا @s2.Order)
+                                        <small style="margin-inline-start:6px;@(s2.IsSigned ? "color:#16a34a" : "color:#d97706")">
+                                            @(s2.IsSigned ? s2.DateSigned?.ToFaDateTime() + " ✓" : "در انتظار امضا")
+                                        </small>
+                                    </span>
+                                }
+                            </div>
+                        </div>
+                    }
+                    <div class="gtree">
+                        <ul>
+                            <li>
+                                <div class="tnode">
+                                    <span class="mini"><i class="bi bi-person"></i></span>
+                                    <div><b>@senderName</b><small> — فرستنده · @letterDate.ToFaDateTime()</small></div>
+                                    <span class="tst p">شروع گردش</span>
+                                </div>
+                                <ul>
+                                    @if (signers.Count > 0)
+                                    {
+                                        <li>
+                                            <div class="tnode">
+                                                <span class="mini"><i class="bi bi-pen"></i></span>
+                                                <div><b>امضا کنندگان</b><small> — @signers.Count(s => s.IsSigned).FaDigits() از @signers.Count.FaDigits()</small></div>
+                                                <span class="tst @(signers.All(s => s.IsSigned) ? "g" : "w")">@(signers.All(s => s.IsSigned) ? "امضای کامل" : "در انتظار امضا")</span>
+                                            </div>
+                                            <ul>
+                                                @foreach (var sg in signers)
+                                                {
+                                                    var s3 = sg;
+                                                    <li>
+                                                        <div class="tnode">
+                                                            <span class="mini"><i class="bi bi-person"></i></span>
+                                                            <div><b>@s3.DisplayName</b><small> — امضا کننده @(s3.Order)@(string.IsNullOrWhiteSpace(s3.SignNote) ? "" : " · " + s3.SignNote)</small></div>
+                                                            <span class="tst @(s3.IsSigned ? "g" : "w")">@(s3.IsSigned ? "امضا شد" : "در انتظار")</span>
+                                                        </div>
+                                                    </li>
+                                                }
+                                            </ul>
+                                        </li>
+                                    }
+                                    @foreach (var n in roots) { @TreeNode(n) }
+                                </ul>
+                            </li>
+                        </ul>
+                    </div>
+                }
+                else
+                {
+                    <div class="fcwrap">
+                        <div class="fc">
+                            <ul>
+                                <li>
+                                    <div class="fnode root">
+                                        <span class="mini"><i class="bi bi-person"></i></span>
+                                        <div><b>@senderName</b><small>فرستنده</small></div>
+                                        <span class="fdot p"></span>
+                                    </div>
+                                    <ul>
+                                        @if (signers.Count > 0)
+                                        {
+                                            <li>
+                                                <div class="fnode @(signers.All(s => s.IsSigned) ? "ok" : "wt")">
+                                                    <span class="mini"><i class="bi bi-pen"></i></span>
+                                                    <div><b>امضا کنندگان</b><small>@signers.Count(s => s.IsSigned).FaDigits()/@signers.Count.FaDigits() امضا</small></div>
+                                                    <span class="fdot @(signers.All(s => s.IsSigned) ? "g" : "w")"></span>
+                                                </div>
+                                                <ul>
+                                                    @foreach (var sg in signers)
+                                                    {
+                                                        var s4 = sg;
+                                                        <li>
+                                                            <div class="fnode @(s4.IsSigned ? "ok" : "wt")">
+                                                                <span class="mini"><i class="bi bi-person"></i></span>
+                                                                <div><b>@s4.DisplayName</b><small>امضا کننده @(s4.Order)</small></div>
+                                                                <span class="fdot @(s4.IsSigned ? "g" : "w")"></span>
+                                                            </div>
+                                                        </li>
+                                                    }
+                                                </ul>
+                                            </li>
+                                        }
+                                        @foreach (var n in roots) { @FlowNode(n) }
+                                    </ul>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                }
+
+                @if (selectedNode is { } sn)
+                {
+                    <div class="gdetail">
+                        <h4>
+                            <i class="bi bi-info-circle-fill"></i>
+                            جزئیات ایستگاه — @sn.Reciver
+                            <button class="x2" @onclick="() => selectedNode = null"><i class="bi bi-x-lg"></i></button>
+                        </h4>
+                        <div class="gkv"><b>نوع دریافت</b><span>@sn.Type</span></div>
+                        <div class="gkv"><b>از طرف</b><span>@sn.Sender</span></div>
+                        <div class="gkv"><b>تاریخ ارجاع</b><span class="num">@sn.Date.ToFaDateTime()</span></div>
+                        <div class="gkv"><b>وضعیت</b><span>@StLabel(sn)</span></div>
+                        @if (!string.IsNullOrWhiteSpace(sn.MatnErja)) { <div class="gkv" style="flex-direction:column"><b>پاراف</b><div class="gtxt">@sn.MatnErja</div></div> }
+                        @if (!string.IsNullOrWhiteSpace(sn.Answer)) { <div class="gkv" style="flex-direction:column"><b>پاسخ</b><div class="gtxt" style="border-color:#a7f3d0;background:#f0fdf7">@sn.Answer</div></div> }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+}
+
+@code {
+    private bool visible;
+    private bool loading;
+    private int view;
+    private string title = "", letterNumber = "", senderName = "";
+    private DateTime letterDate;
+    private List<ErjaTreeNodeDto> roots = new();
+
+    /// <summary>امضا کنندگان نامه صادره — در گردش مشخص و قابل پیگیری هستند</summary>
+    private List<OutgoingSignerDto> signers = new();
+
+    private ErjaTreeNodeDto? selectedNode;
+
+    public async Task Open(int letterId, string letterTitle, string number, string sender, DateTime date)
+    {
+        title = letterTitle; letterNumber = number; senderName = sender; letterDate = date;
+        view = 0; visible = true; loading = true; selectedNode = null;
+        signers = new(); roots = new();
+        StateHasChanged();
+        try
+        {
+            roots = await OutgoingSvc.GetGardeshAsync(letterId);
+            try { signers = await OutgoingSvc.GetSignersAsync(letterId); } catch { signers = new(); }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); roots = new(); }
+        finally { loading = false; StateHasChanged(); }
+    }
+
+    private void Close() => visible = false;
+    private void SelectNode(ErjaTreeNodeDto n) => selectedNode = selectedNode == n ? null : n;
+    private static bool IsDone(ErjaTreeNodeDto n) => n.IsRead || n.TypeTaeed != 0 || !string.IsNullOrWhiteSpace(n.Answer);
+    private static string StLabel(ErjaTreeNodeDto n) =>
+        n.TypeTaeed == 1 ? "تایید شد" :
+        n.TypeTaeed == 2 ? "رد شد" :
+        !string.IsNullOrWhiteSpace(n.Answer) ? "پاسخ داده شد" :
+        n.IsRead ? "خوانده شد" : "در انتظار";
+    private static string NodeSub(ErjaTreeNodeDto n)
+    {
+        var s = n.Type == "ارجاع" ? $"ارجاع «{n.AmalgarTitle ?? "—"}»" : n.Type == "هامش" ? "هامش" : "گیرنده";
+        if (!string.IsNullOrWhiteSpace(n.MatnErja)) s += " · " + (n.MatnErja.Length > 40 ? n.MatnErja[..40] + "…" : n.MatnErja);
+        s += " · از طرف " + n.Sender;
+        return s;
+    }
+    private int CountAll() { int C(List<ErjaTreeNodeDto> l) => l.Sum(x => 1 + C(x.Children)); return 1 + C(roots) + signers.Count; }
+    private IEnumerable<ErjaTreeNodeDto> Flat()
+    {
+        IEnumerable<ErjaTreeNodeDto> Dfs(ErjaTreeNodeDto n) { yield return n; foreach (var k in n.Children) foreach (var x in Dfs(k)) yield return x; }
+        return roots.SelectMany(Dfs);
+    }
+    private RenderFragment TreeNode(ErjaTreeNodeDto n) => @<li>
+        <div class="tnode gnode-click @(selectedNode == n ? "sel" : "")" @onclick="() => SelectNode(n)">
+            <span class="mini"><i class="bi bi-person"></i></span>
+            <div><b>@n.Reciver</b><small> — @NodeSub(n)</small></div>
+            <span class="tst @(IsDone(n) ? "g" : "w")">@StLabel(n)</span>
+        </div>
+        @if (n.Children.Count > 0) { <ul>@foreach (var k in n.Children) { @TreeNode(k) }</ul> }
+    </li>;
+    private RenderFragment FlowNode(ErjaTreeNodeDto n) => @<li>
+        <div class="fnode @(IsDone(n) ? "ok" : "wt") gnode-click" @onclick="() => SelectNode(n)">
+            <span class="mini"><i class="bi bi-person"></i></span>
+            <div><b>@n.Reciver</b><small>@NodeSub(n)</small></div>
+            <span class="fdot @(IsDone(n) ? "g" : "w")"></span>
+        </div>
+        @if (n.Children.Count > 0) { <ul>@foreach (var k in n.Children) { @FlowNode(k) }</ul> }
+    </li>;
+}

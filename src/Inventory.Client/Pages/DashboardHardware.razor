@@ -1,0 +1,444 @@
+@page "/dashboard-hardware"
+@inject IAuthState Auth
+@using Microsoft.AspNetCore.SignalR.Client
+@inject ApiOptions ApiCfg
+@inject HttpClient Http
+@implements IDisposable
+
+@if (!Auth.Has("Dashboards.Hardware"))
+{
+    <div class="alert alert-warning mt-3">
+        <i class="bi bi-shield-exclamation"></i>
+        شما به «داشبورد سخت‌افزار» دسترسی ندارید. برای دریافت دسترسی با مدیر سیستم تماس بگیرید.
+    </div>
+}
+else
+{
+<PageTitle>داشبورد سخت‌افزار — بلادرنگ</PageTitle>
+
+@* ================== آمار درخواست‌های خدمت IT — باکس جدا با نمودار میله‌ای ================== *@
+@if (itStats != null)
+{
+    <div class="card border-0 shadow-sm mb-3 itbox">
+        <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <b><i class="bi bi-headset text-primary"></i> درخواست‌های خدمت IT — واحد</b>
+            <span class="badge bg-light text-dark border fw-800">مجموع: <span class="num">@itStats.Total</span> درخواست</span>
+        </div>
+        <div class="card-body">
+            <div class="itchart">
+                @foreach (var bar in ItBars)
+                {
+                    <div class="itbar-col">
+                        <div class="itbar-val num" style="color:@bar.Color;">@bar.Value</div>
+                        <div class="itbar-track">
+                            <div class="itbar-fill" style="height:@bar.Pct%;background:@bar.Color;"></div>
+                        </div>
+                        <div class="itbar-lbl">@bar.Label</div>
+                        @if (bar.Sub != null)
+                        { <div class="itbar-sub">@bar.Sub</div> }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <h5 class="mb-0 fw-bold"><i class="bi bi-motherboard"></i> داشبورد سخت‌افزار</h5>
+    <div class="d-flex align-items-center gap-2">
+        <span class="badge @(connected ? "bg-success" : "bg-secondary") rounded-pill px-3 py-2">
+            @(connected ? "🟢 برخط (SignalR)" : "⚪ در حال اتصال…")
+        </span>
+        <button class="btn btn-sm btn-warning rounded-pill fw-800" @onclick="CheckNow" disabled="@(stats?.Sweeping ?? false)">
+            @if (stats?.Sweeping ?? false)
+            { <span class="spinner-border spinner-border-sm me-1"></span> <text>در حال پینگ…</text> }
+            else
+            { <i class="bi bi-broadcast"></i> <text>بررسی فوری</text> }
+        </button>
+    </div>
+</div>
+
+@if (stats == null)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" style="width:3rem;height:3rem;"></div>
+        <div class="mt-3 text-muted">در حال دریافت وضعیت سخت‌افزار…</div>
+    </div>
+}
+else
+{
+    @* ============ کامپیوترها / سیستم‌ها ============ *@
+    <div class="row g-3 mb-4">
+        <div class="col-md-3"><div class="kpi kpi-blue"><div class="kpi-num">@Sys.Total</div><div class="kpi-lbl"><i class="bi bi-pc-display"></i> کل سیستم‌ها</div></div></div>
+        <div class="col-md-3"><div class="kpi kpi-green"><div class="kpi-num">@Sys.Online</div><div class="kpi-lbl"><i class="bi bi-wifi"></i> روشن / آنلاین</div></div></div>
+        <div class="col-md-3"><div class="kpi kpi-red"><div class="kpi-num">@Sys.Offline</div><div class="kpi-lbl"><i class="bi bi-power"></i> خاموش / آفلاین</div></div></div>
+        <div class="col-md-3"><div class="kpi kpi-orange"><div class="kpi-num">@stats.SystemsPending</div><div class="kpi-lbl"><i class="bi bi-hourglass-split"></i> در انتظار تایید</div></div></div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-800"><i class="bi bi-pc-display"></i> وضعیت روشن/خاموش سیستم‌ها</div>
+                <div class="card-body text-center">
+                    @Donut(Sys.Total > 0 ? (int)(Sys.Online * 100.0 / Sys.Total) : 0, "آنلاین")
+                    <div class="small mt-2">
+                        <span class="badge bg-success">آنلاین: @Sys.Online</span>
+                        <span class="badge bg-danger ms-1">آفلاین: @Sys.Offline</span>
+                        <span class="badge bg-secondary ms-1">بدون IP: @Sys.NoIp</span>
+                    </div>
+                    @if (stats.SystemsAvgHealth.HasValue)
+                    {
+                        <div class="avg-health">
+                            <HealthGauge Score="stats.SystemsAvgHealth" Size="52" />
+                            <div class="text-start">
+                                <div class="fw-800" style="font-size:.82rem;color:#1c2130;"><i class="bi bi-heart-pulse-fill" style="color:#e0245e;"></i> میانگین سلامت ناوگان</div>
+                                <div class="small fw-700" style="color:@AvgHealthColor(stats.SystemsAvgHealth);">@AvgHealthFa(stats.SystemsAvgHealth) — از ۱۰۰</div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-800"><i class="bi bi-list-ul"></i> سیستم‌ها (@Sys.Total)</div>
+                <div class="card-body device-list">
+                    @if (Sys.Items.Count == 0)
+                    { <div class="text-muted text-center py-3">سیستمی ثبت نشده</div> }
+                    else
+                    {
+                        foreach (var d in Sys.Items)
+                        {
+                            <div class="dev-row">
+                                <span class="@DotClass(d.Online)"></span>
+                                @if (d.Health.HasValue)
+                                {
+                                    <HealthGauge Score="d.Health" Size="28" ShowScore="false" Tooltip="@HealthTip(d.Health)" />
+                                }
+                                <b class="dev-name">@d.Name</b>
+                                <span class="dev-ip">@(!string.IsNullOrEmpty(d.Ip) ? d.Ip : "بدون IP")</span>
+                                <span class="badge bg-light text-dark">@d.Extra</span>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* ============ دوربین‌ها ============ *@
+    <div class="row g-3 mb-4">
+        <div class="col-md-3"><div class="kpi kpi-purple"><div class="kpi-num">@stats.CamerasTotal</div><div class="kpi-lbl"><i class="bi bi-camera-video-fill"></i> کل دوربین‌ها</div></div></div>
+        <div class="col-md-3"><div class="kpi kpi-green"><div class="kpi-num">@Cam.Online</div><div class="kpi-lbl"><i class="bi bi-wifi"></i> آنلاین (پینگ فعال)</div></div></div>
+        <div class="col-md-3"><div class="kpi kpi-red"><div class="kpi-num">@Cam.Offline</div><div class="kpi-lbl"><i class="bi bi-camera-video-off"></i> آفلاین</div></div></div>
+        <div class="col-md-3"><div class="kpi kpi-teal"><div class="kpi-num">@(stats.CamerasTotal - stats.CamerasActiveFlag)</div><div class="kpi-lbl"><i class="bi bi-slash-circle"></i> غیرفعال (ثبت)</div></div></div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-800"><i class="bi bi-camera-video-fill"></i> آنلاین/آفلاین دوربین‌ها</div>
+                <div class="card-body text-center">
+                    @Donut(Cam.Total > 0 ? (int)(Cam.Online * 100.0 / Cam.Total) : 0, "آنلاین")
+                    <div class="small mt-2">
+                        <span class="badge bg-success">آنلاین: @Cam.Online</span>
+                        <span class="badge bg-danger ms-1">آفلاین: @Cam.Offline</span>
+                        <span class="badge bg-secondary ms-1">بدون IP: @Cam.NoIp</span>
+                    </div>
+                    <div class="mt-2 text-start">
+                        <div class="bar-row"><div class="bar-label">فعال (ثبت‌شده)</div><div class="bar-track"><div class="bar-fill bg-grad-blue" style="width:@Pct(stats.CamerasActiveFlag, stats.CamerasTotal)%;">@stats.CamerasActiveFlag</div></div></div>
+                        <div class="bar-row"><div class="bar-label">غیرفعال (ثبت‌شده)</div><div class="bar-track"><div class="bar-fill bg-grad-purple" style="width:@Pct(stats.CamerasTotal - stats.CamerasActiveFlag, stats.CamerasTotal)%;">@(stats.CamerasTotal - stats.CamerasActiveFlag)</div></div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-800"><i class="bi bi-list-ul"></i> دوربین‌ها (@Cam.Total)</div>
+                <div class="card-body device-list">
+                    @if (Cam.Items.Count == 0)
+                    { <div class="text-muted text-center py-3">دوربینی ثبت نشده</div> }
+                    else
+                    {
+                        foreach (var d in Cam.Items)
+                        {
+                            <div class="dev-row">
+                                <span class="@DotClass(d.Online)"></span>
+                                <b class="dev-name">@d.Name</b>
+                                <span class="dev-ip">@(!string.IsNullOrEmpty(d.Ip) ? d.Ip : "بدون IP")</span>
+                                <span class="badge bg-light text-dark">@d.Extra</span>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* ============ NVRها ============ *@
+    <div class="row g-3 mb-4">
+        <div class="col-md-3"><div class="kpi kpi-teal"><div class="kpi-num">@stats.NvrsTotal</div><div class="kpi-lbl"><i class="bi bi-hdd-stack-fill"></i> کل NVRها</div></div></div>
+        <div class="col-md-3"><div class="kpi kpi-green"><div class="kpi-num">@Nvr.Online</div><div class="kpi-lbl"><i class="bi bi-wifi"></i> آنلاین (پینگ فعال)</div></div></div>
+        <div class="col-md-3"><div class="kpi kpi-red"><div class="kpi-num">@Nvr.Offline</div><div class="kpi-lbl"><i class="bi bi-power"></i> آفلاین</div></div></div>
+        <div class="col-md-3"><div class="kpi kpi-orange"><div class="kpi-num">@Nvr.NoIp</div><div class="kpi-lbl"><i class="bi bi-question-circle"></i> بدون IP ثبت‌شده</div></div></div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-800"><i class="bi bi-hdd-stack-fill"></i> آنلاین/آفلاین NVRها</div>
+                <div class="card-body text-center">
+                    @Donut(Nvr.Total > 0 ? (int)(Nvr.Online * 100.0 / Nvr.Total) : 0, "آنلاین")
+                    <div class="small mt-2">
+                        <span class="badge bg-success">آنلاین: @Nvr.Online</span>
+                        <span class="badge bg-danger ms-1">آفلاین: @Nvr.Offline</span>
+                        <span class="badge bg-secondary ms-1">بدون IP: @Nvr.NoIp</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-800"><i class="bi bi-list-ul"></i> دستگاه‌های NVR (@Nvr.Total)</div>
+                <div class="card-body device-list">
+                    @if (Nvr.Items.Count == 0)
+                    { <div class="text-muted text-center py-3">دستگاهی ثبت نشده</div> }
+                    else
+                    {
+                        foreach (var d in Nvr.Items)
+                        {
+                            <div class="dev-row">
+                                <span class="@DotClass(d.Online)"></span>
+                                <b class="dev-name">@d.Name</b>
+                                <span class="dev-ip">@(!string.IsNullOrEmpty(d.Ip) ? d.Ip : "بدون IP")</span>
+                                <span class="badge bg-light text-dark">@d.Extra</span>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="text-muted small mt-3 text-start" dir="ltr">
+        <i class="bi bi-clock"></i> آخرین پویش: @(stats.LastSweepAt.Year > 2000 ? stats.LastSweepAt.ToString("yyyy/MM/dd HH:mm:ss") : "—")
+        — پویش خودکار هر ۳۰ ثانیه + پخش بلادرنگ
+    </div>
+}
+
+<style>
+.kpi{border-radius:16px;padding:1rem .6rem;text-align:center;border:1px solid #e2e6f1;background:#fff;box-shadow:0 4px 14px rgba(45,55,110,.08);border-top:4px solid #8e5cff;}
+.kpi-num{font-size:1.9rem;font-weight:900;line-height:1.2;}
+.kpi-lbl{font-size:.78rem;font-weight:700;color:#5f688a;margin-top:.25rem;}
+.kpi-blue{border-top-color:#3f8cff;} .kpi-blue .kpi-num{color:#1d5fc2;}
+.kpi-orange{border-top-color:#f4a23c;} .kpi-orange .kpi-num{color:#b06a00;}
+.kpi-red{border-top-color:#e0245e;} .kpi-red .kpi-num{color:#b21b4c;}
+.kpi-green{border-top-color:#2ec47e;} .kpi-green .kpi-num{color:#0e8a55;}
+.kpi-teal{border-top-color:#14b8a6;} .kpi-teal .kpi-num{color:#0e8577;}
+.kpi-purple{border-top-color:#8e5cff;} .kpi-purple .kpi-num{color:#5b21b6;}
+.device-list{max-height:320px;overflow-y:auto;}
+.avg-health{display:flex;align-items:center;justify-content:center;gap:.7rem;margin-top:.9rem;padding-top:.85rem;border-top:1px dashed #e3e7f2;}
+.dev-row{display:flex;align-items:center;gap:.6rem;padding:.45rem .6rem;border-radius:10px;background:#f8f9fd;border:1px solid #edf0f8;margin-bottom:.45rem;font-size:.85rem;}
+.dev-row:hover{background:#f1f0ff;}
+.dev-name{color:#1c2130;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dev-ip{color:#5f688a;font-size:.78rem;direction:ltr;}
+.dot{width:12px;height:12px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 3px rgba(0,0,0,.05);}
+.dot-on{background:#2ec47e;animation:pulse 1.6s infinite;}
+.dot-off{background:#e0245e;}
+.dot-na{background:#b6bccb;}
+@@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(46,196,126,.5);}70%{box-shadow:0 0 0 7px rgba(46,196,126,0);}100%{box-shadow:0 0 0 0 rgba(46,196,126,0);}}
+.bar-row{display:flex;align-items:center;gap:.6rem;margin-bottom:.55rem;}
+.bar-label{width:38%;font-size:.78rem;font-weight:700;color:#3c4358;white-space:nowrap;}
+.bar-track{flex:1;background:#eef0f7;border-radius:8px;height:24px;overflow:hidden;}
+.bar-fill{height:100%;border-radius:8px 0 0 8px;color:#fff;font-size:.72rem;font-weight:800;display:flex;align-items:center;justify-content:center;min-width:26px;transition:width .4s ease;}
+.bg-grad-blue{background:linear-gradient(90deg,#3f8cff,#6d4dff);}
+.bg-grad-purple{background:linear-gradient(90deg,#8e5cff,#e0245e);}
+    /* ===== باکس آمار درخواست IT — نمودار میله‌ای ===== */
+    .itbox { border: 1px solid #dfe7ff !important; }
+    .itchart { display: flex; align-items: stretch; gap: 1rem; height: 200px; padding-top: .4rem; }
+    .itbar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: .4rem; min-width: 0; }
+    .itbar-val { font-size: 1.3rem; font-weight: 900; line-height: 1; }
+    .itbar-track { flex: 1; width: 58%; max-width: 74px; background: #eef0f7; border: 1px solid #e3e7f2; border-radius: 12px; display: flex; align-items: flex-end; overflow: hidden; }
+    .itbar-fill { width: 100%; border-radius: 10px 10px 0 0; transition: height .5s ease; min-height: 3px; }
+    .itbar-lbl { font-size: .76rem; font-weight: 800; color: #5f688a; text-align: center; }
+    .itbar-sub { font-size: .63rem; color: #94a3b8; text-align: center; font-weight: 600; line-height: 1.5; }
+    @@media (max-width: 575.98px) { .itchart { gap: .4rem; height: 160px; } .itbar-val { font-size: 1rem; } }
+</style>
+
+}
+
+@code {
+    // ================== آمار درخواست‌های IT ==================
+    public class ItStats
+    {
+        public int Total { get; set; }
+        public int Completed { get; set; }
+        public int InProgress { get; set; }
+        public int WaitingManager { get; set; }
+        public int NewOnes { get; set; }
+        public int WaitingDecision { get; set; }
+        public int WaitingRequester { get; set; }
+        public int Rejected { get; set; }
+    }
+    private ItStats? itStats;
+
+    private class ItBar
+    {
+        public string Label { get; set; } = "";
+        public int Value { get; set; }
+        public int Pct { get; set; }
+        public string Color { get; set; } = "";
+        public string? Sub { get; set; }
+    }
+
+    private List<ItBar> ItBars
+    {
+        get
+        {
+            if (itStats == null) return new();
+            var max = new[] { 1, itStats.Total, itStats.Completed, itStats.InProgress, itStats.WaitingManager }.Max();
+            int P(int v) => v > 0 ? Math.Max(4, (int)Math.Round(v * 100.0 / max)) : 0;
+            return new List<ItBar>
+            {
+                new() { Label = "کل درخواست‌ها", Value = itStats.Total, Pct = P(itStats.Total), Color = "#3f8cff" },
+                new() { Label = "انجام‌شده", Value = itStats.Completed, Pct = P(itStats.Completed), Color = "#2ec47e" },
+                new() { Label = "در حال اجرا", Value = itStats.InProgress, Pct = P(itStats.InProgress), Color = "#f4a23c" },
+                new() { Label = "در انتظار مدیر واحد", Value = itStats.WaitingManager, Pct = P(itStats.WaitingManager), Color = "#e0245e",
+                          Sub = $"جدید: {itStats.NewOnes} | تایید گزارش: {itStats.WaitingDecision}" }
+            };
+        }
+    }
+
+    private async Task LoadItStats()
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(Auth.Token))
+                Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Auth.Token);
+            itStats = await Http.GetFromJsonAsync<ItStats>("/api/itrequests/stats");
+        }
+        catch { }
+    }
+
+    private HubConnection? hub;
+    private HardwareStats? stats;
+    private bool connected;
+
+    private class Group
+    {
+        public int Total; public int Online; public int Offline; public int NoIp;
+        public List<HardwareDevice> Items = new();
+    }
+
+    private Group Sys => Make("system");
+    private Group Cam => Make("camera");
+    private Group Nvr => Make("nvr");
+
+    private Group Make(string kind)
+    {
+        var g = new Group();
+        if (stats == null) return g;
+        g.Items = stats.Devices.Where(d => d.Kind == kind).ToList();
+        g.Total = g.Items.Count;
+        g.Online = g.Items.Count(d => d.Online == true);
+        g.Offline = g.Items.Count(d => d.Online == false);
+        g.NoIp = g.Items.Count(d => d.Online == null);
+        return g;
+    }
+
+    private static string DotClass(bool? on) => on == true ? "dot dot-on" : on == false ? "dot dot-off" : "dot dot-na";
+    private static int Pct(int v, int t) => t > 0 ? (int)(v * 100.0 / t) : 0;
+
+    private RenderFragment Donut(int pct, string label) => __builder =>
+    {
+        <svg viewBox="0 0 120 120" style="width:140px;height:140px;">
+            <circle cx="60" cy="60" r="50" fill="none" stroke="#eef0f7" stroke-width="16"></circle>
+            <circle cx="60" cy="60" r="50" fill="none" stroke="#2ec47e" stroke-width="16"
+                    stroke-dasharray="@(pct * 3.1416) 999" stroke-linecap="round"
+                    transform="rotate(-90 60 60)"></circle>
+            <text x="60" y="58" text-anchor="middle" font-size="22" font-weight="800" fill="#1c2130">@pct٪</text>
+            <text x="60" y="76" text-anchor="middle" font-size="10" fill="#8a90a5">@label</text>
+        </svg>
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadItStats();
+        try { stats = await Http.GetFromJsonAsync<HardwareStats>($"{ApiCfg.BaseUrl}/api/Dashboard/hardware-stats"); }
+        catch { stats = new HardwareStats(); }
+
+        try
+        {
+            hub = new HubConnectionBuilder()
+                .WithUrl($"{ApiCfg.BaseUrl}/hubs/dashboard")
+                .WithAutomaticReconnect()
+                .Build();
+
+            hub.On<System.Text.Json.JsonElement>("ReceiveHardwareStats", el =>
+            {
+                try
+                {
+                    stats = System.Text.Json.JsonSerializer.Deserialize<HardwareStats>(el.GetRawText(),
+                        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                }
+                catch { }
+                _ = InvokeAsync(StateHasChanged);
+            });
+
+            hub.Closed += (ex) => { connected = false; _ = InvokeAsync(StateHasChanged); return Task.CompletedTask; };
+            hub.Reconnected += arg => { connected = true; _ = InvokeAsync(StateHasChanged); return Task.CompletedTask; };
+
+            await hub.StartAsync();
+            connected = true;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { connected = false; }
+    }
+
+    private async Task CheckNow()
+    {
+        try
+        {
+            if (hub is { State: HubConnectionState.Connected })
+                await hub.InvokeAsync("RequestHardwareCheck");
+            else
+                await Http.PostAsync($"{ApiCfg.BaseUrl}/api/Dashboard/hardware-check", null);
+        }
+        catch { }
+    }
+
+    public void Dispose() { try { _ = hub?.DisposeAsync(); } catch { } }
+
+    // ---------- مدل‌ها ----------
+    public class HardwareDevice
+    {
+        public string Kind { get; set; } = "";
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public string Ip { get; set; } = "";
+        public string Extra { get; set; } = "";
+        public bool? Online { get; set; }
+        public int? Health { get; set; }  // امتیاز سلامت 0-100 (فقط سیستم‌ها)
+    }
+
+    public class HardwareStats
+    {
+        public bool Sweeping { get; set; }
+        public DateTime LastSweepAt { get; set; }
+        public int SystemsTotal { get; set; }
+        public int SystemsApproved { get; set; }
+        public int SystemsPending { get; set; }
+        public int? SystemsAvgHealth { get; set; }  // میانگین امتیاز سلامت سیستم‌ها
+        public int CamerasTotal { get; set; }
+        public int CamerasActiveFlag { get; set; }
+        public int NvrsTotal { get; set; }
+        public int NvrsActiveFlag { get; set; }
+        public List<HardwareDevice> Devices { get; set; } = new();
+    }
+
+    // ---------- درجه‌بندی سلامت (همان منطق سرور) ----------
+    private static string HealthTip(int? h) => h.HasValue ? "امتیاز سلامت: " + h.Value + "از ۱۰۰" : "";
+
+    private static string AvgHealthFa(int? s) => s switch { >= 90 => "عالی", >= 75 => "خوب", >= 60 => "متوسط", >= 40 => "نیازمند توجه", _ => "بحرانی" };
+    private static string AvgHealthColor(int? s) => s switch { >= 90 => "#0ea5a4", >= 75 => "#2ec47e", >= 60 => "#b06a00", >= 40 => "#c2410c", _ => "#b21b4c" };
+}

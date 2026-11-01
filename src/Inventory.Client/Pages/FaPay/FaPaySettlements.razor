@@ -1,0 +1,366 @@
+@namespace Inventory.Client.Pages
+@page "/fa-pay/settlements"
+@inject IFaPayClientService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>تسویه‌حساب پایان همکاری</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-file-earmark-check"></i> تسویه‌حساب پایان همکاری</h1>
+            <div class="lead">سنوات + عیدی تناسبی + بازخرید مرخصی، منهای مانده وام و کسور — با سند قابل چاپ</div>
+        </div>
+        @if (faManage)
+        {
+            <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> تسویه جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">به این بخش دسترسی ندارید.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-5">
+                <label class="form-label small text-muted">پرسنل</label>
+                <select class="form-select" @bind="fEmp">
+                    <option value="">همه</option>
+                    @foreach (var e in emps)
+                    {
+                        <option value="@e.Id">@e.FirstName @e.LastName (@e.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small text-muted">وضعیت</label>
+                <select class="form-select" @bind="fStatus">
+                    <option value="">همه</option>
+                    <option value="0">پیش‌نویس</option>
+                    <option value="1">نهایی</option>
+                </select>
+            </div>
+            <div class="col-md-3"><button class="btn btn-primary w-100" @onclick="Reload"><i class="bi bi-search"></i> جستجو</button></div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>پرسنل</th>
+                        <th>پایان همکاری</th>
+                        <th>علت</th>
+                        <th>سابقه (روز)</th>
+                        <th>جمع مطالبات</th>
+                        <th>خالص پرداختی</th>
+                        <th>وضعیت</th>
+                        <th style="width:150px">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var s in rows)
+                    {
+                        <tr>
+                            <td><strong>@s.EmployeeName</strong><div class="small text-muted">@s.EmployeeCode</div></td>
+                            <td class="num">@PersianDate.ToShortFa(s.LeaveDate)</td>
+                            <td>@FaPayUi.SettleReason(s.Reason)</td>
+                            <td class="num">@FaPayUi.Num(s.ServiceDays)</td>
+                            <td>@FaPayUi.Money(s.GrossTotal)</td>
+                            <td><strong class="text-primary">@FaPayUi.Money(s.NetPayable)</strong></td>
+                            <td><span class="badge @FaPayUi.SettleBadge(s.Status)">@FaPayUi.SettleStatus(s.Status)</span></td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button class="btn btn-outline-primary" title="مشاهده" @onclick="() => OpenDetail(s.Id)"><i class="bi bi-eye"></i></button>
+                                    <button class="btn btn-outline-secondary" title="دانلود PDF" @onclick="() => Pdf(s.Id)"><i class="bi bi-file-earmark-pdf"></i></button>
+                                    @if (faManage && s.Status == 0)
+                                    {
+                                        <button class="btn btn-outline-dark" title="ویرایش" @onclick="() => OpenEdit(s)"><i class="bi bi-pen"></i></button>
+                                        <button class="btn btn-outline-danger" title="حذف" @onclick="() => Del(s)"><i class="bi bi-trash"></i></button>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0)
+                    {
+                        <tr><td colspan="8" class="text-center text-muted py-4">تسویه‌ای یافت نشد.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@if (faManage)
+{
+    <Modal Visible="showEdit" Title="@EditTitle" Size="modal-xl" OnClose="() => showEdit = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-4">
+                <label class="form-label">پرسنل</label>
+                <select class="form-select" @bind="form.EmployeeId">
+                    @foreach (var e in emps)
+                    {
+                        <option value="@e.Id">@e.FirstName @e.LastName (@e.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4"><label class="form-label">تاریخ پایان همکاری (آخرین روز کار)</label><DatePicker @bind-Value="leaveDate" /></div>
+            <div class="col-md-4">
+                <label class="form-label">علت پایان همکاری</label>
+                <select class="form-select" @bind="form.Reason">
+                    <option value="0">استعفا</option>
+                    <option value="1">اخراج/فسخ</option>
+                    <option value="2">پایان قرارداد</option>
+                    <option value="3">بازنشستگی</option>
+                    <option value="4">توافق طرفین</option>
+                    <option value="9">سایر</option>
+                </select>
+            </div>
+            <div class="col-md-3"><label class="form-label">سایر مطالبات (ریال)</label><input class="form-control" type="number" min="0" step="any" @bind="form.OtherEarnings" /></div>
+            <div class="col-md-3"><label class="form-label">شرح سایر مطالبات</label><input class="form-control" @bind="form.OtherEarningsNote" /></div>
+            <div class="col-md-3"><label class="form-label">سایر کسور (ریال)</label><input class="form-control" type="number" min="0" step="any" @bind="form.OtherDeductions" /></div>
+            <div class="col-md-3"><label class="form-label">شرح سایر کسور</label><input class="form-control" @bind="form.OtherDeductionsNote" /></div>
+            <div class="col-md-6">
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="stdeact" @bind="form.DeactivateEmployee" />
+                    <label class="form-check-label" for="stdeact">با نهایی‌شدن، پرسنل غیرفعال شود</label>
+                </div>
+            </div>
+            <div class="col-md-6"><label class="form-label">یادداشت</label><input class="form-control" @bind="form.Note" /></div>
+            <div class="col-12">
+                <button class="btn btn-outline-primary" disabled="@previewBusy" @onclick="CalcPreview">
+                    @if (previewBusy)
+                    {
+                        <span class="spinner-border spinner-border-sm"></span>
+                    }
+                    <i class="bi bi-calculator"></i> محاسبه پیش‌نمایش
+                </button>
+            </div>
+        </div>
+        @if (preview != null)
+        {
+            <hr />
+            <h6 class="fw-bold">پیش‌نمایش محاسبه</h6>
+            @PreviewTable(preview)
+        }
+    </ChildContent>
+    <Footer>
+        <div class="d-flex justify-content-end gap-2 mt-3">
+            <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+            <button class="btn btn-success" @onclick="Save"><i class="bi bi-check-lg"></i> ذخیره پیش‌نویس تسویه</button>
+        </div>
+    </Footer>
+    </Modal>
+}
+
+<Modal Visible="showDetail" Title="جزئیات تسویه‌حساب" Size="modal-lg" OnClose="() => showDetail = false">
+<ChildContent>
+    @if (detailLoading)
+    {
+        <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    }
+    else if (detail != null)
+    {
+        <div class="alert alert-light border small">
+            <b>@detail.EmployeeName</b> (@detail.EmployeeCode) —
+            پایان همکاری: <b class="num">@PersianDate.ToShortFa(detail.LeaveDate)</b> —
+            علت: <b>@FaPayUi.SettleReason(detail.Reason)</b> —
+            وضعیت: <span class="badge @FaPayUi.SettleBadge(detail.Status)">@FaPayUi.SettleStatus(detail.Status)</span>
+        </div>
+        @PreviewTable(detail)
+        @if (!string.IsNullOrWhiteSpace(detail.Note))
+        {
+            <div class="small text-muted mt-2">یادداشت: @detail.Note</div>
+        }
+    }
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-between gap-2 mt-3">
+        <div>
+            @if (detail != null && faManage && detail.Status == 0)
+            {
+                <button class="btn btn-dark" @onclick="() => Finalize(detail)"><i class="bi bi-lock"></i> نهایی‌سازی تسویه</button>
+            }
+        </div>
+        <div class="d-flex gap-2">
+            @if (detail != null)
+            {
+                <button class="btn btn-outline-secondary" @onclick="() => Pdf(detail.Id)"><i class="bi bi-file-earmark-pdf"></i> دانلود PDF</button>
+            }
+            <button class="btn btn-light" @onclick="() => showDetail = false">بستن</button>
+        </div>
+    </div>
+</Footer>
+</Modal>
+
+@code {
+    private bool faRead => Auth.Has("FaPay.Read") || faManage;
+    private bool faManage => Auth.Has("FaPay.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaPaySettlementDto> rows = new();
+    private List<HrEmployeeDto> emps = new();
+    private string? fEmp;
+    private string? fStatus;
+
+    private bool showEdit;
+    private int? editId;
+    private FaPaySettlementSaveDto form = new();
+    private DateTime? leaveDate = DateTime.Today;
+    private bool previewBusy;
+    private FaPaySettlementDto? preview;
+    private string EditTitle => editId == null ? "تسویه جدید" : "ویرایش تسویه";
+
+    private bool showDetail;
+    private bool detailLoading;
+    private FaPaySettlementDto? detail;
+
+    private RenderFragment PreviewTable(FaPaySettlementDto d) => __builder =>
+    {
+        <div class="table-responsive">
+            <table class="table table-bordered align-middle mb-0">
+                <tbody>
+                    <tr class="table-light"><th colspan="2">مطالبات</th></tr>
+                    <tr><td>سنوات خدمت (@FaPayUi.Num(d.ServiceDays) روز سابقه — معاف از مالیات)</td><td class="text-start" style="width:220px">@FaPayUi.Money(d.SenavatAmount)</td></tr>
+                    <tr><td>عیدی تناسبی سال جاری</td><td class="text-start">@FaPayUi.Money(d.EidiAmount)</td></tr>
+                    <tr><td>بازخرید مرخصی (@Fa.Digits(d.LeaveBuybackDays.ToString("0.#")) روز)</td><td class="text-start">@FaPayUi.Money(d.LeaveBuybackAmount)</td></tr>
+                    @if (d.OtherEarnings != 0)
+                    {
+                        <tr><td>سایر مطالبات @Note(d.OtherEarningsNote)</td><td class="text-start">@FaPayUi.Money(d.OtherEarnings)</td></tr>
+                    }
+                    <tr class="table-light"><th>جمع مطالبات</th><th class="text-start">@FaPayUi.Money(d.GrossTotal)</th></tr>
+                    <tr class="table-light"><th colspan="2">کسور</th></tr>
+                    <tr><td>مانده وام‌ها (کسر یکجا)</td><td class="text-start">@FaPayUi.Money(d.LoanRemaining)</td></tr>
+                    @if (d.OtherDeductions != 0)
+                    {
+                        <tr><td>سایر کسور @Note(d.OtherDeductionsNote)</td><td class="text-start">@FaPayUi.Money(d.OtherDeductions)</td></tr>
+                    }
+                    <tr><td>مالیات تسویه</td><td class="text-start">@FaPayUi.Money(d.TaxAmount)</td></tr>
+                    <tr class="table-success"><th>خالص قابل پرداخت (ریال)</th><th class="text-start">@FaPayUi.Money(d.NetPayable)</th></tr>
+                </tbody>
+            </table>
+        </div>
+    };
+
+    private string Note(string? n) => string.IsNullOrWhiteSpace(n) ? "" : $"({n})";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        try { emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items; }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            int? empId = int.TryParse(fEmp, out var v) ? v : null;
+            int? st = int.TryParse(fStatus, out var s) ? s : null;
+            rows = await Svc.ListSettlementsAsync(empId, st);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void OpenEdit(FaPaySettlementDto? s)
+    {
+        editId = s?.Id;
+        form = s == null
+            ? new FaPaySettlementSaveDto { EmployeeId = emps.FirstOrDefault()?.Id ?? 0, DeactivateEmployee = true }
+            : new FaPaySettlementSaveDto
+            {
+                EmployeeId = s.EmployeeId, LeaveDate = s.LeaveDate, Reason = s.Reason,
+                OtherEarnings = s.OtherEarnings, OtherEarningsNote = s.OtherEarningsNote,
+                OtherDeductions = s.OtherDeductions, OtherDeductionsNote = s.OtherDeductionsNote,
+                DeactivateEmployee = s.DeactivateEmployee, Note = s.Note
+            };
+        leaveDate = s?.LeaveDate ?? DateTime.Today;
+        preview = null;
+        showEdit = true;
+    }
+
+    private async Task CalcPreview()
+    {
+        if (form.EmployeeId <= 0 || leaveDate == null) { Toast.Error("پرسنل و تاریخ پایان همکاری را مشخص کنید."); return; }
+        previewBusy = true;
+        try
+        {
+            preview = await Svc.PreviewSettlementAsync(form.EmployeeId, leaveDate.Value, form.Reason, form.OtherEarnings, form.OtherDeductions);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); preview = null; }
+        previewBusy = false;
+    }
+
+    private async Task Save()
+    {
+        if (leaveDate == null) { Toast.Error("تاریخ پایان همکاری الزامی است."); return; }
+        form.LeaveDate = leaveDate.Value;
+        try
+        {
+            var saved = await Svc.SaveSettlementAsync(editId, form);
+            showEdit = false;
+            preview = null;
+            Toast.Success("پیش‌نویس تسویه ذخیره شد.");
+            await Reload();
+            await OpenDetail(saved.Id);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OpenDetail(int id)
+    {
+        showDetail = true;
+        detailLoading = true;
+        detail = null;
+        try { detail = await Svc.GetSettlementAsync(id); }
+        catch (Exception ex) { Toast.Error(ex.Message); showDetail = false; }
+        detailLoading = false;
+    }
+
+    private async Task Finalize(FaPaySettlementDto s)
+    {
+        var msg = "تسویه نهایی شود؟ پس از نهایی‌سازی قابل ویرایش نیست" + (s.DeactivateEmployee ? " و پرسنل غیرفعال می‌شود." : ".");
+        if (!await JS.InvokeAsync<bool>("confirm", msg)) return;
+        try
+        {
+            detail = await Svc.FinalizeSettlementAsync(s.Id);
+            Toast.Success("تسویه نهایی شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Del(FaPaySettlementDto s)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"تسویه {s.EmployeeName} حذف شود؟")) return;
+        try { await Svc.DeleteSettlementAsync(s.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Pdf(int id)
+    {
+        try { await Svc.DownloadSettlementPdfAsync(id); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

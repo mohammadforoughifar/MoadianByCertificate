@@ -1,0 +1,200 @@
+@* ================== فرم «طرف حساب جدید / ویرایش طرف حساب» ==================
+   یک نسخهٔ واحد از فرم تعریف طرف حساب که هم در صفحهٔ «طرف حساب‌ها»
+   (/parties) و هم در «فروش و ویزیتوری» (سفارش ویزیتور) استفاده می‌شود؛
+   بنابراین مشتری‌ای که ویزیتور ثبت می‌کند دقیقاً همان فرم/همان رکورد
+   تعریف مشتری است — نه یک فرمول موازی.
+   قرارداد مودال: بستن فقط با ×، «انصراف» یا Esc.
+   ======================================================================= *@
+@namespace Inventory.Client.Shared
+@inject IPartyService PartySvc
+@inject IReferrerService ReferrerSvc
+@inject IToastService Toast
+@inject IAuthState Auth
+
+<Modal Visible="Visible" Title="@(IsEdit ? "ویرایش طرف حساب" : Type == PartyType.Supplier ? "تأمین‌کننده جدید" : "مشتری جدید")"
+       OnClose="Close">
+    <ChildContent>
+        @if (IsEdit)
+        {
+            <div class="alert alert-light border py-2 px-2 fs-8 mb-3">
+                <i class="bi bi-pencil-square text-primary"></i>
+                ویرایش طرف حساب شمارهٔ <b class="num">@Fa.Digits(party.Id)</b>
+                @if (!string.IsNullOrWhiteSpace(party.RegisteredByName))
+                {
+                    <span class="text-muted">
+                        — ثبت‌شده توسط
+                        <b>@party.RegisteredByName</b>
+                        @if (!string.IsNullOrWhiteSpace(party.RegisteredByReferrerName))
+                        {
+                            <span>(ویزیتور: @party.RegisteredByReferrerName)</span>
+                        }
+                    </span>
+                }
+            </div>
+        }
+
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label">نام <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="party.Name" data-party-field="name" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">موبایل</label>
+                <input class="form-control" @bind="party.Mobile" inputmode="tel" data-digits="tel" dir="ltr" data-party-field="mobile" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">تلفن ثابت</label>
+                <input class="form-control" @bind="party.Phone" inputmode="tel" data-digits="tel" dir="ltr" />
+            </div>
+            <div class="col-12">
+                <label class="form-label">آدرس</label>
+                <input class="form-control" @bind="party.Address" />
+            </div>
+            @if (Type == PartyType.Customer)
+            {
+                <div class="col-md-6">
+                    <label class="form-label">شناسه ملی خریدار</label>
+                    <input class="form-control" dir="ltr" inputmode="numeric" maxlength="14" @bind="party.TaxId" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">کد پستی خریدار</label>
+                    <input class="form-control" dir="ltr" inputmode="numeric" @bind="party.PostalCode" />
+                </div>
+            }
+            @if (Type == PartyType.Customer && AllowReferrerPicker)
+            {
+                <div class="col-12">
+                    <label class="form-label">معرف</label>
+                    <select class="form-select" @bind="referrerIdStr">
+                        <option value="0">— بدون معرف —</option>
+                        @foreach (var r in referrerList)
+                        {
+                            <option value="@r.Id">@r.Name@(string.IsNullOrWhiteSpace(r.CompanyName) ? "" : $" ({r.CompanyName})")</option>
+                        }
+                    </select>
+                    <div class="fs-8 text-muted mt-1">در فاکتور فروش این مشتری، معرف به‌صورت خودکار انتخاب می‌شود</div>
+                </div>
+            }
+            @if (Type == PartyType.Customer && !AllowReferrerPicker)
+            {
+                <div class="col-12">
+                    <div class="alert alert-info py-2 px-2 fs-8 mb-0">
+                        <i class="bi bi-info-circle"></i>
+                        این مشتری به‌صورت خودکار در پروندهٔ معرفی خودِ شما ثبت می‌شود.
+                    </div>
+                </div>
+            }
+            <div class="col-12">
+                <label class="form-label">یادداشت</label>
+                <textarea class="form-control" rows="2" @bind="party.Note"></textarea>
+            </div>
+            <div class="col-12">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="partyFormActive" @bind="party.IsActive" />
+                    <label class="form-check-label" for="partyFormActive">فعال باشد</label>
+                </div>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="Close">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+            @if (saving)
+            {
+                <span class="spinner-border spinner-border-sm ms-1"></span>
+            }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    /// <summary>نمایش/عدم نمایش فرم.</summary>
+    [Parameter] public bool Visible { get; set; }
+
+    /// <summary>نوع طرف حساب (مشتری/تأمین‌کننده).</summary>
+    [Parameter] public PartyType Type { get; set; } = PartyType.Customer;
+
+    /// <summary>طرف حساب آمادهٔ ویرایش (null یا Id=0 یعنی ایجاد جدید).</summary>
+    [Parameter] public Party? Model { get; set; }
+
+    /// <summary>
+    /// انتخاب معرف در فرم مجاز باشد یا نه. ویزیتور معرفِ خودش را می‌گیرد و این گزینه برایش false است.
+    /// </summary>
+    [Parameter] public bool AllowReferrerPicker { get; set; } = true;
+
+    /// <summary>پس از ثبت/ویرایش موفق.</summary>
+    [Parameter] public EventCallback<Party> OnSaved { get; set; }
+
+    /// <summary>انصراف کاربر.</summary>
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private Party party = new();
+    private bool saving;
+    private List<Referrer> referrerList = new();
+    private string referrerIdStr = "0";
+    private bool loadedForKey;
+
+    private bool IsEdit => party.Id != 0;
+
+    private PartyType _prevType;
+
+    protected override void OnParametersSet()
+    {
+        // با تغییر وضعیت نمایش یا تغییر نوع (مثلاً از فروش به خرید)، فرم باید از نو مقداردهی شود
+        if (!Visible) { loadedForKey = false; return; }
+        if (loadedForKey && _prevType == Type) return;
+        loadedForKey = true;
+        _prevType = Type;
+
+        var src = Model;
+        party = new Party
+        {
+            Id = src?.Id ?? 0,
+            Type = Type,
+            Name = src?.Name ?? "",
+            Mobile = src?.Mobile,
+            Phone = src?.Phone,
+            Address = src?.Address,
+            TaxId = src?.TaxId,
+            PostalCode = src?.PostalCode,
+            Note = src?.Note,
+            IsActive = src?.IsActive ?? true,
+            ReferrerId = src?.ReferrerId,
+            RegisteredByName = src?.RegisteredByName,
+            RegisteredByReferrerName = src?.RegisteredByReferrerName
+        };
+        referrerIdStr = (party.ReferrerId ?? 0).ToString();
+        _ = LoadReferrersAsync();
+    }
+
+    private async Task LoadReferrersAsync()
+    {
+        if (Type != PartyType.Customer || !AllowReferrerPicker) return;
+        try { referrerList = await ReferrerSvc.GetAllAsync(activeOnly: true); }
+        catch { /* فهرست معرف‌ها اختیاری است */ }
+        StateHasChanged();
+    }
+
+    private async Task Close()
+    {
+        saving = false;
+        await OnCancel.InvokeAsync();
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(party.Name)) { Toast.Error("نام طرف حساب را وارد کنید."); return; }
+
+        party.ReferrerId = AllowReferrerPicker && int.TryParse(referrerIdStr, out var rid) && rid > 0 ? rid : party.ReferrerId;
+        saving = true;
+        try
+        {
+            var saved = await PartySvc.SaveAsync(party);
+            Toast.Success(IsEdit ? "طرف حساب ویرایش شد." : "طرف حساب ثبت شد.");
+            await OnSaved.InvokeAsync(saved);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+}

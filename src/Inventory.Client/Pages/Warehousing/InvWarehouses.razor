@@ -1,0 +1,427 @@
+@page "/inv/warehouses"
+@inject IInvWarehouseService WarehouseSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>مدیریت انبارها</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>مدیریت انبارها</h1>
+        <p class="lead">تعریف انبارها، انبار پیش‌فرض و مشاهده موجودی و ارزش ریالی هر انبار</p>
+    </div>
+    <button class="btn btn-primary ms-auto" @onclick="OpenNew">
+        <i class="bi bi-plus-lg"></i> انبار جدید
+    </button>
+</div>
+
+@* ---------- کارت‌های خلاصه ---------- *@
+<div class="row g-2 mb-3">
+    <div class="col-6 col-lg-3">
+        <div class="mini-kpi">
+            <i class="bi bi-building bg-soft-primary text-primary"></i>
+            <div><div class="k-val num">@items.Count.Num()</div><div class="k-lbl">تعداد انبار</div></div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="mini-kpi">
+            <i class="bi bi-check2-circle bg-soft-success text-success"></i>
+            <div><div class="k-val num">@items.Count(w => w.IsActive).Num()</div><div class="k-lbl">انبار فعال</div></div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="mini-kpi">
+            <i class="bi bi-boxes bg-soft-info text-info"></i>
+            <div><div class="k-val num">@items.Sum(w => w.ItemCount).Num()</div><div class="k-lbl">اقلام دارای موجودی</div></div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="mini-kpi">
+            <i class="bi bi-cash-stack bg-soft-warning text-warning"></i>
+            <div><div class="k-val num">@items.Sum(w => w.TotalValue).Money()</div><div class="k-lbl">ارزش موجودی (ریال)</div></div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span><i class="bi bi-building text-primary"></i> فهرست انبارها</span>
+        <div class="form-check form-switch ms-auto mb-0">
+            <input class="form-check-input" type="checkbox" id="chkActiveWh" checked="@activeOnly" @onchange="OnActiveOnly" />
+            <label class="form-check-label" for="chkActiveWh">فقط فعال‌ها</label>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state">
+                <i class="bi bi-building"></i>
+                <h5>انباری تعریف نشده است</h5>
+                <p class="text-muted">برای ثبت اسناد رسید و حواله، حداقل یک انبار لازم است.</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>نام انبار</th>
+                            <th>کد</th>
+                            <th>نوع</th>
+                            <th>روش قیمت‌گذاری</th>
+                            <th>انباردار</th>
+                            <th>تلفن</th>
+                            <th class="text-center">اقلام</th>
+                            <th class="text-center">ارزش موجودی</th>
+                            <th class="text-center">اسناد</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var w in items)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="stat-icon bg-soft-primary" style="width:38px;height:38px;font-size:1.05rem">
+                                            <i class="bi @KindIcon(w.Kind)"></i>
+                                        </span>
+                                        <div>
+                                            <div class="fw-500">
+                                                @w.Name
+                                                @if (w.IsDefault)
+                                                {
+                                                    <span class="badge badge-soft-warning fs-8">پیش‌فرض</span>
+                                                }
+                                            </div>
+                                            @if (!string.IsNullOrWhiteSpace(w.Address))
+                                            {
+                                                <div class="text-muted" style="font-size:.74rem">@w.Address</div>
+                                            }
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="num text-muted">@(string.IsNullOrWhiteSpace(w.Code) ? "—" : w.Code)</td>
+                                <td><span class="badge badge-soft-info">@KindTitle(w.Kind)</span></td>
+                                <td>
+                                    @if (w.Valuation is not null)
+                                    {
+                                        <span class="badge badge-soft-primary fs-8">@MethodTitle(w.Valuation.Value)</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted fs-8">—</span>
+                                    }
+                                </td>
+                                <td>@(string.IsNullOrWhiteSpace(w.KeeperName) ? "—" : w.KeeperName)</td>
+                                <td class="num">@(string.IsNullOrWhiteSpace(w.Phone) ? "—" : w.Phone)</td>
+                                <td class="text-center"><span class="badge badge-soft-primary num">@w.ItemCount.Num()</span></td>
+                                <td class="text-center num fw-600">@w.TotalValue.Money()</td>
+                                <td class="text-center num text-muted">@w.DocCount.Num()</td>
+                                <td>
+                                    @if (w.IsActive)
+                                    {
+                                        <span class="badge badge-soft-success">فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-muted">غیرفعال</span>
+                                    }
+                                </td>
+                                <td class="text-end text-nowrap">
+                                    <a class="btn btn-sm btn-light" title="موجودی این انبار" href="@($"/inv/stock?warehouseId={w.Id}")"><i class="bi bi-boxes text-info"></i></a>
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(w)"><i class="bi bi-pencil text-primary"></i></button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(w)"><i class="bi bi-trash text-danger"></i></button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var w in items)
+                {
+                    <div class="m-card @(w.IsActive ? "st-ready" : "st-delivered")">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi @KindIcon(w.Kind)"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-700 text-truncate">@w.Name</span>
+                                    @if (w.IsDefault)
+                                    {
+                                        <span class="badge badge-soft-warning fs-8">پیش‌فرض</span>
+                                    }
+                                </div>
+                                <div class="fs-8 text-muted text-truncate">@KindTitle(w.Kind)@(string.IsNullOrWhiteSpace(w.KeeperName) ? "" : $" — {w.KeeperName}")</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">اقلام</div>
+                                <div class="num fw-800 text-primary">@w.ItemCount.Num()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-money">
+                                <span>ارزش موجودی</span>
+                                <b class="num">@w.TotalValue.Money() <small>ریال</small></b>
+                            </div>
+                            <div class="m-card-row"><span><i class="bi bi-upc text-muted"></i> کد</span><b class="num">@(string.IsNullOrWhiteSpace(w.Code) ? "—" : w.Code)</b></div>
+                            <div class="m-card-row"><span><i class="bi bi-journal-text text-muted"></i> اسناد</span><b class="num">@w.DocCount.Num()</b></div>
+                        </div>
+                        <div class="m-card-actions">
+                            <button class="btn btn-light text-primary" @onclick="() => OpenEdit(w)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            <button class="btn btn-light text-danger" @onclick="() => Delete(w)"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@* ================= مودال افزودن/ویرایش انبار ================= *@
+<Modal Visible="showModal" Title="@(editing.Id == 0 ? "انبار جدید" : "ویرایش انبار")" Size="modal-lg" OnClose="Close">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label">نام انبار <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="editing.Name" @bind:event="oninput" placeholder="مثلاً: انبار مرکزی" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">کد انبار</label>
+                <input class="form-control num" @bind="editing.Code" dir="ltr" placeholder="W-01" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">نوع انبار</label>
+                <select class="form-select" value="@((int)editing.Kind)" @onchange="OnKindChanged">
+                    @foreach (var k in Kinds)
+                    {
+                        <option value="@((int)k)">@KindTitle(k)</option>
+                    }
+                </select>
+            </div>
+
+            <div class="col-12 col-md-6">
+                <label class="form-label">نام انباردار</label>
+                <input class="form-control" @bind="editing.KeeperName" />
+            </div>
+            <div class="col-12 col-md-6">
+                <label class="form-label">تلفن</label>
+                <input class="form-control num" @bind="editing.Phone" dir="ltr" />
+            </div>
+
+            <div class="col-12 col-md-6">
+                <label class="form-label">روش قیمت‌گذاری پیش‌فرض انبار</label>
+                <select class="form-select" @bind="valuationStr">
+                    <option value="">— ارث‌بری از تنظیمات کلی سیستم —</option>
+                    <option value="0">میانگین موزون</option>
+                    <option value="1">اولین صادره از اولین وارده (FIFO)</option>
+                    <option value="2">اولین صادره از آخرین وارده (LIFO)</option>
+                </select>
+                <div class="fs-8 text-muted mt-1">
+                    <i class="bi bi-info-circle"></i>
+                    اولویت روش قیمت‌گذاری در سیستم: ۱) کالا ← ۲) گروه کالا ← ۳) انبار ← ۴) تنظیمات کلی
+                </div>
+            </div>
+
+            <div class="col-12 col-md-6">
+                <label class="form-label">آدرس</label>
+                <input class="form-control" @bind="editing.Address" />
+            </div>
+
+            <div class="col-12">
+                <div class="d-flex flex-wrap gap-4">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="whDefault" @bind="editing.IsDefault" />
+                        <label class="form-check-label" for="whDefault">انبار پیش‌فرض سیستم</label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="whNeg" @bind="editing.AllowNegative" />
+                        <label class="form-check-label" for="whNeg">اجازه منفی شدن موجودی</label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="whAct" @bind="editing.IsActive" />
+                        <label class="form-check-label" for="whAct">فعال</label>
+                    </div>
+                </div>
+            </div>
+
+            @if (editing.AllowNegative)
+            {
+                <div class="col-12">
+                    <div class="alert alert-warning py-2 mb-0" style="font-size:.82rem">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        با فعال بودن این گزینه، ثبت حواله بیش از موجودی مجاز می‌شود و مانده انبار می‌تواند منفی شود.
+                    </div>
+                </div>
+            }
+
+            <div class="col-12">
+                <label class="form-label">یادداشت</label>
+                <textarea class="form-control" rows="2" @bind="editing.Note"></textarea>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="Close">انصراف</button>
+        <button class="btn btn-primary" data-hotkey="f1" disabled="@saving" @onclick="Save">
+            @if (saving)
+            {
+                <span class="spinner-border spinner-border-sm ms-1"></span>
+            }
+            <i class="bi bi-check-lg"></i> ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<InvWarehouse> items = new();
+    private bool loading = true, saving, showModal, activeOnly;
+    private InvWarehouse editing = new();
+    private string valuationStr = "";
+
+    private static readonly WarehouseKind[] Kinds =
+    {
+        WarehouseKind.Main, WarehouseKind.Sub, WarehouseKind.Consignment,
+        WarehouseKind.Scrap, WarehouseKind.Production, WarehouseKind.Transit
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("مدیریت انبارها");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            items = await WarehouseSvc.GetAllAsync(activeOnly);
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task OnActiveOnly(ChangeEventArgs e)
+    {
+        activeOnly = e.Value is bool b && b;
+        await Load();
+    }
+
+    private void OnKindChanged(ChangeEventArgs e)
+        => editing.Kind = (WarehouseKind)int.Parse(e.Value?.ToString() ?? "0");
+
+    private void OpenNew()
+    {
+        editing = new InvWarehouse { IsActive = true, IsDefault = items.Count == 0 };
+        valuationStr = "";
+        showModal = true;
+    }
+
+    private void OpenEdit(InvWarehouse w)
+    {
+        editing = new InvWarehouse
+        {
+            Id = w.Id,
+            Code = w.Code,
+            Name = w.Name,
+            Kind = w.Kind,
+            Valuation = w.Valuation,
+            Address = w.Address,
+            Phone = w.Phone,
+            KeeperName = w.KeeperName,
+            IsDefault = w.IsDefault,
+            AllowNegative = w.AllowNegative,
+            IsActive = w.IsActive,
+            Note = w.Note
+        };
+        valuationStr = w.Valuation is null ? "" : ((int)w.Valuation.Value).ToString();
+        showModal = true;
+    }
+
+    private void Close() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(editing.Name))
+        {
+            Toast.Error("نام انبار الزامی است.");
+            return;
+        }
+        editing.Valuation = int.TryParse(valuationStr, out var v) ? (ValuationMethod)v : null;
+        saving = true;
+        try
+        {
+            await WarehouseSvc.SaveAsync(editing);
+            Toast.Success("انبار ذخیره شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private static string MethodTitle(ValuationMethod m) => m switch
+    {
+        ValuationMethod.Fifo => "FIFO",
+        ValuationMethod.Lifo => "LIFO",
+        _ => "میانگین موزون"
+    };
+
+    private async Task Delete(InvWarehouse w)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"انبار «{w.Name}» حذف شود؟"))
+            return;
+        try
+        {
+            await WarehouseSvc.DeleteAsync(w.Id);
+            Toast.Success("انبار حذف شد.");
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+    }
+
+    private static string KindTitle(WarehouseKind k) => k switch
+    {
+        WarehouseKind.Main => "اصلی",
+        WarehouseKind.Sub => "فرعی",
+        WarehouseKind.Consignment => "امانی",
+        WarehouseKind.Scrap => "ضایعات",
+        WarehouseKind.Production => "تولید",
+        _ => "در راه"
+    };
+
+    private static string KindIcon(WarehouseKind k) => k switch
+    {
+        WarehouseKind.Main => "bi-building",
+        WarehouseKind.Sub => "bi-house-door",
+        WarehouseKind.Consignment => "bi-handshake",
+        WarehouseKind.Scrap => "bi-trash3",
+        WarehouseKind.Production => "bi-gear-wide-connected",
+        _ => "bi-truck"
+    };
+}

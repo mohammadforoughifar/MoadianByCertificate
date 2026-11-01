@@ -1,0 +1,202 @@
+@namespace Inventory.Client.Pages
+@page "/fa-lms/courses"
+@inject IFaLmsService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>دوره‌های آموزشی</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-collection"></i> دوره‌های آموزشی</h1>
+            <div class="lead">تعریف دوره داخلی/خارجی/آنلاین/کارگاه + مدیریت وضعیت</div>
+        </div>
+        @if (faManage)
+        {
+            <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> دوره جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2">
+            <div class="col-md-2"><label class="form-label small text-muted">سال</label><input type="number" class="form-control" @bind="fYear" /></div>
+            <div class="col-md-2"><label class="form-label small text-muted">وضعیت</label><select class="form-select" @bind="fStatus"><option value="">همه</option><option value="0">پیش‌نویس</option><option value="1">باز</option><option value="2">در حال برگزاری</option><option value="3">اتمام‌شده</option><option value="4">لغوشده</option></select></div>
+            <div class="col-md-2"><label class="form-label small text-muted">نوع</label><select class="form-select" @bind="fKind"><option value="">همه</option><option value="0">داخلی</option><option value="1">خارجی</option><option value="2">آنلاین</option><option value="3">کارگاه</option></select></div>
+            <div class="col-md-4"><label class="form-label small text-muted">جستجو</label><input class="form-control" placeholder="عنوان یا کد…" @bind="fQ" /></div>
+            <div class="col-md-2 d-flex align-items-end gap-2"><button class="btn btn-primary" @onclick="Reload"><i class="bi bi-search"></i></button><button class="btn btn-outline-secondary" @onclick="ClearFilter">حذف فیلتر</button></div>
+        </div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (courses.Count == 0)
+        {
+            <div class="text-center text-muted py-5">دوره‌ای ثبت نشده است.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>کد</th><th>عنوان</th><th>نوع</th><th>مدرس</th><th>شروع</th><th>ساعت</th><th>ثبت‌نام</th><th>وضعیت</th><th style="width:150px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var c in courses)
+                        {
+                            <tr>
+                                <td class="num fw-bold">@c.Code</td>
+                                <td><a href="@DetailUrl(c.Id)"><b>@c.Title</b></a>@if (!c.IsActive){<span class="badge text-bg-secondary ms-1">غیرفعال</span>}</td>
+                                <td>@FaLmsUi.Kind(c.Kind)</td>
+                                <td>@(c.TrainerName ?? "—")</td>
+                                <td class="num">@(c.StartDate == null ? "—" : c.StartDate.Value.ToFa())</td>
+                                <td class="num">@FaLmsUi.Num(c.DurationHours)</td>
+                                <td class="num">@FaLmsUi.Num(c.EnrolledCount)@if (c.MaxSeats != null){<span class="text-muted"> / @FaLmsUi.Num(c.MaxSeats.Value)</span>}</td>
+                                <td><span class="badge @FaLmsUi.CourseBadge(c.Status)">@FaLmsUi.CourseStatus(c.Status)</span></td>
+                                <td class="text-end">
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-primary" title="جزئیات" @onclick="() => GoDetail(c.Id)"><i class="bi bi-eye"></i></button>
+                                        @if (faManage)
+                                        {
+                                            <button class="btn btn-outline-secondary" title="ویرایش" @onclick="() => OpenEdit(c)"><i class="bi bi-pencil"></i></button>
+                                            <button class="btn btn-outline-danger" title="حذف" @onclick="() => Delete(c)"><i class="bi bi-trash"></i></button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="دوره آموزشی" Size="modal-lg" OnClose="() => showEdit = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-md-3"><label class="form-label">کد *</label><input class="form-control num" @bind="form.Code" /></div>
+        <div class="col-md-9"><label class="form-label">عنوان *</label><input class="form-control" @bind="form.Title" /></div>
+        <div class="col-md-3"><label class="form-label">نوع</label><select class="form-select" @bind="form.Kind"><option value="0">داخلی</option><option value="1">خارجی</option><option value="2">آنلاین</option><option value="3">کارگاه</option></select></div>
+        <div class="col-md-3"><label class="form-label">وضعیت</label><select class="form-select" @bind="form.Status"><option value="0">پیش‌نویس</option><option value="1">باز</option><option value="2">در حال برگزاری</option><option value="3">اتمام‌شده</option><option value="4">لغوشده</option></select></div>
+        <div class="col-md-3"><label class="form-label">مدت (ساعت)</label><input type="number" step="0.5" class="form-control" @bind="form.DurationHours" /></div>
+        <div class="col-md-3"><label class="form-label">هزینه سرانه (ریال)</label><input type="number" class="form-control" @bind="form.CostPerPerson" /></div>
+        <div class="col-md-3"><label class="form-label">ظرفیت</label><input type="number" class="form-control" @bind="form.MaxSeats" /></div>
+        <div class="col-md-3"><label class="form-label">نمره قبولی</label><input type="number" class="form-control" @bind="form.PassScore" /></div>
+        <div class="col-md-3"><label class="form-label">شروع</label><DatePicker @bind-Value="form.StartDate" /></div>
+        <div class="col-md-3"><label class="form-label">پایان</label><DatePicker @bind-Value="form.EndDate" /></div>
+        <div class="col-md-3"><label class="form-label">مدرس (پرونده)</label>
+            <select class="form-select" @bind="form.InstructorId" @bind:after="OnInstructorChanged">
+                <option value="">— بدون پرونده —</option>
+                @foreach (var i in instructors)
+                {
+                    <option value="@i.Id">@i.Name (@(i.Type == 0 ? "داخلی" : "خارجی"))</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3"><label class="form-label">نام نمایشی مدرس</label><input class="form-control" @bind="form.TrainerName" /></div>
+        <div class="col-md-6"><label class="form-label">محل / لینک کلاس</label><input class="form-control" @bind="form.Location" /></div>
+        <div class="col-12"><label class="form-label">توضیحات</label><textarea class="form-control" rows="2" @bind="form.Description"></textarea></div>
+        <div class="col-md-6"><div class="form-check mt-2"><input type="checkbox" class="form-check-input" @bind="form.HasExam" /><label class="form-check-label">آزمون پایان دوره دارد</label></div></div>
+        <div class="col-md-6"><div class="form-check mt-2"><input type="checkbox" class="form-check-input" @bind="form.IsActive" /><label class="form-check-label">فعال</label></div></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" @onclick="Save" disabled="@saving">@(saving ? "در حال ذخیره…" : "ذخیره")</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faRead => Auth.Has("FaLms.Read") || Auth.IsAdmin;
+    private bool faManage => Auth.Has("FaLms.Manage") || Auth.IsAdmin;
+    private bool loading = true, saving, showEdit;
+    private List<FaLmsCourseDto> courses = new();
+    private int? fYear = FaLmsUi.CurrentYear;
+    private string? fStatus, fKind, fQ;
+    private int? editId;
+    private FaLmsCourseSaveDto form = new();
+    private List<FaLmsInstructorDto> instructors = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        try { instructors = await Svc.ListInstructorsAsync(true); } catch { }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            int? st = int.TryParse(fStatus, out var s) ? s : null;
+            int? kd = int.TryParse(fKind, out var k) ? k : null;
+            courses = await Svc.ListCoursesAsync(fYear, st, kd, fQ);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void ClearFilter() { fYear = null; fStatus = fKind = fQ = null; _ = Reload(); }
+    private string DetailUrl(int id) => "fa-lms/courses/" + id;
+    private void GoDetail(int id) => Nav.NavigateTo(DetailUrl(id));
+
+    private void OpenEdit(FaLmsCourseDto? c)
+    {
+        editId = c?.Id;
+        form = c == null ? new FaLmsCourseSaveDto { Status = 1 }
+            : new FaLmsCourseSaveDto
+            {
+                Code = c.Code, Title = c.Title, Kind = c.Kind, Description = c.Description,
+                DurationHours = c.DurationHours, CostPerPerson = c.CostPerPerson, MaxSeats = c.MaxSeats,
+                TrainerName = c.TrainerName, InstructorId = c.InstructorId,
+                Location = c.Location, StartDate = c.StartDate, EndDate = c.EndDate,
+                Status = c.Status, HasExam = c.HasExam, PassScore = c.PassScore, IsActive = c.IsActive
+            };
+        showEdit = true;
+    }
+
+    private void OnInstructorChanged()
+    {
+        var i = instructors.FirstOrDefault(x => x.Id == form.InstructorId);
+        if (i != null && string.IsNullOrWhiteSpace(form.TrainerName))
+            form.TrainerName = i.Name;
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            await Svc.SaveCourseAsync(editId, form);
+            Toast.Success("دوره ذخیره شد.");
+            showEdit = false;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(FaLmsCourseDto c)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "دوره «" + c.Title + "» حذف شود؟")) return;
+        try { await Svc.DeleteCourseAsync(c.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

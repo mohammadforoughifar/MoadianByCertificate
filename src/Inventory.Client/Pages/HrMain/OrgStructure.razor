@@ -1,0 +1,295 @@
+@namespace Inventory.Client.Pages
+@page "/hr-main/org"
+@inject IHrMainService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>ساختار سازمانی</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1><i class="bi bi-diagram-3-fill"></i> ساختار سازمانی</h1>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-outline-secondary" href="hr-main/org/change-log"><i class="bi bi-clock-history"></i> تاریخچه و مقایسه</a>
+        @if (canCreate)
+        {
+            <button class="btn btn-primary" @onclick="() => OpenEdit(null, null)"><i class="bi bi-plus-lg"></i> گره ریشه (شرکت)</button>
+        }
+    </div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به این بخش برای شما فعال نیست.</div>
+    return;
+}
+
+    <div class="mtabs mb-3 d-flex align-items-center flex-wrap gap-2">
+        <button class="mtab @(tab == 0 ? "active" : "")" @onclick="() => tab = 0"><i class="bi bi-list-nested"></i> درخت مدیریتی</button>
+        <button class="mtab @(tab == 1 ? "active" : "")" @onclick="() => tab = 1"><i class="bi bi-diagram-3"></i> چارت بصری</button>
+        @if (tab == 1 && tree.Count > 0)
+        {
+            <button class="btn btn-sm btn-outline-secondary ms-auto no-print" @onclick="PrintChart"><i class="bi bi-printer"></i> چاپ / خروجی PDF چارت</button>
+        }
+    </div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else if (tree.Count == 0)
+{
+    <div class="card border-0 shadow-sm"><div class="card-body">
+        <div class="empty-state"><i class="bi bi-diagram-3"></i><h5>هنوز ساختاری تعریف نشده است</h5><p class="text-muted small mb-0">ابتدا گره ریشه (شرکت) را بسازید.</p></div>
+    </div></div>
+}
+else if (tab == 0)
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-body">
+            @foreach (var r in tree)
+            {
+                <OrgNodeItem Node="r" CanCreate="canCreate" CanUpdate="canUpdate" CanDelete="canDelete"
+                             OnAddChild="n => OpenEdit(null, n)" OnEdit="n => OpenEdit(n, null)" OnDelete="AskDelete" />
+            }
+        </div>
+    </div>
+}
+else
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-4 overflow-auto">
+            <div class="org-chart">
+                <ul>
+                    @foreach (var r in tree)
+                    {
+                        <OrgChartNode Node="r" />
+                    }
+                </ul>
+            </div>
+        </div>
+    </div>
+}
+
+<Modal Visible="showEdit" Title="@(editId == null ? "گره جدید" : "ویرایش گره")" Size="modal-lg" OnClose="() => showEdit = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label">والد (بدون والد = ریشه شرکت)</label>
+                <select class="form-select" @bind="form.ParentId">
+                    <option value="">— ریشه (شرکت) —</option>
+                    @foreach (var n in flat.Where(x => x.Id != editId))
+                    {
+                        <option value="@n.Id">@(new string('—', n.Level)) @n.Name (@HrMainUi.OrgLevel(n.Level))</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">سطح <span class="text-danger">*</span></label>
+                <select class="form-select" @bind="form.Level">
+                    <option value="0">شرکت (ریشه)</option>
+                    <option value="1">واحد</option>
+                    <option value="2">دپارتمان</option>
+                    <option value="3">تیم</option>
+                </select>
+            </div>
+            <div class="col-md-4"><label class="form-label">کد <span class="text-danger">*</span></label><input class="form-control num" @bind="form.Code" /></div>
+            <div class="col-md-8"><label class="form-label">نام <span class="text-danger">*</span></label><input class="form-control" @bind="form.Name" /></div>
+            <div class="col-md-6">
+                <label class="form-label">شعبه محل استقرار</label>
+                <select class="form-select" @bind="form.BranchId">
+                    <option value="">—</option>
+                    @foreach (var b in branches)
+                    {
+                        <option value="@b.Id">@b.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-6"><label class="form-label">عنوان مدیر گره</label><input class="form-control" @bind="form.ManagerTitle" placeholder="مثلاً مدیر مالی" /></div>
+            <div class="col-md-6"><label class="form-label">تلفن</label><input class="form-control num" dir="ltr" @bind="form.Phone" /></div>
+            <div class="col-md-3"><label class="form-label">ترتیب نمایش</label><input class="form-control num" type="number" @bind="form.SortOrder" /></div>
+            <div class="col-md-3 d-flex align-items-end">
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="nact" @bind="form.IsActive" /><label class="form-check-label" for="nact">فعال</label></div>
+            </div>
+            <div class="col-12"><label class="form-label">توضیحات</label><textarea class="form-control" rows="2" @bind="form.Description"></textarea></div>
+        </div>
+        <div class="alert alert-light border small mt-2 mb-0">قانون سلسله‌مراتب: ریشه فقط «شرکت» است و هر زیرمجموعه باید از سطح عمیق‌تر از والد باشد (شرکت ← واحد ← دپارتمان ← تیم).</div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="Save">
+            @if (saving)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showDelete" Title="حذف گره سازمانی" OnClose="() => showDelete = false">
+    <ChildContent>
+        <p>«<b>@delItem?.Name</b>» حذف شود؟</p>
+        @if ((delItem?.Children.Count ?? 0) > 0 || (delItem?.PositionCount ?? 0) > 0)
+        {
+            <div class="alert alert-warning mb-0">این گره زیرمجموعه یا پست سازمانی دارد و قابل حذف نیست؛ ابتدا آن‌ها را حذف یا جابه‌جا کنید.</div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showDelete = false">انصراف</button>
+        <button class="btn btn-danger" disabled="@((delItem?.Children.Count ?? 0) > 0 || (delItem?.PositionCount ?? 0) > 0 || deleting)" @onclick="DoDelete">
+            @if (deleting)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            حذف
+        </button>
+    </Footer>
+</Modal>
+
+<style>
+    /* ---------- درخت مدیریتی ---------- */
+    .hrmain-tchildren { margin-right: 1.4rem; padding-right: .6rem; border-right: 2px solid #f0e6f5; }
+    .hrmain-trow { display: flex; align-items: center; gap: .5rem; padding: .45rem .5rem; border-radius: .6rem; flex-wrap: wrap; }
+    .hrmain-trow:hover { background: #fdf4ff; }
+    .hrmain-texp { width: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+    .hrmain-texp-leaf { width: 28px; }
+    .hrmain-tico { color: #a21caf; font-size: 1.1rem; }
+
+    /* ---------- چارت بصری ---------- */
+    .org-chart { min-width: max-content; margin: 0 auto; width: max-content; max-width: 100%; }
+    .org-chart ul { display: flex; justify-content: center; padding-top: 22px; padding-right: 0; position: relative; margin: 0; }
+    .org-chart li { list-style: none; position: relative; padding: 22px 8px 0 8px; text-align: center; }
+    .org-chart li::before, .org-chart li::after { content: ''; position: absolute; top: 0; left: 50%; border-top: 2px solid #d8b4fe; width: 50%; height: 22px; }
+    .org-chart li::after { left: auto; right: 50%; border-left: 2px solid #d8b4fe; border-right: none; }
+    .org-chart li:only-child::before, .org-chart li:only-child::after { display: none; }
+    .org-chart li:only-child { padding-top: 0; }
+    .org-chart li:first-child::before, .org-chart li:last-child::after { border: 0 none; }
+    .org-chart li:last-child::before { border-right: 2px solid #d8b4fe; border-radius: 0 8px 0 0; }
+    .org-chart li:first-child::after { border-radius: 8px 0 0 0; }
+    .org-chart ul ul::before { content: ''; position: absolute; top: 0; right: 50%; border-right: 2px solid #d8b4fe; width: 0; height: 22px; }
+    .org-box { display: inline-block; min-width: 170px; max-width: 230px; background: #fff; border: 1px solid #e9d5ff; border-top-width: 4px; border-radius: .8rem; padding: .6rem .8rem; box-shadow: 0 3px 12px rgba(162,28,175,.10); vertical-align: top; }
+    .org-lv-0 { border-top-color: #7c3aed; }
+    .org-lv-1 { border-top-color: #0ea5e9; }
+    .org-lv-2 { border-top-color: #f59e0b; }
+    .org-lv-3 { border-top-color: #22c55e; }
+    .org-box-head { font-size: .68rem; color: #6b7280; font-weight: 700; }
+    .org-box-name { font-weight: 800; font-size: .92rem; margin: .15rem 0; }
+    .org-box-code { font-size: .72rem; color: #9ca3af; }
+    .org-box-mgr { font-size: .75rem; color: #7c3aed; margin-top: .2rem; }
+    .org-box-branch { font-size: .72rem; color: #6b7280; }
+    .org-box-counts { display: flex; justify-content: center; gap: .6rem; margin-top: .3rem; padding-top: .3rem; border-top: 1px dashed #e9d5ff; font-size: .72rem; color: #7c3aed; font-weight: 700; }
+    .org-off { opacity: .45; filter: grayscale(1); }
+
+    @@media print {
+        .page-head, .mtabs .mtab, .no-print { display: none !important; }
+        .card { box-shadow: none !important; border: none !important; }
+        .org-chart { transform: scale(.9); transform-origin: top center; }
+    }
+</style>
+
+@code {
+    private bool canRead => Auth.Has("HrMain.Read") || Auth.Has("HrMain.Org") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrMain.Create") || Auth.Has("HrMain.Org") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrMain.Update") || Auth.Has("HrMain.Org") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrMain.Delete") || Auth.Has("HrMain.Org") || Auth.IsAdmin;
+
+    private bool loading = true, saving, deleting;
+    private int tab;
+    private List<HrMainOrgNodeDto> tree = new();
+    private List<HrMainOrgNodeDto> flat = new();
+    private List<HrMainBranchDto> branches = new();
+
+    private bool showEdit, showDelete;
+    private int? editId;
+    private HrMainOrgNodeSaveDto form = new();
+    private HrMainOrgNodeDto? delItem;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) { loading = false; return; }
+        try { branches = await Svc.ListBranchesAsync(); } catch { }
+        await Reload();
+    }
+
+    private async Task PrintChart() => await JS.InvokeVoidAsync("window.print");
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            tree = await Svc.GetOrgTreeAsync();
+            flat = await Svc.ListOrgNodesAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenEdit(HrMainOrgNodeDto? node, HrMainOrgNodeDto? parent)
+    {
+        if (node is null)
+        {
+            editId = null;
+            form = new HrMainOrgNodeSaveDto();
+            if (parent is not null)
+            {
+                form.ParentId = parent.Id;
+                form.Level = Math.Min(3, parent.Level + 1);
+            }
+            else
+            {
+                form.ParentId = null;
+                form.Level = 0;
+            }
+        }
+        else
+        {
+            editId = node.Id;
+            form = new HrMainOrgNodeSaveDto
+            {
+                ParentId = node.ParentId, Level = node.Level, Code = node.Code, Name = node.Name,
+                BranchId = node.BranchId, ManagerTitle = node.ManagerTitle, Phone = node.Phone,
+                Description = node.Description, SortOrder = node.SortOrder, IsActive = node.IsActive
+            };
+        }
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            await Svc.SaveOrgNodeAsync(editId, form);
+            showEdit = false;
+            Toast.Success("ذخیره شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private void AskDelete(HrMainOrgNodeDto n)
+    {
+        delItem = n;
+        showDelete = true;
+    }
+
+    private async Task DoDelete()
+    {
+        if (delItem is null) return;
+        deleting = true;
+        try
+        {
+            await Svc.DeleteOrgNodeAsync(delItem.Id);
+            showDelete = false;
+            Toast.Success("حذف شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { deleting = false; }
+    }
+}

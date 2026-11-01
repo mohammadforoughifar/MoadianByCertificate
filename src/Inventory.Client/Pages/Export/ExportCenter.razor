@@ -1,0 +1,153 @@
+@page "/export-center"
+@inject IApiClient Api
+@inject IToastService Toast
+@inject IAuthState Auth
+
+<PageTitle>مرکز خروجی</PageTitle>
+
+<div class="card shadow-sm mb-3">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center flex-wrap gap-2"
+         style="background:linear-gradient(135deg,#0ea5e9,#6366f1);color:#fff;border-radius:14px 14px 0 0;">
+        <span>
+            <i class="bi bi-file-earmark-arrow-down me-2"></i>مرکز خروجی
+            <span class="badge bg-light text-dark ms-1">@reports.Count.Num()</span>
+        </span>
+        <div class="d-flex gap-2 align-items-center">
+            <input class="form-control form-control-sm" style="width:210px" placeholder="جستجوی گزارش…"
+                   @bind="search" @bind:event="oninput" />
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else if (reports.Count == 0)
+{
+    <div class="empty-state">
+        <i class="bi bi-inbox"></i>
+        <h5>گزارشی در دسترس نیست</h5>
+        <p class="fs-8 text-muted">برای خروجی گرفتن، مجوز «Export» ماژول مربوطه لازم است.</p>
+    </div>
+}
+else
+{
+    @foreach (var g in Filtered.GroupBy(r => r.Module))
+    {
+        <div class="card mb-3">
+            <div class="card-header fw-700 fs-8">
+                <i class="bi @ModuleIcon(g.Key) ms-1"></i> @g.Key
+                <span class="badge bg-secondary ms-1">@g.Count().Num()</span>
+            </div>
+            <div class="card-body p-2">
+                <div class="row g-2">
+                    @foreach (var r in g)
+                    {
+                        <div class="col-md-6 col-xl-4">
+                            <div class="rep-card">
+                                <div class="flex-grow-1">
+                                    <div class="fw-600 fs-8">@r.Title</div>
+                                    <div class="fs-9 text-muted num">@r.Key</div>
+                                    @if (NeedsParam(r.Key))
+                                    {
+                                        <div class="fs-9 text-warning mt-1">
+                                            <i class="bi bi-info-circle"></i> نیازمند انتخاب مورد
+                                        </div>
+                                    }
+                                </div>
+                                @if (NeedsParam(r.Key))
+                                {
+                                    <input class="form-control form-control-sm num mb-1" style="width:80px"
+                                           placeholder="شناسه" @bind="paramId" />
+                                }
+                                <ExportButtons ReportKey="@r.Key" ShowText="false"
+                                               Query="@QueryFor(r.Key)" />
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+}
+
+<div class="alert alert-light fs-8 border">
+    <i class="bi bi-lightbulb text-warning ms-1"></i>
+    گزارش‌های آرشیو اسناد فقط شامل مدارکی هستند که شما به آن‌ها دسترسی دارید.
+    برای گزارش‌هایی که «نیازمند انتخاب مورد» هستند، ابتدا شناسه را وارد کنید.
+</div>
+
+<style>
+    .rep-card { display:flex; align-items:center; gap:.5rem; border:1px solid #e8edf3;
+                border-radius:12px; padding:.6rem .75rem; background:#fff; height:100%; }
+    .rep-card:hover { border-color:#c7d7ee; background:#fbfdff; }
+    .fs-9 { font-size:.68rem; }
+    .fw-600 { font-weight:600; }
+</style>
+
+@code {
+    private List<ReportInfo> reports = new();
+    private bool loading = true;
+    private string search = "";
+    private string paramId = "";
+
+    public class ReportInfo
+    {
+        public string Key { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string Module { get; set; } = "";
+    }
+
+    private IEnumerable<ReportInfo> Filtered =>
+        string.IsNullOrWhiteSpace(search)
+            ? reports
+            : reports.Where(r => r.Title.Contains(search, StringComparison.OrdinalIgnoreCase)
+                              || r.Key.Contains(search, StringComparison.OrdinalIgnoreCase)
+                              || r.Module.Contains(search, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            reports = await Api.GetAsync<List<ReportInfo>>("api/exp/reports") ?? new();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    /// <summary>گزارش‌هایی که بدون پارامتر کار نمی‌کنند.</summary>
+    private static bool NeedsParam(string key) =>
+        key is "inv-kardex" or "acc-ledger" or "stk-diff" or "doc-history";
+
+    private object? QueryFor(string key)
+    {
+        if (!NeedsParam(key)) return null;
+        if (!int.TryParse(paramId, out var id) || id <= 0) return null;
+
+        return key switch
+        {
+            "inv-kardex" => new { productId = id },
+            "acc-ledger" => new { accountId = id },
+            "stk-diff" => new { sessionId = id },
+            _ => new { id }
+        };
+    }
+
+    private static string ModuleIcon(string module) => module switch
+    {
+        "انبارداری" => "bi-box-seam",
+        "حسابداری" => "bi-journal-bookmark",
+        "فاکتور" => "bi-receipt",
+        "خزانه‌داری" => "bi-cash-coin",
+        "انبارگردانی" => "bi-clipboard-check",
+        "آرشیو اسناد" => "bi-folder2-open",
+        _ => "bi-file-earmark"
+    };
+}

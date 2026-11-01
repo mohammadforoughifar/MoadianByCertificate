@@ -1,0 +1,651 @@
+@namespace Inventory.Client.Pages
+@page "/system-users"
+@inject HttpClient Http
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center flex-wrap gap-2" style="background:linear-gradient(135deg,#4f8cff,#8e5cff);color:#fff;border-radius:14px 14px 0 0;">
+        <span><i class="bi bi-people-fill me-2"></i>لیست کاربران سیستم
+            <span class="badge bg-light text-dark ms-1">@filteredItems.Count</span>
+        </span>
+        <button class="btn btn-light btn-sm fw-700 shadow-sm" style="border-radius:8px;color:#4f5b8a;" @onclick="OpenForm"><i class="bi bi-plus-lg"></i> افزودن کاربر</button>
+    </div>
+        <div class="mb-3">
+        <input type="text" class="form-control" style="max-width:280px"
+               placeholder="جستجو (نام / شماره پرسنلی)..." @bind="searchText" @bind:event="oninput" />
+        <span class="badge bg-secondary">@filteredItems.Count کاربر</span>
+    </div>
+    <div class="table-responsive d-none d-md-block">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>#</th><th>نام و نام خانوادگی</th><th>شماره تماس</th><th>شماره پرسنلی</th>
+                    <th>شرکت</th><th>واحد</th><th>دسته‌بندی</th><th>وضعیت</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (isLoading)
+                {
+                    <tr><td colspan="9" class="text-center py-4"><div class="spinner-border text-primary"></div></td></tr>
+                }
+                else if (!filteredItems.Any())
+                {
+                    <tr><td colspan="9" class="text-center text-muted py-4">کاربری یافت نشد.</td></tr>
+                }
+                else
+                {
+                    var i = 1;
+                    @foreach (var u in filteredItems)
+                    {
+                        <tr>
+                            <td>@(i++)</td>
+                            <td>
+                                <div class="uv-wrap">
+                                    <UserAvatar SystemUserId="@u.Id" Size="34" CacheBust="@photoBust" />
+                                    <span class="uv-name">@u.FirstName @u.LastName</span>
+                                </div>
+                            </td>
+                            <td class="num" dir="ltr">@(string.IsNullOrWhiteSpace(u.Phone) ? "—" : u.Phone)</td>
+                            <td>@u.StaffNumber</td>
+                            <td>@GetCompanyName(u.CompanyId)</td>
+                            <td>@GetDepartmentName(u.DepartmentId)</td>
+                            <td>@RoleName(u.Role)</td>
+                            <td><span class="badge @(u.IsActive ? "bg-success" : "bg-secondary")">@(u.IsActive ? "فعال" : "غیرفعال")</span></td>
+                            <td>
+                                <div class="d-flex gap-1 justify-content-center">
+                                    <button class="btn btn-sm btn-outline-info ops-btn" title="تغییر عکس" @onclick="() => OpenChangePhoto(u)"><i class="bi bi-camera-fill"></i></button>
+                                    <button class="btn btn-sm btn-outline-primary ops-btn" title="ویرایش" @onclick="() => EditUser(u)"><i class="bi bi-pencil-fill"></i></button>
+                                    <button class="btn btn-sm btn-outline-danger ops-btn" title="حذف" @onclick="() => DeleteUser(u.Id)"><i class="bi bi-trash-fill"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @* ---------- کارت‌ویو موبایل ---------- *@
+    <div class="d-md-none px-3 pb-3">
+        @if (isLoading)
+        {
+            <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (filteredItems.Count == 0)
+        {
+            <div class="alert alert-info py-2">کاربری یافت نشد.</div>
+        }
+        else
+        {
+            foreach (var u in filteredItems)
+            {
+                <div class="m-card">
+                    <div class="m-title d-flex align-items-center gap-2">
+                        <UserAvatar SystemUserId="@u.Id" Size="40" CacheBust="@photoBust" />
+                        @u.FirstName @u.LastName
+                    </div>
+                    <div class="m-row"><span class="m-label">شماره تماس</span><span class="m-val num" dir="ltr">@(string.IsNullOrWhiteSpace(u.Phone) ? "—" : u.Phone)</span></div>
+                    <div class="m-row"><span class="m-label">شماره پرسنلی</span><span class="m-val">@u.StaffNumber</span></div>
+                    <div class="m-row"><span class="m-label">شرکت</span><span class="m-val">@GetCompanyName(u.CompanyId)</span></div>
+                    <div class="m-row"><span class="m-label">واحد</span><span class="m-val">@GetDepartmentName(u.DepartmentId)</span></div>
+                    <div class="m-row"><span class="m-label">نقش</span><span class="m-val">@RoleName(u.Role)</span></div>
+                    <div class="m-row"><span class="m-label">وضعیت</span><span class="m-val">@(u.IsActive ? "فعال ✅" : "غیرفعال")</span></div>
+                    <div class="m-actions">
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => EditUser(u)"><i class="bi bi-pencil-fill"></i> ویرایش</button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteUser(u.Id)"><i class="bi bi-trash-fill"></i> حذف</button>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@if (ShowForm)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+        <div class="modal-dialog modal-dialog-centered" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(editingUser ? "ویرایش کاربر" : "افزودن کاربر جدید")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseForm"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrWhiteSpace(formError))
+                    {
+                        <div class="alert alert-danger py-2">@formError</div>
+                    }
+                    <div class="photo-pick mb-3">
+                        <label class="form-label small fw-800 mb-1"><i class="bi bi-camera"></i> عکس کاربر <span class="text-muted fw-600">(اختیاری — بدون عکس، عکس پیش‌فرض نمایش داده می‌شود)</span></label>
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="pp-preview">
+                                @if (pendingPhotoPreview != null)
+                                {
+                                    <img src="@pendingPhotoPreview" alt="پیش‌نمایش" />
+                                }
+                                else
+                                {
+                                    <i class="bi bi-person-circle"></i>
+                                }
+                            </div>
+                            <div class="d-flex flex-column gap-1">
+                                <InputFile OnChange="OnPhotoPicked" Accept="image/*" class="btn btn-sm btn-outline-primary" style="max-width:220px">
+                                    <i class="bi bi-cloud-arrow-up-fill"></i> انتخاب عکس (JPG/PNG، حداکثر ۵MB)
+                                </InputFile>
+                                @if (pendingPhotoPreview != null)
+                                {
+                                    <button type="button" class="btn btn-sm btn-link text-danger p-0" @onclick="ClearPhoto"><i class="bi bi-x-circle"></i> حذف عکس</button>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">نام <span class="text-danger">*</span></label>
+                            <input class="form-control" @bind="form.FirstName" placeholder="مثلاً: علی" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">نام خانوادگی</label>
+                            <input class="form-control" @bind="form.LastName" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">شماره تماس</label>
+                            <input class="form-control num" dir="ltr" @bind="form.Phone" placeholder="09xxxxxxxxx" inputmode="tel" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">شماره پرسنلی <span class="text-danger">*</span></label>
+                            <input class="form-control" @bind="form.StaffNumber" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">شرکت <span class="text-danger">*</span></label>
+                            @if (companies.Any())
+                            {
+                                <select class="form-select" value="@selectedCompanyId" @onchange="OnCompanyChanged">
+                                    <option value="0">— انتخاب کنید —</option>
+                                    @foreach (var c in companies.Where(c => c.IsActive).OrderBy(c => c.Name))
+                                    {
+                                        <option value="@c.Id">@c.Name</option>
+                                    }
+                                </select>
+                            }
+                            else
+                            {
+                                <div class="alert alert-warning py-2 mb-0">
+                                    شرکتی ثبت نشده — اول از صفحه‌ی «شناسه سیستم» یک شرکت بسازید.
+                                </div>
+                            }
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">واحد (دپارتمان)</label>
+                            <select class="form-select" @bind="form.DepartmentId">
+                                <option value="">— بدون واحد —</option>
+                                @foreach (var d in departments.Where(d => d.CompanyId == selectedCompanyId).OrderBy(d => d.Name))
+                                {
+                                    <option value="@d.Id">@d.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">واحد سازمانی (برای شماره نامه)</label>
+                            <select class="form-select" @bind="selectedOrganizationId">
+                                <option value="">— بدون واحد سازمانی —</option>
+                                @foreach (var o in organizations.Where(o => o.IsActive && (selectedCompanyId is null || selectedCompanyId == 0 || selectedCompanyId == o.CompanyId)).OrderBy(o => o.NameUnit))
+                                {
+                                    <option value="@o.OrganizationId">@o.NameUnit (@o.NameUniq)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">دسته‌بندی (سطح دسترسی سیستمی)</label>
+                            <select class="form-select" @bind="form.Role">
+                                <option value="User">کاربر عادی (کارمند)</option>
+                                <option value="Operator">اپراتور</option>
+                                <option value="Accountant">حسابدار</option>
+                                <option value="Referrer">معرف</option>
+                                <option value="Admin">مدیر کل</option>
+                            </select>
+                            <div class="form-text fs-8">
+                                دسترسی‌های جزئی‌تر (مدیر منابع انسانی، کارشناس IT و ...) از صفحه «کاربران» ← تب «نقش‌ها و دسترسی‌ها» اختصاص داده می‌شوند.
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check form-switch mt-4 pt-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="activeSwitch" @bind="form.IsActive" />
+                                <label class="form-check-label" for="activeSwitch">کاربر فعال باشد</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseForm">انصراف</button>
+                    <button class="btn btn-primary" disabled="@busy" @onclick="SaveUser">
+                        @(editingUser ? "ذخیره تغییرات" : "افزودن کاربر")
+                    </button>
+                </div>
+
+@* ---------- مودال تغییر عکس کاربر ---------- *@
+@if (ShowChangePhoto)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.55)">
+        <div class="modal-dialog modal-dialog-centered" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-camera-fill text-info"></i> تغییر عکس — @(changePhotoUser != null ? changePhotoUser.FirstName + " " + changePhotoUser.LastName : "")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseChangePhoto"></button>
+                </div>
+                <div class="modal-body text-center">
+                    <div class="pp-preview pp-preview-lg mx-auto mb-3">
+                        @if (cpPreview != null)
+                        {
+                            <img src="@cpPreview" alt="پیش‌نمایش عکس" />
+                        }
+                        else if (changePhotoUser != null)
+                        {
+                            <UserAvatar SystemUserId="@changePhotoUser.Id" Size="100" CssClass="user-avatar-xl" CacheBust="@photoBust" />
+                        }
+                    </div>
+                    <InputFile OnChange="OnChangePhotoPicked" Accept="image/*" class="btn btn-primary" style="max-width:280px">
+                        <i class="bi bi-cloud-arrow-up-fill"></i> انتخاب عکس جدید (JPG/PNG، حداکثر ۵MB)
+                    </InputFile>
+                    @if (cpError.Length > 0)
+                    { <div class="alert alert-danger py-2 mt-3">@cpError</div> }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseChangePhoto">انصراف</button>
+                    <button class="btn btn-success rounded-pill px-4 fw-800" disabled="@(cpPreview == null || cpBusy)" @onclick="SubmitChangePhoto">
+                        @if (cpBusy)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <text>در حال ذخیره…</text>
+                        }
+                        else
+                        {
+                            <i class="bi bi-check-circle-fill"></i>
+                            <text>ذخیره عکس</text>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<SystemUserItem> items = new();
+    private List<SystemCompanyItem> companies = new();
+    private List<OrganizationItem> organizations = new();
+
+    // ================== عکس کاربر ==================
+    private long photoBust;
+    private byte[]? pendingPhoto;
+    private string? pendingPhotoName;
+    private string? pendingPhotoPreview;
+
+    private SystemUserItem? changePhotoUser;
+    private bool ShowChangePhoto;
+    private bool cpBusy;
+    private string cpError = "";
+    private byte[]? cpBytes;
+    private string? cpPreview;
+
+    private void ResetPhoto()
+    {
+        pendingPhoto = null;
+        pendingPhotoName = null;
+        pendingPhotoPreview = null;
+    }
+
+    private async Task OnPhotoPicked(InputFileChangeEventArgs e)
+    {
+        cpError = "";
+        var file = e.File;
+        if (file == null || file.Size == 0) return;
+        if (file.Size > 5 * 1024 * 1024) { formError = "حداکثر حجم عکس ۵ مگابایت است."; StateHasChanged(); return; }
+        var buf = new byte[file.Size];
+        await file.OpenReadStream(long.MaxValue).ReadAsync(buf);
+        pendingPhoto = buf;
+        pendingPhotoName = file.Name;
+        pendingPhotoPreview = "data:" + (file.ContentType ?? "image/jpeg") + ";base64," + Convert.ToBase64String(buf);
+        StateHasChanged();
+    }
+
+    private void ClearPhoto()
+    {
+        ResetPhoto();
+        StateHasChanged();
+    }
+
+    private async Task UploadPhotoAsync(int userId, byte[] bytes, string name)
+    {
+        try
+        {
+            using var form = new MultipartFormDataContent();
+            var content = new ByteArrayContent(bytes);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+            form.Add(content, "file", name);
+            var resp = await Http.PostAsync($"/api/SystemUsers/photo/{userId}", form);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                formError = "عکس ذخیره نشد: " + ExtractServerError(body);
+            }
+        }
+        catch (Exception ex)
+        {
+            formError = "خطا در آپلود عکس: " + ex.Message;
+        }
+    }
+
+    // ---------- مودال تغییر عکس ----------
+    private void OpenChangePhoto(SystemUserItem u)
+    {
+        changePhotoUser = u;
+        cpBytes = null;
+        cpPreview = null;
+        cpError = "";
+        ShowChangePhoto = true;
+        StateHasChanged();
+    }
+
+    private void CloseChangePhoto()
+    {
+        ShowChangePhoto = false;
+        cpBytes = null;
+        cpPreview = null;
+        cpError = "";
+        StateHasChanged();
+    }
+
+    private async Task OnChangePhotoPicked(InputFileChangeEventArgs e)
+    {
+        cpError = "";
+        var file = e.File;
+        if (file == null || file.Size == 0) return;
+        if (file.Size > 5 * 1024 * 1024) { cpError = "حداکثر حجم عکس ۵ مگابایت است."; StateHasChanged(); return; }
+        var buf = new byte[file.Size];
+        await file.OpenReadStream(long.MaxValue).ReadAsync(buf);
+        cpBytes = buf;
+        cpPreview = "data:" + (file.ContentType ?? "image/jpeg") + ";base64," + Convert.ToBase64String(buf);
+        StateHasChanged();
+    }
+
+    private async Task SubmitChangePhoto()
+    {
+        if (changePhotoUser == null || cpBytes == null) return;
+        cpBusy = true;
+        cpError = "";
+        try
+        {
+            using var form = new MultipartFormDataContent();
+            var content = new ByteArrayContent(cpBytes);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+            form.Add(content, "file", "photo.jpg");
+            var resp = await Http.PostAsync($"/api/SystemUsers/photo/{changePhotoUser.Id}", form);
+            if (resp.IsSuccessStatusCode)
+            {
+                photoBust++;
+                ShowChangePhoto = false;
+            }
+            else
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                cpError = "عکس ذخیره نشد: " + ExtractServerError(body);
+            }
+        }
+        catch (Exception ex)
+        {
+            cpError = "خطا در آپلود عکس: " + ex.Message;
+        }
+        cpBusy = false;
+        StateHasChanged();
+    }
+    private List<SystemDepartmentItem> departments = new();
+
+    private bool isLoading = true;
+    private bool companiesLoadFailed = false;
+    private bool ShowForm = false;
+    private bool editingUser = false;
+    private bool busy = false;
+    private string formError = "";
+    private string searchText = "";
+    private int? selectedCompanyId = null;
+    private int? selectedOrganizationId = null;
+    private int editId = 0;
+
+    private UserForm form = new();
+
+    private List<SystemUserItem> filteredItems => string.IsNullOrWhiteSpace(searchText)
+        ? items
+        : items.Where(u =>
+            (u.FirstName + " " + u.LastName).Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            (u.Phone ?? "").Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            u.StaffNumber.Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try { items = await Http.GetFromJsonAsync<List<SystemUserItem>>("/api/SystemUsers") ?? new(); }
+        catch { items = new(); }
+        try
+        {
+            companies = await Http.GetFromJsonAsync<List<SystemCompanyItem>>("/api/SystemCompanies") ?? new();
+            companiesLoadFailed = false;
+        }
+        catch { companies = new(); companiesLoadFailed = true; }
+        try { departments = await Http.GetFromJsonAsync<List<SystemDepartmentItem>>("/api/SystemDepartments") ?? new(); }
+        catch { departments = new(); }
+        try { organizations = await Http.GetFromJsonAsync<List<OrganizationItem>>("/api/SystemOrganizations") ?? new(); }
+        catch { organizations = new(); }
+        finally { isLoading = false; }
+    }
+
+    private void OpenForm()
+    {
+        editingUser = false; editId = 0; formError = "";
+        form = new UserForm();
+        selectedCompanyId = 0;
+        selectedOrganizationId = null;
+        ResetPhoto();
+        ShowForm = true;
+    }
+
+    private void EditUser(SystemUserItem u)
+    {
+        editingUser = true; editId = u.Id; formError = "";
+        form = new UserForm
+        {
+            FirstName = u.FirstName ?? "",
+            LastName = u.LastName ?? "",
+            Phone = u.Phone ?? "",
+            StaffNumber = u.StaffNumber ?? "",
+            DepartmentId = u.DepartmentId,
+            Role = string.IsNullOrWhiteSpace(u.Role) ? "User" : u.Role,
+            IsActive = u.IsActive
+        };
+        selectedCompanyId = u.CompanyId ?? 0;
+        selectedOrganizationId = u.OrganizationId;
+        ResetPhoto();
+        ShowForm = true;
+        StateHasChanged();
+    }
+
+    private void CloseForm()
+    {
+        ShowForm = false;
+        ResetPhoto();
+    }
+
+    private void OnCompanyChanged(ChangeEventArgs e)
+    {
+        selectedCompanyId = int.TryParse(e.Value?.ToString(), out var id) ? id : 0;
+        form.DepartmentId = null; // با تغییر شرکت، دپارتمان قبلی دیگر معتبر نیست
+    }
+
+    private async Task SaveUser()
+    {
+        // اعتبارسنجی اینجا انجام می‌شود نه با disable کردن دکمه —
+        // بنابراین کلیک همیشه وارد این متد می‌شود و بریک‌پوینت هم می‌گیرد.
+        formError = "";
+
+        if (string.IsNullOrWhiteSpace(form.FirstName))
+        { formError = "نام را وارد کنید."; return; }
+
+        if (string.IsNullOrWhiteSpace(form.StaffNumber))
+        { formError = "شماره پرسنلی را وارد کنید."; return; }
+
+        if (selectedCompanyId <= 0)
+        { formError = "یک شرکت انتخاب کنید. اگر لیست شرکت‌ها خالی است، اول از صفحه‌ی «شناسه سیستم» شرکت بسازید و مطمئن شوید API در حال اجراست."; return; }
+
+        busy = true;
+        try
+        {
+            var payload = new SystemUserItem
+            {
+                Id = editId,
+                FirstName = form.FirstName.Trim(),
+                LastName = form.LastName?.Trim() ?? "",
+                Phone = string.IsNullOrWhiteSpace(form.Phone) ? null : form.Phone.Trim(),
+                StaffNumber = form.StaffNumber.Trim(),
+                DepartmentId = form.DepartmentId != null &&
+                               departments.Any(d => d.Id == form.DepartmentId && d.CompanyId == selectedCompanyId)
+                               ? form.DepartmentId : null,
+                CompanyId = selectedCompanyId,
+                OrganizationId = selectedOrganizationId,
+                Role = form.Role,
+                IsActive = form.IsActive,
+                CreatedAt = DateTime.Now
+            };
+
+            HttpResponseMessage resp;
+            if (editingUser && editId > 0)
+                resp = await Http.PutAsJsonAsync($"/api/SystemUsers/{editId}", payload);
+            else
+                resp = await Http.PostAsJsonAsync("/api/SystemUsers", payload);
+
+            if (resp.IsSuccessStatusCode)
+            {
+                int savedId = editId;
+                try
+                {
+                    var json = await resp.Content.ReadAsStringAsync();
+                    using var doc = System.Text.Json.JsonDocument.Parse(json);
+                    if (doc.RootElement.TryGetProperty("id", out var idEl)) savedId = idEl.GetInt32();
+                }
+                catch { }
+
+                ShowForm = false;
+                if (pendingPhoto != null && savedId > 0)
+                    await UploadPhotoAsync(savedId, pendingPhoto, pendingPhotoName ?? "photo.jpg");
+                pendingPhoto = null;
+                pendingPhotoName = null;
+                pendingPhotoPreview = null;
+                photoBust++;
+                await LoadAsync();
+            }
+            else
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                formError = $"سرور درخواست را نپذیرفت (کد {(int)resp.StatusCode}): {ExtractServerError(body)}";
+            }
+        }
+        catch (Exception ex)
+        {
+            formError = "ارتباط با API برقرار نشد. مطمئن شوید سرور (start.bat) در حال اجراست. (" + ex.Message + ")";
+        }
+        finally { busy = false; }
+    }
+
+    private async Task DeleteUser(int id)
+    {
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/SystemUsers/{id}");
+            if (resp.IsSuccessStatusCode) await LoadAsync();
+        }
+        catch { }
+    }
+
+    private string GetCompanyName(int? id) => companies.FirstOrDefault(c => c.Id == id)?.Name ?? "—";
+
+    /// <summary>استخراج پیام خطا از بدنه‌ی پاسخ خطای سرور.</summary>
+    private static string ExtractServerError(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "بدون جزئیات";
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("message", out var msg) && msg.ValueKind == System.Text.Json.JsonValueKind.String)
+                return msg.GetString() ?? json;
+            if (root.TryGetProperty("errors", out var errs) && errs.ValueKind == System.Text.Json.JsonValueKind.Object)
+                return string.Join(" | ", errs.EnumerateObject()
+                    .SelectMany(p2 => p2.Value.EnumerateArray().Where(v => v.ValueKind == System.Text.Json.JsonValueKind.String)
+                    .Select(v => $"{p2.Name}: {v.GetString()}")));
+            if (root.TryGetProperty("title", out var title) && title.ValueKind == System.Text.Json.JsonValueKind.String)
+                return title.GetString() ?? json;
+        }
+        catch { }
+        return json.Length > 400 ? json[..400] + "…" : json;
+    }
+    private string GetDepartmentName(int? id) => departments.FirstOrDefault(d => d.Id == id)?.Name ?? "—";
+    private static string RoleName(string? r) => r switch { "Admin" => "مدیر", "Operator" => "اپراتور", "Accountant" => "حسابدار", "Referrer" => "معرف", "HrManager" => "مدیر منابع انسانی", "Employee" => "کارمند", _ => "کاربر" };
+
+    private class UserForm
+    {
+        public string FirstName { get; set; } = "";
+        public string LastName { get; set; } = "";
+        public string Phone { get; set; } = "";
+        public string StaffNumber { get; set; } = "";
+        public int? DepartmentId { get; set; }
+        public int? OrganizationId { get; set; }
+        public string Role { get; set; } = "User";
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class SystemUserItem
+    {
+        public int Id { get; set; }
+        public string FirstName { get; set; } = "";
+        public string LastName { get; set; } = "";
+        public string? Phone { get; set; }
+        public string StaffNumber { get; set; } = "";
+        public int? DepartmentId { get; set; }
+        public int? CompanyId { get; set; }
+        public int? OrganizationId { get; set; }
+        public string? Role { get; set; } = "User";
+        public bool IsActive { get; set; } = true;
+        public DateTime CreatedAt { get; set; } = DateTime.Now;
+    }
+
+    public class OrganizationItem
+    {
+        public int OrganizationId { get; set; }
+        public int? CompanyId { get; set; }
+        public string NameUnit { get; set; } = "";
+        public string NameUniq { get; set; } = "";
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class SystemCompanyItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public string? Code { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class SystemDepartmentItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public int? CompanyId { get; set; }
+    }
+}
+
+<style>
+.ops-btn{width:34px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;border-radius:8px;}
+</style>

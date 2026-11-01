@@ -1,0 +1,136 @@
+@* نظرات و منشن — ترددار — 2025-10-09 *@
+@inject IDocArchiveService Svc
+@inject IToastService Toast
+
+<div class="doc-comments" dir="rtl">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <h6 class="mb-0 fw-700"><i class="bi bi-chat-dots ms-1"></i> نظرات <span class="badge bg-light text-dark">@totalCount</span></h6>
+    <button class="btn btn-xs btn-outline-secondary" @onclick="Load" disabled="@loading"><i class="bi bi-arrow-clockwise"></i> تازه‌سازی</button>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body p-2">
+      <div class="position-relative">
+        <textarea class="form-control" rows="2" placeholder="نظر بنویس — برای منشن @@ را بزن..." @bind="newBody" @bind:event="oninput" @onkeyup="OnKeyUp"></textarea>
+        @if (showMentionBox && mentionCandidates.Count > 0)
+        {
+          <div class="position-absolute bg-white border rounded shadow p-1" style="z-index:20; bottom:45px; right:10px; min-width:220px">
+            @foreach (var u in mentionCandidates.Take(6))
+            {
+              <button type="button" class="d-flex align-items-center gap-2 w-100 btn btn-sm btn-light text-start" @onclick="() => PickMention(u)">
+                <span class="bg-primary text-white rounded-circle d-grid place-items-center" style="width:26px;height:26px;font-size:11px">@u.Name.Substring(0,1)</span>
+                <span class="flex-grow-1 text-truncate">@u.Name</span>
+              </button>
+            }
+          </div>
+        }
+      </div>
+      @if (pickedMentions.Count > 0)
+      {
+        <div class="d-flex flex-wrap gap-1 mt-2">
+          @foreach (var pm in pickedMentions)
+          {
+            <span class="badge bg-primary">@pm.Name <i class="bi bi-x ms-1" style="cursor:pointer" @onclick="() => RemoveMention(pm)"></i></span>
+          }
+        </div>
+      }
+      <div class="d-flex justify-content-between align-items-center mt-2">
+        <span class="fs-9 text-muted">@newBody.Length / 2000</span>
+        <button class="btn btn-sm btn-primary" disabled="@(string.IsNullOrWhiteSpace(newBody) || sending)" @onclick="Send">
+          @if (sending){<span class="spinner-border spinner-border-sm ms-1"></span>} ارسال
+        </button>
+      </div>
+    </div>
+  </div>
+
+  @if (loading)
+  {
+    <div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> بارگذاری نظرات...</div>
+  }
+  else if (comments.Count == 0)
+  {
+    <div class="text-muted fs-8 text-center py-2">هنوز نظری ثبت نشده — اولین نظر را بگذار!</div>
+  }
+  else
+  {
+    @foreach (var c in comments)
+    {
+      <DocCommentItem Comment="@c" DocumentId="@DocumentId" Users="@Users" OnReply="OnReply" OnRefresh="Load" />
+    }
+  }
+</div>
+
+@code {
+  [Parameter] public int DocumentId { get; set; }
+  [Parameter] public int? VersionId { get; set; }
+  [Parameter] public List<LookupItem> Users { get; set; } = new();
+  private List<DocCommentDto> comments = new();
+  private int totalCount => CountAll(comments);
+  private int CountAll(List<DocCommentDto> list) => list.Sum(c => 1 + CountAll(c.Replies));
+  private bool loading, sending;
+  private string newBody = "";
+  private List<LookupItem> pickedMentions = new();
+  private bool showMentionBox;
+  private List<LookupItem> mentionCandidates = new();
+  private int? replyTo;
+
+  protected override async Task OnParametersSetAsync()
+  {
+    if (DocumentId > 0) await Load();
+  }
+
+  private async Task Load()
+  {
+    loading = true;
+    try { comments = await Svc.GetCommentsAsync(DocumentId) ?? new(); } catch (Exception ex) { Toast.Error(ex.Message); }
+    finally { loading = false; }
+  }
+
+  private void OnKeyUp(KeyboardEventArgs e)
+  {
+    var atIdx = newBody.LastIndexOf('@');
+    if (atIdx >= 0)
+    {
+      var q = newBody.Substring(atIdx + 1).Split(' ', '\n')[0].Trim();
+      if (q.Length >= 0)
+      {
+        mentionCandidates = Users.Where(u => u.Name.Contains(q, StringComparison.OrdinalIgnoreCase)).Take(6).ToList();
+        showMentionBox = mentionCandidates.Count > 0;
+        return;
+      }
+    }
+    showMentionBox = false;
+  }
+
+  private void PickMention(LookupItem u)
+  {
+    if (!pickedMentions.Any(x => x.Id == u.Id)) pickedMentions.Add(u);
+    var atIdx = newBody.LastIndexOf('@');
+    if (atIdx >= 0) newBody = newBody.Substring(0, atIdx) + "@" + u.Name + " ";
+    showMentionBox = false;
+  }
+  private void RemoveMention(LookupItem u) => pickedMentions.Remove(u);
+
+  private async Task Send()
+  {
+    if (string.IsNullOrWhiteSpace(newBody)) return;
+    sending = true;
+    try
+    {
+      var dto = new DocCommentCreateDto { DocumentId = DocumentId, VersionId = VersionId, ParentId = replyTo, Body = newBody.Trim(), MentionedUserIds = pickedMentions.Select(x => x.Id).ToList() };
+      await Svc.AddCommentAsync(dto);
+      newBody = ""; pickedMentions.Clear(); replyTo = null; showMentionBox = false;
+      Toast.Success("نظر ثبت شد.");
+      await Load();
+    }
+    catch (Exception ex) { Toast.Error(ex.Message); }
+    finally { sending = false; }
+  }
+
+  private void OnReply(int parentId)
+  {
+    replyTo = parentId;
+    newBody = "";
+    Toast.Info("پاسخ به نظر — متن را بنویس و ارسال بزن.");
+  }
+}

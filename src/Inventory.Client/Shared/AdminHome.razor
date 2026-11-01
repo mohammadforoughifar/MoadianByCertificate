@@ -1,0 +1,662 @@
+@using Inventory.Shared
+@using Inventory.Shared.Dtos
+@inject IDashboardService DashboardSvc
+@inject IReportService ReportSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>داشبورد — سامانه جامع انبار و فروش</PageTitle>
+
+@if (loading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+    </div>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>داشبورد</h1>
+            <p class="lead">خلاصه وضعیت انبار، خرید و فروش — @PersianDate.ToLong(DateTime.Now)</p>
+        </div>
+    </div>
+
+    @* ---------- داشبورد مدیریتی: فقط ادمین ---------- *@
+    @if (Auth.IsAdmin && admin is not null)
+    {
+        <h6 class="mb-2 text-muted"><i class="bi bi-cart-check"></i> فروش دوره‌ای</h6>
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-lg-3">
+                <div class="ref-stat ref-grad-1"><i class="bi bi-calendar-day bg-ico"></i>
+                    <div class="fs-8 opacity-75">فروش امروز</div>
+                    <div class="fs-4 fw-800 num">@admin.SalesToday.Money()</div><div class="fs-8 opacity-75">ریال</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="ref-stat ref-grad-2"><i class="bi bi-calendar-week bg-ico"></i>
+                    <div class="fs-8 opacity-75">فروش هفته (از شنبه)</div>
+                    <div class="fs-4 fw-800 num">@admin.SalesWeek.Money()</div><div class="fs-8 opacity-75">ریال</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="ref-stat ref-grad-3"><i class="bi bi-calendar-month bg-ico"></i>
+                    <div class="fs-8 opacity-75">فروش ماه شمسی</div>
+                    <div class="fs-4 fw-800 num">@admin.SalesMonth.Money()</div><div class="fs-8 opacity-75">ریال</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="ref-stat ref-grad-4"><i class="bi bi-calendar3-range bg-ico"></i>
+                    <div class="fs-8 opacity-75">فروش فصل جاری</div>
+                    <div class="fs-4 fw-800 num">@admin.SalesQuarter.Money()</div><div class="fs-8 opacity-75">ریال</div>
+                </div>
+            </div>
+        </div>
+
+        <h6 class="mb-2 text-muted"><i class="bi bi-graph-up-arrow"></i> سود دوره‌ای</h6>
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-lg-3">
+                <div class="card stat-card h-100"><div class="d-flex align-items-center gap-3">
+                    <div class="stat-icon bg-soft-success"><i class="bi bi-calendar-day"></i></div>
+                    <div class="min-w-0"><div class="stat-label">سود امروز</div>
+                    <div class="stat-value num @(admin.ProfitToday >= 0 ? "text-success" : "text-danger")">@admin.ProfitToday.Money()</div></div>
+                </div></div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="card stat-card h-100"><div class="d-flex align-items-center gap-3">
+                    <div class="stat-icon bg-soft-success"><i class="bi bi-calendar-week"></i></div>
+                    <div class="min-w-0"><div class="stat-label">سود هفته</div>
+                    <div class="stat-value num @(admin.ProfitWeek >= 0 ? "text-success" : "text-danger")">@admin.ProfitWeek.Money()</div></div>
+                </div></div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="card stat-card h-100"><div class="d-flex align-items-center gap-3">
+                    <div class="stat-icon bg-soft-success"><i class="bi bi-calendar-month"></i></div>
+                    <div class="min-w-0"><div class="stat-label">سود ماه</div>
+                    <div class="stat-value num @(admin.ProfitMonth >= 0 ? "text-success" : "text-danger")">@admin.ProfitMonth.Money()</div></div>
+                </div></div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="card stat-card h-100"><div class="d-flex align-items-center gap-3">
+                    <div class="stat-icon bg-soft-success"><i class="bi bi-calendar3-range"></i></div>
+                    <div class="min-w-0"><div class="stat-label">سود فصل</div>
+                    <div class="stat-value num @(admin.ProfitQuarter >= 0 ? "text-success" : "text-danger")">@admin.ProfitQuarter.Money()</div></div>
+                </div></div>
+            </div>
+        </div>
+
+        @* ---------- گجت‌های نموداری ---------- *@
+        <div class="row g-3 mb-3">
+            <div class="col-lg-7">
+                <div class="chart-card">
+                    <div class="chart-title">
+                        <i class="bi bi-bar-chart-fill" style="background:linear-gradient(135deg,#4f46e5,#7c3aed)"></i>
+                        فروش و سود ۶ ماه اخیر
+                    </div>
+                    <div class="chart-box"><canvas id="chMonthly"></canvas></div>
+                </div>
+            </div>
+            <div class="col-lg-5">
+                <div class="chart-card">
+                    <div class="chart-title">
+                        <i class="bi bi-pie-chart-fill" style="background:linear-gradient(135deg,#059669,#0f766e)"></i>
+                        تفکیک روش پرداخت (فصل جاری)
+                    </div>
+                    <div class="chart-box-sm"><canvas id="chPayMix"></canvas></div>
+                </div>
+            </div>
+            <div class="col-12">
+                <div class="chart-card">
+                    <div class="chart-title">
+                        <i class="bi bi-graph-up" style="background:linear-gradient(135deg,#d97706,#b45309)"></i>
+                        روند فروش ۳۰ روز اخیر
+                    </div>
+                    <div class="chart-box"><canvas id="chDaily"></canvas></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+            <div class="col-lg-7">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <i class="bi bi-person-exclamation text-danger"></i>
+                        <span class="card-title">بدهکاران سررسیدشده</span>
+                        @if (admin.OverdueDebtors.Count > 0)
+                        {
+                            <span class="badge badge-soft-danger me-2">@admin.OverdueDebtors.Count.Num() مورد</span>
+                        }
+                    </div>
+                    <div class="card-body p-0">
+                        @if (admin.OverdueDebtors.Count == 0)
+                        {
+                            <div class="empty-state py-4"><i class="bi bi-emoji-smile"></i><h6>بدهکار سررسیدشده‌ای ندارید</h6></div>
+                        }
+                        else
+                        {
+                            <div class="table-responsive grid-desktop">
+                                <table class="table table-hover align-middle mb-0">
+                                    <thead><tr><th>مشتری</th><th>سند</th><th>نوع</th><th class="text-start">مبلغ (ریال)</th><th>سررسید</th><th>تأخیر</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var b in admin.OverdueDebtors.Take(8))
+                                        {
+                                            <tr>
+                                                <td><div class="fw-500">@b.PartyName</div><div class="fs-8 text-muted num">@(b.Mobile ?? "")</div></td>
+                                                <td class="doc-number text-primary">@b.Number</td>
+                                                <td><span class="badge badge-soft-warning fs-8">@b.Kind</span></td>
+                                                <td class="text-start num fw-700 text-danger">@b.Amount.Money()</td>
+                                                <td class="num fs-8">@b.DueDate.ToFa()</td>
+                                                <td>
+                                                    @if (b.DaysOverdue == 0)
+                                                    {
+                                                        <span class="badge badge-soft-warning">امروز</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="badge badge-soft-danger">@b.DaysOverdue.Num() روز</span>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="cards-mobile">
+                                @foreach (var b in admin.OverdueDebtors.Take(8))
+                                {
+                                    <div class="m-card st-cancelled">
+                                        <div class="m-card-head">
+                                            <div class="m-card-icon"><i class="bi bi-person-exclamation"></i></div>
+                                            <div class="flex-grow-1 min-w-0">
+                                                <div class="fw-700 text-truncate">@b.PartyName</div>
+                                                <div class="fs-8 text-muted">@b.Number — @b.Kind</div>
+                                            </div>
+                                            <div class="text-end">
+                                                <div class="num fw-800 text-danger">@b.Amount.Money()</div>
+                                                <div class="fs-8 text-muted num">@b.DueDate.ToFa()</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-5">
+                <div class="card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="bi bi-bank text-primary"></i>
+                            <span class="card-title">چک‌های دریافتی مشتریان (امروز و معوق)</span>
+                        </div>
+                        @if (admin.TodayCheques.Count > 0)
+                        {
+                            <span class="badge badge-soft-primary">@admin.TodayCheques.Count.Num() چک</span>
+                        }
+                    </div>
+                    <div class="card-body p-0">
+                        @if (admin.TodayCheques.Count == 0)
+                        {
+                            <div class="empty-state py-4"><i class="bi bi-check2-circle"></i><h6>چک دریافتی سررسیدشده‌ای ندارید</h6></div>
+                        }
+                        else
+                        {
+                            <div class="table-responsive grid-desktop">
+                                <table class="table table-hover align-middle mb-0">
+                                    <thead><tr><th>چک</th><th>مشتری</th><th class="text-start">مبلغ</th><th>سررسید</th><th></th></tr></thead>
+                                    <tbody>
+                                        @foreach (var c in admin.TodayCheques)
+                                        {
+                                            <tr>
+                                                <td>
+                                                    <div class="doc-number fw-700">@c.Number</div>
+                                                    <div class="fs-8 text-muted">@(c.BankName ?? "")</div>
+                                                    @if (!string.IsNullOrEmpty(c.OrderNumber))
+                                                    {
+                                                        <div class="fs-9 text-muted num">فاکتور: @c.OrderNumber</div>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    <div class="fw-500">@c.PartyName</div>
+                                                    @if (!string.IsNullOrWhiteSpace(c.OwnerName) && c.OwnerName != c.PartyName)
+                                                    {
+                                                        <div class="fs-8 text-muted">صاحب: @c.OwnerName</div>
+                                                    }
+                                                </td>
+                                                <td class="text-start num fw-700 text-primary">@c.Amount.Money()</td>
+                                                <td class="num fs-8">
+                                                    @c.DueDate.ToFa()
+                                                    @if (c.DueDate.Date < DateTime.Now.Date)
+                                                    {
+                                                        <div class="text-danger fs-9 fw-bold">معوق (@((int)(DateTime.Now.Date - c.DueDate.Date).TotalDays) روز)</div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <div class="text-success fs-9">سررسید امروز</div>
+                                                    }
+                                                </td>
+                                                <td class="text-end">
+                                                    @if (c.Status == ChequeStatus.Bounced)
+                                                    {
+                                                        <span class="badge badge-soft-danger me-1">برگشت خورده</span>
+                                                        <button class="btn btn-sm btn-outline-success" title="وصول مجدد" @onclick="() => ClearCheque(c)">
+                                                            <i class="bi bi-check2"></i> وصول شد
+                                                        </button>
+                                                    }
+                                                    else
+                                                    {
+                                                        <button class="btn btn-sm btn-success me-1" title="وصول چک و واریز به حساب" @onclick="() => ClearCheque(c)">
+                                                            <i class="bi bi-check2"></i> وصول شد
+                                                        </button>
+                                                        <button class="btn btn-sm btn-outline-danger" title="برگشت زدن چک مشتری" @onclick="() => PromptBounce(c)">
+                                                            <i class="bi bi-x-circle"></i> برگشت
+                                                        </button>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="cards-mobile">
+                                @foreach (var c in admin.TodayCheques)
+                                {
+                                    <div class="m-card st-received">
+                                        <div class="m-card-head">
+                                            <div class="m-card-icon"><i class="bi bi-bank"></i></div>
+                                            <div class="flex-grow-1 min-w-0">
+                                                <div class="fw-700">@c.Number</div>
+                                                <div class="fs-8 text-muted text-truncate">@c.PartyName — @(c.BankName ?? "")</div>
+                                            </div>
+                                            <div class="text-end">
+                                                <div class="num fw-800 text-primary">@c.Amount.Money()</div>
+                                                <button class="btn btn-sm btn-success mt-1" @onclick="() => ClearCheque(c)"><i class="bi bi-check2"></i> وصول شد</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @* ---------- ردیف چک‌های پرداختی ما (صادره به تأمین‌کنندگان) ---------- *@
+        <div class="row g-3 mb-3">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="bi bi-credit-card-2-front text-warning"></i>
+                            <span class="card-title">چک‌های پرداختی ما (صادره به تأمین‌کنندگان / خرید)</span>
+                        </div>
+                        @if (admin.IssuedCheques.Count > 0)
+                        {
+                            <span class="badge badge-soft-warning">@admin.IssuedCheques.Count.Num() چک سررسیدشده</span>
+                        }
+                    </div>
+                    <div class="card-body p-0">
+                        @if (admin.IssuedCheques.Count == 0)
+                        {
+                            <div class="empty-state py-4"><i class="bi bi-check2-all"></i><h6>چک پرداختیِ سررسیدشده یا موعد امروزی برای پرداخت ندارید</h6></div>
+                        }
+                        else
+                        {
+                            <div class="table-responsive grid-desktop">
+                                <table class="table table-hover align-middle mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>شماره چک / صیاد</th>
+                                            <th>تأمین‌کننده (دریافت‌کننده)</th>
+                                            <th>بانک و حساب مبدأ</th>
+                                            <th>فاکتور خرید مرتبط</th>
+                                            <th class="text-start">مبلغ چک (ریال)</th>
+                                            <th>تاریخ سررسید</th>
+                                            <th>وضعیت موعد</th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var c in admin.IssuedCheques)
+                                        {
+                                            <tr>
+                                                <td class="doc-number fw-700">@c.Number</td>
+                                                <td><div class="fw-600">@c.PartyName</div></td>
+                                                <td><div class="fs-8 text-muted">@(c.BankName ?? "—")</div></td>
+                                                <td class="num fs-8">@c.OrderNumber</td>
+                                                <td class="text-start num fw-800 text-warning">@c.Amount.Money()</td>
+                                                <td class="num fs-8">@c.DueDate.ToFa()</td>
+                                                <td>
+                                                    @if (c.DueDate.Date < DateTime.Now.Date)
+                                                    {
+                                                        <span class="badge badge-soft-danger">معوق (@((int)(DateTime.Now.Date - c.DueDate.Date).TotalDays) روز)</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="badge badge-soft-warning">سررسید امروز</span>
+                                                    }
+                                                </td>
+                                                <td class="text-end">
+                                                    <button class="btn btn-sm btn-outline-success" title="علامت‌گذاری به عنوان پاس‌شده از حساب ما" @onclick="() => ClearCheque(c)">
+                                                        <i class="bi bi-check2"></i> پاس شد
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="cards-mobile">
+                                @foreach (var c in admin.IssuedCheques)
+                                {
+                                    <div class="m-card st-pending">
+                                        <div class="m-card-head">
+                                            <div class="m-card-icon"><i class="bi bi-credit-card-2-front"></i></div>
+                                            <div class="flex-grow-1 min-w-0">
+                                                <div class="fw-700">@c.Number</div>
+                                                <div class="fs-8 text-muted text-truncate">@c.PartyName — @(c.BankName ?? "")</div>
+                                            </div>
+                                            <div class="text-end">
+                                                <div class="num fw-800 text-warning">@c.Amount.Money()</div>
+                                                <button class="btn btn-sm btn-outline-success mt-1" @onclick="() => ClearCheque(c)"><i class="bi bi-check2"></i> پاس شد</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-4 col-xxl-2">
+            <div class="card stat-card h-100">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="stat-icon bg-soft-primary"><i class="bi bi-cash-coin"></i></div>
+                    <div class="min-w-0">
+                        <div class="stat-label">ارزش موجودی</div>
+                        <div class="stat-value num">@d.InventoryValue.Money()</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4 col-xxl-2">
+            <div class="card stat-card h-100">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="stat-icon bg-soft-success"><i class="bi bi-cart-check"></i></div>
+                    <div class="min-w-0">
+                        <div class="stat-label">فروش امروز</div>
+                        <div class="stat-value num">@d.TodaySales.Money()</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4 col-xxl-2">
+            <div class="card stat-card h-100">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="stat-icon bg-soft-info"><i class="bi bi-bag-plus"></i></div>
+                    <div class="min-w-0">
+                        <div class="stat-label">خرید امروز</div>
+                        <div class="stat-value num">@d.TodayPurchases.Money()</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4 col-xxl-2">
+            <div class="card stat-card h-100">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="stat-icon bg-soft-warning"><i class="bi bi-graph-up-arrow"></i></div>
+                    <div class="min-w-0">
+                        <div class="stat-label">فروش این ماه</div>
+                        <div class="stat-value num">@d.MonthSales.Money()</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4 col-xxl-2">
+            <div class="card stat-card h-100">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="stat-icon bg-soft-primary"><i class="bi bi-box-seam"></i></div>
+                    <div class="min-w-0">
+                        <div class="stat-label">اقلام کالا</div>
+                        <div class="stat-value num">@d.ProductCount.Num()</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4 col-xxl-2">
+            <a href="reports/reorder" class="text-decoration-none">
+                <div class="card stat-card h-100 @(d.BelowReorderCount > 0 ? "border-danger" : "")">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="stat-icon bg-soft-danger"><i class="bi bi-exclamation-triangle"></i></div>
+                        <div class="min-w-0">
+                            <div class="stat-label">زیر نقطه سفارش</div>
+                            <div class="stat-value num @(d.BelowReorderCount > 0 ? "text-danger" : "")">@d.BelowReorderCount.Num()</div>
+                        </div>
+                    </div>
+                </div>
+            </a>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <div class="col-lg-7">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-clock-history text-primary"></i>
+                    <span class="card-title">آخرین فعالیت‌ها</span>
+                </div>
+                <div class="card-body p-0">
+                    @if (recent.Count == 0)
+                    {
+                        <div class="empty-state"><i class="bi bi-inbox"></i><h5>فعالیتی ثبت نشده است</h5></div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>نوع</th>
+                                        <th>شماره سند</th>
+                                        <th>طرف حساب</th>
+                                        <th>تاریخ</th>
+                                        <th class="text-start">مبلغ</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var a in recent)
+                                    {
+                                        <tr>
+                                            <td>@TypeBadge(a.Type)</td>
+                                            <td class="doc-number">@a.Number</td>
+                                            <td>@a.PartyName</td>
+                                            <td class="fs-8 text-muted">@a.Date.ToFa()</td>
+                                            <td class="text-start num">@a.Amount.Money()</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-5">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-exclamation-triangle text-danger"></i>
+                    <span class="card-title">نیازمند سفارش مجدد</span>
+                    <a href="reports/reorder" class="ms-auto fs-8">مشاهده همه</a>
+                </div>
+                <div class="card-body p-0">
+                    @if (lowStock.Count == 0)
+                    {
+                        <div class="empty-state"><i class="bi bi-check2-circle"></i><h5>موجودی همه اقلام مناسب است</h5></div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>کالا</th>
+                                        <th>موجودی</th>
+                                        <th>نقطه سفارش</th>
+                                        <th>کمبود</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var r in lowStock)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <div class="fw-500">@r.ProductName</div>
+                                                <div class="fs-8 text-muted">@r.ProductCode</div>
+                                            </td>
+                                            <td class="num text-danger fw-700">@r.TotalStock.Num()</td>
+                                            <td class="num">@r.ReorderPoint.Num()</td>
+                                            <td class="num fw-700 text-danger">@r.Shortage.Num()</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+
+@if (showBounceModal && bounceTarget != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow-lg border-danger">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title fs-6"><i class="bi bi-exclamation-triangle-fill me-1"></i> ثبت برگشت چک</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="() => showBounceModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <p>آیا از ثبت برگشت چک شماره <strong>@bounceTarget.Number</strong> به مبلغ <strong>@bounceTarget.Amount.Money() ریال</strong> متعلق به <strong>@bounceTarget.PartyName</strong> اطمینان دارید؟</p>
+                    <div class="alert alert-warning fs-8">
+                        <i class="bi bi-info-circle"></i> با ثبت برگشت، این چک در وضعیت برگشتی قرار گرفته و حساب طرف حساب بدهکار باقی خواهد ماند.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">علت برگشت:</label>
+                        <input type="text" class="form-control" @bind="bounceReason" placeholder="مثلاً: کسر موجودی، مسدودی حساب یا عدم تطابق امضا" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="() => showBounceModal = false">انصراف</button>
+                    <button type="button" class="btn btn-danger" @onclick="ConfirmBounce"><i class="bi bi-x-octagon"></i> ثبت قطعی برگشت چک</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private DashboardSummary d = new();
+    private AdminDashboard? admin;
+    private List<RecentActivity> recent = new();
+    private List<ReorderItem> lowStock = new();
+    private bool loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("داشبورد");
+        try
+        {
+            var dashTask = DashboardSvc.GetSummaryAsync();
+            var recentTask = DashboardSvc.GetRecentAsync(8);
+            var reorderTask = ReportSvc.GetReorderAsync();
+
+            d = await dashTask;
+            recent = await recentTask;
+            lowStock = (await reorderTask).Take(5).ToList();
+
+            if (Auth.IsAdmin)
+                admin = await DashboardSvc.GetAdminDashboardAsync();
+        }
+        catch { }
+        finally { loading = false; }
+    }
+
+    private bool chartsDrawn;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (admin is null || chartsDrawn || loading) return;
+        chartsDrawn = true;
+        try
+        {
+            var mLabels = admin.MonthlyTrend.Select(t => t.Label).ToArray();
+            var mSales = admin.MonthlyTrend.Select(t => t.Sales).ToArray();
+            var mProfit = admin.MonthlyTrend.Select(t => t.Profit).ToArray();
+            await JS.InvokeVoidAsync("appCharts.bar", "chMonthly", mLabels, mSales, mProfit);
+
+            var dLabels = admin.DailyTrend.Select(t => t.Label).ToArray();
+            var dSales = admin.DailyTrend.Select(t => t.Sales).ToArray();
+            await JS.InvokeVoidAsync("appCharts.line", "chDaily", dLabels, dSales, "فروش", "#d97706");
+
+            await JS.InvokeVoidAsync("appCharts.doughnut", "chPayMix",
+                new[] { "نقدی", "نسیه", "چک", "اقساطی" },
+                new[] { admin.PayCash, admin.PayCredit, admin.PayCheque, admin.PayInstallment },
+                new[] { "#059669", "#d97706", "#2563eb", "#7c3aed" });
+        }
+        catch { /* Chart.js در دسترس نیست */ }
+    }
+
+    private async Task ClearCheque(ChequeAlertItem c)
+    {
+        try
+        {
+            await DashboardSvc.ClearChequeAsync(c.ChequeId);
+            Toast.Success($"وضعیت چک {c.Number} با موفقیت به وصول‌شده به‌روزرسانی شد.");
+            admin = await DashboardSvc.GetAdminDashboardAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private ChequeAlertItem? bounceTarget;
+    private string bounceReason = "";
+    private bool showBounceModal;
+
+    private void PromptBounce(ChequeAlertItem c)
+    {
+        bounceTarget = c;
+        bounceReason = "عدم موجودی کافی";
+        showBounceModal = true;
+    }
+
+    private async Task ConfirmBounce()
+    {
+        if (bounceTarget == null) return;
+        try
+        {
+            await DashboardSvc.BounceChequeAsync(bounceTarget.ChequeId, bounceReason);
+            Toast.Error($"چک شماره {bounceTarget.Number} مشتری {bounceTarget.PartyName} برگشت خورد و به عنوان بدهی منظور شد.");
+            showBounceModal = false;
+            admin = await DashboardSvc.GetAdminDashboardAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static RenderFragment TypeBadge(string type) => type switch
+    {
+        "Sale" => @<span class="badge badge-out"><i class="bi bi-arrow-up-left"></i> فروش</span>,
+        "Purchase" => @<span class="badge badge-in"><i class="bi bi-arrow-down-right"></i> خرید</span>,
+        _ => @<span class="badge badge-adjust"><i class="bi bi-sliders"></i> اصلاح موجودی</span>
+    };
+}

@@ -1,0 +1,932 @@
+@namespace Inventory.Client.Pages
+@page "/hr-admin"
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject RealtimeService Rt
+@implements IDisposable
+
+<PageTitle>پنل مدیریت منابع انسانی</PageTitle>
+
+@if (!Auth.Has("LeaveRequests.Approve") && !Auth.Has("LeaveRequests.Report"))
+{
+    <div class="text-center py-5">
+        <i class="bi bi-shield-lock fs-1 text-danger d-block mb-3"></i>
+        <h4>دسترسی ندارید</h4>
+        <p class="text-muted">این پنل مخصوص مدیر منابع انسانی است. درخواست‌های خود را از کارتابل «مرخصی و ماموریت» پیگیری کنید.</p>
+        <a class="btn btn-primary rounded-pill px-4" href="leave"><i class="bi bi-arrow-right me-1"></i> کارتابل من</a>
+    </div>
+    return;
+}
+
+@* ================== وضعیت دسترسی ================== *@
+@{
+    canApprove = Auth.Has("LeaveRequests.Approve");
+    canReport  = Auth.Has("LeaveRequests.Report");
+    if (!canApprove && tab != "report") { tab = "report"; }
+}
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-people-fill"></i> پنل مدیریت منابع انسانی</h1>
+    <div class="lead">تایید / رد درخواست‌های همه‌ی نیروها + گزارش ماهانه — مدیر منابع انسانی</div>
+</div>
+
+@* ================== کارت‌های آمار ================== *@
+<div class="row g-3 mb-4">
+    <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm hr-stat h-100">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="hr-stat-icon" style="background:#fff3e6;color:#b06a00"><i class="bi bi-hourglass-split"></i></div>
+                <div>
+                    <div class="hr-stat-num">@Fa.Digits(stats?.Pending ?? 0)</div>
+                    <div class="hr-stat-lbl">در انتظار تایید</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm hr-stat h-100">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="hr-stat-icon" style="background:#e6f9ef;color:#0e8a55"><i class="bi bi-check2-circle"></i></div>
+                <div>
+                    <div class="hr-stat-num">@Fa.Digits(stats?.Approved ?? 0)</div>
+                    <div class="hr-stat-lbl">تاییدشده</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm hr-stat h-100">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="hr-stat-icon" style="background:#fdecef;color:#b21b4c"><i class="bi bi-x-circle"></i></div>
+                <div>
+                    <div class="hr-stat-num">@Fa.Digits(stats?.Rejected ?? 0)</div>
+                    <div class="hr-stat-lbl">ردشده</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm hr-stat h-100">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="hr-stat-icon" style="background:#eef0f7;color:#1c2130"><i class="bi bi-collection"></i></div>
+                <div>
+                    <div class="hr-stat-num">@Fa.Digits(stats?.Total ?? 0)</div>
+                    <div class="hr-stat-lbl">کل درخواست‌ها</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@* ================== تب‌ها ================== *@
+<div class="lv-tabs d-flex gap-2 mb-3 flex-wrap">
+    @if (canApprove)
+    {
+        <button class="lv-tab @(tab == "requests" ? "active" : "")" @onclick='() => tab = "requests"'>
+            <i class="bi bi-inbox-fill"></i> درخواست‌های همه‌ی نیروها
+            @if (stats?.Pending > 0) { <span class="lv-tab-badge">@Fa.Digits(stats.Pending)</span> }
+        </button>
+    }
+    @if (canReport)
+    {
+        <button class="lv-tab @(tab == "report" ? "active" : "")" @onclick='() => tab = "report"'>
+            <i class="bi bi-bar-chart-fill"></i> گزارش ماهانه‌ی همه‌ی کاربران
+        </button>
+    }
+
+</div>
+
+@* ================== درخواست‌های همه‌ی نیروها ================== *@
+@if (tab == "requests")
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <b><i class="bi bi-inbox-fill text-primary"></i> درخواست‌های همه‌ی نیروها</b>
+            <div class="d-flex gap-2 flex-wrap align-items-center">
+                @if (canApprove)
+                {
+                    <button class="btn btn-sm btn-primary rounded-pill" @onclick="OpenOnBehalf">
+                        <i class="bi bi-person-plus-fill me-1"></i> ثبت به‌جای کاربر
+                    </button>
+                }
+                <select class="form-select form-select-sm" style="width:auto" @bind="allStatus" @bind:after="LoadAll">
+                    <option value="Pending">در انتظار</option>
+                    <option value="Approved">تاییدشده</option>
+                    <option value="Rejected">ردشده</option>
+                    <option value="All">همه</option>
+                </select>
+                <select class="form-select form-select-sm" style="width:auto" @bind="filterUserId" @bind:after="LoadAll">
+                    <option value="0">همه‌ی نیروها</option>
+                    @foreach (var u in UserOptions)
+                    {
+                        <option value="@u.Id">@u.Name</option>
+                    }
+                </select>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            @if (allLoading)
+            {
+                <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+            }
+            else if (all.Count == 0)
+            {
+                <div class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>درخواستی با این فیلتر نیست.</div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle lv-table mb-0">
+                        <thead class="lv-thead">
+                            <tr>
+                                <th>شماره</th><th>نیرو</th><th>نوع</th><th>بازه</th><th>میزان</th><th>دلیل / مقصد</th><th>وضعیت</th><th>اقدام</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in all)
+                            {
+                                <tr class="@(r.Status == "Pending" ? "lv-pending-row" : "")">
+                                    <td class="lv-num" dir="ltr">@r.Number</td>
+                                    <td>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <UserAvatar LoginUserId="r.RequesterUserId" Size="30" />
+                                            <span class="fw-700">@r.RequesterName</span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        @TypeBadge(r.Type)
+                                        @if (r.AdminCreated)
+                                        {
+                                            <div class="small mt-1"><span class="badge lv-badge-admin" title="این درخواست توسط مدیر به‌جای کاربر ثبت و مستقیم تایید شد"><i class="bi bi-shield-check"></i> توسط مدیر</span></div>
+                                        }
+                                    </td>
+                                    <td class="lv-date">
+                                        @if (r.Type is "Hourly" or "HourlyMission")
+                                        {
+                                            <span>@PersianDate.ToShort(r.StartDate)</span>
+                                            @if (r.StartTime.HasValue && r.EndTime.HasValue)
+                                            { <div dir="ltr" class="lv-time-range">@r.StartTime.HHMM() ← @r.EndTime.HHMM()</div> }
+                                        }
+                                        else
+                                        { <span>@PersianDate.ToShort(r.StartDate) ← @PersianDate.ToShort(r.EndDate)</span> }
+                                        @if (r.Type is "Mission" or "HourlyMission" && !string.IsNullOrWhiteSpace(r.Destination))
+                                        { <div class="small text-muted"><i class="bi bi-geo-alt"></i> @(r.Destination)</div> }
+                                    </td>
+                                    <td class="fw-800">@AmountText(r)</td>
+                                    <td class="lv-reason">@(r.Type == "Mission" ? "—" : (r.Reason ?? "—"))</td>
+                                    <td>@StatusBadge(r.Status)</td>
+                                    <td>
+                                        @if (r.Status == "Pending" && canApprove)
+                                        {
+                                            <div class="d-flex gap-1">
+                                                <button class="btn btn-sm btn-success lv-act" title="تایید" @onclick="() => ApproveRequest(r.Id)"><i class="bi bi-check-lg"></i></button>
+                                                <button class="btn btn-sm btn-outline-danger lv-act" title="رد" @onclick="() => OpenReject(r)"><i class="bi bi-x-lg"></i></button>
+                                            </div>
+                                        }
+                                        else if (r.Status == "Pending")
+                                        {
+                                            <span class="small text-muted"><i class="bi bi-hourglass-split text-warning"></i> در انتظار</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="small text-muted">
+                                                @r.ApprovedByName
+                                                @if (!string.IsNullOrWhiteSpace(r.ApproveNote))
+                                                { <div class="text-danger small">«@r.ApproveNote»</div> }
+                                            </span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@* ================== تعطیلات شرکتی (اعمال گروهی برای کل پرسنل) ================== *@
+@if (tab == "requests")
+{
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <b><i class="bi bi-calendar-x text-primary"></i> تعطیلات شرکتی <span class="small text-muted fw-normal">(اعمال می‌شود برای کل پرسنل)</span></b>
+        </div>
+        <div class="card-body">
+            @if (canApprove)
+            {
+                <div class="row g-2 mb-3 align-items-end">
+                    <div class="col-4 col-md-3">
+                        <label class="form-label small fw-800">تاریخ تعطیلی</label>
+                        <DatePicker Value="holDate" ValueChanged="v => holDate = v" CssClass="form-control-sm" />
+                    </div>
+                    <div class="col-6 col-md-4">
+                        <label class="form-label small fw-800">عنوان / دلیل</label>
+                        <input class="form-control form-control-sm" @bind="holName" placeholder="مثلاً: ایام عزاداری / نشست سازمانی" />
+                    </div>
+                    <div class="col-12 col-sm-2">
+                        <button class="btn btn-sm btn-primary w-100" @onclick="AddHoliday" disabled="@holBusy">
+                            @if (holBusy)
+                            {
+                                <span class="spinner-border spinner-border-sm"></span>
+                                <span>در حال ثبت…</span>
+                            }
+                            else
+                            {
+                                <i class="bi bi-plus-circle me-1"></i>
+                                <span>افزودن</span>
+                            }
+                        </button>
+                    </div>
+                </div>
+            }
+            @if (holLoading)
+            {
+                <div class="text-center py-3"><div class="spinner-border spinner-border-sm text-primary"></div></div>
+            }
+            else if (holidays.Count == 0)
+            {
+                <div class="text-center text-muted py-2 small">تعطیلی شرکتی ثبت نشده است.</div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle lv-table mb-0">
+                        <thead class="lv-thead">
+                            <tr><th>تاریخ</th><th>روز</th><th>عنوان</th><th>ثبت‌کننده</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var h in holidays)
+                            {
+                                <tr>
+                                    <td class="fw-bold" dir="ltr">@PersianDate.ToShort(h.HolidayDate)</td>
+                                    <td>@PersianDate.WeekdayName(h.HolidayDate)</td>
+                                    <td>@h.Name @if (h.IsOfficial) { <span class="badge rounded-pill text-bg-danger" style="font-size:.62rem">تعطیل رسمی</span> }</td>
+                                    <td class="small text-muted">@h.CreatedByName</td>
+                                    <td>
+                                        @if (canApprove)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger lv-act" title="حذف" @onclick="() => DeleteHoliday(h.Id)"><i class="bi bi-trash"></i></button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@* ================== مودال ثبت به‌جای کاربر ================== *@
+<Modal Visible="showOnBehalf" Title="ثبت مرخصی/ماموریت به‌جای کاربر (توسط مدیر)" OnClose="() => showOnBehalf = false">
+    <ChildContent>
+    @if (!string.IsNullOrEmpty(obError))
+    {
+        <div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle-fill"></i> @obError</div>
+    }
+    <div class="row g-2">
+        <div class="col-12">
+            <label class="form-label small fw-800">کاربر <span class="text-danger">*</span></label>
+            <select class="form-select form-select-sm" @bind="obUserId">
+                <option value="0">انتخاب کنید…</option>
+                @foreach (var u in UserOptions)
+                {
+                    <option value="@u.Id">@u.Name</option>
+                }
+            </select>
+        </div>
+        <div class="col-12">
+            <label class="form-label small fw-800">نوع درخواست</label>
+            <div class="d-flex gap-2 flex-wrap">
+                <div class="lv-type-sm @(obType == "Hourly" ? "active" : "")" @onclick='() => obType = "Hourly"'><i class="bi bi-clock-history"></i> مرخصی ساعتی</div>
+                <div class="lv-type-sm @(obType == "HourlyMission" ? "active" : "")" @onclick='() => obType = "HourlyMission"'><i class="bi bi-clipboard2-check"></i> ماموریت ساعتی</div>
+                <div class="lv-type-sm @(obType == "Daily" ? "active" : "")" @onclick='() => obType = "Daily"'><i class="bi bi-calendar2-check"></i> مرخصی روزانه</div>
+            </div>
+        </div>
+        <div class="col-4 col-md-3">
+            <label class="form-label small fw-800">تاریخ شروع</label>
+            <DatePicker Value="obStart" ValueChanged="v => obStart = v" CssClass="form-control-sm" />
+        </div>
+        @if (obType == "Daily")
+        {
+            <div class="col-4 col-md-3">
+                <label class="form-label small fw-800">تاریخ پایان</label>
+                <DatePicker Value="obEnd" ValueChanged="v => obEnd = v" CssClass="form-control-sm" />
+            </div>
+        }
+        else
+        {
+            <div class="col-6 col-md-3">
+                <label class="form-label small fw-800">ساعت شروع</label>
+                <TimeTextInput @bind-Value="obStartTime" Default="08:00" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label small fw-800">ساعت پایان</label>
+                <TimeTextInput @bind-Value="obEndTime" Default="10:00" />
+            </div>
+        }
+        @if (obType == "HourlyMission")
+        {
+            <div class="col-12">
+                <label class="form-label small fw-800">مقصد <span class="text-danger">*</span></label>
+                <input class="form-control form-control-sm" @bind="obDestination" placeholder="مثلاً: تهران" />
+            </div>
+        }
+        <div class="col-12">
+            <label class="form-label small fw-800">توضیح (اختیاری)</label>
+            <input class="form-control form-control-sm" @bind="obReason" placeholder="مثلاً: هماهنگی با مدیریت" />
+        </div>
+        <div class="col-12 small text-muted">
+            <i class="bi bi-info-circle"></i> درخواست مستقیماً با وضعیت «تاییدشده» و علامت «توسط مدیر» ثبت می‌شود و کسریِ روزهای مربوطه بازحساب می‌شود.
+        </div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end mt-3 gap-2">
+        <button class="btn btn-sm btn-light" @onclick="() => showOnBehalf = false">انصراف</button>
+        <button class="btn btn-sm btn-primary" @onclick="SubmitOnBehalf" disabled="@obBusy">
+            @if (obBusy)
+            {
+                <span class="spinner-border spinner-border-sm me-1"></span>
+                <span>در حال ثبت…</span>
+            }
+            else
+            {
+                <i class="bi bi-check2-circle me-1"></i>
+                <span>ثبت و تایید</span>
+            }
+        </button>
+    </div>
+    </Footer>
+</Modal>
+
+@* ================== گزارش ماهانه ================== *@
+@if (tab == "report")
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <b><i class="bi bi-bar-chart-fill text-primary"></i> گزارش مصرف مرخصی همه‌ی کاربران — @if (report != null) { <span>@report.MonthName @Fa.Digits(report.Year)</span> }</b>
+            <div class="d-flex gap-2">
+                <select class="form-select form-select-sm" style="width:auto" @bind="reportJm" @bind:after="LoadReport">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        <option value="@m">@PersianDate.MonthName(m)</option>
+                    }
+                </select>
+                <select class="form-select form-select-sm" style="width:auto" @bind="reportJy" @bind:after="LoadReport">
+                    @for (int y = reportJy - 2; y <= reportJy + 1; y++)
+                    {
+                        <option value="@y">@Fa.Digits(y)</option>
+                    }
+                </select>
+                <button class="btn btn-sm btn-outline-primary" @onclick="ExportCsv" disabled="@(report == null || exporting)">
+                    @if (exporting) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    <i class="bi bi-download me-1"></i> خروجی CSV
+                </button>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            @if (report == null)
+            {
+                <div class="text-center text-muted py-5"><div class="spinner-border text-primary"></div></div>
+            }
+            else
+            {
+                @if (report.Rows.All(r => r.TotalQuotaDays == 0 && r.MissionCount == 0))
+                {
+                    <div class="text-center text-muted py-5">
+                        <i class="bi bi-calendar-x fs-1 d-block mb-2"></i>
+                        در این ماه مرخصی یا ماموریتی ثبت نشده است.
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle lv-table mb-0">
+                            <thead class="lv-thead">
+                                <tr>
+                                    <th>نیرو</th>
+                                    <th>روزانه</th>
+                                    <th>ساعتی</th>
+                                    <th>مصرف ماه</th>
+                                    <th>مانده ماه</th>
+                                    <th>مصرف سالانه</th>
+                                    <th>مانده سالانه (از @Fa.Digits(24))</th>
+                                    <th>ماموریت</th>
+                                    <th>در انتظار</th>
+                                    <th>وضعیت</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var r in report.Rows.Where(r => r.TotalQuotaDays > 0 || r.MissionCount > 0 || r.PendingCount > 0))
+                                {
+                                    var pct = Math.Min(100, (int)Math.Round(r.TotalQuotaDays / Math.Max(0.01, report.Quota) * 100));
+                                    <tr>
+                                        <td>
+                                            <div class="d-flex align-items-center gap-2">
+                                                <UserAvatar LoginUserId="r.UserId" Size="30" />
+                                                <span class="fw-700">@r.Name</span>
+                                            </div>
+                                        </td>
+                                        <td class="num">@D0(r.DailyDays) @if (r.DailyDays > 0) { <span class="small text-muted">روز</span> }</td>
+                                        <td class="num">@if (r.HourlyHours > 0) { <span>@D0(r.HourlyHours) <span class="small text-muted">ساعت</span></span> } else { <span class="text-muted">—</span> }</td>
+                                        <td class="fw-800 num">@D0(r.TotalQuotaDays)</td>
+                                        <td class="num @(r.Remaining < 0 ? "text-danger fw-700" : "text-success")">@D0(r.Remaining)</td>
+                                        <td class="num">@D0(r.YearlyUsed)</td>
+                                        <td class="num @(r.YearlyRemaining < 0 ? "text-danger fw-700" : "text-success")">@D0(r.YearlyRemaining)</td>
+                                        <td class="num">@if (r.MissionCount > 0) { <span>@Fa.Digits(r.MissionCount) <span class="small text-muted">سفر</span></span> } else { <span class="text-muted">—</span> }</td>
+                                        <td class="num">@if (r.PendingCount > 0) { <span class="badge bg-warning text-dark">@Fa.Digits(r.PendingCount)</span> } else { <span class="text-muted">—</span> }</td>
+                                        <td><span class="badge @(r.YearlyRemaining < 0 ? "bg-danger" : r.TotalQuotaDays > report.Quota ? "bg-warning text-dark" : r.PendingCount > 0 ? "bg-info text-dark" : "bg-success-subtle text-success border")">@r.StatusFa</span></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="lv-report-summary d-flex gap-4 flex-wrap px-3 py-2 small">
+                        <span><i class="bi bi-people text-primary"></i> مجموع مصرف ماه: <b class="num">@D0(report.TotalUsed)</b> روز</span>
+                        <span><i class="bi bi-plane text-info"></i> مجموع ماموریت: <b class="num">@Fa.Digits(report.TotalMissions)</b> سفر</span>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+}
+
+@* ================== مودال رد درخواست ================== *@
+@if (ShowReject)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.55)">
+        <div class="modal-dialog modal-dialog-centered" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-x-circle text-danger"></i> رد درخواست @if (rejectTarget != null) { <span dir="ltr">@rejectTarget.Number</span> }</h5>
+                    <button type="button" class="btn-close" @onclick="CloseReject"></button>
+                </div>
+                <div class="modal-body">
+                    <label class="form-label small fw-800">دلیل رد (اختیاری)</label>
+                    <textarea class="form-control form-control-sm" rows="2" @bind="rejectNote" placeholder="مثلاً: بیش از موجودی مرخصی دارید…"></textarea>
+                    @if (!string.IsNullOrEmpty(rejectError))
+                    {
+                        <div class="alert alert-danger py-2 mt-2">@rejectError</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-light" @onclick="CloseReject">انصراف</button>
+                    <button class="btn btn-danger rounded-pill px-4 fw-800" @onclick="ConfirmReject" disabled="@rejectBusy">
+                        @if (rejectBusy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        else { <i class="bi bi-x-circle-fill me-1"></i> }
+                        تأیید رد درخواست
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+.lv-badge-admin { background:#ede9fe; color:#6d28d9; font-weight:800; border:1px solid #ddd6fe; font-size:.7rem; }
+.lv-type-sm { border:2px solid #e5e0f5; border-radius:10px; padding:.45rem .9rem; cursor:pointer; font-weight:700; font-size:.85rem; background:#fbfaff; }
+.lv-type-sm:hover { border-color:#b9a5f5; }
+.lv-type-sm.active { background:linear-gradient(135deg,#8e5cff,#4f8cff); color:#fff; border-color:transparent; }
+
+/* ====== آمار ====== */
+.hr-stat { border-radius: 16px; border: 1px solid #e8e2fb; }
+.hr-stat-icon { width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; flex-shrink: 0; }
+.hr-stat-num { font-size: 1.35rem; font-weight: 900; color: #1c2130; line-height: 1.1; }
+.hr-stat-lbl { font-size: .75rem; color: #8a90a5; font-weight: 700; }
+/* ====== تب‌ها ====== */
+.lv-tabs { border-bottom: 2px solid #e8e2fb; padding-bottom: .6rem; }
+.lv-tab { border: none; background: transparent; color: #5f688a; font-weight: 800; font-size: .9rem; border-radius: 10px; padding: .45rem 1rem; display: inline-flex; align-items: center; gap: .45rem; }
+.lv-tab:hover { background: #f1edfc; color: #5b21b6; }
+.lv-tab.active { background: #efeaff; color: #5b21b6; box-shadow: inset 0 -2px 0 #8e5cff; }
+.lv-tab-badge { background: #e0245e; color: #fff; font-size: .7rem; border-radius: 999px; padding: .1rem .5rem; font-weight: 800; }
+/* ====== جدول‌ها ====== */
+.lv-table { font-size: .88rem; }
+.lv-thead th { font-size: .78rem; color: #5f688a; background: #f8f7fd; border-bottom: 2px solid #e8e2fb; white-space: nowrap; }
+.lv-num { font-weight: 800; color: #5b21b6; font-size: .8rem; white-space: nowrap; }
+.lv-date { white-space: nowrap; font-weight: 700; }
+.lv-reason { max-width: 220px; font-size: .82rem; color: #5f688a; }
+.lv-pending-row { background: #fffbf2; }
+.lv-act { width: 32px; height: 30px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; }
+/* ====== گزارش ====== */
+.lv-report-bar { height: 10px; border-radius: 6px; background: #eef0f7; overflow: hidden; border: 1px solid #dcdfe9; }
+.lv-report-fill { height: 100%; border-radius: 6px; transition: width .4s ease; }
+.lv-report-summary { border-top: 1px dashed #e3e0f0; color: #5f688a; font-weight: 700; }
+/* ====== بج‌ها ====== */
+.lv-badge-daily { background: #e3efff; color: #1d5fc2; font-weight: 800; border: 1px solid #c8dfff; }
+.lv-badge-hourly { background: #fff6e6; color: #b06a00; font-weight: 800; border: 1px solid #f3d9a8; }
+.lv-badge-mission { background: #eef6ff; color: #0e8577; font-weight: 800; border: 1px solid #c4e5e0; }
+.lv-badge-hourlymission { background: #e8f7f5; color: #0b6e63; font-weight: 800; border: 1px solid #bfe3de; }
+.lv-time-range { font-size: .8rem; font-weight: 800; color: #5b21b6; }
+.lv-st-approved { background: #e6f9ef; color: #0e8a55; font-weight: 800; border: 1px solid #b9e8cf; }
+.lv-st-rejected { background: #fdecef; color: #b21b4c; font-weight: 800; border: 1px solid #f3b9c8; }
+.lv-st-pending { background: #fff6e6; color: #b06a00; font-weight: 800; border: 1px solid #f3d9a8; }
+@@media (max-width: 575.98px) {
+    .lv-tab { font-size: .8rem; padding: .4rem .7rem; }
+}
+</style>
+
+@code {
+    private string tab = "requests";
+    private StatsInfo? stats;
+    private List<LeaveItem> all = new();
+
+    // ---------- تعطیلات شرکتی ----------
+    private List<HolidayItem> holidays = new();
+    private bool holLoading, holBusy;
+    private DateTime? holDate = DateTime.Today;
+    private string? holName;
+
+    // ---------- ثبت به‌جای کاربر ----------
+    private bool showOnBehalf, obBusy;
+    private int obUserId;
+    private string obType = "Hourly";
+    private DateTime? obStart = DateTime.Today;
+    private DateTime? obEnd = DateTime.Today;
+    private string? obStartTime = "08:00";
+    private string? obEndTime = "10:00";
+    private string? obDestination;
+    private string? obReason;
+    private string obError = "";
+    private bool allLoading = true;
+    private string allStatus = "Pending";
+    private int filterUserId; // 0 = همه
+
+    private bool canApprove;
+    private bool canReport;
+
+    private ReportInfo? report;
+    private int reportJy, reportJm;
+    private bool exporting;
+
+    // مودال رد
+    private bool ShowReject;
+    private LeaveItem? rejectTarget;
+    private string rejectNote = "";
+    private string rejectError = "";
+    private bool rejectBusy;
+
+    /// <summary>گزینه‌های فیلتر نیرو — از لیست درخواست‌ها استخراج می‌شود</summary>
+    private List<UserOption> UserOptions { get; set; } = new();
+
+    private string apiBase = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(Auth.Token))
+            Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Auth.Token);
+        apiBase = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+
+        canApprove = Auth.Has("LeaveRequests.Approve");
+        canReport  = Auth.Has("LeaveRequests.Report");
+
+        // کاربر فقط گزارش می‌بیند → تب پیش‌فرض «گزارش»
+        if (!canApprove) tab = "report";
+
+        (reportJy, reportJm, _) = PersianDate.FromGregorian(DateTime.Now);
+        if (canApprove) { await LoadStats(); await LoadAll(); await LoadHolidays(); }
+        if (canReport)  { await LoadReport(); }
+
+        // ================== اتصال بلادرنگ SignalR — اعلام خودکار درخواست جدید / تایید / رد ==================
+        Rt.DataChanged += OnRtDataChanged;
+        await Rt.EnsureStartedAsync(apiBase, Auth.UserId);
+    }
+
+    /// <summary>هر پیام datachanged با اسکوپ leaverequests → آمار، لیست درخواست‌ها و گزارش زنده رفرش می‌شوند.</summary>
+    private async void OnRtDataChanged(string scope)
+    {
+        if (scope != "leaverequests") return;
+        await InvokeAsync(async () =>
+        {
+            await LoadStats();
+            await LoadAll();
+            await LoadHolidays();
+            if (tab == "report") await LoadReport();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Rt.DataChanged -= OnRtDataChanged;
+    }
+
+    // ---------- تعطیلات شرکتی ----------
+    private async Task LoadHolidays()
+    {
+        holLoading = true;
+        try { holidays = await Http.GetFromJsonAsync<List<HolidayItem>>("/api/LeaveRequests/holidays") ?? new(); }
+        catch { holidays = new(); }
+        holLoading = false;
+    }
+
+    private async Task AddHoliday()
+    {
+        if (holDate == null) { Toast.Error("تاریخ تعطیلی را انتخاب کنید."); return; }
+        holBusy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync("/api/LeaveRequests/holidays", new { HolidayDate = holDate.Value.Date, Name = holName });
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success("تعطیلی شرکتی ثبت شد؛ برای کل پرسنل اعمال می‌شود.");
+                holName = null;
+                await LoadHolidays();
+            }
+            else Toast.Error(await ExtractError(resp));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        holBusy = false;
+    }
+
+    private async Task DeleteHoliday(int id)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", "این تعطیلی حذف شود؟");
+        if (!ok) return;
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/LeaveRequests/holidays/{id}");
+            if (resp.IsSuccessStatusCode) { Toast.Success("تعطیلی حذف شد."); await LoadHolidays(); }
+            else Toast.Error(await ExtractError(resp));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- ثبت به‌جای کاربر ----------
+    private void OpenOnBehalf()
+    {
+        obUserId = 0;
+        obType = "Hourly";
+        obStart = DateTime.Today;
+        obEnd = DateTime.Today;
+        obStartTime = "08:00";
+        obEndTime = "10:00";
+        obDestination = null;
+        obReason = null;
+        obError = "";
+        showOnBehalf = true;
+    }
+
+    private async Task SubmitOnBehalf()
+    {
+        obError = "";
+        if (obUserId <= 0) { obError = "کاربر را انتخاب کنید."; return; }
+        if (obStart == null) { obError = "تاریخ شروع را انتخاب کنید."; return; }
+        if (obType == "Daily")
+        {
+            if (obEnd == null || obEnd.Value.Date < obStart.Value.Date) { obError = "تاریخ پایان معتبر نیست."; return; }
+        }
+        else
+        {
+            if (!TimeSpan.TryParse(obStartTime, out var st) || !TimeSpan.TryParse(obEndTime, out var en))
+            { obError = "ساعت شروع/پایان را درست وارد کنید."; return; }
+            if (en <= st) { obError = "ساعت پایان باید بعد از ساعت شروع باشد."; return; }
+            if ((en - st).TotalHours > 8) { obError = "بازه نمی‌تواند بیش از ۸ ساعت باشد."; return; }
+            if (obType == "HourlyMission" && string.IsNullOrWhiteSpace(obDestination)) { obError = "مقصد ماموریت را وارد کنید."; return; }
+        }
+        obBusy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync("/api/LeaveRequests/on-behalf", new
+            {
+                UserId = obUserId,
+                Type = obType,
+                StartDate = obStart.Value.Date,
+                EndDate = obType == "Daily" ? obEnd!.Value.Date : obStart.Value.Date,
+                StartTime = obType == "Daily" ? null : obStartTime,
+                EndTime = obType == "Daily" ? null : obEndTime,
+                Destination = obType == "HourlyMission" ? obDestination : null,
+                Reason = obReason
+            });
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success("درخواست توسط مدیر ثبت و تایید شد.");
+                showOnBehalf = false;
+                await LoadAll();
+                await LoadStats();
+            }
+            else obError = await ExtractError(resp);
+        }
+        catch (Exception ex) { obError = ex.Message; }
+        obBusy = false;
+    }
+
+    // ---------- مدل‌ها ----------
+    public class StatsInfo { public int Total { get; set; } public int Pending { get; set; } public int Approved { get; set; } public int Rejected { get; set; } }
+
+    public class UserOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+
+    public class LeaveItem
+    {
+        public int Id { get; set; }
+        public string Number { get; set; } = "";
+        public string Type { get; set; } = "";
+        public int RequesterUserId { get; set; }
+        public string RequesterName { get; set; } = "";
+        public DateTime StartDate { get; set; }
+        public DateTime EndDate { get; set; }
+        public TimeSpan? StartTime { get; set; }
+        public TimeSpan? EndTime { get; set; }
+        public double Days { get; set; }
+        public double Hours { get; set; }
+        public string? Destination { get; set; }
+        public string? Reason { get; set; }
+        public string Status { get; set; } = "";
+        public string? ApprovedByName { get; set; }
+        public DateTime? ApprovedAt { get; set; }
+        public string? ApproveNote { get; set; }
+        public bool AdminCreated { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    public class HolidayItem
+    {
+        public int Id { get; set; }
+        public DateTime HolidayDate { get; set; }
+        public string Name { get; set; } = "";
+        public string? CreatedByName { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public bool IsOfficial { get; set; }
+    }
+
+    public class ReportRow
+    {
+        public int UserId { get; set; }
+        public string Name { get; set; } = "";
+        public string? Role { get; set; }
+        public double DailyDays { get; set; }
+        public double HourlyHours { get; set; }
+        public double TotalQuotaDays { get; set; }
+        public double MissionDays { get; set; }
+        public int MissionCount { get; set; }
+        public double Quota { get; set; } = 2;
+        public double Remaining { get; set; }
+        public int PendingCount { get; set; }
+        public double YearlyUsed { get; set; }
+        public double YearlyRemaining { get; set; }
+        public string StatusFa { get; set; } = "";
+    }
+
+    public class ReportInfo
+    {
+        public int Year { get; set; }
+        public int Month { get; set; }
+        public string MonthName { get; set; } = "";
+        public double Quota { get; set; } = 2;
+        public List<ReportRow> Rows { get; set; } = new();
+        public double TotalUsed { get; set; }
+        public int TotalMissions { get; set; }
+    }
+
+    // ---------- بارگذاری ----------
+    private async Task LoadStats()
+    {
+        try { stats = await Http.GetFromJsonAsync<StatsInfo>("/api/LeaveRequests/stats"); }
+        catch { stats = null; }
+    }
+
+    private async Task LoadAll()
+    {
+        allLoading = true;
+        try
+        {
+            all = await Http.GetFromJsonAsync<List<LeaveItem>>($"/api/LeaveRequests?status={allStatus}") ?? new();
+            if (filterUserId > 0) all = all.Where(x => x.RequesterUserId == filterUserId).ToList();
+            RebuildUserOptions();
+        }
+        catch { all = new(); }
+        allLoading = false;
+    }
+
+    private void RebuildUserOptions()
+    {
+        var opts = all
+            .GroupBy(x => x.RequesterUserId)
+            .Select(g => new UserOption { Id = g.Key, Name = g.First().RequesterName })
+            .OrderBy(o => o.Name)
+            .ToList();
+        // اگر فیلتر فعال است گزینه‌ی آن نیرو حتماً باشد
+        if (filterUserId > 0 && opts.All(o => o.Id != filterUserId))
+            opts.Insert(0, new UserOption { Id = filterUserId, Name = all.FirstOrDefault(x => x.RequesterUserId == filterUserId)?.RequesterName ?? "نیرو" });
+        UserOptions = opts;
+    }
+
+    private async Task LoadReport()
+    {
+        try { report = await Http.GetFromJsonAsync<ReportInfo>($"/api/LeaveRequests/report/{reportJy}/{reportJm}"); }
+        catch { report = null; }
+    }
+
+    // ---------- تایید / رد ----------
+    private async Task ApproveRequest(int id)
+    {
+        try
+        {
+            var resp = await Http.PostAsync($"/api/LeaveRequests/{id}/approve", null);
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success("درخواست تایید شد.");
+                await LoadStats(); await LoadAll();
+                if (tab == "report") await LoadReport();
+            }
+            else Toast.Error(await ExtractError(resp));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenReject(LeaveItem r)
+    {
+        rejectTarget = r; rejectNote = ""; rejectError = ""; ShowReject = true;
+    }
+
+    private void CloseReject() { ShowReject = false; rejectTarget = null; rejectNote = ""; }
+
+    private async Task ConfirmReject()
+    {
+        if (rejectTarget == null) return;
+        rejectBusy = true; rejectError = "";
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/LeaveRequests/{rejectTarget.Id}/reject", new { Note = rejectNote });
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success("درخواست رد شد.");
+                CloseReject();
+                await LoadStats(); await LoadAll();
+                if (tab == "report") await LoadReport();
+            }
+            else rejectError = await ExtractError(resp);
+        }
+        catch (Exception ex) { rejectError = ex.Message; }
+        rejectBusy = false;
+    }
+
+    // ---------- خروجی CSV ----------
+    private async Task ExportCsv()
+    {
+        if (report == null) return;
+        exporting = true;
+        try
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("Name;Role;DailyDays;HourlyHours;MonthUsed;MonthRemain;YearUsed;YearRemain;MissionCount;PendingCount;Status");
+            foreach (var r in report.Rows)
+            {
+                sb.AppendLine($"{CsvCell(r.Name)};{CsvCell(r.Role ?? "")};{r.DailyDays.ToString(System.Globalization.CultureInfo.InvariantCulture)};" +
+                              $"{r.HourlyHours};{r.TotalQuotaDays.ToString(System.Globalization.CultureInfo.InvariantCulture)};" +
+                              $"{r.Remaining.ToString(System.Globalization.CultureInfo.InvariantCulture)};" +
+                              $"{r.YearlyUsed.ToString(System.Globalization.CultureInfo.InvariantCulture)};" +
+                              $"{r.YearlyRemaining.ToString(System.Globalization.CultureInfo.InvariantCulture)};{r.MissionCount};" +
+                              $"{r.PendingCount};{CsvCell(r.StatusFa)}");
+            }
+            var bytes = System.Text.Encoding.UTF8.GetBytes("\uFEFF" + sb.ToString()); // BOM برای اکسل
+            await JS.InvokeVoidAsync("saveAsFile", $"leave-report-{reportJy}-{reportJm}.csv", Convert.ToBase64String(bytes));
+            Toast.Success("گزارش دانلود شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        exporting = false;
+    }
+
+    private static string CsvCell(string v) => "\"" + v.Replace("\"", "\"\"") + "\"";
+
+    // ---------- کمک‌ها ----------
+    private async Task<string> ExtractError(HttpResponseMessage resp)
+    {
+        try
+        {
+            var body = await resp.Content.ReadAsStringAsync();
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("message", out var m)) return m.GetString() ?? "";
+        }
+        catch { }
+        return $"سرور درخواست را نپذیرفت (کد {(int)resp.StatusCode}).";
+    }
+
+    private Microsoft.AspNetCore.Components.MarkupString TypeBadge(string type) => type switch
+    {
+        "Hourly" => new Microsoft.AspNetCore.Components.MarkupString("<span class=\"badge lv-badge-hourly\"><i class=\"bi bi-clock\"></i> مرخصی ساعتی</span>"),
+        "HourlyMission" => new Microsoft.AspNetCore.Components.MarkupString("<span class=\"badge lv-badge-hourlymission\"><i class=\"bi bi-clipboard2-check\"></i> ماموریت ساعتی</span>"),
+        "Mission" => new Microsoft.AspNetCore.Components.MarkupString("<span class=\"badge lv-badge-mission\"><i class=\"bi bi-plane\"></i> ماموریت</span>"),
+        _ => new Microsoft.AspNetCore.Components.MarkupString("<span class=\"badge lv-badge-daily\"><i class=\"bi bi-calendar2-check\"></i> روزانه</span>")
+    };
+
+    private Microsoft.AspNetCore.Components.MarkupString StatusBadge(string status) => status switch
+    {
+        "Approved" => new Microsoft.AspNetCore.Components.MarkupString("<span class=\"badge lv-st-approved\"><i class=\"bi bi-check-circle\"></i> تاییدشده</span>"),
+        "Rejected" => new Microsoft.AspNetCore.Components.MarkupString("<span class=\"badge lv-st-rejected\"><i class=\"bi bi-x-circle\"></i> ردشده</span>"),
+        _ => new Microsoft.AspNetCore.Components.MarkupString("<span class=\"badge lv-st-pending\"><i class=\"bi bi-hourglass-split\"></i> در انتظار</span>")
+    };
+
+    private static string BarColor(int pct) => pct >= 100 ? "#e0245e" : pct >= 75 ? "#f4a23c" : "#2ec47e";
+
+    private static string D0(double v) => v == (long)v ? Fa.Digits((long)v) : Fa.Digits((decimal)Math.Round(v, 1));
+
+    private string AmountText(LeaveItem r) =>
+        r.Type is "Hourly" or "HourlyMission" ? $"{D0(r.Hours)} ساعت" :
+        $"{D0(r.Days)} روز";
+}

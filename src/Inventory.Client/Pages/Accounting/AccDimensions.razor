@@ -1,0 +1,375 @@
+@page "/acc/dimensions"
+@inject IAccDimensionService DimSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>ابعاد تحلیلی</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>ابعاد تحلیلی</h1>
+        <p class="lead">مراکز هزینه و شعبه‌ها — برای گزارش‌گیری تحلیلی از اسناد</p>
+    </div>
+    <div class="ms-auto">
+        <button class="btn btn-primary" @onclick="OpenNewDim">
+            <i class="bi bi-plus-lg"></i> بُعد جدید
+        </button>
+    </div>
+</div>
+
+<div class="row g-3">
+    <!-- ابعاد -->
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <i class="bi bi-grid-3x3-gap-fill text-primary"></i>
+                <span class="card-title">ابعاد</span>
+                <span class="badge badge-soft-primary ms-auto">@dims.Count.Num() بُعد</span>
+            </div>
+            <div class="card-body">
+                @if (loadingDims)
+                {
+                    <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+                }
+                else if (dims.Count == 0)
+                {
+                    <div class="empty-state">
+                        <i class="bi bi-grid-3x3-gap-fill"></i>
+                        <h6>هنوز بُعدی تعریف نشده</h6>
+                        <p class="fs-8 text-muted">مثلاً «مرکز هزینه» یا «شعبه»</p>
+                    </div>
+                }
+                else
+                {
+                    @foreach (var d in dims)
+                    {
+                        <div class="list-group mb-2">
+                            <div class="list-group-item p-2 @(selectedDimId == d.Id ? "active" : "")" style="cursor:pointer" @onclick="() => SelectDim(d)">
+                                <div class="d-flex align-items-center gap-2">
+                                    <i class="bi bi-diagram-3"></i>
+                                    <div class="min-w-0 flex-grow-1">
+                                        <b>@d.Name</b>
+                                        <div class="fs-8 opacity-75 num">@d.Code — @d.ValueCount.Num() مقدار</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- مقادیر بُعد انتخابی -->
+    <div class="col-lg-8">
+        <div class="card h-100">
+            <div class="card-header">
+                <i class="bi bi-list-ul text-primary"></i>
+                <span class="card-title">
+                    @(selectedDim is null ? "یک بُعد را انتخاب کنید" : $"مقادیر «{selectedDim.Name}»")
+                </span>
+                @if (selectedDim is not null)
+                {
+                    <button class="btn btn-sm btn-primary ms-auto" @onclick="OpenNewValue">
+                        <i class="bi bi-plus-lg"></i> مقدار جدید
+                    </button>
+                }
+            </div>
+            <div class="card-body">
+                @if (selectedDim is null)
+                {
+                    <div class="empty-state">
+                        <i class="bi bi-hand-index"></i>
+                        <h6>از لیست سمت راست یک بُعد انتخاب کنید</h6>
+                    </div>
+                }
+                else if (loadingVals)
+                {
+                    <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+                }
+                else if (values.Count == 0)
+                {
+                    <div class="empty-state">
+                        <i class="bi bi-list-ul"></i>
+                        <h6>مقداری برای این بُعد ثبت نشده است</h6>
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead>
+                                <tr>
+                                    <th class="text-center" style="width:44px">#</th>
+                                    <th>کد</th>
+                                    <th>نام</th>
+                                    <th>والد</th>
+                                    <th class="text-center">وضعیت</th>
+                                    <th class="text-center" style="width:110px">عملیات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @{ var row = 1; }
+                                @foreach (var v in values)
+                                {
+                                    <tr>
+                                        <td class="num text-muted">@((row++).FaDigits())</td>
+                                        <td class="num text-muted">@v.Code.FaDigits()</td>
+                                        <td><b>@v.Name</b></td>
+                                        <td class="text-muted">@v.ParentName</td>
+                                        <td class="text-center">
+                                            @if (v.IsActive)
+                                            {
+                                                <span class="badge badge-soft-success">فعال</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge badge-soft-secondary">غیرفعال</span>
+                                            }
+                                        </td>
+                                        <td class="text-center">
+                                            <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEditValue(v)">
+                                                <i class="bi bi-pencil text-primary"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-light" title="حذف" @onclick="() => DeleteValue(v)">
+                                                <i class="bi bi-trash text-danger"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- مودال بُعد -->
+<Modal Visible="showDimModal" Title="تعریف بُعد تحلیلی" OnClose="CloseDimModal">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">کد <span class="text-danger">*</span></label>
+                <input class="form-control num" @bind="dimForm.Code" placeholder="مثلاً CC" />
+            </div>
+            <div class="col-md-8">
+                <label class="form-label">نام <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="dimForm.Name" placeholder="مثلاً مرکز هزینه" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">ترتیب</label>
+                <input class="form-control num" type="number" @bind="dimForm.SortOrder" />
+            </div>
+            <div class="col-md-8">
+                <div class="form-check form-switch mt-4">
+                    <input class="form-check-input" type="checkbox" id="dimActive" @bind="dimForm.IsActive" />
+                    <label class="form-check-label" for="dimActive">فعال</label>
+                </div>
+            </div>
+            <div class="col-12">
+                <label class="form-label">توضیح</label>
+                <textarea class="form-control" rows="2" @bind="dimForm.Description"></textarea>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseDimModal">انصراف</button>
+        <button class="btn btn-primary" @onclick="SaveDim" disabled="@saving">@(saving ? "در حال ذخیره..." : "ذخیره")</button>
+    </Footer>
+</Modal>
+
+<!-- مودال مقدار -->
+<Modal Visible="showValModal" Title="تعریف مقدار" OnClose="CloseValModal">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">کد <span class="text-danger">*</span></label>
+                <input class="form-control num" @bind="valForm.Code" placeholder="مثلاً 101" />
+            </div>
+            <div class="col-md-8">
+                <label class="form-label">نام <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="valForm.Name" placeholder="مثلاً هزینه اداری" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">والد</label>
+                <SearchSelect Items="parentLookups" Value="valForm.ParentId ?? 0"
+                              ValueChanged="OnParentChanged" Placeholder="(بدون والد)" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">ترتیب</label>
+                <input class="form-control num" type="number" @bind="valForm.SortOrder" />
+            </div>
+            <div class="col-12">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="valActive" @bind="valForm.IsActive" />
+                    <label class="form-check-label" for="valActive">فعال</label>
+                </div>
+            </div>
+            <div class="col-12">
+                <label class="form-label">توضیح</label>
+                <textarea class="form-control" rows="2" @bind="valForm.Description"></textarea>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseValModal">انصراف</button>
+        <button class="btn btn-primary" @onclick="SaveValue" disabled="@saving">@(saving ? "در حال ذخیره..." : "ذخیره")</button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<AccDimension> dims = new();
+    private List<AccDimensionValue> values = new();
+    private List<LookupItem> parentLookups = new();
+    private AccDimension? selectedDim;
+    private int selectedDimId;
+
+    private bool loadingDims = true, loadingVals, showDimModal, showValModal, saving;
+
+    private AccDimension dimForm = new();
+    private AccDimensionValue valForm = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("ابعاد تحلیلی");
+        await LoadDims();
+    }
+
+    private async Task LoadDims()
+    {
+        loadingDims = true;
+        try { dims = await DimSvc.GetDimensionsAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loadingDims = false; }
+    }
+
+    private async Task SelectDim(AccDimension d)
+    {
+        selectedDimId = d.Id;
+        selectedDim = d;
+        await LoadValues();
+    }
+
+    private async Task LoadValues()
+    {
+        if (selectedDim is null) return;
+        loadingVals = true;
+        try
+        {
+            values = await DimSvc.GetValuesAsync(selectedDimId);
+            parentLookups = values.Where(v => v.IsActive)
+                .Select(v => new LookupItem { Id = v.Id, Name = $"{v.Code} — {v.Name}" }).ToList();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loadingVals = false; }
+    }
+
+    // ---------- بُعد ----------
+    private void OpenNewDim()
+    {
+        dimForm = new AccDimension { IsActive = true };
+        showDimModal = true;
+    }
+
+    private void OpenEditDim(AccDimension d)
+    {
+        dimForm = new AccDimension
+        {
+            Id = d.Id, Code = d.Code, Name = d.Name, IsSystem = d.IsSystem,
+            IsActive = d.IsActive, SortOrder = d.SortOrder, Description = d.Description
+        };
+        showDimModal = true;
+    }
+
+    private void CloseDimModal() => showDimModal = false;
+
+    private async Task SaveDim()
+    {
+        if (string.IsNullOrWhiteSpace(dimForm.Code) || string.IsNullOrWhiteSpace(dimForm.Name))
+        {
+            Toast.Error("کد و نام بُعد را وارد کنید.");
+            return;
+        }
+        saving = true;
+        try
+        {
+            await DimSvc.SaveDimensionAsync(dimForm);
+            Toast.Success("بُعد ذخیره شد.");
+            showDimModal = false;
+            await LoadDims();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task DeleteDim(AccDimension d)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"آیا از حذف بُعد «{d.Name}» مطمئن هستید؟")) return;
+        try
+        {
+            await DimSvc.DeleteDimensionAsync(d.Id);
+            Toast.Success("حذف شد.");
+            if (selectedDimId == d.Id) { selectedDim = null; selectedDimId = 0; values.Clear(); }
+            await LoadDims();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- مقدار ----------
+    private void OpenNewValue()
+    {
+        valForm = new AccDimensionValue { DimensionId = selectedDimId, IsActive = true };
+        showValModal = true;
+    }
+
+    private void OpenEditValue(AccDimensionValue v)
+    {
+        valForm = new AccDimensionValue
+        {
+            Id = v.Id, DimensionId = v.DimensionId, Code = v.Code, Name = v.Name,
+            ParentId = v.ParentId, SortOrder = v.SortOrder, IsActive = v.IsActive,
+            Description = v.Description
+        };
+        showValModal = true;
+    }
+
+    private void CloseValModal() => showValModal = false;
+
+    private void OnParentChanged(int id) => valForm.ParentId = id > 0 ? id : null;
+
+    private async Task SaveValue()
+    {
+        if (string.IsNullOrWhiteSpace(valForm.Code) || string.IsNullOrWhiteSpace(valForm.Name))
+        {
+            Toast.Error("کد و نام مقدار را وارد کنید.");
+            return;
+        }
+        saving = true;
+        try
+        {
+            await DimSvc.SaveValueAsync(valForm);
+            Toast.Success("مقدار ذخیره شد.");
+            showValModal = false;
+            await LoadValues();
+            await LoadDims();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task DeleteValue(AccDimensionValue v)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"آیا از حذف مقدار «{v.Name}» مطمئن هستید؟")) return;
+        try
+        {
+            await DimSvc.DeleteValueAsync(v.Id);
+            Toast.Success("حذف شد.");
+            await LoadValues();
+            await LoadDims();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

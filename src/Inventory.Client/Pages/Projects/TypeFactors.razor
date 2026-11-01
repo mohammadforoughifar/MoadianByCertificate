@@ -1,0 +1,193 @@
+@page "/type-factors"
+@inject ITypeFactorService TypeFactorSvc
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>انواع فاکتور</PageTitle>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center flex-wrap gap-2"
+         style="background:linear-gradient(135deg,#10b981,#0ea5e9);color:#fff;border-radius:14px 14px 0 0;">
+        <span><i class="bi bi-card-list me-2"></i>انواع فاکتور
+            <span class="badge bg-light text-dark ms-1">@total</span>
+        </span>
+        @if (Auth.Has("TypeFactors.Create"))
+        {
+            <button class="btn btn-light btn-sm fw-700 shadow-sm" style="border-radius:8px;color:#065f46;"
+                    data-hotkey="f2" title="کلید میانبر: F2" @onclick="OpenNew">
+                <i class="bi bi-plus-lg"></i> نوع فاکتور جدید (F2)
+            </button>
+        }
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="row g-2 align-items-center">
+                <div class="col-md-4">
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input class="form-control" placeholder="جستجوی نام…" @bind="search" @bind:event="oninput" @bind:after="SearchChanged" />
+                    </div>
+                </div>
+                <div class="col-auto ms-auto fs-8 text-muted">@total.Num() نوع فاکتور</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (Paged.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-card-list"></i><h5>نوع فاکتوری یافت نشد</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>نام نوع فاکتور</th>
+                            <th class="text-start">تعداد پروژه</th>
+                            <th>تاریخ ایجاد</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var t in Paged)
+                        {
+                            <tr>
+                                <td class="fw-500"><i class="bi bi-card-checklist text-muted ms-1"></i> @t.Name</td>
+                                <td class="text-start num">@t.ProjectCount.Num()</td>
+                                <td class="num">@t.CreatedAt.ToFa()</td>
+                                <td class="text-end">
+                                    @if (Auth.Has("TypeFactors.Update"))
+                                    {
+                                        <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(t)"><i class="bi bi-pencil text-primary"></i></button>
+                                    }
+                                    @if (Auth.Has("TypeFactors.Delete"))
+                                    {
+                                        <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(t)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="ChangePage" />
+        }
+    </div>
+</div>
+
+<Modal Visible="showModal" Title="@(editing ? "ویرایش نوع فاکتور" : "نوع فاکتور جدید")" OnClose="CloseModal">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-12">
+            <label class="form-label">نام نوع فاکتور <span class="text-danger">*</span></label>
+            <input class="form-control" @bind="form.Name" placeholder="مثلاً: خرید، فروش، تعمیرات…" />
+        </div>
+    </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseModal">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            <i class="bi bi-check-lg ms-1"></i> ذخیره (F1)
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<TypeFactorDto> items = new();
+    private bool loading = true;
+    private string search = "";
+
+    private TypeFactorDto form = new();
+    private bool showModal, saving;
+    private bool editing => form.Id != 0;
+
+
+    private int page = 1;
+    private const int PageSize = 12;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+    private List<TypeFactorDto> Paged => items;
+    private int total, loadVersion;
+    private async Task ChangePage(int value) { page = value; await Load(); }
+    private async Task SearchChanged() { page = 1; await Load(); }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("انواع فاکتور");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        var version = ++loadVersion;
+        loading = true;
+        try
+        {
+            var result = await TypeFactorSvc.GetPagedAsync((page - 1) * PageSize, PageSize, search);
+            if (version != loadVersion) return;
+            items = result.Items;
+            total = result.TotalCount;
+            if (page > PageCount) { page = PageCount; await Load(); }
+        }
+        catch (Exception ex) { if (version == loadVersion) Toast.Error(ex.Message); }
+        finally { if (version == loadVersion) loading = false; }
+    }
+
+    private void OpenNew()
+    {
+        if (showModal) return; // وقتی مودال باز است F2 کاری نکند
+        form = new TypeFactorDto();
+        showModal = true;
+    }
+
+    private void OpenEdit(TypeFactorDto t)
+    {
+        form = new TypeFactorDto { Id = t.Id, Name = t.Name, CreatedAt = t.CreatedAt };
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name)) { Toast.Error("نام نوع فاکتور را وارد کنید."); return; }
+        saving = true;
+        try
+        {
+            if (editing)
+                await TypeFactorSvc.UpdateAsync(form.Id, form);
+            else
+                await TypeFactorSvc.CreateAsync(form);
+            Toast.Success(editing ? "نوع فاکتور ویرایش شد." : "نوع فاکتور ثبت شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(TypeFactorDto t)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف نوع فاکتور «{t.Name}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await TypeFactorSvc.DeleteAsync(t.Id);
+            Toast.Success("نوع فاکتور حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

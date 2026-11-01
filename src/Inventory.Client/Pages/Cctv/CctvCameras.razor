@@ -1,0 +1,486 @@
+@namespace Inventory.Client.Pages
+@page "/cctv-cameras"
+@inject HttpClient Http
+
+<PageTitle>دوربین‌های مداربسته</PageTitle>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center flex-wrap gap-2" 
+         style="background:linear-gradient(135deg,#4f8cff,#8e5cff);color:#fff;border-radius:14px 14px 0 0;">
+        <span><i class="bi bi-camera-video-fill me-2"></i>لیست دوربین‌های ثبت‌شده
+            <span class="badge bg-light text-dark ms-1">@filtered.Count</span>
+        </span>
+        <div class="d-flex gap-2 flex-wrap">
+            <a href="/api/CctvCameras/export" target="_blank" class="btn btn-light btn-sm fw-700 shadow-sm" 
+               style="border-radius:8px;color:#4f5b8a;">
+                <i class="bi bi-download"></i> خروجی اکسل
+            </a>
+            <button class="btn btn-light btn-sm fw-700 shadow-sm" style="border-radius:8px;color:#4f5b8a;" @onclick="OpenForm">
+                <i class="bi bi-plus-lg"></i> افزودن دوربین
+            </button>
+        </div>
+    </div>
+
+    <div class="card-body">
+        <!-- ورود اکسل - بالا و رسپانسیو -->
+        <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+            <div class="d-flex flex-wrap align-items-center gap-2 w-100 w-md-auto">
+                <label class="btn btn-sm btn-outline-primary rounded-pill fw-700 mb-0 @(importFile == null ? "" : "active")" title="انتخاب فایل اکسل">
+                    <i class="bi bi-file-earmark-arrow-up"></i> انتخاب فایل اکسل
+                    <InputFile OnChange="OnFileSelected" accept=".xlsx,.xls" class="d-none" />
+                </label>
+                <button class="btn btn-sm btn-success rounded-pill fw-800" @onclick="ImportExcel" disabled="@(importFile == null || importing)">
+                    @if (importing)
+                    { <span class="spinner-border spinner-border-sm me-1"></span> <text>ورود از اکسل</text> }
+                    else
+                    { <i class="bi bi-upload"></i> <text>ورود از اکسل</text> }
+                </button>
+                @if (importFile != null)
+                { <span class="small text-muted">@importFile.Name</span> }
+            </div>
+
+            <!-- سرچ -->
+            <input type="text" class="form-control form-control-sm ms-md-3 mt-2 mt-md-0" style="max-width:260px"
+                   placeholder="جستجو: مدل / سریال / آی‌پی / مک..." @bind="searchText" @bind:event="oninput" />
+
+            <select class="form-select form-select-sm" style="max-width:190px" value="@locationFilter" @onchange="OnLocationFilter">
+                <option value="">همه‌ی محل‌های استقرار</option>
+                @foreach (var loc in Locations)
+                {
+                    <option value="@loc">@loc (@CamerasAt(loc))</option>
+                }
+            </select>
+
+            <select class="form-select form-select-sm" style="max-width:170px" value="@groupMode" @onchange="OnGroupMode">
+                <option value="location">گروه‌بندی: محل</option>
+                <option value="nvr">گروه‌بندی: NVR</option>
+                <option value="none">بدون گروه‌بندی</option>
+            </select>
+
+            <span class="badge bg-secondary">@filtered.Count دوربین</span>
+        </div>
+
+        @if (isLoading)
+        {
+            <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (filtered.Count == 0)
+        {
+            <div class="alert alert-info py-2 mb-0">
+                هنوز دوربینی ثبت نشده — با دکمه‌ی «افزودن دوربین» یا «ورود از اکسل» شروع کنید.
+            </div>
+        }
+        else
+        {
+            <!-- جدول دسکتاپ -->
+            <div class="table-responsive d-none d-md-block">
+                <table class="table table-hover align-middle mb-0" style="white-space:nowrap;">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th><th>مدل</th><th>شماره سریال</th><th>آی‌پی</th>
+                            <th>مک آدرس</th><th>محل استقرار</th><th>NVR</th><th>وضعیت</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{ var i = 1; }
+                        @foreach (var g in Grouped)
+                        {
+                            @if (groupMode != "none")
+                            {
+                                <tr class="table-light">
+                                    <td colspan="9" class="fw-800" style="background:#eef1ff;color:#4f5b8a;">
+                                        <i class="bi @(@groupMode == "nvr" ? "bi-hdd-stack-fill" : "bi-geo-alt-fill")"></i> @g.Key
+                                        <span class="badge bg-primary ms-1">@g.Items.Count</span>
+                                    </td>
+                                </tr>
+                            }
+                            @foreach (var c in g.Items)
+                            {
+                                <tr>
+                                    <td class="text-secondary fw-600">@(i++)</td>
+                                    <td class="fw-700">@c.Model</td>
+                                    <td><code>@c.SerialNumber</code></td>
+                                    <td>@(string.IsNullOrEmpty(c.Ip) ? "—" : c.Ip)</td>
+                                    <td><code>@(string.IsNullOrEmpty(c.Mac) ? "—" : c.Mac)</code></td>
+                                    <td>@(string.IsNullOrEmpty(c.Location) ? "—" : c.Location)</td>
+                                    <td>@NvrName(c.NvrId)</td>
+                                    <td>
+                                        @if (c.IsActive)
+                                        { <span class="badge bg-success">فعال</span> }
+                                        else
+                                        { <span class="badge bg-secondary">غیرفعال</span> }
+                                    </td>
+                                    <td>
+                                        <div class="d-flex gap-1 justify-content-center">
+                                            <button class="btn btn-sm btn-outline-primary ops-btn" title="ویرایش" @onclick="() => Edit(c)"><i class="bi bi-pencil-fill"></i></button>
+                                            <button class="btn btn-sm btn-outline-danger ops-btn" title="حذف" @onclick="() => Delete(c.Id)"><i class="bi bi-trash-fill"></i></button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- کارت موبایل -->
+            <div class="d-md-none">
+                @{ var k = 1; }
+                @foreach (var g in Grouped)
+                {
+                    @if (groupMode != "none")
+                    {
+                        <div class="m-group">
+                            <span class="m-group-name"><i class="bi @(@groupMode == "nvr" ? "bi-hdd-stack-fill" : "bi-geo-alt-fill")"></i> @g.Key</span>
+                            <span class="badge bg-primary">@g.Items.Count</span>
+                        </div>
+                    }
+                    @foreach (var c in g.Items)
+                    {
+                        <div class="m-card">
+                            <div class="m-title">@(k++). @c.Model</div>
+                            <div class="m-row"><span class="m-label">سریال</span><span class="m-val"><code>@c.SerialNumber</code></span></div>
+                            <div class="m-row"><span class="m-label">آی‌پی</span><span class="m-val">@(string.IsNullOrEmpty(c.Ip) ? "—" : c.Ip)</span></div>
+                            <div class="m-row"><span class="m-label">مک</span><span class="m-val">@(string.IsNullOrEmpty(c.Mac) ? "—" : c.Mac)</span></div>
+                            <div class="m-row"><span class="m-label">NVR</span><span class="m-val">@NvrName(c.NvrId)</span></div>
+                            <div class="m-row"><span class="m-label">وضعیت</span><span class="m-val">@(c.IsActive ? "فعال ✅" : "غیرفعال")</span></div>
+                            <div class="m-actions">
+                                <button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(c)"><i class="bi bi-pencil-fill"></i> ویرایش</button>
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(c.Id)"><i class="bi bi-trash-fill"></i> حذف</button>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        }
+
+        @if (importResult != null)
+        {
+            <div class="alert @(importResult.Errors.Count > 0 ? "alert-warning" : "alert-success") py-2 mt-2 mb-0">
+                <b>@importResult.Inserted</b> دوربین ثبت شد؛ <b>@importResult.Skipped</b> رد شد (خالی/تکراری).
+                @if (importResult.Errors.Count > 0)
+                {
+                    <ul class="small mb-0 mt-1">
+                        @foreach (var e in importResult.Errors.Take(10))
+                        { <li>@e</li> }
+                    </ul>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@* مودال فرم *@
+@if (ShowForm)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+        <div class="modal-dialog modal-dialog-centered" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(editing ? "ویرایش دوربین" : "افزودن دوربین مداربسته")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseForm"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrWhiteSpace(formError))
+                    { <div class="alert alert-danger py-2">@formError</div> }
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-800">مدل <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-sm" maxlength="150" @bind="form.Model" placeholder="مثلاً: Hikvision DS-2CD2143G2-I" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-800">شماره سریال <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-sm" maxlength="150" @bind="form.SerialNumber" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-800">آی‌پی</label>
+                            <input class="form-control form-control-sm" maxlength="50" @bind="form.Ip" placeholder="192.168.1.101" style="direction:ltr;text-align:right;" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-800">مک آدرس</label>
+                            <input class="form-control form-control-sm" maxlength="50" @bind="form.Mac" placeholder="C0:56:E3:AA:BB:01" style="direction:ltr;text-align:right;" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-800">محل استقرار <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-sm" maxlength="250" @bind="form.Location" placeholder="مثلاً: انبار مرکزی — سردر شرقی" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-800">دستگاه NVR متصل</label>
+                            <select class="form-select form-select-sm" value="@(form.NvrId ?? 0)" @onchange="OnNvrPicked">
+                                <option value="0">— بدون NVR / مستقیم —</option>
+                                @foreach (var n in nvrs.Where(n => n.IsActive).OrderBy(n => n.Model))
+                                {
+                                    <option value="@n.Id">@n.Model (@n.SerialNumber)@(string.IsNullOrEmpty(n.Location) ? "" : " — " + n.Location)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-800">توضیحات</label>
+                            <textarea class="form-control form-control-sm" rows="2" maxlength="500" @bind="form.Notes"></textarea>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check form-switch mt-1">
+                                <input class="form-check-input" type="checkbox" role="switch" id="camActive" @bind="form.IsActive" />
+                                <label class="form-check-label" for="camActive">دوربین فعال باشد</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary rounded-pill px-4" @onclick="CloseForm">انصراف</button>
+                    <button class="btn btn-primary rounded-pill px-4 fw-800" disabled="@busy" @onclick="Save">
+                        @(editing ? "ذخیره تغییرات" : "افزودن دوربین")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .ops-btn { width:34px; height:30px; display:inline-flex; align-items:center; justify-content:center; padding:0; border-radius:8px; }
+</style>
+
+@code {
+    private List<CctvCameraItem> items = new();
+    private bool isLoading = true;
+    private string searchText = "";
+
+    private bool ShowForm = false;
+    private bool editing = false;
+    private bool busy;
+    private string formError = "";
+    private int editId;
+    private CameraForm form = new();
+
+    private List<CctvNvrItem> nvrs = new();
+    private string locationFilter = "";
+
+    private IBrowserFile? importFile;
+    private bool importing;
+    private ImportResult? importResult;
+
+    private string groupMode = "location";
+
+    private List<CctvCameraItem> filtered
+    {
+        get
+        {
+            var q = string.IsNullOrWhiteSpace(searchText) ? null : searchText.Trim();
+            var list = items.Where(c => string.IsNullOrEmpty(locationFilter) || c.Location == locationFilter);
+            if (q != null)
+                list = list.Where(c =>
+                    (c.Model ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    (c.SerialNumber ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    (c.Ip ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    (c.Mac ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    (c.Location ?? "").Contains(q, StringComparison.OrdinalIgnoreCase));
+            return list.ToList();
+        }
+    }
+
+    private List<string> Locations => items
+        .Select(c => c.Location ?? "")
+        .Where(l => !string.IsNullOrWhiteSpace(l))
+        .Distinct().OrderBy(l => l).ToList();
+
+    private int CamerasAt(string loc) => items.Count(c => (c.Location ?? "") == loc);
+
+    private void OnGroupMode(ChangeEventArgs e) => groupMode = e.Value?.ToString() ?? "location";
+
+    private List<(string Key, List<CctvCameraItem> Items)> Grouped
+    {
+        get
+        {
+            if (groupMode == "none")
+                return new List<(string, List<CctvCameraItem>)> { ("", filtered.ToList()) };
+            if (groupMode == "nvr")
+                return filtered
+                    .GroupBy(c => NvrName(c.NvrId))
+                    .OrderBy(g => g.Key)
+                    .Select(g => (g.Key, g.ToList()))
+                    .ToList()!;
+            return filtered
+                .GroupBy(c => string.IsNullOrEmpty(c.Location) ? "" : c.Location)
+                .OrderBy(g => g.Key)
+                .Select(g => ((string)(string.IsNullOrEmpty(g.Key) ? "بدون محل مشخص" : g.Key), g.ToList()))
+                .ToList()!;
+        }
+    }
+
+    private string NvrName(int? nvrId)
+    {
+        var n = nvrs.FirstOrDefault(x => x.Id == nvrId);
+        return n == null ? "—" : n.Model;
+    }
+
+    private void OnLocationFilter(ChangeEventArgs e) => locationFilter = e.Value?.ToString() ?? "";
+
+    private void OnNvrPicked(ChangeEventArgs e) => form.NvrId = int.TryParse(e.Value?.ToString(), out var v) && v > 0 ? v : null;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        isLoading = true;
+        try { items = await Http.GetFromJsonAsync<List<CctvCameraItem>>("/api/CctvCameras") ?? new(); }
+        catch { items = new(); }
+        try { nvrs = await Http.GetFromJsonAsync<List<CctvNvrItem>>("/api/CctvNvrs") ?? new(); }
+        catch { nvrs = new(); }
+        finally { isLoading = false; }
+    }
+
+    private void OpenForm()
+    {
+        editing = false; editId = 0; formError = "";
+        form = new CameraForm();
+        ShowForm = true;
+    }
+
+    private void Edit(CctvCameraItem c)
+    {
+        editing = true; editId = c.Id; formError = "";
+        form = new CameraForm
+        {
+            Model = c.Model, SerialNumber = c.SerialNumber, Ip = c.Ip,
+            Mac = c.Mac, Location = c.Location, Notes = c.Notes, IsActive = c.IsActive,
+            NvrId = c.NvrId
+        };
+        ShowForm = true;
+    }
+
+    private void CloseForm() => ShowForm = false;
+
+    private async Task Save()
+    {
+        formError = "";
+        if (string.IsNullOrWhiteSpace(form.Model)) { formError = "مدل را وارد کنید."; return; }
+        if (string.IsNullOrWhiteSpace(form.SerialNumber)) { formError = "شماره سریال را وارد کنید."; return; }
+        if (string.IsNullOrWhiteSpace(form.Location)) { formError = "محل استقرار را وارد کنید."; return; }
+
+        busy = true;
+        try
+        {
+            var payload = new CctvCameraItem
+            {
+                Id = editId, Model = form.Model.Trim(), SerialNumber = form.SerialNumber.Trim(),
+                Ip = string.IsNullOrWhiteSpace(form.Ip) ? null : form.Ip.Trim(),
+                Mac = string.IsNullOrWhiteSpace(form.Mac) ? null : form.Mac.Trim(),
+                Location = form.Location.Trim(),
+                Notes = string.IsNullOrWhiteSpace(form.Notes) ? null : form.Notes.Trim(),
+                IsActive = form.IsActive,
+                NvrId = form.NvrId
+            };
+            HttpResponseMessage resp;
+            if (editing && editId > 0) resp = await Http.PutAsJsonAsync($"/api/CctvCameras/{editId}", payload);
+            else resp = await Http.PostAsJsonAsync("/api/CctvCameras", payload);
+
+            if (resp.IsSuccessStatusCode)
+            {
+                ShowForm = false;
+                await Load();
+            }
+            else
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                formError = "سرور: " + (ExtractMessage(body) ?? $"کد {(int)resp.StatusCode}");
+            }
+        }
+        catch (Exception ex) { formError = "ارتباط با API برقرار نشد. (" + ex.Message + ")"; }
+        finally { busy = false; }
+    }
+
+    private static string? ExtractMessage(string json)
+    {
+        try { return System.Text.Json.JsonDocument.Parse(json).RootElement.GetProperty("message").GetString(); }
+        catch { return null; }
+    }
+
+    private async Task Delete(int id)
+    {
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/CctvCameras/{id}");
+            if (resp.IsSuccessStatusCode) await Load();
+        }
+        catch { }
+    }
+
+    // اکسل
+    private void OnFileSelected(InputFileChangeEventArgs e) => importFile = e.File;
+
+    private async Task ImportExcel()
+    {
+        if (importFile == null) return;
+        importing = true;
+        importResult = null;
+        try
+        {
+            using var content = new MultipartFormDataContent();
+            using var stream = importFile.OpenReadStream(long.MaxValue);
+            content.Add(new StreamContent(stream), "file", importFile.Name);
+            var resp = await Http.PostAsync("/api/CctvCameras/import-excel", content);
+            var body = await resp.Content.ReadAsStringAsync();
+            if (resp.IsSuccessStatusCode)
+            {
+                importResult = System.Text.Json.JsonSerializer.Deserialize<ImportResult>(body,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                await Load();
+            }
+            else
+            {
+                importResult = new ImportResult { Errors = { ExtractMessage(body) ?? $"کد {(int)resp.StatusCode}" } };
+            }
+        }
+        catch (Exception ex)
+        {
+            importResult = new ImportResult { Errors = { "آپلود ناموفق: " + ex.Message } };
+        }
+        finally { importing = false; }
+    }
+
+    private class CameraForm
+    {
+        public string Model { get; set; } = "";
+        public string SerialNumber { get; set; } = "";
+        public string? Ip { get; set; }
+        public string? Mac { get; set; }
+        public string Location { get; set; } = "";
+        public string? Notes { get; set; }
+        public bool IsActive { get; set; } = true;
+        public int? NvrId { get; set; }
+    }
+
+    public class CctvCameraItem
+    {
+        public int Id { get; set; }
+        public string Model { get; set; } = "";
+        public string SerialNumber { get; set; } = "";
+        public string? Ip { get; set; }
+        public string? Mac { get; set; }
+        public string? Location { get; set; }
+        public string? Notes { get; set; }
+        public int? NvrId { get; set; }
+        public bool IsActive { get; set; } = true;
+        public DateTime CreatedAt { get; set; }
+    }
+
+    public class CctvNvrItem
+    {
+        public int Id { get; set; }
+        public string Model { get; set; } = "";
+        public string SerialNumber { get; set; } = "";
+        public string? Ip { get; set; }
+        public string? Mac { get; set; }
+        public string? Location { get; set; }
+        public string? Notes { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class ImportResult
+    {
+        public int Inserted { get; set; }
+        public int Skipped { get; set; }
+        public List<string> Errors { get; set; } = new();
+    }
+}

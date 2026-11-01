@@ -1,0 +1,122 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/reports"
+@inject IFaAttService Svc
+@inject IHrMainService OrgSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>گزارش ماهانه حضور</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-file-earmark-spreadsheet"></i> گزارش ماهانه حضور</h1>
+            <div class="lead">خلاصه کارکرد ماه (مبنای ورودی حقوق) + خروجی اکسل</div>
+        </div>
+        <button class="btn btn-outline-success" disabled="@(rows.Count == 0)" @onclick="DownloadExcel"><i class="bi bi-download"></i> خروجی اکسل</button>
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد منابع انسانی است.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2">
+            <div class="col-md-2"><label class="form-label small text-muted">سال</label><input type="number" class="form-control" @bind="year" /></div>
+            <div class="col-md-2"><label class="form-label small text-muted">ماه</label><input type="number" min="1" max="12" class="form-control" @bind="month" /></div>
+            <div class="col-md-5"><label class="form-label small text-muted">واحد سازمانی</label><select class="form-select" @bind="fUnit"><option value="">همه واحدها</option>@foreach (var u in units){<option value="@u.Id">@u.Name</option>}</select></div>
+            <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary" @onclick="Reload"><i class="bi bi-search"></i> نمایش</button></div>
+        </div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (rows.Count == 0)
+        {
+            <div class="text-center text-muted py-5">رکوردی برای این ماه وجود ندارد.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover table-sm mb-0 align-middle">
+                <thead class="table-light"><tr><th>کد</th><th>نام</th><th>حاضر</th><th>غیبت</th><th>تأخیر (تعداد)</th><th>تأخیر (دقیقه)</th><th>تعجیل</th><th>اضافه‌کاری</th><th>کارکرد</th><th>مأموریت</th><th>مرخصی</th><th>تعطیل‌کار</th></tr></thead>
+                <tbody>
+                    @foreach (var r in rows)
+                    {
+                        <tr>
+                            <td class="num">@r.EmployeeCode</td>
+                            <td><b>@r.EmployeeName</b></td>
+                            <td class="num">@FaAttUi.Num(r.PresentDays)</td>
+                            <td class="num @(r.AbsentDays > 0 ? "text-danger fw-bold" : "")">@FaAttUi.Num(r.AbsentDays)</td>
+                            <td class="num">@FaAttUi.Num(r.LateCount)</td>
+                            <td class="num">@FaAttUi.Num(r.LateMinutes)</td>
+                            <td class="num">@FaAttUi.Num(r.EarlyMinutes)</td>
+                            <td class="num">@FaAttUi.Num(r.OvertimeMinutes)</td>
+                            <td class="num">@FaAttUi.Num(r.WorkMinutes)</td>
+                            <td class="num">@FaAttUi.Num(r.MissionDays)</td>
+                            <td class="num">@FaAttUi.Num(r.LeaveDays)</td>
+                            <td class="num">@FaAttUi.Num(r.HolidayWorkDays)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+@code {
+    private bool faManage => Auth.Has("FaAtt.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaAttMonthSummaryDto> rows = new();
+    private List<HrMainOrgNodeDto> units = new();
+    private static readonly System.Globalization.PersianCalendar Pc = new();
+    private int year = FaAttUi.CurrentYear;
+    private int month = 1;
+    private string? fUnit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        try { month = Pc.GetMonth(DateTime.Today); } catch { month = 1; }
+        try
+        {
+            try { units = await OrgSvc.ListOrgNodesAsync(); } catch { units = new(); }
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            int? u = int.TryParse(fUnit, out var x) ? x : null;
+            rows = await Svc.GetMonthSummaryAsync(year, month, u);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task DownloadExcel()
+    {
+        try
+        {
+            int? u = int.TryParse(fUnit, out var x) ? x : null;
+            var (data, name, _) = await Svc.DownloadMonthExcelAsync(year, month, u);
+            await JS.InvokeVoidAsync("saveAsFile", name, Convert.ToBase64String(data));
+            Toast.Success("فایل اکسل دانلود شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

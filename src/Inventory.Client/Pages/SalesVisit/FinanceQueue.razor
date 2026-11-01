@@ -1,0 +1,207 @@
+@namespace Inventory.Client.Pages
+@page "/sales/finance-queue"
+@inject ISalesVisitApi Api
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+
+<PageTitle>کارتابل مالی سفارش‌های ویزیتور</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>کارتابل مالی سفارش‌های ویزیتور</h1>
+        <p class="lead">سفارش تأییدشدهٔ مدیر اینجاست؛ با «تأیید مالی» سند فروش فروشگاه (نقد/چک/اقساط) ثبت و به فهرست «فروش» منتقل می‌شود</p>
+    </div>
+    <button class="btn btn-light ms-auto" @onclick="LoadAsync"><i class="bi bi-arrow-clockwise"></i> بازخوانی</button>
+</div>
+
+<div class="row g-2 mb-3">
+    <div class="col-6 col-md-3">
+        <div class="vis-kpi"><b>@Fa.Digits(PendingCount)</b><span>در انتظار تأیید مالی</span></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="vis-kpi vis-kpi-ok"><b>@Fa.Digits(SoldCount)</b><span>منتقل‌شده به فروش</span></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="vis-kpi"><b>@Fa.Money(PendingAmount)</b><span>مبلغ در انتظار (ریال)</span></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="vis-kpi"><b>@Fa.Digits(items.Count)</b><span>کل ردیف‌ها</span></div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-inbox"></i><h5>موردی در کارتابل مالی نیست</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>سفارش</th>
+                            <th>تاریخ سفارش</th>
+                            <th>تاریخ نهایی تحویل</th>
+                            <th>مشتری</th>
+                            <th>ویزیتور</th>
+                            <th>روش پرداخت</th>
+                            <th class="text-start">مبلغ</th>
+                            <th>وضعیت</th>
+                            <th>موجودی</th>
+                            <th>شماره فروش</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var o in items)
+                        {
+                            <tr data-order="@o.Number">
+                                <td class="fw-600">@o.Number</td>
+                                <td class="fs-8">@o.Date.ToFa()</td>
+                                <td class="fs-8">
+                                    @if (o.FinalDeliveryDate is not null)
+                                    {
+                                        <span class="@(o.FinalDateChanged ? "text-warning fw-600" : "")"
+                                              title="@(o.FinalDateChanged ? $"تاریخ ویزیتور: {o.DeliveryDate?.ToFa()}" : "همان تاریخ ویزیتور")">
+                                            @o.FinalDeliveryDate.Value.ToFa()
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">@(o.DeliveryDate?.ToFa() ?? "—")</span>
+                                    }
+                                </td>
+                                <td>@o.PartyName</td>
+                                <td class="fs-8">@o.ReferrerName</td>
+                                <td class="fs-8"><span class="vis-badge vis-secondary">@VisUi.PaymentText(o.PaymentMethod)</span></td>
+                                <td class="text-start">@Fa.Money(o.TotalNet)</td>
+                                <td><span class="@VisUi.BadgeCss(o.Status)">@VisUi.StatusText(o.Status)</span></td>
+                                <td class="fs-8">
+                                    @if (o.Status == VisOrderStatus.Approved && o.StockWarnings.Count > 0)
+                                    {
+                                        <span class="vis-badge vis-danger" data-stock-short
+                                              title="@string.Join("، ", o.StockWarnings.Select(w => $"{w.ProductName}: موجودی {w.Available} نیاز {w.Required}"))">
+                                            کسری @Fa.Digits(o.StockWarnings.Count) قلم
+                                        </span>
+                                    }
+                                    else if (o.Status == VisOrderStatus.Approved)
+                                    {
+                                        <span class="vis-badge vis-success">موجودی تأمین است</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td class="fs-8">
+                                    @if (o.Status == VisOrderStatus.Invoiced && !string.IsNullOrWhiteSpace(o.SaleNumber))
+                                    {
+                                        <a href="/orders/sale" class="fw-600" title="دیدن در فهرست فروش">@o.SaleNumber</a>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    @if (o.Status == VisOrderStatus.Approved)
+                                    {
+                                        <button class="btn btn-sm btn-success" disabled="@busy"
+                                                data-fin-open @onclick="() => OpenFinance(o)">
+                                            <i class="bi bi-check2-circle"></i> تأیید مالی و ثبت فروش
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary" @onclick="GoToSales">
+                                            <i class="bi bi-cart3"></i> دیدن در فروش
+                                        </button>
+                                    }
+                                    <button class="btn btn-sm btn-light" @onclick="@(() => Nav.NavigateTo($"/sales/visits/{o.Id}"))">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="alert alert-info mt-3 py-2 fs-8">
+    <b>ترتیب کار:</b> ویزیتور سفارش را می‌فرستد ← مدیر فروش تأیید می‌کند (سفارش خودکار به این کارتابل می‌آید)
+    ← مالی روش پرداخت را ثبت می‌کند: <b>نقدی</b> (سند صندوق/بانک)، <b>چک</b> (ردیف چک‌ها)، <b>اقساطی</b> (دفترچهٔ اقساط)
+    ← سند فروش در «سامانه فروشگاهی ← فروش» ثبت و سفارش «فروش‌شده» می‌شود.
+</div>
+
+<VisFinanceModal Visible="showFinance" Order="selected" OnClose="CloseFinance" OnDone="OnFinanceDone" />
+
+<style>
+    .vis-kpi { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 14px; padding: .6rem .8rem; }
+    .vis-kpi b { display: block; font-size: 1.15rem; }
+    .vis-kpi span { font-size: .72rem; color: #64748b; }
+    .vis-kpi-ok { background: #ecfdf5; border-color: #a7f3d0; }
+    .vis-badge { display: inline-block; font-size: .68rem; border-radius: 99px; padding: .1rem .5rem; border: 1px solid transparent; }
+    .vis-secondary { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+    .vis-warning { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+    .vis-primary { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
+    .vis-orange { background: #ffedd5; color: #9a3412; border-color: #fed7aa; }
+    .vis-danger { background: #ffe4e6; color: #9f1239; border-color: #fecdd3; }
+    .vis-success { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
+    .vis-dark { background: #e2e8f0; color: #0f172a; border-color: #cbd5e1; }
+    .fs-8 { font-size: .78rem; }
+    .fs-9 { font-size: .7rem; }
+</style>
+
+@code {
+    private bool loading = true;
+    private bool busy;
+    private List<VisOrderDto> items = new();
+
+    private bool showFinance;
+    private VisOrderDto? selected;
+
+    private int PendingCount => items.Count(i => i.Status == VisOrderStatus.Approved);
+    private int SoldCount => items.Count(i => i.Status == VisOrderStatus.Invoiced);
+    private decimal PendingAmount => items.Where(i => i.Status == VisOrderStatus.Approved).Sum(i => i.TotalNet);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("کارتابل مالی سفارش‌های ویزیتور");
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try { items = await Api.FinanceQueueAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenFinance(VisOrderDto o)
+    {
+        selected = o;
+        showFinance = true;
+    }
+
+    private void CloseFinance() => showFinance = false;
+
+    private void GoToSales() => Nav.NavigateTo("/orders/sale");
+
+    private async Task OnFinanceDone(VisOrderDto res)
+    {
+        showFinance = false;
+        selected = null;
+        await LoadAsync();
+    }
+}

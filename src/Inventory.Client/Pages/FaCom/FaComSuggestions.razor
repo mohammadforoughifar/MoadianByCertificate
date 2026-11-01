@@ -1,0 +1,191 @@
+@namespace Inventory.Client.Pages
+@page "/fa-com/suggestions"
+@inject IFaComService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>کارتابل پیشنهادها</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-inbox"></i> کارتابل صندوق پیشنهادها</h1>
+    <div class="lead">بررسی پیشنهاد/انتقادهای پرسنل + ثبت پاسخ</div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد منابع انسانی است.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label small text-muted">وضعیت</label>
+                <select class="form-select" @bind="fStatus" @bind:after="Reload">
+                    <option value="">همه</option>
+                    <option value="0">جدید</option>
+                    <option value="1">در بررسی</option>
+                    <option value="2">پذیرفته‌شده</option>
+                    <option value="3">ردشده</option>
+                    <option value="4">اجراشده</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small text-muted">دسته</label>
+                <select class="form-select" @bind="fCategory" @bind:after="Reload">
+                    <option value="">همه</option>
+                    <option value="0">پیشنهاد</option>
+                    <option value="1">انتقاد</option>
+                    <option value="2">سایر</option>
+                </select>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>عنوان</th>
+                        <th>ثبت‌کننده</th>
+                        <th>دسته</th>
+                        <th>تاریخ</th>
+                        <th>وضعیت</th>
+                        <th style="width:110px">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var s in rows)
+                    {
+                        <tr>
+                            <td><strong>@s.Title</strong><div class="small text-muted">@Trim(s.Body)</div></td>
+                            <td>@(s.EmployeeName ?? "—")</td>
+                            <td><span class="badge text-bg-info">@FaComUi.SuggestionCategory(s.Category)</span></td>
+                            <td class="small num">@s.CreatedAt.ToFa()</td>
+                            <td><span class="badge @FaComUi.SuggestionBadge(s.Status)">@FaComUi.SuggestionStatus(s.Status)</span></td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button class="btn btn-outline-primary" title="بررسی و پاسخ" @onclick="() => OpenRespond(s)"><i class="bi bi-reply"></i></button>
+                                    <button class="btn btn-outline-danger" title="حذف" @onclick="() => Del(s)"><i class="bi bi-trash"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0)
+                    {
+                        <tr><td colspan="6" class="text-center text-muted py-4">موردی یافت نشد.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<Modal Visible="showResp" Title="@($"بررسی: {respTitle}")" Size="modal-lg" OnClose="() => showResp = false">
+<ChildContent>
+    <div class="alert alert-light">@respBody</div>
+    <div class="row g-2">
+        <div class="col-md-4">
+            <label class="form-label">وضعیت جدید</label>
+            <select class="form-select" @bind="rStatus">
+                <option value="0">جدید</option>
+                <option value="1">در بررسی</option>
+                <option value="2">پذیرفته‌شده</option>
+                <option value="3">ردشده</option>
+                <option value="4">اجراشده</option>
+            </select>
+        </div>
+        <div class="col-12">
+            <label class="form-label">پاسخ (برای ثبت‌کننده اعلان می‌شود)</label>
+            <textarea class="form-control" rows="3" @bind="rText"></textarea>
+        </div>
+    </div>
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showResp = false">انصراف</button>
+        <button class="btn btn-success" disabled="@saving" @onclick="Respond"><i class="bi bi-check-lg"></i> ثبت پاسخ</button>
+    </div>
+</Footer>
+</Modal>
+
+@code {
+    private bool faManage => Auth.Has("FaCom.Manage") || Auth.IsAdmin;
+    private bool loading = true, saving, showResp;
+    private List<FaComSuggestionDto> rows = new();
+    private string? fStatus, fCategory;
+
+    private int respId;
+    private string respTitle = "";
+    private string respBody = "";
+    private int rStatus;
+    private string? rText;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            int? st = int.TryParse(fStatus, out var s) ? s : null;
+            int? ct = int.TryParse(fCategory, out var c) ? c : null;
+            rows = await Svc.ListSuggestionsAsync(st, ct);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private static string Trim(string s) => s.Length <= 90 ? s : s[..90] + "…";
+
+    private void OpenRespond(FaComSuggestionDto s)
+    {
+        respId = s.Id;
+        respTitle = s.Title;
+        respBody = s.Body;
+        rStatus = s.Status == 0 ? 1 : s.Status;
+        rText = s.Response;
+        showResp = true;
+    }
+
+    private async Task Respond()
+    {
+        saving = true;
+        try
+        {
+            await Svc.RespondSuggestionAsync(respId, new FaComSuggestionRespondDto { Status = rStatus, Response = rText });
+            showResp = false;
+            Toast.Success("پاسخ ثبت و به ثبت‌کننده اعلان شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+
+    private async Task Del(FaComSuggestionDto s)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"«{s.Title}» حذف شود؟")) return;
+        try
+        {
+            await Svc.DeleteSuggestionAsync(s.Id);
+            Toast.Success("حذف شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

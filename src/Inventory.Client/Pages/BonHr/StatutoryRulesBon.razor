@@ -1,0 +1,254 @@
+@namespace Inventory.Client.Pages.BonHr
+@page "/bon-hr/statutory-rules"
+@inject BonHrApi Api
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject LayoutState Layout
+
+<PageTitle>الزامات سالانه حقوق</PageTitle>
+<BonHrGuard Section="StatutoryRules">
+<BonHrShell Title="الزامات سالانه حقوق" Sub="مبالغ قانونی سال فعال" />
+
+
+    <p class="text-muted mb-3">مبالغ باید عیناً از مصوبه و بخشنامه رسمی همان سال وارد شود. هر تغییر در سوابق ثبت و برای مدیرعامل ارسال می‌شود.</p>
+
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3"><div class="kpi kpi-blue"><div class="kpi-num">@BonFa.N(_rules.Year)</div><div class="kpi-lbl">سال فعال</div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi kpi-teal"><div class="kpi-num">@BonFa.N(_rules.EffectiveFrom)</div><div class="kpi-lbl">اجرا از</div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi kpi-purple"><div class="kpi-num">@BonFa.N(_rules.MinimumDailyWage)</div><div class="kpi-lbl">حداقل مزد روزانه</div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi kpi-orange"><div class="kpi-num">@BonFa.N(_rules.UpdatedAt?.ToString("yyyy-MM-dd") ?? "—")</div><div class="kpi-lbl">آخرین ویرایش @_rules.UpdatedBy</div></div></div>
+    </div>
+
+    <form class="rules-questionnaire" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+        <article class="card card-body mt-3">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                <div><p class="text-muted small mb-0">مرحله ۱</p><h3>سال و مستندات رسمی</h3></div>
+                <button class="btn btn-light" type="button" @onclick="LoadYearAsync">بارگذاری / ایجاد سال</button>
+            </div>
+            <div class="row g-3">
+                <div class="col-md-6"><label class="form-label">این الزامات برای کدام سال شمسی است؟</label><input class="form-control" type="number" min="1300" max="1600" required @bind="_year" /></div>
+                <div class="col-md-6"><label class="form-label">از چه تاریخی اجرا می‌شود؟</label><BonHrDate @bind-Value="_rules.EffectiveFrom" /></div>
+                <div class="col-12"><label class="form-label">شماره، تاریخ و عنوان مصوبه‌ها و بخشنامه‌های رسمی چیست؟</label><textarea class="form-control" rows="3" required @bind="_rules.SourceReference"></textarea></div>
+                <div class="col-12"><label class="form-label">پیوند منابع رسمی دولتی چیست؟</label><textarea class="form-control" rows="4" dir="ltr" required @bind="_sourceUrls"></textarea></div>
+                <div class="col-12"><label class="form-label">چه توضیح حقوقی یا محدودیتی باید همراه این نسخه ثبت شود؟</label><textarea class="form-control" rows="3" @bind="_rules.SourceNote"></textarea></div>
+            </div>
+        </article>
+
+        <article class="card card-body mt-3">
+            <p class="text-muted small mb-0">مرحله ۲</p>
+            <h3>مزد و مزایای ثابت قانونی</h3>
+            <div class="row g-3">
+                <div class="col-md-6"><label class="form-label">حداقل مزد روزانه چند ریال اعلام شده است؟</label><BonHrRial @bind-Value="_rules.MinimumDailyWage" /></div>
+                <div class="col-md-6"><label class="form-label">پایه سنوات روزانه واجدان شرایط چند ریال است؟</label><BonHrRial @bind-Value="_rules.SeniorityDaily" /></div>
+                <div class="col-md-6"><label class="form-label">حق مسکن ماهانه چند ریال است؟</label><BonHrRial @bind-Value="_rules.HousingMonthly" /></div>
+                <div class="col-md-6"><label class="form-label">بن خواربار / اقلام مصرفی ماهانه چند ریال است؟</label><BonHrRial @bind-Value="_rules.FoodMonthly" /></div>
+                <div class="col-md-6"><label class="form-label">حق تأهل ماهانه کارگر متأهل چند ریال است؟</label><BonHrRial @bind-Value="_rules.MarriageMonthly" /></div>
+                <div class="col-md-6"><label class="form-label">حق اولاد هر فرزند چند برابر حداقل مزد روزانه است؟</label><input class="form-control" type="number" min="0" step="0.01" required @bind="_rules.ChildMultiplier" /></div>
+                <div class="col-md-6"><label class="form-label">مبلغ محاسبه‌شده حق اولاد هر فرزند</label><input class="form-control" readonly value="@BonFa.Rial(_rules.MinimumDailyWage * _rules.ChildMultiplier)" /></div>
+            </div>
+        </article>
+
+        <article class="card card-body mt-3">
+            <p class="text-muted small mb-0">مرحله ۳</p>
+            <h3>نرخ‌های قانون کار و تأمین اجتماعی</h3>
+            <div class="row g-3">
+                <div class="col-md-4"><label class="form-label">سهم بیمه کارگر چند درصد است؟</label><input class="form-control" type="number" min="0" max="100" step="0.01" required @bind="_rules.WorkerInsuranceRate" /></div>
+                <div class="col-md-4"><label class="form-label">سهم کارفرما با بیمه بیکاری چند درصد است؟</label><input class="form-control" type="number" min="0" max="100" step="0.01" required @bind="_rules.EmployerInsuranceRate" /></div>
+                <div class="col-md-4"><label class="form-label">حداکثر دستمزد روزانه مشمول بیمه چند برابر حداقل مزد است؟</label><input class="form-control" type="number" min="1" max="20" step="0.01" required @bind="_rules.MaximumInsurableDailyMultiplier" /></div>
+                <div class="col-md-4"><label class="form-label">فوق‌العاده اضافه‌کاری چند درصد است؟</label><input class="form-control" type="number" min="0" max="100" step="0.01" required @bind="_rules.OvertimePremiumRate" /></div>
+                <div class="col-md-4"><label class="form-label">فوق‌العاده شب‌کاری چند درصد است؟</label><input class="form-control" type="number" min="0" max="100" step="0.01" required @bind="_rules.NightWorkPremiumRate" /></div>
+                <div class="col-md-4"><label class="form-label">فوق‌العاده جمعه‌کاری چند درصد است؟</label><input class="form-control" type="number" min="0" max="100" step="0.01" required @bind="_rules.FridayWorkPremiumRate" /></div>
+                <div class="col-md-4"><label class="form-label">نوبت‌کاری صبح و عصر چند درصد است؟</label><input class="form-control" type="number" min="0" max="100" step="0.01" required @bind="_rules.ShiftMorningEveningRate" /></div>
+                <div class="col-md-4"><label class="form-label">نوبت‌کاری صبح، عصر و شب چند درصد است؟</label><input class="form-control" type="number" min="0" max="100" step="0.01" required @bind="_rules.ShiftThreeShiftRate" /></div>
+                <div class="col-md-4"><label class="form-label">نوبت‌کاری دارای گردش شب چند درصد است؟</label><input class="form-control" type="number" min="0" max="100" step="0.01" required @bind="_rules.ShiftNightRotationRate" /></div>
+                <div class="col-md-4"><label class="form-label">حداقل فوق‌العاده هر روز مأموریت چند برابر مزد روزانه است؟</label><input class="form-control" type="number" min="0" max="20" step="0.01" required @bind="_rules.MissionMinimumDailyMultiplier" /></div>
+            </div>
+
+            <div class="mt-3">
+                <div class="fw-800 mb-2">اقلام مشمول کسر حق‌بیمه</div>
+                <div class="row g-2">
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-base" @bind="_rules.Insurable.Base" /><label class="form-check-label" for="ins-base">مزد و حقوق پایه</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-sen" @bind="_rules.Insurable.Seniority" /><label class="form-check-label" for="ins-sen">پایه سنوات</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-hou" @bind="_rules.Insurable.Housing" /><label class="form-check-label" for="ins-hou">حق مسکن</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-food" @bind="_rules.Insurable.Food" /><label class="form-check-label" for="ins-food">بن خواربار</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-mar" @bind="_rules.Insurable.Marriage" /><label class="form-check-label" for="ins-mar">حق تأهل</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-ch" @bind="_rules.Insurable.Child" /><label class="form-check-label" for="ins-ch">حق اولاد</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-ot" @bind="_rules.Insurable.Overtime" /><label class="form-check-label" for="ins-ot">اضافه‌کاری</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-sh" @bind="_rules.Insurable.Shift" /><label class="form-check-label" for="ins-sh">نوبت‌کاری</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-ni" @bind="_rules.Insurable.Night" /><label class="form-check-label" for="ins-ni">شب‌کاری</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-fr" @bind="_rules.Insurable.Friday" /><label class="form-check-label" for="ins-fr">جمعه‌کاری</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-mi" @bind="_rules.Insurable.Mission" /><label class="form-check-label" for="ins-mi">فوق‌العاده مأموریت</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-at" @bind="_rules.Insurable.Attraction" /><label class="form-check-label" for="ins-at">حق جذب</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-su" @bind="_rules.Insurable.Supervisor" /><label class="form-check-label" for="ins-su">حق سرپرستی</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-pe" @bind="_rules.Insurable.Performance" /><label class="form-check-label" for="ins-pe">کارانه</label></div></div>
+                    <div class="col-6 col-md-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="ins-ag" @bind="_rules.Insurable.Agreed" /><label class="form-check-label" for="ins-ag">مزایای توافقی مستمر</label></div></div>
+                </div>
+            </div>
+        </article>
+
+        <article class="card card-body mt-3">
+            <p class="text-muted small mb-0">مرحله ۴</p>
+            <h3>معافیت و پلکان مالیات حقوق</h3>
+            <div class="mb-3">
+                <label class="form-label">معافیت ماهانه مالیات حقوق چند ریال است؟</label>
+                <BonHrRial @bind-Value="_rules.TaxMonthlyExemption" />
+            </div>
+            <div class="table-wrap tax-bracket-table">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th>پله</th><th>سقف درآمد مشمول مالیات ماهانه (ریال)</th><th>نرخ همان پله</th></tr></thead>
+                    <tbody>
+                        @for (var i = 0; i < 4; i++)
+                        {
+                            var index = i;
+                            <tr>
+                                <td>@BracketNames[index]</td>
+                                <td><BonHrRial Value="_brackets[index].Ceiling ?? 0" ValueChanged="v => _brackets[index].Ceiling = v" /></td>
+                                <td><input class="form-control" type="number" min="0" max="100" required @bind="_brackets[index].Rate" />٪</td>
+                            </tr>
+                        }
+                        <tr>
+                            <td>مازاد نهایی</td>
+                            <td>بدون سقف</td>
+                            <td><input class="form-control" type="number" min="0" max="100" required @bind="_brackets[4].Rate" />٪</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </article>
+
+        <article class="card card-body mt-3 rules-save-panel">
+            <label class="activate-rule">
+                <input class="form-control" type="checkbox" @bind="_activate" /> این سال بلافاصله مبنای محاسبات حقوق و دستمزد شود.
+            </label>
+            <p class="text-muted">ثبت تغییر، گزارش قبل/بعد را غیرقابل حذف در سوابق این نسخه نگه می‌دارد و یک اعلان خوانده‌نشده برای مدیرعامل ایجاد می‌کند.</p>
+            <p class="small mt-2" role="status">@_message</p>
+            <button class="btn btn-primary" type="submit">ثبت الزامات و ارسال گزارش به مدیرعامل</button>
+        </article>
+    </form>
+
+    <article class="card card-body mt-3 rules-audit-panel">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+            <div><p class="text-muted small mb-0">سوابق کنترل تغییر</p><h3>گزارش‌های ارسال‌شده</h3></div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead><tr><th>سال</th><th>زمان</th><th>ثبت‌کننده</th><th>عنوان قلم</th><th>مقدار قبل</th><th>مقدار بعد</th></tr></thead>
+                <tbody>
+                    @foreach (var audit in _audits)
+                    {
+                        <tr>
+                            <td>@BonFa.N(audit.Year)</td>
+                            <td>@audit.ChangedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>@audit.ChangedBy</td>
+                            <td>@audit.FieldLabel</td>
+                            <td>@BonFa.N(audit.OldValue)</td>
+                            <td>@BonFa.N(audit.NewValue)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (_audPg.Total > 0)
+        {
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2">
+                <span class="text-muted small">ردیف @BonFa.N(_audPg.From) تا @BonFa.N(_audPg.To) از @BonFa.N(_audPg.Total)</span>
+                <Pager Page="@_audPg.Page" PageCount="@_audPg.Count" OnPageChanged="p => GoAuditPage(p)" />
+            </div>
+        }
+        @if (_audits.Count == 0)
+        {
+            <p class="text-muted text-center py-4">هنوز تغییری در الزامات ثبت نشده است.</p>
+        }
+    </article>
+
+
+</BonHrGuard>
+@code {
+    private static readonly string[] BracketNames = { "اول", "دوم", "سوم", "چهارم", "مازاد نهایی" };
+
+    private StatutoryRules _rules = new();
+    private List<StatutoryRuleAudit> _audits = new();
+    /// <summary>وضعیت صفحه‌بندی فهرست «گزارش‌های ارسال‌شده» — این فهرست با هر تغییر الزامات رشد می‌کند.</summary>
+    private readonly BonPagerState _audPg = new();
+
+    /// <summary>
+    /// همیشه دقیقاً ۵ پله دارد. Blazor یک‌بار پیش از تکمیل OnInitializedAsync رندر می‌کند،
+    /// پس این لیست هرگز نباید خالی باشد وگرنه دسترسی _brackets[index] خطا می‌دهد.
+    /// </summary>
+    private List<TaxBracket> _brackets = NewBrackets();
+
+    private static List<TaxBracket> NewBrackets() =>
+        Enumerable.Range(0, 5).Select(i => new TaxBracket { Ordinal = i }).ToList();
+    private string _sourceUrls = "";
+    private string _message = "";
+    private bool _activate = true;
+    private int _year = PersianCalendarUtil.Today().Jy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadYearAsync();
+        await LoadAuditsAsync();
+    }
+
+    /// <summary>
+    /// خواندن صفحهٔ جاریِ سوابق کنترل تغییر. سرور این اندپوینت را با
+    /// Paging.QueryAsync(…, defaultCap: 500) صفحه‌بندی می‌کند، پس skip/take
+    /// در SQL اعمال می‌شود و فقط ردیف‌های همین صفحه منتقل می‌شوند.
+    /// </summary>
+    private async Task LoadAuditsAsync()
+        => _audits = _audPg.Take(await Api.ListPagedAsync<StatutoryRuleAudit>(
+            "api/statutory-rules/audits", _audPg.Page, _audPg.Size));
+
+    private void GoAuditPage(int p) { _audPg.Go(p); _ = LoadAuditsAsync(); }
+
+    private async Task LoadYearAsync()
+    {
+        var rules = await Api.GetAsync<StatutoryRules>($"api/statutory-rules/{_year}");
+        if (rules == null) return;
+
+        _rules = rules;
+        _rules.Insurable ??= new InsurableItems();
+        _rules.SourceUrls ??= new List<string>();
+        _sourceUrls = string.Join('\n', _rules.SourceUrls);
+
+        // پله‌های مالیاتی همیشه باید دقیقاً ۵ ردیف باشد؛ کمبود پر و مازاد حذف می‌شود.
+        var loaded = (rules.TaxBrackets ?? new List<TaxBracket>())
+            .OrderBy(b => b.Ordinal)
+            .Select(b => new TaxBracket { Ceiling = b.Ceiling, Rate = b.Rate, Ordinal = b.Ordinal })
+            .ToList();
+        while (loaded.Count < 5) loaded.Add(new TaxBracket { Ordinal = loaded.Count });
+        if (loaded.Count > 5) loaded = loaded.Take(5).ToList();
+        for (var i = 0; i < 5; i++) loaded[i].Ordinal = i;
+        loaded[4].Ceiling = null; // پلهٔ مازاد نهایی سقف ندارد
+        _brackets = loaded;
+    }
+
+    private async Task SaveAsync()
+    {
+        _rules.Year = _year;
+        _rules.SourceUrls = _sourceUrls
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(u => u.Trim()).Where(u => u.Length > 0).ToList();
+
+        _rules.TaxBrackets = _brackets.Select((b, i) => new TaxBracket
+        {
+            Ordinal = i,
+            Ceiling = i == 4 ? null : (b.Ceiling == 0 ? null : b.Ceiling),
+            Rate = b.Rate
+        }).ToList();
+
+        var ok = await Api.SendAsync(HttpMethod.Put, $"api/statutory-rules/{_year}", _rules);
+        _message = ok
+            ? "الزامات ثبت شد و گزارش تغییر برای مدیرعامل ارسال گردید."
+            : "ثبت الزامات انجام نشد.";
+
+        if (ok)
+        {
+            // صفحهٔ جاری حفظ می‌شود تا کاربر از جایی که بود ادامه دهد.
+            await LoadAuditsAsync();
+            await LoadYearAsync();
+        }
+    }
+}

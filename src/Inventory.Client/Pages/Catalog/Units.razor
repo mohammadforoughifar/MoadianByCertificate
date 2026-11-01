@@ -1,0 +1,260 @@
+@namespace Inventory.Client.Pages
+@page "/units"
+@inject IUnitService UnitSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>واحدهای شمارش</PageTitle>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center flex-wrap gap-2" 
+         style="background:linear-gradient(135deg,#8e5cff,#c084fc);color:#fff;border-radius:14px 14px 0 0;">
+        <span><i class="bi bi-rulers me-2"></i>واحدهای شمارش
+            <span class="badge bg-light text-dark ms-1">@total</span>
+        </span>
+        <button class="btn btn-light btn-sm fw-700 shadow-sm" style="border-radius:8px;color:#4f5b8a;" @onclick="OpenNew">
+            <i class="bi bi-plus-lg"></i> واحد جدید
+        </button>
+    </div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="جستجوی نام واحد…" @bind="search" @bind:event="oninput" @bind:after="SearchChanged" />
+                </div>
+            </div>
+            <div class="col-md-auto">
+                <div class="form-check ms-2">
+                    <input class="form-check-input" type="checkbox" id="activeChk" checked="@activeOnly" @onchange="OnActiveChanged" />
+                    <label class="form-check-label" for="activeChk">فقط فعال‌ها</label>
+                </div>
+            </div>
+            <div class="col-auto ms-auto fs-8 text-muted">@total.Num() واحد</div>
+        </div>
+    </div>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-rulers"></i><h5>واحدی یافت نشد</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>نام واحد</th>
+                            <th class="text-start">تعداد کالا</th>
+                            <th>تاریخ ایجاد</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var u in Paged)
+                        {
+                            <tr>
+                                <td class="fw-500"><i class="bi bi-rulers text-muted ms-1"></i> @u.Name</td>
+                                <td class="text-start num">@u.ProductCount.Num()</td>
+                                <td class="num">@u.CreatedAt.ToFa()</td>
+                                <td>
+                                    @if (u.IsActive)
+                                    {
+                                        <span class="badge badge-soft-success"><i class="bi bi-check2"></i> فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-muted">غیرفعال</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(u)"><i class="bi bi-pencil text-primary"></i></button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(u)"><i class="bi bi-trash text-danger"></i></button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var u in Paged)
+                {
+                    <div class="m-card @(u.IsActive ? "st-ready" : "st-delivered")">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi bi-rulers"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-700">@u.Name</span>
+                                    @if (!u.IsActive)
+                                    {
+                                        <span class="badge badge-soft-muted fs-8">غیرفعال</span>
+                                    }
+                                </div>
+                                <div class="fs-8 text-muted num">ایجاد: @u.CreatedAt.ToFa()</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">کالاها</div>
+                                <div class="num fw-800 text-primary">@u.ProductCount.Num()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-actions">
+                            <button class="btn btn-light text-primary" @onclick="() => OpenEdit(u)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            <button class="btn btn-light text-danger" @onclick="() => Delete(u)"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="ChangePage" />
+        }
+    </div>
+</div>
+
+<Modal Visible="showModal" Title="@(editing ? "ویرایش واحد شمارش" : "واحد شمارش جدید")" OnClose="CloseModal">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-12">
+            <label class="form-label">نام واحد <span class="text-danger">*</span></label>
+            <input class="form-control" @bind="form.Name" placeholder="مثلاً: عدد، کیلوگرم، لیتر…" />
+        </div>
+        <div class="col-12">
+            <label class="form-label d-block">وضعیت</label>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="unitStatus" id="unitActive"
+                       checked="@form.IsActive" @onchange="@(() => form.IsActive = true)" />
+                <label class="form-check-label" for="unitActive">فعال</label>
+            </div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="unitStatus" id="unitInactive"
+                       checked="@(!form.IsActive)" @onchange="@(() => form.IsActive = false)" />
+                <label class="form-check-label" for="unitInactive">غیرفعال</label>
+            </div>
+        </div>
+        @if (editing)
+        {
+            <div class="col-12 fs-8 text-muted">
+                <i class="bi bi-clock-history"></i>
+                تاریخ ایجاد: @form.CreatedAt.ToFaDateTime()
+                — @form.ProductCount.Num() کالا با این واحد
+            </div>
+        }
+    </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseModal">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<MeasureUnit> items = new();
+    private bool loading = true, activeOnly;
+    private string search = "";
+
+    private MeasureUnit form = new();
+    private bool showModal, saving;
+    private bool editing => form.Id != 0;
+
+
+    // ---------- صفحه‌بندی ----------
+    private int page = 1;
+    private const int PageSize = 12;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+    private List<MeasureUnit> Paged => items;
+    private int total, loadVersion;
+    private async Task ChangePage(int value) { page = value; await Load(); }
+    private async Task SearchChanged() { page = 1; await Load(); }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("واحدهای شمارش");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        var version = ++loadVersion;
+        loading = true;
+        try
+        {
+            var result = await UnitSvc.GetPagedAsync((page - 1) * PageSize, PageSize, activeOnly, search);
+            if (version != loadVersion) return;
+            items = result.Items;
+            total = result.TotalCount;
+            if (page > PageCount) { page = PageCount; await Load(); }
+        }
+        catch (Exception ex) { if (version == loadVersion) Toast.Error(ex.Message); }
+        finally { if (version == loadVersion) loading = false; }
+    }
+
+    private async Task OnActiveChanged(ChangeEventArgs e)
+    {
+        activeOnly = e.Value is bool b && b;
+        page = 1;
+        await Load();
+    }
+
+    private void OpenNew()
+    {
+        form = new MeasureUnit { IsActive = true };
+        showModal = true;
+    }
+
+    private void OpenEdit(MeasureUnit u)
+    {
+        form = new MeasureUnit
+        {
+            Id = u.Id, Name = u.Name, IsActive = u.IsActive,
+            CreatedAt = u.CreatedAt, ProductCount = u.ProductCount
+        };
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name)) { Toast.Error("نام واحد را وارد کنید."); return; }
+
+        saving = true;
+        try
+        {
+            await UnitSvc.SaveAsync(form);
+            Toast.Success(editing ? "واحد شمارش ویرایش شد." : "واحد شمارش ثبت شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(MeasureUnit u)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف واحد «{u.Name}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await UnitSvc.DeleteAsync(u.Id);
+            Toast.Success("واحد شمارش حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

@@ -1,0 +1,274 @@
+@namespace Inventory.Client.Pages
+@page "/fa-lms/my"
+@inject IFaLmsService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>دوره‌های من</PageTitle>
+
+<div class="page-head mb-4">
+    <div>
+        <h1><i class="bi bi-person-video3"></i> دوره‌های من</h1>
+        <div class="lead">ثبت‌نام در دوره‌ها، شرکت در آزمون و مشاهده گواهی‌ها و کارنامه</div>
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+    return;
+}
+
+@if (report != null)
+{
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3"><div class="card border-0 shadow-sm text-center py-2"><div class="fs-5 fw-bold num">@FaLmsUi.Num(report.CoursesCount)</div><div class="text-muted small">دوره گذرانده</div></div></div>
+        <div class="col-6 col-md-3"><div class="card border-0 shadow-sm text-center py-2"><div class="fs-5 fw-bold num">@FaLmsUi.Num(report.HoursTotal)</div><div class="text-muted small">ساعت آموزش</div></div></div>
+        <div class="col-6 col-md-3"><div class="card border-0 shadow-sm text-center py-2"><div class="fs-5 fw-bold num">@FaLmsUi.Num(report.AvgScore)</div><div class="text-muted small">میانگین نمره</div></div></div>
+        <div class="col-6 col-md-3"><div class="card border-0 shadow-sm text-center py-2"><div class="fs-5 fw-bold num">@FaLmsUi.Num(report.CertsCount)</div><div class="text-muted small">گواهی</div></div></div>
+    </div>
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white fw-bold"><i class="bi bi-mortarboard"></i> ثبت‌نام‌های من</div>
+    <div class="card-body p-0">
+        @if (mine.Count == 0)
+        {
+            <div class="text-center text-muted py-4">هنوز در دوره‌ای ثبت‌نام نکرده‌اید.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>دوره</th><th>تاریخ درخواست</th><th>وضعیت</th><th>نمره</th><th style="width:80px"></th></tr></thead>
+                <tbody>
+                    @foreach (var e in mine)
+                    {
+                        <tr>
+                            <td><b>@e.CourseTitle</b></td>
+                            <td class="num">@e.EnrolledAt.ToFa()</td>
+                            <td><span class="badge @FaLmsUi.EnrollBadge(e.Status)">@FaLmsUi.EnrollStatus(e.Status)</span></td>
+                            <td class="num">@FaLmsUi.Num(e.FinalScore)</td>
+                            <td class="text-end">@if (e.Status == 0){<button class="btn btn-sm btn-outline-secondary" title="انصراف" @onclick="() => Cancel(e)">انصراف</button>}@if (e.Status == 1){<button class="btn btn-sm btn-outline-primary ms-1" title="نظرسنجی اثربخشی" @onclick="() => OpenSurvey(e)"><i class="bi bi-star"></i> نظرسنجی</button>}</td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white fw-bold"><i class="bi bi-patch-question"></i> آزمون‌های من</div>
+    <div class="card-body p-0">
+        @if (myExams.Count == 0)
+        {
+            <div class="text-center text-muted py-4">آزمون فعالی برای شما وجود ندارد.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>آزمون</th><th>دوره</th><th>تاریخ</th><th>سؤال</th><th style="width:130px"></th></tr></thead>
+                <tbody>
+                    @foreach (var e in myExams)
+                    {
+                        <tr>
+                            <td><b>@e.Title</b></td>
+                            <td>@e.CourseTitle</td>
+                            <td class="num">@(e.ExamDate == null ? "—" : e.ExamDate.Value.ToFa())</td>
+                            <td class="num">@FaLmsUi.Num(e.QuestionsCount)</td>
+                            <td class="text-end"><button class="btn btn-sm btn-primary" @onclick="() => GoExam(e.Id)"><i class="bi bi-play-fill"></i> شروع آزمون</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white fw-bold"><i class="bi bi-collection"></i> دوره‌های باز برای ثبت‌نام</div>
+    <div class="card-body p-0">
+        @if (openCourses.Count == 0)
+        {
+            <div class="text-center text-muted py-4">در حال حاضر دوره بازی برای ثبت‌نام وجود ندارد.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>عنوان</th><th>نوع</th><th>مدرس</th><th>شروع</th><th style="width:110px"></th></tr></thead>
+                <tbody>
+                    @foreach (var c in openCourses)
+                    {
+                        <tr>
+                            <td><b>@c.Title</b><div class="small text-muted">@c.Code</div></td>
+                            <td>@FaLmsUi.Kind(c.Kind)</td>
+                            <td>@(c.TrainerName ?? "—")</td>
+                            <td class="num">@(c.StartDate == null ? "—" : c.StartDate.Value.ToFa())</td>
+                            <td class="text-end"><button class="btn btn-sm btn-success" @onclick="() => Enroll(c.Id)">ثبت‌نام</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showSurvey" Title="@($"نظرسنجی اثربخشی — {surveyTitle}")" OnClose="() => showSurvey = false">
+<ChildContent>
+    @if (surveyQs.Count == 0)
+    {
+        <div class="text-center text-muted py-3">برای این دوره نظرسنجی تعریف نشده است.</div>
+    }
+    else
+    {
+        <p class="small text-muted">به هر گویه از ۱ (خیلی ضعیف) تا ۵ (عالی) نمره بدهید.</p>
+        @foreach (var q in surveyQs)
+        {
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <span class="flex-grow-1">@q.Text</span>
+                <select class="form-select" style="max-width:130px" @bind="surveyScores[q.Id]">
+                    <option value="1">۱</option>
+                    <option value="2">۲</option>
+                    <option value="3">۳</option>
+                    <option value="4">۴</option>
+                    <option value="5">۵</option>
+                </select>
+            </div>
+        }
+    }
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showSurvey = false">بستن</button>
+        @if (surveyQs.Count > 0)
+        {
+            <button class="btn btn-success" disabled="@surveySaving" @onclick="SaveSurvey">ثبت نظرسنجی</button>
+        }
+    </div>
+</Footer>
+</Modal>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-white fw-bold"><i class="bi bi-award"></i> گواهی‌های من</div>
+    <div class="card-body p-0">
+        @if (myCerts.Count == 0)
+        {
+            <div class="text-center text-muted py-4">گواهی برای شما صادر نشده است.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>شماره</th><th>دوره</th><th>تاریخ صدور</th><th>نمره</th><th>کد رهگیری</th><th style="width:50px"></th></tr></thead>
+                <tbody>
+                    @foreach (var c in myCerts)
+                    {
+                        <tr><td class="num fw-bold">@c.CertNo</td><td>@c.CourseTitle</td><td class="num">@c.IssueDate.ToFa()</td><td class="num">@FaLmsUi.Num(c.Score)</td><td class="num">@c.VerifyCode</td><td><button class="btn btn-sm btn-outline-primary" title="چاپ" @onclick="() => PrintCert(c.Id)"><i class="bi bi-printer"></i></button></td></tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+@code {
+    private async Task PrintCert(int certId)
+    {
+        try
+        {
+            var f = await Svc.GetCertificatePdfAsync(certId);
+            await JS.InvokeVoidAsync("saveAsFile", f.FileName, System.Convert.ToBase64String(f.Data));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private bool faRead => Auth.Has("FaLms.Read") || Auth.IsAdmin;
+    private bool faCreate => Auth.Has("FaLms.Create") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaLmsEnrollmentDto> mine = new();
+    private List<FaLmsCourseDto> openCourses = new();
+    private List<FaLmsExamDto> myExams = new();
+    private List<FaLmsCertificateDto> myCerts = new();
+    private FaLmsEmployeeReportDto? report;
+    private bool showSurvey, surveySaving;
+    private string surveyTitle = "";
+    private int surveyEmp;
+    private List<FaLmsSurveyQuestionDto> surveyQs = new();
+    private Dictionary<int, int> surveyScores = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            mine = await Svc.MyEnrollmentsAsync();
+            var myIds = new HashSet<int>(mine.Where(e => e.Status is 0 or 1).Select(e => e.CourseId));
+            openCourses = (await Svc.ListCoursesAsync(null, 1, null, null)).Where(c => !myIds.Contains(c.Id)).ToList();
+            myExams = new();
+            foreach (var cid in mine.Where(e => e.Status == 1).Select(e => e.CourseId).Distinct())
+            {
+                try { myExams.AddRange((await Svc.ListExamsAsync(cid)).Where(x => x.IsActive && x.QuestionsCount > 0)); }
+                catch { }
+            }
+            myCerts = await Svc.MyCertificatesAsync();
+            try { report = await Svc.MyReportAsync(); } catch { report = null; }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OpenSurvey(FaLmsEnrollmentDto e)
+    {
+        surveyTitle = e.CourseTitle ?? "";
+        surveyEmp = e.EmployeeId;
+        try
+        {
+            surveyQs = await Svc.ListSurveyQuestionsAsync(e.CourseId, e.EmployeeId);
+            surveyScores = surveyQs.ToDictionary(q => q.Id, q => q.MyScore ?? 5);
+            showSurvey = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task SaveSurvey()
+    {
+        surveySaving = true;
+        try
+        {
+            foreach (var q in surveyQs)
+                await Svc.SaveSurveyAnswerAsync(q.Id, surveyEmp, surveyScores.GetValueOrDefault(q.Id, 5));
+            Toast.Success("نظرسنجی شما ثبت شد. سپاس!");
+            showSurvey = false;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        surveySaving = false;
+    }
+
+    private async Task Enroll(int courseId)
+    {
+        if (!faCreate) { Toast.Error("مجوز ثبت‌نام ندارید."); return; }
+        try { await Svc.EnrollAsync(courseId, null); Toast.Success("درخواست ثبت‌نام ثبت شد و در انتظار تأیید است."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Cancel(FaLmsEnrollmentDto e)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "از ثبت‌نام انصراف می‌دهید؟")) return;
+        try { await Svc.CancelEnrollmentAsync(e.Id); Toast.Success("انصراف ثبت شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void GoExam(int examId) => Nav.NavigateTo("fa-lms/exam/" + examId);
+}

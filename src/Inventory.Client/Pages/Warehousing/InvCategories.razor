@@ -1,0 +1,623 @@
+@page "/inv/categories"
+@inject IInvCategoryService CategorySvc
+@inject IInvSettingsService SettingsSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>گروه‌های کالا</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>مدیریت گروه کالا</h1>
+        <p class="lead">ساختار درختی گروه‌ها به همراه روش قیمت‌گذاری هر گروه</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-outline-primary" @onclick="ExpandAll" title="باز کردن همه">
+            <i class="bi bi-arrows-expand"></i> باز کردن همه
+        </button>
+        <button class="btn btn-outline-primary" @onclick="CollapseAll" title="بستن همه">
+            <i class="bi bi-arrows-collapse"></i> بستن همه
+        </button>
+        <button class="btn btn-primary" @onclick="() => OpenNew(null)">
+            <i class="bi bi-plus-lg"></i> گروه اصلی جدید
+        </button>
+    </div>
+</div>
+
+<div class="row g-3">
+    <!-- ================= درخت ================= -->
+    <div class="col-lg-7">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-diagram-3 text-primary"></i>
+                <span class="card-title">درخت گروه‌ها</span>
+                <span class="badge badge-soft-primary ms-auto">@items.Count.Num() گروه</span>
+            </div>
+            <div class="card-body">
+                <div class="input-group mb-3">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="جستجوی نام یا کد گروه…" @bind="search" @bind:event="oninput" />
+                </div>
+
+                @if (loading)
+                {
+                    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+                }
+                else if (items.Count == 0)
+                {
+                    <div class="empty-state">
+                        <i class="bi bi-diagram-3"></i>
+                        <h5>هنوز گروهی تعریف نشده است</h5>
+                        <button class="btn btn-primary mt-2" @onclick="() => OpenNew(null)">
+                            <i class="bi bi-plus-lg"></i> ساخت اولین گروه
+                        </button>
+                    </div>
+                }
+                else
+                {
+                    <div class="tree">
+                        @foreach (var n in Visible)
+                        {
+                            <div class="tree-row @(selected?.Id == n.Id ? "selected" : "") @(n.IsActive ? "" : "inactive")"
+                                 style="margin-right:@(n.Depth * 22)px"
+                                 @onclick="() => Select(n)">
+                                <button type="button"
+                                        class="tree-caret @(HasChildren(n) ? (IsCollapsed(n.Id) ? "" : "open") : "leaf")"
+                                        @onclick:stopPropagation="true"
+                                        @onclick="() => Toggle(n.Id)">
+                                    <i class="bi bi-chevron-left"></i>
+                                </button>
+
+                                <span class="tree-icon">
+                                    <i class="bi @(HasChildren(n) ? "bi-folder-fill" : "bi-tag-fill")"></i>
+                                </span>
+
+                                <span class="min-w-0">
+                                    <span class="tree-name">@n.Name</span>
+                                    @if (!string.IsNullOrWhiteSpace(n.HierarchyCode))
+                                    {
+                                        <span class="tree-code d-block">کد سلسله‌مراتب: @n.HierarchyCode.FaDigits() @(!string.IsNullOrWhiteSpace(n.Code) && n.Code != n.HierarchyCode ? $" (کد سطح: {n.Code.FaDigits()})" : "")</span>
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(n.Code))
+                                    {
+                                        <span class="tree-code d-block">کد: @n.Code.FaDigits()</span>
+                                    }
+                                </span>
+
+                                <span class="tree-count" title="تعداد کالا (با زیرگروه‌ها)">@n.TotalProductCount.Num()</span>
+
+                                @if (n.Valuation is not null)
+                                {
+                                    <span class="badge badge-soft-primary fs-8">@MethodTitle(n.Valuation.Value)</span>
+                                }
+
+                                <span class="tree-actions" @onclick:stopPropagation="true">
+                                    <button class="btn btn-sm btn-light" title="زیرگروه جدید" @onclick="() => OpenNew(n.Id)">
+                                        <i class="bi bi-plus-lg text-success"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light" title="بالا بردن" @onclick="() => Reorder(n, -1)">
+                                        <i class="bi bi-arrow-up text-muted"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light" title="پایین بردن" @onclick="() => Reorder(n, 1)">
+                                        <i class="bi bi-arrow-down text-muted"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(n)">
+                                        <i class="bi bi-pencil text-primary"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(n)">
+                                        <i class="bi bi-trash text-danger"></i>
+                                    </button>
+                                </span>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= جزئیات گروه ================= -->
+    <div class="col-lg-5">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-info-circle text-primary"></i>
+                <span class="card-title">جزئیات گروه</span>
+            </div>
+            <div class="card-body">
+                @if (selected is null)
+                {
+                    <div class="empty-state">
+                        <i class="bi bi-hand-index"></i>
+                        <h5>یک گروه را از درخت انتخاب کنید</h5>
+                    </div>
+                }
+                else
+                {
+                    <div class="d-flex align-items-center gap-2 mb-3">
+                        <span class="tree-icon"><i class="bi bi-tag-fill"></i></span>
+                        <div class="min-w-0">
+                            <div class="fw-700">@selected.Name</div>
+                            <div class="fs-8 text-muted text-truncate">@selected.FullPath</div>
+                        </div>
+                        <span class="ms-auto badge @(selected.IsActive ? "badge-soft-success" : "badge-soft-muted")">
+                            @(selected.IsActive ? "فعال" : "غیرفعال")
+                        </span>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-12 col-sm-6">
+                            <div class="mini-kpi">
+                                <i class="bg-soft-primary bi bi-box-seam"></i>
+                                <div>
+                                    <div class="k-val">@selected.ProductCount.Num()</div>
+                                    <div class="k-lbl">کالای مستقیم</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-sm-6">
+                            <div class="mini-kpi">
+                                <i class="bg-soft-info bi bi-boxes"></i>
+                                <div>
+                                    <div class="k-val">@selected.TotalProductCount.Num()</div>
+                                    <div class="k-lbl">با زیرگروه‌ها</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <table class="table table-sm">
+                        <tbody>
+                            <tr>
+                                <td class="text-muted">کد سطح گروه</td>
+                                <td class="fw-500 font-monospace">@(string.IsNullOrWhiteSpace(selected.Code) ? "—" : selected.Code.FaDigits())</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">کد سلسله‌مراتبی (پیشوند کالا)</td>
+                                <td class="fw-bold text-primary font-monospace">@(string.IsNullOrWhiteSpace(selected.HierarchyCode) ? (selected.Code ?? "—") : selected.HierarchyCode.FaDigits())</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">روش قیمت‌گذاری</td>
+                                <td>
+                                    <span class="badge badge-soft-primary">@MethodTitle(selected.EffectiveValuation)</span>
+                                    @if (selected.Valuation is null)
+                                    {
+                                        <span class="fs-8 text-muted ms-1">(ارث‌بری از والد / تنظیمات)</span>
+                                    }
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">تعداد زیرگروه</td>
+                                <td class="num">@items.Count(c => c.ParentId == selected.Id).Num()</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">وضعیت ارزش افزوده</td>
+                                <td>
+                                    @if (selected.IsVatIncluded ?? true)
+                                    {
+                                        <span class="badge badge-soft-success">مشمول (@((selected.VatRate ?? 10m).Num())٪)</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-muted">غیرمشمول</span>
+                                    }
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">تاریخ ایجاد</td>
+                                <td class="num fs-8">@selected.CreatedAt.ToFaDateTime()</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">شرح</td>
+                                <td>@(string.IsNullOrWhiteSpace(selected.Description) ? "—" : selected.Description)</td>
+                            </tr>
+                        </tbody>
+                    </table>
+
+                    @* ---------- اعمال گروهی ارزش افزوده به کالاهای گروه ---------- *@
+                    <div class="p-3 bg-light rounded-3 border mb-3">
+                        <div class="fw-600 fs-8 mb-2"><i class="bi bi-tags-fill text-warning me-1"></i>اعمال ارزش افزوده به کالاهای این گروه:</div>
+                        <div class="d-flex align-items-center gap-2 mb-2">
+                            <div class="form-check form-check-inline mb-0">
+                                <input class="form-check-input cursor-pointer" type="checkbox" id="catVatInc" @bind="panelVatIncluded" />
+                                <label class="form-check-label fs-8 cursor-pointer" for="catVatInc">مشمول ارزش افزوده</label>
+                            </div>
+                            <div class="input-group input-group-sm" style="max-width: 140px;">
+                                <input type="number" step="any" class="form-control num" dir="ltr" @bind="panelVatRate" disabled="@(!panelVatIncluded)" />
+                                <span class="input-group-text">٪</span>
+                            </div>
+                        </div>
+                        <button class="btn btn-sm btn-outline-warning w-100" @onclick="() => ApplyVatToSelected(selected)" disabled="@applyingVat">
+                            @if (applyingVat)
+                            {
+                                <span class="spinner-border spinner-border-sm ms-1"></span>
+                                <span>در حال اعمال ارزش افزوده…</span>
+                            }
+                            else
+                            {
+                                <i class="bi bi-check2-all me-1"></i>
+                                <span>اعمال به تمام کالاهای این گروه (@selected.TotalProductCount.Num() کالا)</span>
+                            }
+                        </button>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-primary flex-grow-1" @onclick="() => OpenEdit(selected)">
+                            <i class="bi bi-pencil"></i> ویرایش
+                        </button>
+                        <button class="btn btn-outline-primary" @onclick="() => OpenNew(selected.Id)">
+                            <i class="bi bi-plus-lg"></i> زیرگروه
+                        </button>
+                        <button class="btn btn-light text-danger" @onclick="() => Delete(selected)">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ================= مودال ثبت/ویرایش ================= -->
+<Modal Visible="showModal" Title="@(editing ? "ویرایش گروه کالا" : "گروه کالای جدید")" OnClose="CloseModal">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-8">
+                <label class="form-label">نام گروه <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="form.Name" placeholder="مثلاً: لوازم برقی" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">
+                    کد گروه
+                    <span class="fs-8 text-muted fw-normal">(حداکثر @categoryCodeLength رقم)</span>
+                </label>
+                <input class="form-control num font-monospace" @bind="form.Code" maxlength="@categoryCodeLength" placeholder="@(new string('0', categoryCodeLength))" dir="ltr" />
+                <div class="fs-8 text-muted mt-1">طول استاندارد کد سطح: @categoryCodeLength رقم</div>
+            </div>
+            <div class="col-md-8">
+                <label class="form-label">گروه والد</label>
+                <select class="form-select" @bind="parentIdStr">
+                    <option value="0">— گروه ریشه (بدون والد) —</option>
+                    @foreach (var c in items.Where(x => x.Id != form.Id))
+                    {
+                        <option value="@c.Id">@(new string('\u00A0', c.Depth * 4))@(c.Depth > 0 ? "└ " : "")@c.Name @(!string.IsNullOrEmpty(c.HierarchyCode) ? $"({c.HierarchyCode})" : "")</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">ترتیب نمایش</label>
+                <input type="number" class="form-control num" @bind="form.SortOrder" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label fw-600">نوع قیمت‌گذاری گروه کالا <span class="text-danger">*</span></label>
+                <select class="form-select" @bind="valuationStr">
+                    @if (form.ParentId is not null && form.ParentId > 0)
+                    {
+                        <option value="">— ارث‌بری از گروه والد —</option>
+                    }
+                    <option value="0">میانگین موزون</option>
+                    <option value="1">اولین صادره از اولین وارده (FIFO)</option>
+                    <option value="2">اولین صادره از آخرین وارده (LIFO)</option>
+                </select>
+                <div class="fs-8 text-muted mt-1">
+                    <i class="bi bi-info-circle"></i>
+                    اولویت سیستم: ۱) تعریف کالا ← ۲) گروه کالا ← ۳) انبار ← ۴) تنظیمات کلی
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label d-block">وضعیت</label>
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="catStatus" id="catActive"
+                           checked="@form.IsActive" @onchange="@(() => form.IsActive = true)" />
+                    <label class="form-check-label" for="catActive">فعال</label>
+                </div>
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="catStatus" id="catInactive"
+                           checked="@(!form.IsActive)" @onchange="@(() => form.IsActive = false)" />
+                    <label class="form-check-label" for="catInactive">غیرفعال</label>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">مشمول مالیات بر ارزش افزوده</label>
+                <div class="d-flex align-items-center gap-3 mt-1">
+                    <div class="form-check form-check-inline mb-0">
+                        <input class="form-check-input cursor-pointer" type="radio" name="formVatInc" id="fVatYes"
+                               checked="@formIsVatIncluded" @onchange="() => formIsVatIncluded = true" />
+                        <label class="form-check-label cursor-pointer text-success fw-500" for="fVatYes">مشمول (بله)</label>
+                    </div>
+                    <div class="form-check form-check-inline mb-0">
+                        <input class="form-check-input cursor-pointer" type="radio" name="formVatInc" id="fVatNo"
+                               checked="@(!formIsVatIncluded)" @onchange="() => formIsVatIncluded = false" />
+                        <label class="form-check-label cursor-pointer text-muted" for="fVatNo">غیرمشمول (خیر)</label>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">نرخ ارزش افزوده (٪)</label>
+                <input type="number" step="any" class="form-control num" dir="ltr" @bind="formVatRate" disabled="@(!formIsVatIncluded)" />
+            </div>
+            @if (editing)
+            {
+                <div class="col-12">
+                    <div class="form-check p-2 bg-light rounded border">
+                        <input class="form-check-input cursor-pointer" type="checkbox" id="propagateVat" @bind="propagateVatToProducts" />
+                        <label class="form-check-label cursor-pointer fw-600 text-primary fs-8" for="propagateVat">
+                            <i class="bi bi-arrow-repeat me-1"></i>
+                            اعمال این تنظیم ارزش افزوده به تمام کالاهای موجود در این گروه و زیرگروه‌ها پس از ذخیره
+                        </label>
+                    </div>
+                </div>
+            }
+            <div class="col-12">
+                <label class="form-label">شرح</label>
+                <textarea class="form-control" rows="2" @bind="form.Description"></textarea>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseModal">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<InvCategory> items = new();
+    private InvCategory? selected;
+    private readonly HashSet<int> collapsed = new();
+    private bool loading = true, showModal, saving;
+    private string search = "";
+
+    private InvCategory form = new();
+    private string parentIdStr = "0";
+    private string valuationStr = "";
+    private bool editing => form.Id != 0;
+
+    private bool formIsVatIncluded = true;
+    private decimal formVatRate = 10m;
+    private bool propagateVatToProducts;
+
+    private bool panelVatIncluded = true;
+    private decimal panelVatRate = 10m;
+    private bool applyingVat;
+
+    private WarehousingSettingsDto whSettings = new();
+    private int categoryCodeLength => whSettings.CategoryCodeLength > 0 ? whSettings.CategoryCodeLength : 2;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("مدیریت گروه کالا");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            whSettings = await SettingsSvc.GetSettingsAsync() ?? new WarehousingSettingsDto();
+            items = await CategorySvc.GetFlatAsync();
+            if (selected is not null)
+            {
+                selected = items.FirstOrDefault(c => c.Id == selected.Id);
+                if (selected != null)
+                {
+                    panelVatIncluded = selected.IsVatIncluded ?? true;
+                    panelVatRate = (selected.VatRate ?? 0) > 0 ? selected.VatRate.Value : 10m;
+                }
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    // ---------- درخت ----------
+    private bool HasChildren(InvCategory n) => items.Any(c => c.ParentId == n.Id);
+    private bool IsCollapsed(int id) => collapsed.Contains(id);
+
+    private void Toggle(int id)
+    {
+        if (!collapsed.Remove(id)) collapsed.Add(id);
+    }
+
+    private void ExpandAll() => collapsed.Clear();
+
+    private void CollapseAll()
+    {
+        collapsed.Clear();
+        foreach (var c in items.Where(HasChildren)) collapsed.Add(c.Id);
+    }
+
+    /// <summary>گره‌های قابل نمایش: با در نظر گرفتن جستجو و باز/بسته بودن والدها.</summary>
+    private List<InvCategory> Visible
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var s = search.Trim();
+                var hit = items.Where(c => c.Name.Contains(s) || (c.Code ?? "").Contains(s)).ToList();
+                var ids = new HashSet<int>();
+                foreach (var h in hit)
+                {
+                    ids.Add(h.Id);
+                    var pid = h.ParentId;
+                    while (pid is > 0)
+                    {
+                        ids.Add(pid.Value);
+                        pid = items.FirstOrDefault(x => x.Id == pid.Value)?.ParentId;
+                    }
+                }
+                return items.Where(c => ids.Contains(c.Id)).ToList();
+            }
+
+            return items.Where(c => !HiddenByCollapse(c)).ToList();
+        }
+    }
+
+    private bool HiddenByCollapse(InvCategory n)
+    {
+        var pid = n.ParentId;
+        var guard = 0;
+        while (pid is > 0 && guard++ < 100)
+        {
+            if (collapsed.Contains(pid.Value)) return true;
+            pid = items.FirstOrDefault(x => x.Id == pid.Value)?.ParentId;
+        }
+        return false;
+    }
+
+    private void Select(InvCategory n)
+    {
+        selected = n;
+        panelVatIncluded = n.IsVatIncluded ?? true;
+        panelVatRate = (n.VatRate ?? 0) > 0 ? n.VatRate.Value : 10m;
+    }
+
+    // ---------- عملیات ----------
+    private void OpenNew(int? parentId)
+    {
+        form = new InvCategory
+        {
+            IsActive = true,
+            ParentId = parentId,
+            Valuation = ValuationMethod.Average,
+            IsVatIncluded = true,
+            VatRate = 10m
+        };
+        parentIdStr = (parentId ?? 0).ToString();
+        valuationStr = parentId > 0 ? "" : "0";
+        formIsVatIncluded = true;
+        formVatRate = 10m;
+        propagateVatToProducts = false;
+        showModal = true;
+    }
+
+    private void OpenEdit(InvCategory c)
+    {
+        form = new InvCategory
+        {
+            Id = c.Id, Name = c.Name, Code = c.Code, ParentId = c.ParentId,
+            Description = c.Description, IsActive = c.IsActive, SortOrder = c.SortOrder,
+            Valuation = c.Valuation, IsVatIncluded = c.IsVatIncluded, VatRate = c.VatRate,
+            CreatedAt = c.CreatedAt
+        };
+        parentIdStr = (c.ParentId ?? 0).ToString();
+        valuationStr = c.Valuation is null ? "" : ((int)c.Valuation.Value).ToString();
+        formIsVatIncluded = c.IsVatIncluded ?? true;
+        formVatRate = (c.VatRate ?? 0) > 0 ? c.VatRate.Value : 10m;
+        propagateVatToProducts = false;
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name)) { Toast.Error("نام گروه را وارد کنید."); return; }
+
+        form.ParentId = int.TryParse(parentIdStr, out var pid) && pid > 0 ? pid : null;
+        if (form.ParentId is null or 0 && string.IsNullOrWhiteSpace(valuationStr))
+        {
+            valuationStr = "0";
+        }
+        form.Valuation = int.TryParse(valuationStr, out var v) ? (ValuationMethod)v : null;
+        form.IsVatIncluded = formIsVatIncluded;
+        form.VatRate = formIsVatIncluded ? formVatRate : 0m;
+
+        saving = true;
+        try
+        {
+            var saved = await CategorySvc.SaveAsync(form);
+            if (propagateVatToProducts && saved.Id > 0)
+            {
+                var updatedCount = await CategorySvc.ApplyCategoryVatAsync(saved.Id, formIsVatIncluded, formIsVatIncluded ? formVatRate : 0m);
+                Toast.Success($"گروه کالا ویرایش شد و ارزش افزوده به {updatedCount.Num()} کالا اعمال گردید.");
+            }
+            else
+            {
+                Toast.Success(editing ? "گروه کالا ویرایش شد." : "گروه کالا ثبت شد.");
+            }
+            showModal = false;
+            await Load();
+            selected = items.FirstOrDefault(c => c.Id == saved.Id);
+            if (selected != null)
+            {
+                panelVatIncluded = selected.IsVatIncluded ?? true;
+                panelVatRate = (selected.VatRate ?? 0) > 0 ? selected.VatRate.Value : 10m;
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task ApplyVatToSelected(InvCategory cat)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm",
+            $"آیا از اعمال ارزش افزوده ({(panelVatIncluded ? $"{panelVatRate}%" : "غیرمشمول")}) به کلیه کالاهای گروه «{cat.Name}» (شامل {cat.TotalProductCount.Num()} کالا) اطمینان دارید؟");
+        if (!confirmed) return;
+
+        applyingVat = true;
+        try
+        {
+            var updated = await CategorySvc.ApplyCategoryVatAsync(cat.Id, panelVatIncluded, panelVatIncluded ? panelVatRate : 0m);
+            Toast.Success($"ارزش افزوده با موفقیت به {updated.Num()} قلم کالا در گروه «{cat.Name}» اعمال شد و در فاکتورهای ریالی لحاظ می‌گردد.");
+            await Load();
+            selected = items.FirstOrDefault(c => c.Id == cat.Id);
+            if (selected != null)
+            {
+                panelVatIncluded = selected.IsVatIncluded ?? true;
+                panelVatRate = (selected.VatRate ?? 0) > 0 ? selected.VatRate.Value : 10m;
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            applyingVat = false;
+        }
+    }
+
+    private async Task Delete(InvCategory c)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف گروه «{c.Name}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await CategorySvc.DeleteAsync(c.Id);
+            Toast.Success("گروه کالا حذف شد.");
+            if (selected?.Id == c.Id) selected = null;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    /// <summary>جابه‌جایی گروه بین هم‌سطح‌ها (بالا/پایین).</summary>
+    private async Task Reorder(InvCategory n, int delta)
+    {
+        var siblings = items.Where(c => c.ParentId == n.ParentId).OrderBy(c => c.SortOrder).ThenBy(c => c.Name).ToList();
+        var index = siblings.FindIndex(c => c.Id == n.Id);
+        var target = index + delta;
+        if (index < 0 || target < 0 || target >= siblings.Count) return;
+
+        try
+        {
+            var other = siblings[target];
+            await CategorySvc.MoveAsync(new InvCategoryMove { Id = n.Id, NewParentId = n.ParentId, SortOrder = target });
+            await CategorySvc.MoveAsync(new InvCategoryMove { Id = other.Id, NewParentId = other.ParentId, SortOrder = index });
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string MethodTitle(ValuationMethod m) => m switch
+    {
+        ValuationMethod.Fifo => "FIFO",
+        ValuationMethod.Lifo => "LIFO",
+        _ => "میانگین"
+    };
+}

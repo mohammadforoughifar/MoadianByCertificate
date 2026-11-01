@@ -1,0 +1,68 @@
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@implements IDisposable
+
+@if (groups.Length > 0)
+{
+    <div class="nav-group group-erp erp-navigation">
+        <button type="button" class="nav-section-title nav-toggle @(open ? "open" : "")" aria-expanded="@open.ToString().ToLowerInvariant()" @onclick="() => open = !open">
+            <span><i class="bi bi-layers" aria-hidden="true"></i>ERP</span>
+            <i class="bi bi-chevron-down nav-chevron" aria-hidden="true"></i>
+        </button>
+        @if (open)
+        {
+            <div class="nav-group-items">
+                @foreach (var group in groups)
+                {
+                    var expanded = expandedId == group.Id;
+                    <div class="erp-nav-section">
+                        <button type="button" class="erp-nav-toggle nav-toggle @(activeGroup == group.Id ? "current" : "") @(expanded ? "open" : "")" aria-expanded="@expanded.ToString().ToLowerInvariant()" aria-controls="@("erp-nav-" + group.Id)" @onclick="() => expandedId = expanded ? null : group.Id">
+                            <span><i class="bi @group.Icon" aria-hidden="true"></i>@group.Title</span>
+                            <i class="bi bi-chevron-down nav-chevron" aria-hidden="true"></i>
+                        </button>
+                        @if (expanded)
+                        {
+                            <div id="@("erp-nav-" + group.Id)" class="erp-nav-children">
+                                @foreach (var item in group.Items)
+                                {
+                                    var active = selected?.Href == item.Href;
+                                    <a href="@item.Href" class="nav-link @(active ? "active" : "")" aria-current="@(active ? "page" : null)" @onclick="Navigate">
+                                        <i class="bi @item.Icon" aria-hidden="true"></i>
+                                        <span>@item.Title</span>
+                                    </a>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnNavigate { get; set; }
+    private ErpNavigation.Section[] groups = [];
+    private ErpNavigation.Entry? selected;
+    private string? expandedId, activeGroup;
+    private bool open;
+    protected override void OnInitialized()
+    {
+        Nav.LocationChanged += LocationChanged;
+        Auth.Changed += AuthChanged;
+        Refresh();
+    }
+    private void Refresh()
+    {
+        var path = ErpNavigation.Path(Nav.ToBaseRelativePath(Nav.Uri));
+        groups = ErpNavigation.Visible(Auth.CanSee);   // ملاک نمایش، مجوز «مشاهده» هر ماژول است
+        selected = ErpNavigation.Find(path);
+        activeGroup = ErpNavigation.SectionId(path);
+        if (activeGroup != null) expandedId = activeGroup;
+        open = ErpNavigation.IsWorkspace(path);
+    }
+    private void LocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e) => _ = InvokeAsync(() => { Refresh(); StateHasChanged(); });
+    private void AuthChanged() => _ = InvokeAsync(() => { Refresh(); StateHasChanged(); });
+    private Task Navigate() => OnNavigate.InvokeAsync();
+    public void Dispose() { Nav.LocationChanged -= LocationChanged; Auth.Changed -= AuthChanged; }
+}

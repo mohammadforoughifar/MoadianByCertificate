@@ -1,0 +1,288 @@
+@namespace Inventory.Client.Pages
+@page "/categories"
+@inject ICategoryService CategorySvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>گروه‌های کالا</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>گروه‌های کالا</h1>
+        <p class="lead">تعریف و مدیریت دسته‌بندی کالاها</p>
+    </div>
+    <button class="btn btn-primary ms-auto" @onclick="OpenNew">
+        <i class="bi bi-plus-lg"></i> گروه جدید
+    </button>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="جستجوی نام گروه…" @bind="search" @bind:event="oninput" />
+                </div>
+            </div>
+            <div class="col-md-auto">
+                <div class="form-check ms-2">
+                    <input class="form-check-input" type="checkbox" id="activeChk" checked="@activeOnly" @onchange="OnActiveChanged" />
+                    <label class="form-check-label" for="activeChk">فقط فعال‌ها</label>
+                </div>
+            </div>
+            <div class="col-auto ms-auto fs-8 text-muted">@Filtered.Count.Num() گروه</div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-tags"></i><h5>گروهی یافت نشد</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>نام گروه</th>
+                            <th>شرح</th>
+                            <th class="text-start">تعداد کالا</th>
+                            <th>تاریخ ایجاد</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var c in Paged)
+                        {
+                            <tr>
+                                <td class="fw-500">
+                                    <span style="padding-right:@(c.Depth * 22)px">
+                                        @if (c.Depth > 0)
+                                        {
+                                            <i class="bi bi-arrow-return-left text-muted ms-1"></i>
+                                        }
+                                        else
+                                        {
+                                            <i class="bi bi-tag text-muted ms-1"></i>
+                                        }
+                                        @c.Name
+                                    </span>
+                                </td>
+                                <td class="text-muted">@(string.IsNullOrWhiteSpace(c.Description) ? "—" : c.Description)</td>
+                                <td class="text-start num">@c.ProductCount.Num()</td>
+                                <td class="num">@c.CreatedAt.ToFa()</td>
+                                <td>
+                                    @if (c.IsActive)
+                                    {
+                                        <span class="badge badge-soft-success"><i class="bi bi-check2"></i> فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-muted">غیرفعال</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(c)"><i class="bi bi-pencil text-primary"></i></button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(c)"><i class="bi bi-trash text-danger"></i></button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var c in Paged)
+                {
+                    <div class="m-card @(c.IsActive ? "st-ready" : "st-delivered")" style="margin-right:@(c.Depth * 14)px">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi @(c.Depth > 0 ? "bi-arrow-return-left" : "bi-tags")"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-700 text-truncate">@c.Name</span>
+                                    @if (!c.IsActive)
+                                    {
+                                        <span class="badge badge-soft-muted fs-8">غیرفعال</span>
+                                    }
+                                </div>
+                                <div class="fs-8 text-muted text-truncate">@(string.IsNullOrWhiteSpace(c.Description) ? "بدون شرح" : c.Description)</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">کالاها</div>
+                                <div class="num fw-800 text-primary">@c.ProductCount.Num()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-actions">
+                            <button class="btn btn-light text-primary" @onclick="() => OpenEdit(c)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            <button class="btn btn-light text-danger" @onclick="() => Delete(c)"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="p => page = p" />
+        }
+    </div>
+</div>
+
+<Modal Visible="showModal" Title="@(editing ? "ویرایش گروه کالا" : "گروه کالای جدید")" OnClose="CloseModal">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-12">
+            <label class="form-label">نام گروه <span class="text-danger">*</span></label>
+            <input class="form-control" @bind="form.Name" placeholder="مثلاً: روغن، فیلتر، لاستیک…" />
+        </div>
+        <div class="col-12">
+            <label class="form-label">گروه والد</label>
+            <select class="form-select" @bind="parentIdStr">
+                <option value="0">— گروه ریشه (بدون والد) —</option>
+                @foreach (var c in items.Where(x => x.Id != form.Id))
+                {
+                    <option value="@c.Id">@(new string('\u00A0', c.Depth * 4))@(c.Depth > 0 ? "└ " : "")@c.Name</option>
+                }
+            </select>
+        </div>
+        <div class="col-12">
+            <label class="form-label">شرح</label>
+            <textarea class="form-control" rows="2" @bind="form.Description"></textarea>
+        </div>
+        <div class="col-12">
+            <label class="form-label d-block">وضعیت</label>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="catStatus" id="catActive"
+                       checked="@form.IsActive" @onchange="@(() => form.IsActive = true)" />
+                <label class="form-check-label" for="catActive">فعال</label>
+            </div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="catStatus" id="catInactive"
+                       checked="@(!form.IsActive)" @onchange="@(() => form.IsActive = false)" />
+                <label class="form-check-label" for="catInactive">غیرفعال</label>
+            </div>
+        </div>
+        @if (editing)
+        {
+            <div class="col-12 fs-8 text-muted">
+                <i class="bi bi-clock-history"></i>
+                تاریخ ایجاد: @form.CreatedAt.ToFaDateTime()
+                — @form.ProductCount.Num() کالا در این گروه
+            </div>
+        }
+    </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseModal">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<ProductCategory> items = new();
+    private bool loading = true, activeOnly;
+    private string search = "";
+
+    private ProductCategory form = new();
+    private bool showModal, saving;
+    private bool editing => form.Id != 0;
+    private string parentIdStr = "0";
+
+    private List<ProductCategory> Filtered =>
+        items.Where(c => string.IsNullOrWhiteSpace(search) || c.Name.Contains(search.Trim()))
+             .ToList();
+
+    // ---------- صفحه‌بندی ----------
+    private int page = 1;
+    private const int PageSize = 12;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(Filtered.Count / (double)PageSize));
+    private List<ProductCategory> Paged
+    {
+        get
+        {
+            if (page > PageCount) page = PageCount;
+            return Filtered.Skip((page - 1) * PageSize).Take(PageSize).ToList();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("گروه‌های کالا");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try { items = await CategorySvc.GetAllAsync(activeOnly); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnActiveChanged(ChangeEventArgs e)
+    {
+        activeOnly = e.Value is bool b && b;
+        await Load();
+    }
+
+    private void OpenNew()
+    {
+        form = new ProductCategory { IsActive = true };
+        parentIdStr = "0";
+        showModal = true;
+    }
+
+    private void OpenEdit(ProductCategory c)
+    {
+        form = new ProductCategory
+        {
+            Id = c.Id, Name = c.Name, ParentId = c.ParentId, Description = c.Description,
+            IsActive = c.IsActive, CreatedAt = c.CreatedAt, ProductCount = c.ProductCount
+        };
+        parentIdStr = (c.ParentId ?? 0).ToString();
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name)) { Toast.Error("نام گروه را وارد کنید."); return; }
+        form.ParentId = int.TryParse(parentIdStr, out var pid) && pid > 0 ? pid : null;
+
+        saving = true;
+        try
+        {
+            await CategorySvc.SaveAsync(form);
+            Toast.Success(editing ? "گروه کالا ویرایش شد." : "گروه کالا ثبت شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(ProductCategory c)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف گروه «{c.Name}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await CategorySvc.DeleteAsync(c.Id);
+            Toast.Success("گروه کالا حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

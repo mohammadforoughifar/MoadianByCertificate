@@ -1,0 +1,282 @@
+@page "/misc/minutes"
+@inject IMinutesApiService Minutes
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@inject IApiClient Api
+@inject RealtimeService Rt
+@inject LayoutState Layout
+@implements IDisposable
+
+<PageTitle>صورتجلسه‌ها — فرم‌های متفرقه</PageTitle>
+
+<div class="container-fluid py-3" style="max-width:1300px">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+        <h4 class="mb-0"><i class="bi bi-journal-text me-2"></i>صورتجلسه‌ها</h4>
+        <span class="badge text-bg-light border" title="تعداد ثبت‌شده">@(items.Count) مورد</span>
+        </div>
+        <div class="d-flex flex-wrap gap-2 mm-actions">
+            @if (Auth.Has("MeetingMinutes.Create"))
+            {
+                <button class="btn btn-primary btn-sm" @onclick="GoNew">
+                    <i class="bi bi-plus-lg me-1"></i>ثبت صورتجلسه جدید
+                </button>
+            }
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body py-2">
+            <div class="row g-2 align-items-center">
+                <div class="col-12 col-md-6 col-lg-5">
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input class="form-control" placeholder="جستجو در عنوان یا ثبت‌کننده…"
+                               @bind="search" @bind:event="oninput" @bind:after="Load" />
+                    </div>
+                </div>
+                <div class="col-6 col-md-4 col-lg-3">
+                    <select class="form-select form-select-sm" @bind="statusFilter" @bind:after="Load">
+                        <option value="">همهٔ وضعیت‌ها</option>
+                        <option value="InReview">در حال بررسی</option>
+                        <option value="Closed">اتمام نهایی</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (busy)
+    {
+        <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    }
+    else if (items.Count == 0)
+    {
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-journal-x" style="font-size:2.5rem"></i>
+            <div class="mt-2">صورتجلسه‌ای که در گردش شما باشد یافت نشد.</div>
+            <div class="fs-7 mt-1">فقط صورتجلسه‌هایی نمایش داده می‌شوند که شما ایجادکننده، حاضر/غایبِ ارسال‌شده، یا مسئول اجرا/پیگیری یکی از بندهای آن باشید.</div>
+        </div>
+    }
+    else
+    {
+        <div class="card border-0 shadow-sm">
+            <div class="d-none d-md-block table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width:50px">شماره</th>
+                            <th>عنوان</th>
+                            <th style="width:120px">تاریخ جلسه</th>
+                            <th style="width:120px">تاریخ ثبت</th>
+                            <th style="width:130px">وضعیت</th>
+                            <th style="width:110px">پیشرفت بندها</th>
+                            <th style="width:110px">شرکت‌کنندگان</th>
+                            <th style="width:130px" class="mm-actions-cell">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var m in items)
+                        {
+                            var done = m.ItemDoneCount;
+                            var total = m.ItemCount;
+                            <tr style="cursor:pointer" @onclick="() => Open(m.Id)">
+                                <td class="num fw-600">@m.Id</td>
+                                <td class="fw-600">@m.Title</td>
+                                <td>@PersianDate.ToShortFa(m.MeetingDate)</td>
+                                <td class="text-muted">@PersianDate.ToShortFa(m.DateRegistered)</td>
+                                <td>
+                                    @if (m.Status == "Closed")
+                                    {
+                                        <span class="badge text-bg-success">اتمام نهایی</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-warning">در حال بررسی</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (total == 0)
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                    else
+                                    {
+                                        <div class="d-flex align-items-center gap-2">
+                                            <div style="width:64px;height:6px;background:#e2e8f0;border-radius:4px;overflow:hidden">
+                                                <div style="height:100%;width:@(total > 0 ? done * 100 / total : 0)%;background:@(done == total ? "#16a34a" : "#2563eb")"></div>
+                                            </div>
+                                            <span class="fs-7 num">@done از @total</span>
+                                        </div>
+                                    }
+                                </td>
+                                <td class="fs-7">
+                                    <span title="حاضرین"><i class="bi bi-people me-1 text-success"></i>@m.AttendeeCount</span>
+                                    <span class="ms-2" title="غایبین"><i class="bi bi-person-x me-1 text-danger"></i>@m.AbsentCount</span>
+                                    @if (m.AttachmentCount > 0)
+                                    {
+                                        <span class="ms-2" title="پیوست"><i class="bi bi-paperclip me-1 text-secondary"></i>@m.AttachmentCount</span>
+                                    }
+                                </td>
+                                <td class="mm-actions-cell">
+                                    <div class="d-inline-flex gap-1 mm-btn-row">
+                                    <button type="button" class="btn btn-sm btn-outline-primary" title="باز کردن"
+                                            @onclick:stopPropagation="true" @onclick="() => Open(m.Id)">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
+                                    @if (Auth.Has("MeetingMinutes.Delete") && m.CreatedByUserId == Auth.UserId && m.Status != "Closed")
+                                    {
+                                        <button type="button" class="btn btn-sm btn-outline-danger" title="حذف"
+                                                @onclick:stopPropagation="true" @onclick="() => AskDelete(m)">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* نمای کارتی برای موبایل *@
+            <div class="d-md-none p-2">
+                @foreach (var m in items)
+                {
+                    var done = m.ItemDoneCount;
+                    var total = m.ItemCount;
+                    <div class="card mb-2 shadow-sm border" style="cursor:pointer" @onclick="() => Open(m.Id)">
+                        <div class="card-body p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="fw-bold">صورتجلسه @m.Id</span>
+                                @if (m.Status == "Closed")
+                                {
+                                    <span class="badge text-bg-success">اتمام نهایی</span>
+                                }
+                                else
+                                {
+                                    <span class="badge text-bg-warning">در حال بررسی</span>
+                                }
+                            </div>
+                            <h6 class="mb-2 text-primary">@m.Title</h6>
+                            <div class="fs-7 text-muted mb-1">
+                                <span><i class="bi bi-calendar-event me-1"></i>جلسه: @PersianDate.ToShortFa(m.MeetingDate)</span>
+                                <span class="ms-3"><i class="bi bi-clock-history me-1"></i>ثبت: @PersianDate.ToShortFa(m.DateRegistered)</span>
+                            </div>
+                            <div class="fs-7 text-muted mb-2">
+                                <span title="حاضرین"><i class="bi bi-people me-1 text-success"></i>@m.AttendeeCount حاضر</span>
+                                <span class="ms-2" title="غایبین"><i class="bi bi-person-x me-1 text-danger"></i>@m.AbsentCount غایب</span>
+                                @if (total > 0)
+                                {
+                                    <span class="ms-2"><i class="bi bi-check-circle me-1"></i>بندها: @done از @total</span>
+                                }
+                            </div>
+                            <div class="d-flex mm-btn-row gap-1 pt-2 border-top">
+                                <button type="button" class="btn btn-sm btn-outline-primary" @onclick:stopPropagation="true" @onclick="() => Open(m.Id)">
+                                    <i class="bi bi-eye me-1"></i>مشاهده و جزئیات
+                                </button>
+                                @if (Auth.Has("MeetingMinutes.Delete") && m.CreatedByUserId == Auth.UserId && m.Status != "Closed")
+                                {
+                                    <button type="button" class="btn btn-sm btn-outline-danger" @onclick:stopPropagation="true" @onclick="() => AskDelete(m)">
+                                        <i class="bi bi-trash me-1"></i>حذف
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@* ---------- مودال حذف ---------- *@
+<Modal Visible="delVisible" Title="حذف صورتجلسه" Size="modal-sm"
+       OnClose="() => delVisible = false">
+    <ChildContent>
+    <p class="mb-0">صورتجلسه «@(delTarget?.Title)» حذف شود؟</p>
+
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => delVisible = false">انصراف</button>
+        <button class="btn btn-danger" disabled="@delBusy" @onclick="DoDelete">حذف</button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<MinutesListItemDto> items = new();
+    private string search = "";
+    private string statusFilter = "";
+    private bool busy = true;
+
+    private bool delVisible;
+    private MinutesListItemDto? delTarget;
+    private bool delBusy;
+
+protected override void OnInitialized()
+    {
+        Layout.SetTitle("صورتجلسه‌ها");
+        Rt.DataChanged += OnRealtimeChanged;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        busy = items.Count > 0;
+        try
+        {
+            items = await Minutes.GetListAsync(search, string.IsNullOrWhiteSpace(statusFilter) ? null : statusFilter);
+        }
+        catch (Exception ex)
+        {
+            Toast.Error("خطا در بارگذاری: " + ex.Message);
+        }
+        busy = false;
+    }
+
+    private async void OnRealtimeChanged(string scope)
+    {
+        if (scope != "meeting-minutes") return;
+        try
+        {
+            items = await Minutes.GetListAsync(search, string.IsNullOrWhiteSpace(statusFilter) ? null : statusFilter);
+        }
+        catch { }
+        try { await InvokeAsync(StateHasChanged); } catch { }
+    }
+
+    private void GoNew() => Nav.NavigateTo("misc/minutes/new");
+
+    private void Open(int id) => Nav.NavigateTo($"misc/minutes/{id}");
+
+    private void AskDelete(MinutesListItemDto m)
+    {
+        delTarget = m;
+        delVisible = true;
+    }
+
+    private async Task DoDelete()
+    {
+        if (delTarget is null) return;
+        delBusy = true;
+        try
+        {
+            await Minutes.DeleteAsync(delTarget.Id);
+            Toast.Success("صورتجلسه حذف شد.");
+            delVisible = false;
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        delBusy = false;
+    }
+
+    public void Dispose() => Rt.DataChanged -= OnRealtimeChanged;
+}

@@ -1,0 +1,273 @@
+@namespace Inventory.Client.Pages
+@page "/sales/visits"
+@inject ISalesVisitApi Api
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+@inject IAuthState Auth
+
+<PageTitle>سفارش‌های ویزیتوری</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>سفارش‌های ویزیتوری</h1>
+        <p class="lead">سفارش میدانی ثبت کنید؛ پس از تأیید مدیر فروش، مالی آن را به فاکتور تبدیل می‌کند</p>
+    </div>
+    @* ثبت سفارش برای هر کاربری که مجوز ثبت دارد (ویزیتور، کارشناس، مدیر سیستم). *@
+    @if (me?.CanCreate == true)
+    {
+        <button class="btn btn-primary ms-auto" data-new-order @onclick="@(() => Nav.NavigateTo("/sales/visits/new"))">
+            <i class="bi bi-plus-lg"></i> سفارش جدید
+        </button>
+    }
+</div>
+
+@* ================== آمار سریع ================== *@
+<div class="row g-2 mb-3">
+    <div class="col-6 col-md-3">
+        <div class="vis-kpi"><b>@Fa.Digits(stats?.Draft ?? 0)</b><span>پیش‌نویس</span></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="vis-kpi vis-kpi-warn"><b>@Fa.Digits(stats?.Submitted ?? 0)</b><span>در انتظار تأیید</span></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="vis-kpi vis-kpi-ok"><b>@Fa.Digits(stats?.Approved ?? 0)</b><span>تأییدشده / در صف مالی</span></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="vis-kpi"><b>@Fa.Money(stats?.ApprovedAmount ?? 0)</b><span>مبلغ تأییدشده (ریال)</span></div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-3">
+                <select class="form-select" @bind="statusFilter" @bind:after="ReloadAsync">
+                    <option value="">همهٔ وضعیت‌ها</option>
+                    <option value="0">پیش‌نویس</option>
+                    <option value="1">در انتظار تأیید</option>
+                    <option value="2">تأییدشده</option>
+                    <option value="3">برگشتی برای اصلاح</option>
+                    <option value="5">فاکتورشده</option>
+                    <option value="7">ابطال‌شده</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="شماره، مشتری، ویزیتور…"
+                           @bind="search" @bind:event="oninput" @bind:after="SearchChanged" />
+                </div>
+            </div>
+            <div class="col-auto ms-auto text-muted fs-8">@Fa.Digits(items.Count) سفارش</div>
+            <div class="col-auto">
+                <button class="btn btn-light btn-sm" @onclick="ReloadAsync"><i class="bi bi-arrow-clockwise"></i></button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-journal-x"></i><h5>سفارشی یافت نشد</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>شماره</th>
+                            <th>تاریخ سفارش</th>
+                            <th>تحویل</th>
+                            <th>مشتری</th>
+                            @if (me?.CanApprove == true || me?.CanFinance == true)
+                            {
+                                <th>ویزیتور</th>
+                            }
+                            <th class="text-start">مبلغ خالص</th>
+                            <th>وضعیت</th>
+                            <th>فاکتور</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var o in items)
+                        {
+                            <tr @onclick="@(() => Open(o.Id))" style="cursor:pointer">
+                                <td class="fw-600">@o.Number</td>
+                                <td class="fs-8">@o.Date.ToFa()</td>
+                                <td class="fs-8">
+                                    @if (o.FinalDeliveryDate is not null)
+                                    {
+                                        <span class="@(o.FinalDateChanged ? "text-warning fw-600" : "")"
+                                              title="@(o.FinalDateChanged ? $"تاریخ ویزیتور: {o.DeliveryDate?.ToFa()}" : "همان تاریخ ویزیتور")">
+                                            @o.FinalDeliveryDate.Value.ToFa()
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">@(o.DeliveryDate?.ToFa() ?? "—")</span>
+                                    }
+                                </td>
+                                <td>
+                                    @o.PartyName
+                                    <div class="fs-9 text-muted">@Fa.Digits(o.LineCount) سطر</div>
+                                </td>
+                                @if (me?.CanApprove == true || me?.CanFinance == true)
+                                {
+                                    <td class="fs-8">@o.ReferrerName</td>
+                                }
+                                <td class="text-start">@Fa.Money(o.TotalNet)</td>
+                                <td>
+                                    <span class="@VisUi.BadgeCss(o.Status)">@VisUi.StatusText(o.Status)</span>
+                                    @if (o.ReturnCount > 0)
+                                    {
+                                        <span class="vis-badge vis-orange" title="تعداد برگشت">↩ @Fa.Digits(o.ReturnCount)</span>
+                                    }
+                                </td>
+                                <td class="fs-8">
+                                    @if (o.Status == VisOrderStatus.Invoiced && !string.IsNullOrWhiteSpace(o.SaleNumber))
+                                    {
+                                        <span class="text-success fw-600">@o.SaleNumber</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td class="text-end" @onclick:stopPropagation="true">
+                                    <button class="btn btn-sm btn-outline-secondary" @onclick="@(() => Open(o.Id))">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
+                                    @if (CanEdit(o))
+                                    {
+                                        <button class="btn btn-sm btn-outline-primary" @onclick="@(() => Edit(o.Id))">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-success" @onclick="@(() => SubmitAsync(o))">
+                                            <i class="bi bi-send"></i> ارسال
+                                        </button>
+                                    }
+                                    @if (CanCancel(o))
+                                    {
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="@(() => CancelAsync(o))">
+                                            <i class="bi bi-x-circle"></i>
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+    .vis-kpi { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 14px; padding: .6rem .8rem; }
+    .vis-kpi b { display: block; font-size: 1.15rem; }
+    .vis-kpi span { font-size: .72rem; color: #64748b; }
+    .vis-kpi-warn { background: #fffbeb; border-color: #fde68a; }
+    .vis-kpi-ok { background: #ecfdf5; border-color: #a7f3d0; }
+    .vis-badge { display: inline-block; font-size: .68rem; border-radius: 99px; padding: .1rem .5rem; border: 1px solid transparent; }
+    .vis-secondary { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+    .vis-warning { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+    .vis-primary { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
+    .vis-orange { background: #ffedd5; color: #9a3412; border-color: #fed7aa; }
+    .vis-danger { background: #ffe4e6; color: #9f1239; border-color: #fecdd3; }
+    .vis-success { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
+    .vis-dark { background: #e2e8f0; color: #0f172a; border-color: #cbd5e1; }
+    .fs-8 { font-size: .78rem; }
+    .fs-9 { font-size: .7rem; }
+</style>
+
+@code {
+    private bool loading = true;
+    private VisActorInfo? me;
+    private VisQueueStats? stats;
+    private List<VisOrderDto> items = new();
+    private string? statusFilter;
+    private string? search;
+    private System.Threading.CancellationTokenSource? _debounce;
+
+    [Microsoft.AspNetCore.Components.SupplyParameterFromQuery(Name = "status")]
+    public string? StatusParam { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("سفارش‌های ویزیتوری");
+        if (!string.IsNullOrWhiteSpace(StatusParam)) statusFilter = ((int)Enum.Parse<VisOrderStatus>(StatusParam)).ToString();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            me = await Api.MeAsync();
+            stats = await Api.StatsAsync();
+            VisOrderStatus? st = int.TryParse(statusFilter, out var v) ? (VisOrderStatus)v : null;
+            items = await Api.ListAsync(st, search);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private Task ReloadAsync() => LoadAsync();
+
+    private async Task SearchChanged()
+    {
+        _debounce?.Cancel();
+        _debounce = new System.Threading.CancellationTokenSource();
+        var token = _debounce.Token;
+        try
+        {
+            await Task.Delay(350, token);
+            if (!token.IsCancellationRequested) await LoadAsync();
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private void Open(int id) => Nav.NavigateTo($"/sales/visits/{id}");
+
+    private void Edit(int id) => Nav.NavigateTo($"/sales/visits/{id}/edit");
+
+    /// <summary>ویرایش تا زمانی که مدیر تأیید نکرده: پیش‌نویس، ارسال‌شده و برگشتی.</summary>
+    private bool CanEdit(VisOrderDto o) =>
+        (o.Status is VisOrderStatus.Draft or VisOrderStatus.Submitted or VisOrderStatus.Returned)
+        && (me?.CanCreate == true || me?.CanApprove == true);
+
+    private bool CanCancel(VisOrderDto o) =>
+        o.Status is VisOrderStatus.Draft or VisOrderStatus.Returned or VisOrderStatus.Submitted;
+
+    private async Task SubmitAsync(VisOrderDto o)
+    {
+        try
+        {
+            await Api.SubmitAsync(o.Id);
+            Toast.Success($"سفارش {o.Number} برای تأیید مدیر فروش ارسال شد.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task CancelAsync(VisOrderDto o)
+    {
+        try
+        {
+            await Api.CancelAsync(o.Id, "ابطال از فهرست سفارش‌ها");
+            Toast.Info($"سفارش {o.Number} ابطال شد.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

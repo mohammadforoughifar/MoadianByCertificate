@@ -1,0 +1,154 @@
+@namespace Inventory.Client.Pages
+@page "/fa-pay/slips/{Id:int}"
+@page "/fa-pay/my/{Id:int}"
+@inject IFaPayClientService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+
+<PageTitle>فیش حقوقی</PageTitle>
+
+<style>
+@@media print {
+    .no-print { display: none !important; }
+    .page-head { display: none !important; }
+    .card { box-shadow: none !important; border: 1px solid #ccc !important; }
+}
+</style>
+
+<div class="page-head mb-4 no-print">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-receipt-cutoff"></i> @SlipTitle</h1>
+            <div class="lead">مشاهده و چاپ فیش حقوقی</div>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-secondary" @onclick="Pdf"><i class="bi bi-file-earmark-pdf"></i> دانلود PDF</button>
+            <button class="btn btn-outline-secondary" @onclick="Print"><i class="bi bi-printer"></i> چاپ</button>
+            @if (faManage && !mine && slip != null)
+            {
+                <button class="btn btn-info" @onclick="Send"><i class="bi bi-envelope"></i> ارسال ایمیل</button>
+            }
+            <button class="btn btn-outline-secondary" @onclick="Back">بازگشت</button>
+        </div>
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">به این بخش دسترسی ندارید.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+@if (slip == null)
+{
+    <div class="alert alert-danger">فیش یافت نشد.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="text-center mb-3">
+            <h3 class="mb-0">فیش حقوقی ماهانه</h3>
+            <div class="text-muted">@FaPayUi.YearMonth(slip.RunYear, slip.RunMonth)</div>
+        </div>
+        <div class="row g-2 mb-3">
+            <div class="col-md-3"><div class="border rounded p-2"><div class="small text-muted">نام و نام خانوادگی</div><strong>@slip.EmployeeName</strong></div></div>
+            <div class="col-md-3"><div class="border rounded p-2"><div class="small text-muted">کد پرسنلی</div><strong>@slip.EmployeeCode</strong></div></div>
+            <div class="col-md-3"><div class="border rounded p-2"><div class="small text-muted">واحد سازمانی</div><strong>@(slip.OrgUnitName ?? "—")</strong></div></div>
+            <div class="col-md-3"><div class="border rounded p-2"><div class="small text-muted">حقوق پایه (ریال)</div><strong>@FaPayUi.Money(slip.BaseSalary)</strong></div></div>
+            <div class="col-md-3"><div class="border rounded p-2"><div class="small text-muted">حاضر / غیبت / مأموریت</div><strong>@FaPayUi.Num(slip.PresentDays) / @FaPayUi.Num(slip.AbsentDays) / @FaPayUi.Num(slip.MissionDays)</strong></div></div>
+            <div class="col-md-3"><div class="border rounded p-2"><div class="small text-muted">اضافه‌کاری / تأخیر (دقیقه)</div><strong>@FaPayUi.Num(slip.OvertimeMinutes) / @FaPayUi.Num(slip.DelayMinutes)</strong></div></div>
+            <div class="col-md-3"><div class="border rounded p-2"><div class="small text-muted">مرخصی بدون حقوق (روز)</div><strong>@FaPayUi.Num(slip.UnpaidLeaveDays)</strong></div></div>
+            <div class="col-md-3"><div class="border rounded p-2"><div class="small text-muted">وضعیت پرداخت</div>@if (slip.IsPaid) { <span class="badge text-bg-success">پرداخت شد</span> } else { <span class="badge text-bg-secondary">پرداخت نشده</span> }</div></div>
+        </div>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <h6 class="text-success">مزایا (ریال)</h6>
+                <table class="table table-sm table-bordered">
+                    <thead class="table-light"><tr><th>شرح</th><th style="width:130px">مبلغ</th></tr></thead>
+                    <tbody>
+                        <tr><td>حقوق پایه</td><td>@FaPayUi.Money(slip.BaseSalary)</td></tr>
+                        @foreach (var i in FaPayUi.Earn(slip))
+                        {
+                            <tr><td>@i.Title @if (!i.IsAuto) { <span class="badge text-bg-info">دستی</span> }</td><td>@FaPayUi.Money(i.Amount)</td></tr>
+                        }
+                    </tbody>
+                    <tfoot><tr class="table-success"><th>جمع مزایا</th><th>@FaPayUi.Money(slip.GrossEarnings)</th></tr></tfoot>
+                </table>
+            </div>
+            <div class="col-md-6">
+                <h6 class="text-danger">کسور (ریال)</h6>
+                <table class="table table-sm table-bordered">
+                    <thead class="table-light"><tr><th>شرح</th><th style="width:130px">مبلغ</th></tr></thead>
+                    <tbody>
+                        @foreach (var i in FaPayUi.Ded(slip))
+                        {
+                            <tr><td>@i.Title @if (!i.IsAuto) { <span class="badge text-bg-info">دستی</span> }</td><td>@FaPayUi.Money(i.Amount)</td></tr>
+                        }
+                        @if (FaPayUi.Ded(slip).Count == 0)
+                        {
+                            <tr><td colspan="2" class="text-center text-muted">کسری ثبت نشده است.</td></tr>
+                        }
+                    </tbody>
+                    <tfoot><tr class="table-danger"><th>جمع کسور</th><th>@FaPayUi.Money(slip.TotalDeductions)</th></tr></tfoot>
+                </table>
+            </div>
+        </div>
+        <div class="row g-2 mt-1">
+            <div class="col-md-4"><div class="alert alert-secondary mb-0 text-center py-2">مالیات: <strong>@FaPayUi.Money(slip.TaxAmount)</strong></div></div>
+            <div class="col-md-4"><div class="alert alert-secondary mb-0 text-center py-2">بیمه: <strong>@FaPayUi.Money(slip.InsuranceAmount)</strong></div></div>
+            <div class="col-md-4"><div class="alert alert-success mb-0 text-center py-2">خالص پرداختی: <strong>@FaPayUi.Money(slip.NetPay)</strong> ریال</div></div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private bool faRead => Auth.Has("FaPay.Read") || faManage;
+    private bool faManage => Auth.Has("FaPay.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private bool mine;
+    private FaPaySlipDto? slip;
+
+    private string SlipTitle => slip == null ? "فیش حقوقی" : $"فیش {slip.EmployeeName} — {FaPayUi.YearMonth(slip.RunYear, slip.RunMonth)}";
+    private string BackUrl => mine ? "/fa-pay/my" : (slip == null ? "/fa-pay" : FaPayUi.RunUrl(slip.RunId));
+
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        mine = Nav.Uri.Contains("/fa-pay/my/", StringComparison.OrdinalIgnoreCase) || !faManage;
+        loading = true;
+        try { slip = mine ? await Svc.GetMySlipAsync(Id) : await Svc.GetSlipAsync(Id); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void Back() => Nav.NavigateTo(BackUrl);
+
+    private async Task Print()
+    {
+        try { await JS.InvokeVoidAsync("print"); } catch { }
+    }
+
+    private async Task Pdf()
+    {
+        try { await Svc.DownloadSlipPdfAsync(Id, mine); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Send()
+    {
+        try { await Svc.SendSlipAsync(Id); Toast.Success("فیش ایمیل شد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

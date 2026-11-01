@@ -1,0 +1,371 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/daily"
+@inject IFaAttService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>وضعیت روزانه</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-calendar2-check"></i> وضعیت روزانه پرسنل</h1>
+            <div class="lead">تأخیر، تعجیل، اضافه‌کاری، غیبت و مأموریت — محاسبه خودکار</div>
+        </div>
+        <div class="d-flex gap-2">
+            @if (faUpdate)
+            {
+                <button class="btn btn-outline-primary" disabled="@recalcing" @onclick="RecalcRange">
+                    @if (recalcing)
+                    {
+                        <span class="spinner-border spinner-border-sm"></span>
+                    }
+                    <i class="bi bi-arrow-repeat"></i> محاسبه مجدد بازه
+                </button>
+            }
+            @if (faCreate)
+            {
+                <button class="btn btn-success" @onclick="() => OpenManual(null)"><i class="bi bi-plus-lg"></i> ثبت دستی تردد</button>
+                <button class="btn btn-outline-primary" @onclick="OpenImport"><i class="bi bi-upload"></i> ایمپورت فایل دستگاه</button>
+            }
+        </div>
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-2"><label class="form-label small text-muted">از تاریخ</label><DatePicker @bind-Value="fFrom" /></div>
+            <div class="col-md-2"><label class="form-label small text-muted">تا تاریخ</label><DatePicker @bind-Value="fTo" /></div>
+            <div class="col-md-3">
+                <label class="form-label small text-muted">پرسنل</label>
+                <select class="form-select" @bind="fEmp">
+                    <option value="0">همه</option>
+                    @foreach (var e in emps)
+                    {
+                        <option value="@e.Id">@e.FullName (@e.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small text-muted">وضعیت</label>
+                <select class="form-select" @bind="fStatus">
+                    <option value="-1">همه</option>
+                    @for (var s = 0; s <= 10; s++)
+                    {
+                        var v = s;
+                        <option value="@v">@FaAttUi.DayStatus(v)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2"><button class="btn btn-primary w-100" @onclick="Reload"><i class="bi bi-search"></i> نمایش</button></div>
+        </div>
+    </div>
+</div>
+
+@if (rows.Count > 0)
+{
+    <div class="d-flex flex-wrap gap-1 mb-2">
+        @foreach (var g in rows.GroupBy(x => x.Status).OrderBy(x => x.Key))
+        {
+            <span class="badge @FaAttUi.DayBadge(g.Key)">@FaAttUi.DayStatus(g.Key): @g.Count().Num()</span>
+        }
+    </div>
+}
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (rows.Count == 0)
+        {
+            <div class="text-center text-muted py-5">رکوردی یافت نشد. با «محاسبه مجدد بازه» وضعیت‌ها ساخته می‌شوند.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover table-sm mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr><th>تاریخ</th><th>پرسنل</th><th>شیفت</th><th>ورود</th><th>خروج</th><th>کارکرد</th><th>تأخیر</th><th>تعجیل</th><th>اضافه‌کاری</th><th>وضعیت</th><th style="width:80px"></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var d in rows)
+                        {
+                            <tr>
+                                <td class="num">@d.Date.ToFa()</td>
+                                <td><b>@d.EmployeeName</b><div class="small text-muted num">@d.EmployeeCode</div></td>
+                                <td class="small">@(d.ShiftName ?? "—")</td>
+                                <td class="num" dir="ltr">@FmtClock(d.FirstIn)</td>
+                                <td class="num" dir="ltr">@FmtClock(d.LastOut)</td>
+                                <td class="num">@FaAttUi.Min(d.WorkMinutes)</td>
+                                <td class="num">@FaAttUi.Min(d.LateMinutes)</td>
+                                <td class="num">@FaAttUi.Min(d.EarlyMinutes)</td>
+                                <td class="num">@FaAttUi.Min(d.OvertimeMinutes)</td>
+                                <td>
+                                    <span class="badge @FaAttUi.DayBadge(d.Status)">@FaAttUi.DayStatus(d.Status)</span>
+                                    @if (d.IsIncomplete)
+                                    {
+                                        <span class="badge text-bg-warning" title="تردد ناقص">!</span>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(d.Note))
+                                    {
+                                        <div class="small text-muted">@d.Note</div>
+                                    }
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        @if (faUpdate)
+                                        {
+                                            <button class="btn btn-light" title="محاسبه مجدد" @onclick="() => RecalcOne(d)"><i class="bi bi-arrow-repeat text-primary"></i></button>
+                                        }
+                                        @if (faCreate)
+                                        {
+                                            <button class="btn btn-light" title="ثبت دستی تردد" @onclick="() => OpenManual(d)"><i class="bi bi-plus-circle text-success"></i></button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showManual" Title="ثبت دستی تردد" OnClose="() => showManual = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label">پرسنل</label>
+                <select class="form-select" @bind="mform.EmployeeId">
+                    @foreach (var e in emps)
+                    {
+                        <option value="@e.Id">@e.FullName (@e.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">نوع تردد</label>
+                <select class="form-select" @bind="mform.Type">
+                    <option value="0">ورود</option><option value="1">خروج</option><option value="2">نامشخص</option>
+                </select>
+            </div>
+            <div class="col-md-6"><label class="form-label">تاریخ</label><DatePicker @bind-Value="mDate" /></div>
+            <div class="col-md-6"><label class="form-label">ساعت</label><input type="time" class="form-control" @bind="mTime" /></div>
+            <div class="col-12"><label class="form-label">یادداشت</label><input class="form-control" @bind="mform.Note" /></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showManual = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="SaveManual">ذخیره</button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showImport" Title="ایمپورت فایل تردد دستگاه" Size="modal-lg" OnClose="() => showImport = false">
+    <ChildContent>
+    <div class="row g-2 align-items-end mb-3">
+        <div class="col-md-4">
+            <label class="form-label">دستگاه (اختیاری)</label>
+            <select class="form-select" @bind="impDeviceId">
+                <option value="">—</option>
+                @foreach (var dv in impDevices)
+                {
+                    <option value="@dv.Id">@dv.Name (@dv.Code)</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-5">
+            <label class="form-label">فایل (اکسل یا CSV)</label>
+            <InputFile class="form-control" OnChange="OnImpFile" accept=".xlsx,.xls,.csv,.txt" />
+        </div>
+        <div class="col-md-3">
+            <button class="btn btn-outline-secondary w-100" @onclick="DownloadTemplate"><i class="bi bi-file-earmark-spreadsheet"></i> نمونه فایل</button>
+        </div>
+    </div>
+    @if (impFile is not null)
+    {
+        <div class="alert alert-light border small">فایل انتخاب‌شده: <b>@impFile.Name</b>
+            <button class="btn btn-primary btn-sm ms-2" disabled="@impBusy" @onclick="DoImport">
+                @if (impBusy)
+                {
+                    <span class="spinner-border spinner-border-sm"></span>
+                }
+                <i class="bi bi-upload"></i> شروع ایمپورت
+            </button>
+        </div>
+    }
+    @if (impResult is not null)
+    {
+        <div class="alert alert-success small">ثبت شد: <b>@impResult.Added</b> — تکراری رد شد: <b>@impResult.Skipped</b></div>
+        @if (impResult.Errors.Count > 0)
+        {
+            <h6 class="fw-bold">خطاها (@impResult.Errors.Count)</h6>
+            <ul class="small text-danger" style="max-height:180px;overflow:auto">
+                @foreach (var e in impResult.Errors)
+                {
+                    <li>@e</li>
+                }
+            </ul>
+        }
+    }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showImport = false">بستن</button>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faRead => Auth.Has("FaAtt.Read") || Auth.IsAdmin;
+    private bool faCreate => Auth.Has("FaAtt.Create") || Auth.IsAdmin;
+    private bool faUpdate => Auth.Has("FaAtt.Update") || Auth.IsAdmin;
+
+    private bool loading = true, saving, recalcing;
+    private List<FaAttDailyDto> rows = new();
+    private List<HrEmployeeDto> emps = new();
+
+    private DateTime? fFrom = DateTime.Today, fTo = DateTime.Today;
+    private int fEmp, fStatus = -1;
+
+    private bool showManual;
+    private FaAttLogSaveDto mform = new();
+    private DateTime? mDate = DateTime.Today;
+    private TimeOnly mTime = new(8, 0);
+
+    private static string FmtClock(DateTime? d) => d == null ? "—" : Fa.Digits(d.Value.ToString("HH:mm"));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) return;
+        try { emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 200)).Items; } catch { }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            rows = await Svc.GetDailyAsync(
+                fFrom ?? DateTime.Today, fTo ?? DateTime.Today,
+                fEmp == 0 ? null : fEmp, null, fStatus < 0 ? null : fStatus);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task RecalcRange()
+    {
+        recalcing = true;
+        try
+        {
+            var n = await Svc.RecalcRangeAsync(
+                fFrom ?? DateTime.Today, fTo ?? DateTime.Today,
+                fEmp == 0 ? null : fEmp, null);
+            Toast.Success($"{n.Num()} رکورد روزانه محاسبه شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { recalcing = false; }
+    }
+
+    private bool showImport, impBusy;
+    private IBrowserFile? impFile;
+    private int? impDeviceId;
+    private FaAttImportResultDto? impResult;
+    private List<FaAttDeviceDto> impDevices = new();
+
+    private async Task OpenImport()
+    {
+        showImport = true;
+        impFile = null;
+        impResult = null;
+        try { impDevices = await Svc.GetDevicesAsync(true); }
+        catch { impDevices = new(); }
+    }
+
+    private void OnImpFile(InputFileChangeEventArgs e)
+    {
+        impFile = e.File;
+        impResult = null;
+    }
+
+    private async Task DownloadTemplate()
+    {
+        try
+        {
+            var f = await Svc.GetImportTemplateAsync();
+            await JS.InvokeVoidAsync("saveAsFile", f.FileName, System.Convert.ToBase64String(f.Data));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DoImport()
+    {
+        if (impFile is null) return;
+        impBusy = true;
+        impResult = null;
+        try
+        {
+            await using var stream = impFile.OpenReadStream(long.MaxValue);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            ms.Position = 0;
+            impResult = await Svc.ImportLogsAsync(ms, impFile.Name, impFile.ContentType, impDeviceId);
+            impFile = null;
+            Toast.Success($"ایمپورت انجام شد: {impResult.Added} ثبت، {impResult.Skipped} تکراری.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { impBusy = false; }
+    }
+
+    private async Task RecalcOne(FaAttDailyDto d)
+    {
+        try
+        {
+            var r = await Svc.RecalcAsync(d.EmployeeId, d.Date);
+            var i = rows.FindIndex(x => x.Id == r.Id);
+            if (i >= 0) rows[i] = r;
+            Toast.Success("محاسبه شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenManual(FaAttDailyDto? d)
+    {
+        mform = new FaAttLogSaveDto
+        {
+            EmployeeId = d?.EmployeeId ?? emps.FirstOrDefault()?.Id ?? 0,
+            Source = 3
+        };
+        mDate = d?.Date ?? DateTime.Today;
+        mTime = TimeOnly.FromDateTime(DateTime.Now);
+        showManual = true;
+    }
+
+    private async Task SaveManual()
+    {
+        saving = true;
+        try
+        {
+            mform.Timestamp = (mDate ?? DateTime.Today).Date.Add(mTime.ToTimeSpan());
+            await Svc.SaveLogAsync(mform);
+            showManual = false;
+            Toast.Success("تردد ثبت و وضعیت روزانه به‌روز شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+}

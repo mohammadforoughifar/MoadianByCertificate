@@ -1,0 +1,223 @@
+@namespace Inventory.Client.Pages
+@page "/fa-lms/banks"
+@inject IFaLmsService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>بانک سؤال مشترک</PageTitle>
+
+<div class="page-head mb-4">
+    <div>
+        <h1><i class="bi bi-collection"></i> بانک سؤال مشترک</h1>
+        <div class="lead">سؤال‌های مشترک تستی/تشریحی + افزودن به آزمون‌ها با یک کلیک</div>
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">مدیریت بانک سؤال نیازمند دسترسی مدیریتی آموزش است.</div>
+    return;
+}
+
+<div class="row g-3">
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white d-flex align-items-center gap-2">
+                <strong><i class="bi bi-collection text-primary"></i> بانک‌ها</strong>
+                <button class="btn btn-sm btn-success ms-auto" @onclick="() => OpenBank(null)"><i class="bi bi-plus-lg"></i> بانک جدید</button>
+            </div>
+            <div class="list-group list-group-flush" style="max-height:60vh;overflow:auto">
+                @foreach (var b in banks)
+                {
+                    <div class="list-group-item list-group-item-action @(b.Id == selBankId ? "active" : "")" style="cursor:pointer" @onclick="() => SelectBank(b.Id)">
+                        <div class="d-flex justify-content-between align-items-center gap-2">
+                            <strong>@b.Title</strong>
+                            <span class="badge @(b.Id == selBankId ? "text-bg-light" : "text-bg-secondary") num">@FaLmsUi.Num(b.QuestionsCount)</span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(b.Description)) { <div class="small @(b.Id == selBankId ? "" : "text-muted")">@b.Description</div> }
+                        @if (b.Id == selBankId)
+                        {
+                            <div class="mt-1 d-flex gap-1" @onclick:stopPropagation="true">
+                                <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenBank(b)"><i class="bi bi-pencil"></i></button>
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteBank(b.Id)"><i class="bi bi-trash"></i></button>
+                            </div>
+                        }
+                    </div>
+                }
+                @if (banks.Count == 0)
+                {
+                    <div class="text-center text-muted py-4">بانکی ثبت نشده است.</div>
+                }
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white"><strong><i class="bi bi-list-check text-primary"></i> سؤال‌ها</strong> @if (selBank != null) { <span class="text-muted small">@selBank.Title</span> }</div>
+            <div class="card-body">
+                @if (selBankId is not > 0)
+                {
+                    <div class="text-center text-muted py-4">یک بانک انتخاب کنید.</div>
+                }
+                else
+                {
+                    @if (questions.Count == 0)
+                    {
+                        <div class="text-center text-muted py-3">سؤالی ثبت نشده است.</div>
+                    }
+                    else
+                    {
+                        <ol class="list-group list-group-numbered mb-3">
+                            @foreach (var q in questions)
+                            {
+                                <li class="list-group-item">
+                                    <div class="d-flex justify-content-between gap-2"><b>@q.Text</b><span class="text-nowrap"><span class="badge @(q.Type == 1 ? "text-bg-warning" : "text-bg-info") me-1">@(q.Type == 1 ? "تشریحی" : "تستی")</span><span class="badge text-bg-info num">@FaLmsUi.Num(q.Score) نمره</span></span></div>
+                                    @if (q.Type == 0)
+                                    {
+                                        <div class="small text-muted mt-1">۱) @q.OptA | ۲) @q.OptB | ۳) @q.OptC | ۴) @q.OptD — <b class="text-success">صحیح: گزینه @(q.CorrectIndex + 1)</b></div>
+                                    }
+                                    <div class="mt-1 d-flex gap-2">
+                                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => OpenQuestion(q)">ویرایش</button>
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteQuestion(q)">حذف</button>
+                                    </div>
+                                </li>
+                            }
+                        </ol>
+                    }
+                    <hr />
+                    <h6>@(qEditId == null ? "سؤال جدید" : "ویرایش سؤال")</h6>
+                    <div class="row g-2">
+                        <div class="col-12"><input class="form-control" placeholder="متن سؤال *" @bind="qForm.Text" /></div>
+                        <div class="col-md-4"><label class="form-label small">نوع سؤال</label><select class="form-select" @bind="qForm.Type"><option value="0">تستی</option><option value="1">تشریحی</option></select></div>
+                        @if (qForm.Type == 0)
+                        {
+                            <div class="col-md-6"><input class="form-control" placeholder="گزینه ۱" @bind="qForm.OptA" /></div>
+                            <div class="col-md-6"><input class="form-control" placeholder="گزینه ۲" @bind="qForm.OptB" /></div>
+                            <div class="col-md-6"><input class="form-control" placeholder="گزینه ۳" @bind="qForm.OptC" /></div>
+                            <div class="col-md-6"><input class="form-control" placeholder="گزینه ۴" @bind="qForm.OptD" /></div>
+                            <div class="col-md-4"><label class="form-label small">گزینه صحیح</label><select class="form-select" @bind="qForm.CorrectIndex"><option value="0">۱</option><option value="1">۲</option><option value="2">۳</option><option value="3">۴</option></select></div>
+                        }
+                        <div class="col-md-4"><label class="form-label small">نمره</label><input type="number" step="0.5" class="form-control" @bind="qForm.Score" /></div>
+                        <div class="col-md-4"><label class="form-label small">ترتیب</label><input type="number" class="form-control" @bind="qForm.SortOrder" /></div>
+                    </div>
+                    <div class="d-flex justify-content-end gap-2 mt-2">
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="ResetQForm">جدید</button>
+                        <button class="btn btn-sm btn-success" @onclick="SaveQuestion">ذخیره سؤال</button>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<Modal Visible="showBank" Title="بانک سؤال" OnClose="() => showBank = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-12"><label class="form-label">عنوان *</label><input class="form-control" @bind="bForm.Title" /></div>
+        <div class="col-12"><label class="form-label">توضیح</label><textarea class="form-control" rows="2" @bind="bForm.Description"></textarea></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showBank = false">انصراف</button>
+        <button class="btn btn-success" @onclick="SaveBank">ذخیره</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faManage => Auth.Has("FaLms.Manage") || Auth.IsAdmin;
+
+    private bool showBank;
+    private List<FaLmsBankDto> banks = new();
+    private List<FaLmsBankQuestionDto> questions = new();
+    private int? selBankId;
+    private FaLmsBankDto? selBank => banks.FirstOrDefault(b => b.Id == selBankId);
+    private int? bEditId;
+    private FaLmsBankSaveDto bForm = new();
+    private int? qEditId;
+    private FaLmsBankQuestionSaveDto qForm = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) return;
+        await ReloadBanks();
+    }
+
+    private async Task ReloadBanks()
+    {
+        try
+        {
+            banks = await Svc.ListBanksAsync();
+            if (selBankId is not > 0 || !banks.Any(b => b.Id == selBankId))
+                selBankId = banks.FirstOrDefault()?.Id;
+            await ReloadQuestions();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task SelectBank(int id)
+    {
+        selBankId = id;
+        await ReloadQuestions();
+    }
+
+    private async Task ReloadQuestions()
+    {
+        questions = new();
+        if (selBankId is not > 0) return;
+        try { questions = await Svc.ListBankQuestionsAsync(selBankId.Value); ResetQForm(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenBank(FaLmsBankDto? b)
+    {
+        bEditId = b?.Id;
+        bForm = b == null ? new FaLmsBankSaveDto() : new FaLmsBankSaveDto { Title = b.Title, Description = b.Description };
+        showBank = true;
+    }
+
+    private async Task SaveBank()
+    {
+        try
+        {
+            var saved = await Svc.SaveBankAsync(bEditId, bForm);
+            Toast.Success("بانک ذخیره شد.");
+            showBank = false;
+            await ReloadBanks();
+            selBankId = saved.Id;
+            await ReloadQuestions();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteBank(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "بانک و همه سؤال‌های آن حذف شود؟")) return;
+        try { await Svc.DeleteBankAsync(id); Toast.Success("حذف شد."); await ReloadBanks(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void ResetQForm() { qEditId = null; qForm = new FaLmsBankQuestionSaveDto { BankId = selBankId ?? 0, Score = 1, SortOrder = questions.Count + 1 }; }
+
+    private void OpenQuestion(FaLmsBankQuestionDto q)
+    {
+        qEditId = q.Id;
+        qForm = new FaLmsBankQuestionSaveDto { BankId = q.BankId, Text = q.Text, OptA = q.OptA, OptB = q.OptB, OptC = q.OptC, OptD = q.OptD, CorrectIndex = q.CorrectIndex, Score = q.Score, Type = q.Type, SortOrder = q.SortOrder };
+    }
+
+    private async Task SaveQuestion()
+    {
+        if (selBankId is not > 0) return;
+        try { await Svc.SaveBankQuestionAsync(qEditId, selBankId.Value, qForm); Toast.Success("سؤال ذخیره شد."); await ReloadBanks(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteQuestion(FaLmsBankQuestionDto q)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "سؤال حذف شود؟")) return;
+        try { await Svc.DeleteBankQuestionAsync(q.Id); await ReloadBanks(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

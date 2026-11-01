@@ -1,0 +1,554 @@
+@page "/acc/accounts"
+@inject IAccAccountService AccountSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>کدینگ حساب‌ها</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>کدینگ حساب‌ها</h1>
+        <p class="lead">ساختار درختی حساب‌ها: گروه ← کل ← معین ← تفصیلی</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-outline-primary" @onclick="ToggleBalances" title="نمایش گردش و مانده">
+            <i class="bi bi-cash-coin"></i> @(withBalances ? "پنهان کردن مانده" : "نمایش مانده")
+        </button>
+        <button class="btn btn-outline-primary" @onclick="ExpandAll" title="باز کردن همه">
+            <i class="bi bi-arrows-expand"></i> باز کردن همه
+        </button>
+        <button class="btn btn-outline-primary" @onclick="CollapseAll" title="بستن همه">
+            <i class="bi bi-arrows-collapse"></i> بستن همه
+        </button>
+        <button class="btn btn-primary" @onclick="() => OpenNew(null)">
+            <i class="bi bi-plus-lg"></i> گروه حساب جدید
+        </button>
+    </div>
+</div>
+
+<div class="row g-3">
+    <!-- ================= درخت حساب‌ها ================= -->
+    <div class="col-lg-7">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-diagram-3 text-primary"></i>
+                <span class="card-title">درخت حساب‌ها</span>
+                <span class="badge badge-soft-primary ms-auto">@items.Count.Num() حساب</span>
+            </div>
+            <div class="card-body">
+                <div class="row g-2 mb-3">
+                    <div class="col-md-7">
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input class="form-control" placeholder="جستجوی نام یا کد حساب…" @bind="search" @bind:event="oninput" />
+                        </div>
+                    </div>
+                    <div class="col-md-5">
+                        <select class="form-select" @bind="levelFilter">
+                            <option value="">— همه‌ی سطوح —</option>
+                            <option value="0">فقط گروه</option>
+                            <option value="1">تا سطح کل</option>
+                            <option value="2">تا سطح معین</option>
+                            <option value="3">تا سطح تفصیلی</option>
+                        </select>
+                    </div>
+                </div>
+
+                @if (loading)
+                {
+                    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+                }
+                else if (items.Count == 0)
+                {
+                    <div class="empty-state">
+                        <i class="bi bi-diagram-3"></i>
+                        <h5>هنوز حسابی تعریف نشده است</h5>
+                        <button class="btn btn-primary mt-2" @onclick="() => OpenNew(null)">
+                            <i class="bi bi-plus-lg"></i> ساخت اولین حساب
+                        </button>
+                    </div>
+                }
+                else
+                {
+                    <div class="tree">
+                        @foreach (var n in Visible)
+                        {
+                            <div class="tree-row @(selected?.Id == n.Id ? "selected" : "") @(n.IsActive ? "" : "inactive")"
+                                 style="margin-right:@(n.Depth * 22)px"
+                                 @onclick="() => Select(n)">
+                                <button type="button"
+                                        class="tree-caret @(HasChildren(n) ? (IsCollapsed(n.Id) ? "" : "open") : "leaf")"
+                                        @onclick:stopPropagation="true"
+                                        @onclick="() => Toggle(n.Id)">
+                                    <i class="bi bi-chevron-left"></i>
+                                </button>
+
+                                <span class="tree-icon">
+                                    <i class="bi @LevelIcon(n)"></i>
+                                </span>
+
+                                <span class="min-w-0">
+                                    <span class="tree-name">@n.Name</span>
+                                    <span class="tree-code d-block">کد: @n.Code.FaDigits() · @n.LevelTitle</span>
+                                </span>
+
+                                @if (withBalances && (n.Debit != 0 || n.Credit != 0))
+                                {
+                                    <span class="badge @(n.Balance >= 0 ? "badge-soft-success" : "badge-soft-danger") num fs-8"
+                                          title="مانده (با زیرمجموعه‌ها)">
+                                        @Math.Abs(n.Balance).Money() @n.BalanceSide
+                                    </span>
+                                }
+
+                                @if (n.IsPostable)
+                                {
+                                    <span class="badge badge-soft-primary fs-8" title="روی این حساب می‌توان سند زد">قابل ثبت</span>
+                                }
+                                @if (n.IsSystem)
+                                {
+                                    <span class="badge badge-soft-warning fs-8" title="حساب سیستمی">سیستمی</span>
+                                }
+
+                                <span class="tree-actions" @onclick:stopPropagation="true">
+                                    <button class="btn btn-sm btn-light" title="زیرحساب جدید" @onclick="() => OpenNew(n.Id)">
+                                        <i class="bi bi-plus-lg text-success"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light" title="دفتر حساب" @onclick="() => GoLedger(n)">
+                                        <i class="bi bi-journal-text text-info"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light" title="بالا بردن" @onclick="() => Reorder(n, -1)">
+                                        <i class="bi bi-arrow-up text-muted"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light" title="پایین بردن" @onclick="() => Reorder(n, 1)">
+                                        <i class="bi bi-arrow-down text-muted"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(n)">
+                                        <i class="bi bi-pencil text-primary"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(n)">
+                                        <i class="bi bi-trash text-danger"></i>
+                                    </button>
+                                </span>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= جزئیات حساب ================= -->
+    <div class="col-lg-5">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-info-circle text-primary"></i>
+                <span class="card-title">جزئیات حساب</span>
+            </div>
+            <div class="card-body">
+                @if (selected is null)
+                {
+                    <div class="empty-state">
+                        <i class="bi bi-hand-index"></i>
+                        <h5>یک حساب را از درخت انتخاب کنید</h5>
+                    </div>
+                }
+                else
+                {
+                    <dl class="detail-list">
+                        <dt>کد حساب</dt>
+                        <dd class="num fw-600">@selected.Code.FaDigits()</dd>
+
+                        <dt>نام حساب</dt>
+                        <dd>@selected.Name</dd>
+
+                        @if (!string.IsNullOrWhiteSpace(selected.EnName))
+                        {
+                            <dt>نام لاتین</dt>
+                            <dd dir="ltr" class="text-start">@selected.EnName</dd>
+                        }
+
+                        <dt>مسیر کامل</dt>
+                        <dd class="fs-8 text-muted">@selected.FullPath</dd>
+
+                        <dt>سطح</dt>
+                        <dd><span class="badge badge-soft-primary">@selected.LevelTitle</span></dd>
+
+                        <dt>نوع</dt>
+                        <dd><span class="badge badge-soft-info">@selected.TypeTitle</span></dd>
+
+                        <dt>ماهیت</dt>
+                        <dd>@selected.NatureTitle</dd>
+
+                        <dt>دائم / موقت</dt>
+                        <dd>@(selected.IsPermanent ? "دائم (ترازنامه‌ای)" : "موقت (سود و زیانی)")</dd>
+
+                        <dt>قابل ثبت سند</dt>
+                        <dd>
+                            @if (selected.IsPostable)
+                            {
+                                <span class="text-success"><i class="bi bi-check-circle-fill"></i> بله</span>
+                            }
+                            else
+                            {
+                                <span class="text-muted"><i class="bi bi-dash-circle"></i> خیر (حساب میانی)</span>
+                            }
+                        </dd>
+
+                        <dt>الزام طرف حساب</dt>
+                        <dd>@(selected.RequiresParty ? "بله" : "خیر")</dd>
+
+                        <dt>تعداد زیرحساب</dt>
+                        <dd class="num">@selected.ChildCount.Num()</dd>
+
+                        @if (withBalances)
+                        {
+                            <dt>گردش بدهکار</dt>
+                            <dd class="num text-success">@selected.Debit.Money()</dd>
+
+                            <dt>گردش بستانکار</dt>
+                            <dd class="num text-danger">@selected.Credit.Money()</dd>
+
+                            <dt>مانده</dt>
+                            <dd class="num fw-600">@Math.Abs(selected.Balance).Money() @selected.BalanceSide</dd>
+                        }
+
+                        <dt>وضعیت</dt>
+                        <dd>
+                            @if (selected.IsActive)
+                            {
+                                <span class="badge badge-soft-success">فعال</span>
+                            }
+                            else
+                            {
+                                <span class="badge badge-soft-danger">غیرفعال</span>
+                            }
+                        </dd>
+
+                        @if (!string.IsNullOrWhiteSpace(selected.Description))
+                        {
+                            <dt>شرح</dt>
+                            <dd>@selected.Description</dd>
+                        }
+                    </dl>
+
+                    <div class="d-flex gap-2 mt-3">
+                        <button class="btn btn-primary flex-fill" @onclick="() => OpenEdit(selected)">
+                            <i class="bi bi-pencil"></i> ویرایش
+                        </button>
+                        <button class="btn btn-light" @onclick="() => OpenNew(selected.Id)">
+                            <i class="bi bi-plus-lg"></i> زیرحساب
+                        </button>
+                        <button class="btn btn-light" title="دفتر حساب" @onclick="() => GoLedger(selected)">
+                            <i class="bi bi-journal-text text-info"></i>
+                        </button>
+                        <button class="btn btn-light text-danger" @onclick="() => Delete(selected)">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ================= مودال ثبت/ویرایش ================= -->
+<Modal Visible="showModal" Title="@(editing ? "ویرایش حساب" : "حساب جدید")" OnClose="CloseModal">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">کد حساب <span class="text-danger">*</span></label>
+                <input class="form-control num" @bind="form.Code" placeholder="مثلاً: 1101" />
+                <div class="fs-8 text-muted mt-1">
+                    <i class="bi bi-info-circle"></i> کد زیرحساب باید با کد والد شروع شود.
+                </div>
+            </div>
+            <div class="col-md-8">
+                <label class="form-label">نام حساب <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="form.Name" placeholder="مثلاً: موجودی کالا — انبار" />
+            </div>
+
+            <div class="col-md-8">
+                <label class="form-label">حساب والد</label>
+                <select class="form-select" @bind="parentIdStr">
+                    <option value="0">— حساب گروه (بدون والد) —</option>
+                    @foreach (var c in items.Where(x => x.Id != form.Id && x.Level != AccountLevel.Detail))
+                    {
+                        <option value="@c.Id">@Indent(c.Depth)@c.Code — @c.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">ترتیب نمایش</label>
+                <input type="number" class="form-control num" @bind="form.SortOrder" />
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label">نوع حساب</label>
+                <select class="form-select" @bind="typeStr" disabled="@(parentIdStr != "0")">
+                    <option value="0">دارایی</option>
+                    <option value="1">بدهی</option>
+                    <option value="2">سرمایه</option>
+                    <option value="3">درآمد</option>
+                    <option value="4">هزینه</option>
+                </select>
+                @if (parentIdStr != "0")
+                {
+                    <div class="fs-8 text-muted mt-1">نوع از حساب والد به ارث می‌رسد.</div>
+                }
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">ماهیت</label>
+                <select class="form-select" @bind="natureStr">
+                    <option value="0">بدهکار</option>
+                    <option value="1">بستانکار</option>
+                    <option value="2">دوطرفه</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">نام لاتین</label>
+                <input class="form-control" dir="ltr" @bind="form.EnName" placeholder="اختیاری" />
+            </div>
+
+            <div class="col-12">
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="accPostable" @bind="form.IsPostable" />
+                            <label class="form-check-label" for="accPostable">قابل ثبت سند (برگ درخت)</label>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="accParty" @bind="form.RequiresParty" />
+                            <label class="form-check-label" for="accParty">الزام ثبت طرف حساب</label>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="accActive" @bind="form.IsActive" />
+                            <label class="form-check-label" for="accActive">فعال</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12">
+                <label class="form-label">شرح</label>
+                <textarea class="form-control" rows="2" @bind="form.Description"></textarea>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseModal">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<AccAccount> items = new();
+    private AccAccount? selected;
+    private readonly HashSet<int> collapsed = new();
+    private bool loading = true, showModal, saving, withBalances;
+    private string search = "";
+    private string levelFilter = "";
+
+    private AccAccount form = new();
+    private string parentIdStr = "0";
+    private string typeStr = "0";
+    private string natureStr = "0";
+    private bool editing => form.Id != 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("کدینگ حساب‌ها");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            items = await AccountSvc.GetFlatAsync(false, withBalances);
+            if (selected is not null) selected = items.FirstOrDefault(a => a.Id == selected.Id);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task ToggleBalances()
+    {
+        withBalances = !withBalances;
+        await Load();
+    }
+
+    // ---------- درخت ----------
+    private bool HasChildren(AccAccount n) => items.Any(a => a.ParentId == n.Id);
+    private bool IsCollapsed(int id) => collapsed.Contains(id);
+
+    private void Toggle(int id)
+    {
+        if (!collapsed.Remove(id)) collapsed.Add(id);
+    }
+
+    private void ExpandAll() => collapsed.Clear();
+
+    private void CollapseAll()
+    {
+        collapsed.Clear();
+        foreach (var a in items.Where(HasChildren)) collapsed.Add(a.Id);
+    }
+
+    private static string LevelIcon(AccAccount n) => n.Level switch
+    {
+        AccountLevel.Group => "bi-folder-fill",
+        AccountLevel.General => "bi-folder2-open",
+        AccountLevel.Subsidiary => "bi-journal-bookmark-fill",
+        _ => "bi-tag-fill"
+    };
+
+    private static string Indent(int depth) => new string('\u00A0', depth * 4);
+
+    /// <summary>گره‌های قابل نمایش: با در نظر گرفتن جستجو، فیلتر سطح و باز/بسته بودن والدها.</summary>
+    private List<AccAccount> Visible
+    {
+        get
+        {
+            var source = items.AsEnumerable();
+
+            if (int.TryParse(levelFilter, out var lvl))
+                source = source.Where(a => (int)a.Level <= lvl);
+
+            var list = source.ToList();
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var s = search.Trim();
+                var hit = list.Where(a => a.Name.Contains(s) || a.Code.Contains(s) || a.Code.Contains(Fa.ToEn(s))).ToList();
+                var ids = new HashSet<int>();
+                foreach (var h in hit)
+                {
+                    ids.Add(h.Id);
+                    var pid = h.ParentId;
+                    while (pid is > 0)
+                    {
+                        ids.Add(pid.Value);
+                        pid = items.FirstOrDefault(x => x.Id == pid.Value)?.ParentId;
+                    }
+                }
+                return list.Where(a => ids.Contains(a.Id)).ToList();
+            }
+
+            return list.Where(a => !HiddenByCollapse(a)).ToList();
+        }
+    }
+
+    private bool HiddenByCollapse(AccAccount n)
+    {
+        var pid = n.ParentId;
+        var guard = 0;
+        while (pid is > 0 && guard++ < 100)
+        {
+            if (collapsed.Contains(pid.Value)) return true;
+            pid = items.FirstOrDefault(x => x.Id == pid.Value)?.ParentId;
+        }
+        return false;
+    }
+
+    private void Select(AccAccount n) => selected = n;
+
+    private void GoLedger(AccAccount n) => Nav.NavigateTo($"/acc/reports/ledger?accountId={n.Id}");
+
+    // ---------- عملیات ----------
+    private void OpenNew(int? parentId)
+    {
+        var parent = parentId is > 0 ? items.FirstOrDefault(a => a.Id == parentId) : null;
+        form = new AccAccount
+        {
+            IsActive = true,
+            ParentId = parentId,
+            Code = parent?.Code ?? "",
+            IsPostable = parent is not null && parent.Level >= AccountLevel.Subsidiary
+        };
+        parentIdStr = (parentId ?? 0).ToString();
+        typeStr = ((int)(parent?.Type ?? AccountType.Asset)).ToString();
+        natureStr = ((int)(parent?.Nature ?? AccountNature.Debit)).ToString();
+        showModal = true;
+    }
+
+    private void OpenEdit(AccAccount a)
+    {
+        form = new AccAccount
+        {
+            Id = a.Id, Code = a.Code, Name = a.Name, EnName = a.EnName, ParentId = a.ParentId,
+            Level = a.Level, Type = a.Type, Nature = a.Nature, IsPermanent = a.IsPermanent,
+            IsPostable = a.IsPostable, RequiresParty = a.RequiresParty, IsSystem = a.IsSystem,
+            IsActive = a.IsActive, SortOrder = a.SortOrder, Description = a.Description
+        };
+        parentIdStr = (a.ParentId ?? 0).ToString();
+        typeStr = ((int)a.Type).ToString();
+        natureStr = ((int)a.Nature).ToString();
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Code)) { Toast.Error("کد حساب را وارد کنید."); return; }
+        if (string.IsNullOrWhiteSpace(form.Name)) { Toast.Error("نام حساب را وارد کنید."); return; }
+
+        form.ParentId = int.TryParse(parentIdStr, out var pid) && pid > 0 ? pid : null;
+        form.Type = (AccountType)int.Parse(typeStr);
+        form.Nature = (AccountNature)int.Parse(natureStr);
+
+        saving = true;
+        try
+        {
+            var saved = await AccountSvc.SaveAsync(form);
+            Toast.Success(editing ? "حساب ویرایش شد." : "حساب ثبت شد.");
+            showModal = false;
+            await Load();
+            selected = items.FirstOrDefault(a => a.Id == saved.Id);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(AccAccount a)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف حساب «{a.Name}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await AccountSvc.DeleteAsync(a.Id);
+            Toast.Success("حساب حذف شد.");
+            if (selected?.Id == a.Id) selected = null;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    /// <summary>جابه‌جایی حساب بین هم‌سطح‌ها (بالا/پایین).</summary>
+    private async Task Reorder(AccAccount n, int delta)
+    {
+        var siblings = items.Where(a => a.ParentId == n.ParentId).OrderBy(a => a.SortOrder).ThenBy(a => a.Code).ToList();
+        var index = siblings.FindIndex(a => a.Id == n.Id);
+        var target = index + delta;
+        if (index < 0 || target < 0 || target >= siblings.Count) return;
+
+        try
+        {
+            var other = siblings[target];
+            await AccountSvc.MoveAsync(new AccAccountMove { Id = n.Id, NewParentId = n.ParentId, SortOrder = target });
+            await AccountSvc.MoveAsync(new AccAccountMove { Id = other.Id, NewParentId = other.ParentId, SortOrder = index });
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

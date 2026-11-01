@@ -1,0 +1,379 @@
+@namespace Inventory.Client.Pages
+@page "/referrer-wallets"
+@inject IReferrerService ReferrerSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>کیف پول معرف‌ها</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>کیف پول معرف‌ها</h1>
+        <p class="lead">مانده پورسانت، پرداخت‌ها و اسناد پرداخت هر معرف</p>
+    </div>
+    <button class="btn btn-primary ms-auto" @onclick="OpenPay">
+        <i class="bi bi-cash-stack"></i> سند پرداخت جدید
+    </button>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="جستجوی نام معرف یا مجموعه…" @bind="search" @onkeydown="OnSearchKey" />
+                    <button class="btn btn-primary" @onclick="Load">جستجو</button>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" value="@sortBy" @onchange="OnSortChanged">
+                    <option value="name">مرتب‌سازی: نام</option>
+                    <option value="commission">مرتب‌سازی: جمع پورسانت</option>
+                    <option value="paid">مرتب‌سازی: جمع پرداختی</option>
+                    <option value="balance">مرتب‌سازی: مانده کیف پول</option>
+                </select>
+            </div>
+            <div class="col-md-auto">
+                <button class="btn btn-light" title="صعودی/نزولی" @onclick="ToggleDesc">
+                    <i class="bi @(desc ? "bi-sort-down" : "bi-sort-up")"></i>
+                    @(desc ? "نزولی" : "صعودی")
+                </button>
+            </div>
+            <div class="col-auto ms-auto fs-8 text-muted">@items.Count.Num() معرف</div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-wallet2"></i><h5>معرفی یافت نشد</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>معرف</th>
+                            <th>مجموعه</th>
+                            <th>حساب بانکی</th>
+                            <th class="text-start">جمع پورسانت (ریال)</th>
+                            <th class="text-start">جمع پرداختی (ریال)</th>
+                            <th class="text-start">مانده کیف پول (ریال)</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in Paged)
+                        {
+                            <tr>
+                                <td class="fw-500"><i class="bi bi-person-badge text-muted ms-1"></i> @r.Name</td>
+                                <td class="text-muted">@(string.IsNullOrWhiteSpace(r.CompanyName) ? "—" : r.CompanyName)</td>
+                                <td class="fs-8">
+                                    @if (!string.IsNullOrWhiteSpace(r.CardNumber))
+                                    {
+                                        <div class="num" dir="ltr" style="text-align:right"><i class="bi bi-credit-card text-muted"></i> @r.CardNumber</div>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(r.Iban))
+                                    {
+                                        <div class="num text-muted" dir="ltr" style="text-align:right">IR@(r.Iban)</div>
+                                    }
+                                    @if (string.IsNullOrWhiteSpace(r.CardNumber) && string.IsNullOrWhiteSpace(r.Iban))
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td class="text-start num">@r.TotalCommission.Money()</td>
+                                <td class="text-start num text-muted">@r.TotalPaid.Money()</td>
+                                <td class="text-start num fw-700 @(r.WalletBalance > 0 ? "text-success" : r.WalletBalance < 0 ? "text-danger" : "")">
+                                    @r.WalletBalance.Money()
+                                </td>
+                                <td class="text-end text-nowrap">
+                                    <button class="btn btn-sm btn-light" title="پرداخت به این معرف" @onclick="() => OpenPayFor(r)">
+                                        <i class="bi bi-cash-stack text-success"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light" title="اسناد پرداخت" @onclick="() => ShowPayments(r)">
+                                        <i class="bi bi-receipt text-primary"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var r in Paged)
+                {
+                    <div class="m-card @(r.WalletBalance > 0 ? "st-ready" : "st-delivered")">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi bi-wallet2"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="fw-700 text-truncate">@r.Name</div>
+                                <div class="fs-8 text-muted text-truncate">@(string.IsNullOrWhiteSpace(r.CompanyName) ? "—" : r.CompanyName)</div>
+                                @if (!string.IsNullOrWhiteSpace(r.CardNumber))
+                                {
+                                    <div class="fs-8 num text-muted" dir="ltr" style="text-align:right"><i class="bi bi-credit-card"></i> @r.CardNumber</div>
+                                }
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">مانده کیف پول</div>
+                                <div class="num fw-800 @(r.WalletBalance > 0 ? "text-success" : r.WalletBalance < 0 ? "text-danger" : "")">@r.WalletBalance.Money()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-money">
+                                <div>
+                                    <div class="fs-8 text-muted">جمع پورسانت</div>
+                                    <div class="num fw-700">@r.TotalCommission.Money()</div>
+                                </div>
+                                <div class="text-end">
+                                    <div class="fs-8 text-muted">جمع پرداختی</div>
+                                    <div class="num fw-700 text-muted">@r.TotalPaid.Money()</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="m-card-actions">
+                            <button class="btn btn-light text-success" @onclick="() => OpenPayFor(r)"><i class="bi bi-cash-stack"></i> پرداخت</button>
+                            <button class="btn btn-light text-primary" @onclick="() => ShowPayments(r)"><i class="bi bi-receipt"></i> اسناد</button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="p => page = p" />
+        }
+    </div>
+</div>
+
+<Modal Visible="showPay" Title="سند پرداخت پورسانت" OnClose="ClosePay">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-12">
+            <label class="form-label">معرف <span class="text-danger">*</span></label>
+            <select class="form-select" @bind="payReferrerIdStr">
+                <option value="0">— انتخاب معرف —</option>
+                @foreach (var r in items)
+                {
+                    <option value="@r.Id">@r.Name — مانده: @r.WalletBalance.Money() ریال</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">مبلغ پرداخت (ریال) <span class="text-danger">*</span></label>
+            <input class="form-control num" value="@payAmount" @oninput="@(e => payAmount = FormatMoney(e.Value))" inputmode="decimal" dir="ltr" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">تاریخ پرداخت</label>
+            <DatePicker @bind-Value="payDate" />
+        </div>
+        <div class="col-12">
+            <label class="form-label">توضیحات</label>
+            <input class="form-control" @bind="payDesc" placeholder="اختیاری" />
+        </div>
+    </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="ClosePay">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="SavePay" disabled="@paySaving">
+            @if (paySaving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            ثبت پرداخت (F1)
+        </button>
+    </Footer>
+</Modal>
+
+<Modal Visible="paymentsOf is not null" Title="@($"اسناد پرداخت — {paymentsOf?.Name}")" Size="modal-lg" OnClose="() => paymentsOf = null">
+    <ChildContent>
+        @if (paymentsLoading)
+        {
+            <div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (payments.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-receipt"></i><h5>سند پرداختی ثبت نشده است</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>شماره سند</th>
+                            <th>تاریخ</th>
+                            <th class="text-start">مبلغ (ریال)</th>
+                            <th>توضیحات</th>
+                            <th class="text-end"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in payments)
+                        {
+                            <tr>
+                                <td class="doc-number fw-700 text-primary">@p.Number</td>
+                                <td class="num">@p.Date.ToFa()</td>
+                                <td class="text-start num fw-700">@p.Amount.Money()</td>
+                                <td class="text-muted">@(string.IsNullOrWhiteSpace(p.Description) ? "—" : p.Description)</td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => DeletePayment(p)">
+                                        <i class="bi bi-trash text-danger"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="d-flex justify-content-end mt-2">
+                <span class="text-muted ms-2">جمع پرداختی:</span>
+                <span class="fw-800 fs-6 text-primary num">@payments.Sum(p => p.Amount).Money()</span>
+                <span class="fs-8 text-muted">ریال</span>
+            </div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => paymentsOf = null">بستن (Esc)</button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<Referrer> items = new();
+    private bool loading = true, desc = true;
+    private string search = "", sortBy = "balance";
+
+    // ---------- صفحه‌بندی ----------
+    private int page = 1;
+    private const int PageSize = 12;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(items.Count / (double)PageSize));
+    private List<Referrer> Paged
+    {
+        get
+        {
+            if (page > PageCount) page = PageCount;
+            return items.Skip((page - 1) * PageSize).Take(PageSize).ToList();
+        }
+    }
+
+    // ---------- سند پرداخت ----------
+    private bool showPay, paySaving;
+    private string payReferrerIdStr = "0", payAmount = "", payDesc = "";
+    private DateTime? payDate;
+
+    // ---------- اسناد پرداخت یک معرف ----------
+    private Referrer? paymentsOf;
+    private List<ReferrerPayment> payments = new();
+    private bool paymentsLoading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("کیف پول معرف‌ها");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try { items = await ReferrerSvc.GetWalletsAsync(search, sortBy, desc); page = 1; }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Load();
+    }
+
+    private async Task OnSortChanged(ChangeEventArgs e)
+    {
+        sortBy = e.Value?.ToString() ?? "name";
+        await Load();
+    }
+
+    private async Task ToggleDesc()
+    {
+        desc = !desc;
+        await Load();
+    }
+
+    private static string FormatMoney(object? value)
+    {
+        var raw = Fa.ToEn(value?.ToString() ?? "").Replace(",", "");
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        var intPart = new string(raw.Where(char.IsDigit).ToArray());
+        if (intPart.Length == 0) return "";
+        return decimal.Parse(intPart).ToString("#,##0");
+    }
+
+    private void OpenPay()
+    {
+        payReferrerIdStr = "0";
+        payAmount = "";
+        payDesc = "";
+        payDate = DateTime.Now;
+        showPay = true;
+    }
+
+    private void OpenPayFor(Referrer r)
+    {
+        OpenPay();
+        payReferrerIdStr = r.Id.ToString();
+    }
+
+    private void ClosePay() => showPay = false;
+
+    private async Task SavePay()
+    {
+        var rid = int.TryParse(payReferrerIdStr, out var v) ? v : 0;
+        if (rid <= 0) { Toast.Error("معرف را انتخاب کنید."); return; }
+        var amount = Fa.ParseDecimal(payAmount);
+        if (amount <= 0) { Toast.Error("مبلغ پرداخت را وارد کنید."); return; }
+
+        paySaving = true;
+        try
+        {
+            await ReferrerSvc.AddPaymentAsync(new ReferrerPayment
+            {
+                ReferrerId = rid,
+                Amount = amount,
+                Date = payDate ?? DateTime.Now,
+                Description = payDesc
+            });
+            Toast.Success("سند پرداخت ثبت شد.");
+            showPay = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { paySaving = false; }
+    }
+
+    private async Task ShowPayments(Referrer r)
+    {
+        paymentsOf = r;
+        paymentsLoading = true;
+        try { payments = await ReferrerSvc.GetPaymentsAsync(r.Id); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { paymentsLoading = false; }
+    }
+
+    private async Task DeletePayment(ReferrerPayment p)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف سند پرداخت «{p.Number}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await ReferrerSvc.DeletePaymentAsync(p.Id);
+            Toast.Success("سند پرداخت حذف شد.");
+            if (paymentsOf is not null) await ShowPayments(paymentsOf);
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

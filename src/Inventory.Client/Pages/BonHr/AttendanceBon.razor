@@ -1,0 +1,628 @@
+@namespace Inventory.Client.Pages.BonHr
+@page "/bon-hr/attendance"
+@inject BonHrApi Api
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject LayoutState Layout
+
+<PageTitle>حضور و غیاب بن‌سازه</PageTitle>
+<BonHrGuard Section="Attendance">
+<BonHrShell Title="حضور و غیاب بن‌سازه" Sub="ورود فایل دستگاه و کارکرد ماهانه">
+    <Actions>
+        <button class="btn btn-light" type="button" @onclick="() => _showCycle = true">چرخه نگهبان</button>
+        <button class="btn btn-light" type="button" @onclick="() => _showPunch = true">ثبت دستی تردد</button>
+        <button class="btn btn-primary" type="button" @onclick="() => _showLeave = true">مرخصی / مأموریت</button>
+    </Actions>
+</BonHrShell>
+
+
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <p class="text-muted small mb-0">کارکرد ماهانه</p>
+                <h2 class="h5 mb-0">ورود و خروج @BonFa.MonthLabel(_month)</h2>
+            </div>
+            <div class="d-flex gap-2 flex-wrap align-items-center">
+                <select class="form-select" style="min-width:160px" @bind="_month" @bind:after="LoadMonthAsync">
+                    @foreach (var month in _months)
+                    {
+                        <option value="@month">@BonFa.MonthLabel(month)</option>
+                    }
+                </select>
+                <InputFile OnChange="OnWorkbookSelected" accept=".xlsx,.xls" />
+                <button class="btn btn-primary" type="button" @onclick="ImportAsync" disabled="@(_file == null || _busy)">ورود فایل دستگاه</button>
+                <button class="btn btn-outline-primary" type="button" @onclick="RecalculateAsync" disabled="@_busy">صحه‌گذاری</button>
+                <button class="btn btn-light" type="button" @onclick="ExportAsync">خروجی کارکرد</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3"><div class="kpi kpi-blue"><div class="kpi-num">@BonFa.N(_rows.Count)</div><div class="kpi-lbl">پرسنل بررسی‌شده</div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi kpi-green"><div class="kpi-num">@BonFa.N(_matched)</div><div class="kpi-lbl">تطبیق قطعی</div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi kpi-orange"><div class="kpi-num">@BonFa.N(_rows.Count - _matched)</div><div class="kpi-lbl">نیازمند تطبیق</div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi kpi-purple"><div class="kpi-num">@MonthName</div><div class="kpi-lbl">سال @BonFa.N(YearPart)</div></div></div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_importMessage))
+    {
+        <p class="form-message success-text" role="status">@_importMessage</p>
+    }
+
+    <section class="guard-shift-grid">
+        <Modal Size="modal-xl" Visible="_showCycle" Title="برنامه چرخه‌ای نگهبان" OnClose="() => _showCycle = false">
+            <ChildContent>
+        <form id="bon-cycle-form" @onsubmit="SaveGuardCycleAsync" @onsubmit:preventDefault="true">
+            <p class="text-muted">چرخه ثابت: ۲ شیفت صبح ۶–۱۸، ۲ شیفت شب ۱۸–۶ روز بعد، ۲ روز استراحت.</p>
+            <label class="form-label">
+                نگهبان
+                <select class="form-select" @bind="_cycle.EmployeeCode">
+                    <option value="">— انتخاب کنید —</option>
+                    @foreach (var employee in _guards)
+                    {
+                        <option value="@employee.Code">@employee.FullName</option>
+                    }
+                </select>
+            </label>
+            <label class="form-label">تاریخ شروع چرخه <BonHrDate @bind-Value="_cycle.StartDate" /></label>
+            <label class="form-label">
+                شروع چرخه نفر اول
+                <select class="form-select" @bind="_cycle.StartShift">
+                    <option value="morning">شیفت صبح</option>
+                    <option value="night">شیفت شب</option>
+                </select>
+            </label>
+            <p class="small mt-2">@_cycleMessage</p>
+        </form>
+            </ChildContent>
+            <Footer>
+                <button class="btn btn-light" type="button" @onclick="() => _showCycle = false">انصراف</button>
+                <button class="btn btn-primary" type="submit" form="bon-cycle-form">ذخیره و ساخت برنامه</button>
+            </Footer>
+        </Modal>
+
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span class="fw-800"><i class="bi bi-shield-check text-primary"></i> برنامه نگهبان — @BonFa.MonthLabel($"{_rosterYear}/{_rosterMonth:00}")</span>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary" type="button" @onclick="() => ShiftRoster(-1)">‹</button>
+                    <button class="btn btn-outline-secondary" type="button" @onclick="() => ShiftRoster(1)">›</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="wc-week-header"><span>ش</span><span>ی</span><span>د</span><span>س</span><span>چ</span><span>پ</span><span>ج</span></div>
+                <div class="wc-days mt-1">
+                    @for (var i = 0; i < RosterOffset; i++)
+                    {
+                        <span></span>
+                    }
+                    @foreach (var day in _roster)
+                    {
+                        <span class="wc-day @RosterClass(day.Shift)">
+                            <span>@BonFa.N(day.Day)</span>
+                            <small>@day.Shift</small>
+                        </span>
+                    }
+                </div>
+                <div class="wc-legend mt-3">
+                    <span><span class="wc-dot" style="background:#dbeafe;border:1px solid #93c5fd"></span> صبح ۰۶:۰۰–۱۸:۰۰</span>
+                    <span><span class="wc-dot" style="background:#1e1b4b"></span> شب ۱۸:۰۰–۰۶:۰۰</span>
+                    <span><span class="wc-dot wc-dot-rest"></span> استراحت</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <Modal Size="modal-xl" Visible="_showPunch" Title="ثبت دستی ورود یا خروج" OnClose="() => _showPunch = false">
+        <ChildContent>
+    <form id="bon-punch-form" @onsubmit="SavePunchAsync" @onsubmit:preventDefault="true">
+        <p class="text-muted">این درخواست تا قبل از تأیید مدیر اداری در محاسبات اعمال نمی‌شود و رکورد دستگاه را حذف یا بازنویسی نمی‌کند.</p>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">پرسنل</label>
+                <select class="form-select" required @bind="_punch.Employee">
+                    <option value="">— انتخاب کنید —</option>
+                    @foreach (var employee in _employees)
+                    {
+                        <option value="@employee.Code">@employee.FullName</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3"><label class="form-label">تاریخ</label><BonHrDate @bind-Value="_punch.Date" /></div>
+            <div class="col-md-3"><label class="form-label">ساعت</label><input class="form-control" required type="time" value="@_punch.Time" @onchange="e => _punch.Time = Text(e)" /></div>
+            <div class="col-md-6">
+                <label class="form-label">نوع تردد</label>
+                <select class="form-select" required @bind="_punch.Type">
+                    <option value="entry">ورود</option>
+                    <option value="exit">خروج</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">علت ثبت دستی</label>
+                <select class="form-select" required @bind="_punchReason">
+                    <option value="">انتخاب کنید</option>
+                    <option>خرابی دستگاه</option>
+                    <option>فراموشی ثبت تردد</option>
+                    <option>قطعی برق یا شبکه</option>
+                    <option>مأموریت خارج شرکت</option>
+                    <option>سایر</option>
+                </select>
+            </div>
+            <div class="col-12"><label class="form-label">توضیحات</label><textarea class="form-control" required rows="2" @bind="_punchNote"></textarea></div>
+        </div>
+        <p class="small mt-2">@_punchMessage</p>
+    </form>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-light" type="button" @onclick="() => _showPunch = false">انصراف</button>
+            <button class="btn btn-primary" type="submit" form="bon-punch-form">ثبت درخواست</button>
+        </Footer>
+    </Modal>
+
+    <article class="card card-body mt-3 correction-guide">
+        <h3>مسیر اصلاح دستی حضور و غیاب</h3>
+        <ol>
+            <li>نگهبانی درخواست ورود/خروج دستی را با علت و توضیحات ثبت می‌کند.</li>
+            <li>مدیر اداری درخواست را در جدول «سوابق اصلاحیه» بررسی و تأیید یا رد می‌کند.</li>
+            <li>فقط درخواست تأییدشده در محاسبات اعمال می‌شود؛ رکورد اصلی دستگاه حذف یا بازنویسی نمی‌شود.</li>
+        </ol>
+    </article>
+
+    <article class="card card-body mt-3 review-panel">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+            <div><p class="text-muted small mb-0">سوابق اصلاحیه</p><h3>درخواست‌های ثبت دستی تردد</h3></div>
+            <span class="badge badge-soft-primary">@BonFa.N(_punPg.Total) رکورد</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr><th>پرسنل</th><th>تاریخ و ساعت</th><th>نوع</th><th>علت و توضیحات</th><th>ثبت‌کننده / زمان ثبت</th><th>وضعیت</th><th>عملیات اداری</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var punch in _punches)
+                    {
+                        <tr>
+                            <td>@NameOf(punch.Employee)</td>
+                            <td>@BonFa.N(punch.Date) — @BonFa.N(punch.Time)</td>
+                            <td>@(punch.Type == "entry" ? "ورود" : "خروج")</td>
+                            <td>@punch.Reason</td>
+                            <td>@punch.RequestedBy</td>
+                            <td><span class="badge @StatusClass(punch.Status)">@StatusLabel(punch.Status)</span></td>
+                            <td class="row-actions">
+                                @if (punch.Status == "pending" && CanReview)
+                                {
+                                    <button type="button" @onclick="() => ReviewAsync(punch, true)">تأیید</button>
+                                    <button type="button" class="danger" @onclick="() => ReviewAsync(punch, false)">رد</button>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">@punch.ReviewedBy</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (_punPg.Total > 0)
+        {
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2">
+                <span class="text-muted small">ردیف @BonFa.N(_punPg.From) تا @BonFa.N(_punPg.To) از @BonFa.N(_punPg.Total)</span>
+                <Pager Page="@_punPg.Page" PageCount="@_punPg.Count" OnPageChanged="p => GoPunchPage(p)" />
+            </div>
+        }
+        @if (_punches.Count == 0)
+        {
+            <p class="text-muted text-center py-4">هنوز اصلاحیه دستی ثبت نشده است.</p>
+        }
+    </article>
+
+    <Modal Size="modal-xl" Visible="_showLeave" Title="ثبت مرخصی و مأموریت" OnClose="() => _showLeave = false">
+        <ChildContent>
+    <form id="bon-leave-form" @onsubmit="SaveLeaveAsync" @onsubmit:preventDefault="true">
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">پرسنل</label>
+                <select class="form-select" required @bind="_leave.Employee">
+                    <option value="">— انتخاب کنید —</option>
+                    @foreach (var employee in _employees)
+                    {
+                        <option value="@employee.Code">@employee.FullName</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">نوع درخواست</label>
+                <select class="form-select" @bind="_leave.Type">
+                    <option>مرخصی ساعتی</option>
+                    <option>مرخصی روزانه</option>
+                    <option>مأموریت ساعتی</option>
+                    <option>مأموریت روزانه</option>
+                </select>
+            </div>
+            <div class="col-md-4"><label class="form-label">تاریخ</label><BonHrDate @bind-Value="_leave.Date" /></div>
+            @if (_leave.Type.Contains("ساعتی"))
+            {
+                <div class="col-md-4"><label class="form-label">از ساعت</label><TimeTextInput Value="@_leave.From" ValueChanged="v => _leave.From = v ?? string.Empty" Default="08:00" /></div>
+                <div class="col-md-4"><label class="form-label">تا ساعت</label><TimeTextInput Value="@_leave.To" ValueChanged="v => _leave.To = v ?? string.Empty" Default="10:00" /></div>
+            }
+        </div>
+        <p class="small mt-2">@_leaveMessage</p>
+    </form>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-light" type="button" @onclick="() => _showLeave = false">انصراف</button>
+            <button class="btn btn-primary" type="submit" form="bon-leave-form">ثبت درخواست</button>
+        </Footer>
+    </Modal>
+
+    <section>
+        <article class="card card-body mt-3 review-panel">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                <div><p class="text-muted small mb-0">کنترل ثبت دستی</p><h3>مرخصی‌ها و مأموریت‌های ثبت‌شده</h3></div>
+                <span class="badge badge-soft-primary">@BonFa.N(_leaPg.Total) رکورد</span>
+            </div>
+            <p class="text-muted">هر ثبت بلافاصله اینجا نمایش داده می‌شود. در صورت اشتباه از دکمه حذف استفاده کنید.</p>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th>پرسنل</th><th>نوع</th><th>تاریخ</th><th>بازه زمانی</th><th>ثبت‌کننده</th><th>عملیات</th></tr></thead>
+                    <tbody>
+                        @foreach (var record in _leaves)
+                        {
+                            <tr>
+                                <td>@NameOf(record.Employee)</td>
+                                <td>@record.Type</td>
+                                <td>@BonFa.N(record.Date)</td>
+                                <td>@(string.IsNullOrEmpty(record.From) ? "تمام روز" : $"{BonFa.N(record.From)} — {BonFa.N(record.To)}")</td>
+                                <td>@record.RegisteredBy</td>
+                                <td class="row-actions">
+                                    <button type="button" class="danger" @onclick="() => DeleteLeaveAsync(record)">حذف</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (_leaPg.Total > 0)
+            {
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2">
+                    <span class="text-muted small">ردیف @BonFa.N(_leaPg.From) تا @BonFa.N(_leaPg.To) از @BonFa.N(_leaPg.Total)</span>
+                    <Pager Page="@_leaPg.Page" PageCount="@_leaPg.Count" OnPageChanged="p => GoLeavePage(p)" />
+                </div>
+            }
+            @if (_leaves.Count == 0)
+            {
+                <p class="text-muted text-center py-4">هنوز مرخصی یا مأموریتی ثبت نشده است.</p>
+            }
+        </article>
+
+        <article class="card card-body mt-3 review-panel">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                <div><p class="text-muted small mb-0">کنترل فایل دستگاه</p><h3>ورود و خروج‌های واردشده</h3></div>
+                <span class="badge badge-soft-primary">@BonFa.N(_days.Count) رکورد</span>
+            </div>
+            <p class="text-muted">ورودی‌های تکراری نادیده گرفته می‌شوند و اطلاعات قبلی، مرخصی‌ها و مأموریت‌ها بازنویسی نخواهند شد.</p>
+            <label class="device-person-filter">
+                نمایش پرسنل
+                <select class="form-select" @bind="_deviceFilter" @bind:after="LoadDaysAsync">
+                    <option value="">ابتدا نام پرسنل را انتخاب کنید</option>
+                    @foreach (var employee in _employees)
+                    {
+                        <option value="@employee.Code">@employee.FullName</option>
+                    }
+                </select>
+            </label>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th>ردیف</th><th>کد پرسنلی</th><th>نام</th><th>تاریخ</th><th>اولین تردد</th><th>آخرین تردد</th><th>حضور</th></tr></thead>
+                    <tbody>
+                        @{ var index = 0; }
+                        @foreach (var day in _days)
+                        {
+                            index++;
+                            <tr>
+                                <td>@BonFa.N(index)</td>
+                                <td>@BonFa.N(day.Code)</td>
+                                <td>@day.Name</td>
+                                <td>@BonFa.N(day.Date)</td>
+                                <td>@BonFa.N(day.First)</td>
+                                <td>@BonFa.N(day.Last)</td>
+                                <td>@BonFa.N(Hm(day.Presence))</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (_days.Count == 0)
+            {
+                <p class="text-muted text-center py-4">برای مشاهده سوابق، نام پرسنل را انتخاب کنید.</p>
+            }
+        </article>
+    </section>
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle attendance-table">
+            <thead>
+                <tr>
+                    <th>کد</th><th>نام</th><th>کد دستگاه</th><th>وضعیت تطبیق</th><th>حضور</th>
+                    <th>مرخصی ساعتی</th><th>ماموریت</th><th>کسرکار</th><th>اضافه‌کار مجاز</th><th>اضافه‌کار غیرمجاز</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in _rows)
+                {
+                    <tr>
+                        <td>@BonFa.N(row.Code)</td>
+                        <td>@row.Name</td>
+                        <td>@BonFa.N(row.DeviceCode)</td>
+                        <td>@(string.IsNullOrEmpty(row.Status) ? "تطبیق قطعی" : row.Status)</td>
+                        <td>@BonFa.N(row.Presence)</td>
+                        <td>@BonFa.N(row.Leave)</td>
+                        <td>@BonFa.N(row.Mission)</td>
+                        <td>@BonFa.N(row.Shortfall)</td>
+                        <td>@BonFa.N(row.Ot)</td>
+                        <td>@BonFa.N(row.UnauthorizedOt)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    @if (_rows.Count == 0)
+    {
+        <p class="text-muted text-center py-4">برای این ماه هنوز کارکردی محاسبه نشده است.</p>
+    }
+
+
+</BonHrGuard>
+@code {
+    private List<Employee> _employees = new();
+    private List<string> _months = new();
+    private List<PayrollRow> _rows = new();
+    private List<AttendanceDay> _days = new();
+    private List<LeaveMission> _leaves = new();
+    private List<ManualPunch> _punches = new();
+
+    // فهرست «اصلاحیه دستی» بدون فیلتر خوانده می‌شود و بی‌نهایت رشد می‌کند، و
+    // «مرخصی و مأموریت» هم در یک ماه شلوغ به صدها ردیف می‌رسد. هر دو فهرست
+    // وضعیت صفحهٔ مستقل خودشان را دارند تا روی هم اثر نگذارند.
+    // (فهرست _days عمداً صفحه‌بندی ندارد: با code=یک پرسنل و month فیلتر می‌شود،
+    //  پس حداکثر ~۳۱ ردیف است.)
+    private readonly BonPagerState _punPg = new();
+    private readonly BonPagerState _leaPg = new();
+    private List<GuardCycle> _cycles = new();
+    private List<RosterDay> _roster = new();
+
+    private GuardCycle _cycle = new();
+    private ManualPunch _punch = new();
+    private LeaveMission _leave = new() { Type = "مرخصی ساعتی" };
+
+    private string _month = "";
+    private string _deviceFilter = "";
+    private string _punchReason = "", _punchNote = "";
+    private string _importMessage = "", _cycleMessage = "", _punchMessage = "", _leaveMessage = "";
+    private IBrowserFile? _file;
+    private bool _busy, _showCycle, _showPunch, _showLeave;
+    private int _rosterYear, _rosterMonth, _matched;
+
+    private record RosterDay(int Day, string Shift);
+
+    private bool CanReview => Auth.IsAdmin || Auth.Has("RadisHr.Access");
+    private int YearPart => int.TryParse(_month.Split('/').FirstOrDefault(), out var y) ? y : PersianCalendarUtil.Today().Jy;
+    private string MonthName
+    {
+        get
+        {
+            var parts = _month.Split('/');
+            return parts.Length == 2 && int.TryParse(parts[1], out var m) && m >= 1 && m <= 12 ? BonFa.MonthNames[m - 1] : "—";
+        }
+    }
+    private int RosterOffset => PersianCalendarUtil.WeekdayIndex(_rosterYear, _rosterMonth, 1);
+
+    private IEnumerable<Employee> _guards => _employees.Where(e => e.Unit.Contains("نگهبان") || e.WorkStation.Contains("نگهبان"));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var today = PersianCalendarUtil.Today();
+        _rosterYear = today.Jy;
+        _rosterMonth = today.Jm;
+
+        _employees = await Api.ListAsync<Employee>("api/employees");
+        _months = await Api.ListAsync<string>("api/attendance/months");
+        if (_months.Count == 0) _months.Add(PersianCalendarUtil.DateKey(today.Jy, today.Jm, 1)[..7]);
+        _month = _months.Count > 0 ? _months[^1] : "";
+
+        _cycles = await Api.ListAsync<GuardCycle>("api/attendance/guard-cycles");
+        await LoadMonthAsync();
+        await LoadReviewAsync();
+        BuildRoster();
+    }
+
+    private async Task LoadMonthAsync()
+    {
+        _rows = await Api.ListAsync<PayrollRow>($"api/payroll/month/{_month}");
+        _matched = _rows.Count(r => string.IsNullOrEmpty(r.Status) || r.Status.Contains("قطعی"));
+        await LoadDaysAsync();
+    }
+
+    private async Task LoadDaysAsync()
+    {
+        if (string.IsNullOrEmpty(_deviceFilter)) { _days = new(); return; }
+        _days = await Api.ListAsync<AttendanceDay>($"api/attendance/days?month={_month}&code={_deviceFilter}");
+    }
+
+    private async Task LoadReviewAsync()
+    {
+        await LoadPunchesAsync();
+        await LoadLeavesAsync();
+    }
+
+    /// <summary>صفحهٔ جاری اصلاحیه‌های دستی — سرور با سقف ۱۰۰۰ و ترتیب نزولی CreatedAt می‌دهد.</summary>
+    private async Task LoadPunchesAsync()
+        => _punches = _punPg.Take(await Api.ListPagedAsync<ManualPunch>(
+            "api/attendance/punches", _punPg.Page, _punPg.Size));
+
+    /// <summary>صفحهٔ جاری مرخصی/مأموریت‌های ماه انتخاب‌شده.</summary>
+    private async Task LoadLeavesAsync()
+        => _leaves = _leaPg.Take(await Api.ListPagedAsync<LeaveMission>(
+            $"api/attendance/leaves?month={_month}", _leaPg.Page, _leaPg.Size));
+
+    private void GoPunchPage(int p) { _punPg.Go(p); _ = LoadPunchesAsync(); }
+    private void GoLeavePage(int p) { _leaPg.Go(p); _ = LoadLeavesAsync(); }
+
+    private void OnWorkbookSelected(InputFileChangeEventArgs args) => _file = args.File;
+
+    private async Task ImportAsync()
+    {
+        if (_file == null) return;
+        _busy = true;
+
+        using var content = new MultipartFormDataContent();
+        using var stream = _file.OpenReadStream(long.MaxValue);
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory);
+        var part = new ByteArrayContent(memory.ToArray());
+        part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        content.Add(part, "file", _file.Name);
+
+        var result = await Api.PostFormAsync<AttendanceImportResult>("api/attendance/import-workbook", content);
+        _busy = false;
+
+        if (result != null)
+        {
+            _importMessage = $"{BonFa.N(result.Rows)} ردیف خوانده شد؛ {BonFa.N(result.Inserted)} رکورد جدید ثبت و {BonFa.N(result.Ignored)} رکورد تکراری نادیده گرفته شد ({BonFa.N(result.From)} تا {BonFa.N(result.To)}).";
+            Toast.Success("فایل دستگاه با موفقیت بارگذاری شد.");
+            _months = await Api.ListAsync<string>("api/attendance/months");
+            await LoadMonthAsync();
+        }
+    }
+
+    private async Task RecalculateAsync()
+    {
+        _busy = true;
+        var ok = await Api.SendAsync(HttpMethod.Post, $"api/attendance/recalculate?month={_month}");
+        _busy = false;
+        if (ok) await LoadMonthAsync();
+    }
+
+    private async Task ExportAsync()
+    {
+        var lines = new List<string> { "کد,نام,کد دستگاه,وضعیت,حضور,مرخصی,مأموریت,کسرکار,اضافه‌کار مجاز,اضافه‌کار غیرمجاز" };
+        lines.AddRange(_rows.Select(r =>
+            string.Join(',', r.Code, r.Name, r.DeviceCode, string.IsNullOrEmpty(r.Status) ? "تطبیق قطعی" : r.Status,
+                r.Presence, r.Leave, r.Mission, r.Shortfall, r.Ot, r.UnauthorizedOt)));
+        var bytes = System.Text.Encoding.UTF8.GetPreamble()
+            .Concat(System.Text.Encoding.UTF8.GetBytes(string.Join('\n', lines))).ToArray();
+        await JS.InvokeVoidAsync("saveAsFile", $"RADIS-Attendance-{_month.Replace('/', '-')}.csv", Convert.ToBase64String(bytes));
+    }
+
+    private async Task SaveGuardCycleAsync()
+    {
+        if (string.IsNullOrEmpty(_cycle.EmployeeCode)) { _cycleMessage = "نگهبان را انتخاب کنید."; return; }
+        var ok = await Api.SendAsync(HttpMethod.Post, "api/attendance/guard-cycles", _cycle);
+        _cycleMessage = ok ? "چرخهٔ نگهبانی ذخیره شد." : "ذخیره‌سازی انجام نشد.";
+        if (ok)
+        {
+            _showCycle = false;
+            _cycles = await Api.ListAsync<GuardCycle>("api/attendance/guard-cycles");
+            BuildRoster();
+        }
+    }
+
+    private void ShiftRoster(int delta)
+    {
+        _rosterMonth += delta;
+        if (_rosterMonth > 12) { _rosterMonth = 1; _rosterYear++; }
+        if (_rosterMonth < 1) { _rosterMonth = 12; _rosterYear--; }
+        BuildRoster();
+    }
+
+    private void BuildRoster()
+    {
+        var cycle = _cycles.FirstOrDefault(c => c.EmployeeCode == _cycle.EmployeeCode) ?? _cycles.FirstOrDefault();
+        var days = PersianCalendarUtil.CalendarMonthDays(_rosterYear, _rosterMonth);
+        _roster = new List<RosterDay>();
+
+        for (var day = 1; day <= days; day++)
+        {
+            var date = PersianCalendarUtil.DateKey(_rosterYear, _rosterMonth, day);
+            var shift = AttendanceEngine.CycleFor(cycle, date);
+            _roster.Add(new RosterDay(day, shift?.Type ?? "—"));
+        }
+    }
+
+    private static string RosterClass(string shift) => shift switch
+    {
+        "صبح" => "d-morning",
+        "شب" => "d-night",
+        "استراحت" => "d-rest",
+        _ => ""
+    };
+
+    private async Task SavePunchAsync()
+    {
+        _punch.Reason = string.IsNullOrEmpty(_punchNote) ? _punchReason : $"{_punchReason} — {_punchNote}";
+        var response = await Api.PostAsync<BonHrIdResponse>("api/attendance/punches", _punch);
+        if (response != null)
+        {
+            _punchMessage = response.Message;
+            Toast.Success(response.Message);
+            _showPunch = false;
+            _punch = new ManualPunch();
+            _punchReason = _punchNote = "";
+            await LoadReviewAsync();
+        }
+    }
+
+    private async Task ReviewAsync(ManualPunch punch, bool approve)
+    {
+        var ok = await Api.SendAsync(HttpMethod.Post, $"api/attendance/punches/{punch.Id}/review?approve={approve.ToString().ToLowerInvariant()}");
+        if (ok) await LoadReviewAsync();
+    }
+
+    private async Task SaveLeaveAsync()
+    {
+        if (!_leave.Type.Contains("ساعتی")) { _leave.From = ""; _leave.To = ""; }
+        var response = await Api.PostAsync<BonHrIdResponse>("api/attendance/leaves", _leave);
+        if (response != null)
+        {
+            _leaveMessage = response.Message;
+            Toast.Success(response.Message);
+            _showLeave = false;
+            _leave = new LeaveMission { Type = "مرخصی ساعتی" };
+            await LoadReviewAsync();
+        }
+    }
+
+    private async Task DeleteLeaveAsync(LeaveMission record)
+    {
+        if (await Api.DeleteAsync($"api/attendance/leaves/{record.Id}"))
+        {
+            Toast.Success("رکورد حذف شد.");
+            await LoadReviewAsync();
+        }
+    }
+
+    private static string Text(ChangeEventArgs args) => args.Value?.ToString() ?? "";
+
+    private string NameOf(string code) =>
+        _employees.FirstOrDefault(e => e.Code == code)?.FullName ?? code;
+
+    private static string Hm(int minutes) => AttendanceEngine.Hm(minutes);
+
+    private static string StatusLabel(string status) => status switch
+    {
+        "approved" => "تأییدشده",
+        "rejected" => "ردشده",
+        _ => "در انتظار بررسی"
+    };
+
+    private static string StatusClass(string status) => status switch
+    {
+        "approved" => "ok",
+        "rejected" => "danger",
+        _ => "warn"
+    };
+}

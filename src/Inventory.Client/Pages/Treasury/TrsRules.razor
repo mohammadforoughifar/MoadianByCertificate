@@ -1,0 +1,194 @@
+@page "/trs/rules"
+@inject ITrsRuleService RuleSvc
+@inject IAccAccountService AccountSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+
+<PageTitle>تنظیمات خزانه</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>تنظیمات خزانه‌داری</h1>
+        <p class="lead">قواعد و الگوهای صدور خودکار اسناد حسابداری دریافت، پرداخت و عملیات چک</p>
+    </div>
+</div>
+
+<div class="alert alert-info d-flex align-items-start gap-2">
+    <i class="bi bi-info-circle-fill mt-1"></i>
+    <div>
+        سند حسابداری هر صندوق/بانک از روی <b>حساب متناظر همان صندوق</b> ساخته می‌شود
+        (در صفحه «صندوق و بانک» تعیین می‌شود). تنظیمات این صفحه فقط حساب‌های
+        <b>طرف حساب، چک، در جریان وصول، تخفیف و کارمزد</b> را مشخص می‌کند.
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else
+{
+    <div class="row g-3 mb-3">
+        @foreach (var r in rules)
+        {
+            var rule = r;
+            <div class="col-lg-6">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <i class="bi @(rule.Kind == TreasuryKind.Receipt ? "bi-box-arrow-in-down" : "bi-box-arrow-up") text-primary"></i>
+                        <span class="card-title">سند @rule.KindTitle</span>
+                        <div class="form-check form-switch ms-auto mb-0">
+                            <input class="form-check-input" type="checkbox" id="@($"act{(int)rule.Kind}")"
+                                   checked="@rule.IsActive" @onchange="e => OnActive(rule, e)" />
+                            <label class="form-check-label fs-8" for="@($"act{(int)rule.Kind}")">فعال</label>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">
+                                    حساب طرف حساب <span class="text-danger">*</span>
+                                    <span class="fs-8 text-muted">@(rule.Kind == TreasuryKind.Receipt ? "(دریافتنی)" : "(پرداختنی)")</span>
+                                </label>
+                                <SearchSelect Items="accounts" Value="@(rule.PartyAccountId ?? 0)"
+                                              ValueChanged="v => rule.PartyAccountId = v > 0 ? v : null" Placeholder="انتخاب حساب…" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">
+                                    حساب چک
+                                    <span class="fs-8 text-muted">@(rule.Kind == TreasuryKind.Receipt ? "(اسناد دریافتنی)" : "(اسناد پرداختنی)")</span>
+                                </label>
+                                <SearchSelect Items="accounts" Value="@(rule.ChequeAccountId ?? 0)"
+                                              ValueChanged="v => rule.ChequeAccountId = v > 0 ? v : null" Placeholder="انتخاب حساب…" />
+                            </div>
+
+                            @if (rule.Kind == TreasuryKind.Receipt)
+                            {
+                                <div class="col-md-6">
+                                    <label class="form-label">
+                                        اسناد در جریان وصول
+                                        <span class="fs-8 text-muted">— برای واگذاری چک به بانک</span>
+                                    </label>
+                                    <SearchSelect Items="accounts" Value="@(rule.CollectionAccountId ?? 0)"
+                                                  ValueChanged="v => rule.CollectionAccountId = v > 0 ? v : null" Placeholder="انتخاب حساب…" />
+                                </div>
+                            }
+
+                            <div class="col-md-6">
+                                <label class="form-label">
+                                    تخفیف و کسورات نقدی
+                                    <span class="fs-8 text-muted">@(rule.Kind == TreasuryKind.Receipt ? "(اعطایی)" : "(دریافتی)")</span>
+                                </label>
+                                <SearchSelect Items="accounts" Value="@(rule.DiscountAccountId ?? 0)"
+                                              ValueChanged="v => rule.DiscountAccountId = v > 0 ? v : null" Placeholder="انتخاب حساب…" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">
+                                    کارمزد بانکی
+                                    <span class="fs-8 text-muted">— برای انتقال بین حساب‌ها</span>
+                                </label>
+                                <SearchSelect Items="accounts" Value="@(rule.FeeAccountId ?? 0)"
+                                              ValueChanged="v => rule.FeeAccountId = v > 0 ? v : null" Placeholder="انتخاب حساب…" />
+                            </div>
+
+                            <div class="col-md-6 d-flex align-items-end">
+                                <div class="form-check form-switch w-100">
+                                    <input class="form-check-input" type="checkbox" id="@($"vch{(int)rule.Kind}")"
+                                           checked="@rule.AutoVoucher" @onchange="e => rule.AutoVoucher = e.Value is bool b && b" />
+                                    <label class="form-check-label fs-8" for="@($"vch{(int)rule.Kind}")">صدور خودکار سند حسابداری</label>
+                                </div>
+                            </div>
+
+                            <div class="col-12">
+                                <div class="alert alert-light border mb-0 fs-8">
+                                    <b>اثر سند:</b> @Effect(rule.Kind)
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-end mt-3">
+                            <button class="btn btn-primary" @onclick="() => Save(rule)">
+                                <i class="bi bi-save"></i> ذخیره
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    <!-- ---------- راهنمای چرخه چک ---------- -->
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-diagram-2 text-primary"></i>
+            <span class="card-title">چرخه عمر چک و سند حسابداری هر گام</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr><th>نوع چک</th><th>عملیات</th><th>بدهکار</th><th>بستانکار</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td rowspan="5" class="align-middle"><span class="badge badge-soft-success">دریافتی</span></td>
+                            <td>ثبت در سند دریافت</td><td>اسناد دریافتنی</td><td>حساب‌های دریافتنی</td></tr>
+                        <tr><td>واگذاری به بانک</td><td>اسناد در جریان وصول</td><td>اسناد دریافتنی</td></tr>
+                        <tr><td>وصول</td><td>بانک</td><td>اسناد در جریان وصول</td></tr>
+                        <tr><td>برگشت</td><td>حساب‌های دریافتنی</td><td>اسناد در جریان وصول</td></tr>
+                        <tr><td>خرج چک</td><td>حساب‌های پرداختنی</td><td>اسناد دریافتنی</td></tr>
+
+                        <tr><td rowspan="3" class="align-middle"><span class="badge badge-soft-danger">پرداختی</span></td>
+                            <td>ثبت در سند پرداخت</td><td>حساب‌های پرداختنی</td><td>اسناد پرداختنی</td></tr>
+                        <tr><td>پاس شدن</td><td>اسناد پرداختنی</td><td>بانک</td></tr>
+                        <tr><td>برگشت</td><td>اسناد پرداختنی</td><td>حساب‌های پرداختنی</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<TrsRule> rules = new();
+    private List<LookupItem> accounts = new();
+    private bool loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("تنظیمات خزانه");
+        loading = true;
+        try
+        {
+            accounts = await AccountSvc.GetLookupsAsync();
+            rules = await RuleSvc.GetAllAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnActive(TrsRule rule, ChangeEventArgs e)
+    {
+        rule.IsActive = e.Value is bool b && b;
+        await Save(rule);
+    }
+
+    private async Task Save(TrsRule rule)
+    {
+        try
+        {
+            var saved = await RuleSvc.SaveAsync(rule);
+            var idx = rules.FindIndex(x => x.Kind == saved.Kind);
+            if (idx >= 0) rules[idx] = saved;
+            Toast.Success($"تنظیمات «{saved.KindTitle}» ذخیره شد.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+            rule.IsActive = false;
+        }
+    }
+
+    private static string Effect(TreasuryKind k) => k == TreasuryKind.Receipt
+        ? "صندوق/بانک، اسناد دریافتنی و تخفیف بدهکار | حساب‌های دریافتنی طرف حساب بستانکار."
+        : "حساب‌های پرداختنی طرف حساب بدهکار | صندوق/بانک، اسناد پرداختنی و تخفیف بستانکار.";
+}

@@ -1,0 +1,268 @@
+@namespace Inventory.Client.Pages
+@page "/fa-com/announcements"
+@inject IFaComService Svc
+@inject IHrMainService OrgSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>مدیریت اطلاعیه‌ها</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-megaphone-fill"></i> مدیریت اطلاعیه‌ها</h1>
+            <div class="lead">انتشار اطلاعیه + ارسال همگانی (ایمیل، اعلان، پیامک)</div>
+        </div>
+        @if (faManage)
+        {
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-primary" @onclick="CheckBirthdays"><i class="bi bi-cake"></i> بررسی تولدها</button>
+                <button class="btn btn-outline-info" title="انتشار دستی موارد زمان‌بندی‌شده فرارسیده" @onclick="CheckDue"><i class="bi bi-clock-history"></i> انتشار فرارسیده‌ها</button>
+                <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> اطلاعیه جدید</button>
+            </div>
+        }
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد منابع انسانی است.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>عنوان</th>
+                        <th>مخاطب</th>
+                        <th>بازه انتشار</th>
+                        <th>وضعیت انتشار</th>
+                        <th class="text-center">فعال؟</th>
+                        <th>ایجادکننده</th>
+                        <th style="width:150px">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var a in rows)
+                    {
+                        <tr>
+                            <td><strong>@a.Title</strong></td>
+                            <td>
+                                <span class="badge text-bg-info">@FaComUi.Audience(a.Audience)</span>
+                                @if (!string.IsNullOrEmpty(a.OrgUnitName))
+                                {
+                                    <div class="small text-muted">@a.OrgUnitName</div>
+                                }
+                            </td>
+                            <td class="small num">@FaComUi.Dt(a.PublishFrom) تا @FaComUi.Dt(a.PublishTo)</td>
+                            <td><span class="badge @PublishBadge(a)">@PublishText(a)</span></td>
+                            <td class="text-center">@if (a.IsActive) { <i class="bi bi-check-circle text-success"></i> } else { <i class="bi bi-x-circle text-danger"></i> }</td>
+                            <td class="small text-muted">@a.CreatedByName<div>@FaComUi.Dt(a.CreatedAt)</div></td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button class="btn btn-outline-success" title="انتشار فوری (اعلان سیستمی)" @onclick="() => PublishNow(a)"><i class="bi bi-megaphone"></i></button>
+                                    <button class="btn btn-outline-info" title="ارسال همگانی (ایمیل/پوش/پیامک)" @onclick="() => OpenBroadcast(a)"><i class="bi bi-send"></i></button>
+                                    <button class="btn btn-outline-primary" title="ویرایش" @onclick="() => OpenEdit(a)"><i class="bi bi-pen"></i></button>
+                                    <button class="btn btn-outline-danger" title="حذف" @onclick="() => Del(a)"><i class="bi bi-trash"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0)
+                    {
+                        <tr><td colspan="7" class="text-center text-muted py-4">اطلاعیه‌ای ثبت نشده است.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="@EditTitle" Size="modal-lg" OnClose="() => showEdit = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-12"><label class="form-label">عنوان</label><input class="form-control" @bind="form.Title" /></div>
+        <div class="col-12"><label class="form-label">متن</label><textarea class="form-control" rows="4" @bind="form.Body"></textarea></div>
+        <div class="col-md-6">
+            <label class="form-label">مخاطب</label>
+            <select class="form-select" @bind="form.Audience">
+                <option value="0">همه</option>
+                <option value="1">واحد خاص</option>
+            </select>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">واحد سازمانی</label>
+            <select class="form-select" @bind="form.OrgUnitId" disabled="@(form.Audience != 1)">
+                <option value="">—</option>
+                @foreach (var u in units)
+                {
+                    <option value="@u.Id">@u.Name</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-5"><label class="form-label">انتشار از</label><DatePicker @bind-Value="form.PublishFrom" AllowClear="true" /></div>
+        <div class="col-md-5"><label class="form-label">انتشار تا</label><DatePicker @bind-Value="form.PublishTo" AllowClear="true" /></div>
+        <div class="col-md-2 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" @bind="form.IsActive" id="faComAct" /><label class="form-check-label" for="faComAct">فعال</label></div></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" @onclick="Save"><i class="bi bi-check-lg"></i> ذخیره</button>
+    </div>
+    </Footer>
+</Modal>
+
+<Modal Visible="showBc" Title="@BcTitle" OnClose="() => showBc = false">
+    <ChildContent>
+    <div class="d-flex flex-column gap-2">
+        <div class="form-check"><input class="form-check-input" type="checkbox" @bind="bcEmail" id="bcEmail" /><label class="form-check-label" for="bcEmail">ایمیل</label></div>
+        <div class="form-check"><input class="form-check-input" type="checkbox" @bind="bcPush" id="bcPush" /><label class="form-check-label" for="bcPush">اعلان داخل سامانه (پوش)</label></div>
+        <div class="form-check"><input class="form-check-input" type="checkbox" @bind="bcSms" id="bcSms" /><label class="form-check-label" for="bcSms">پیامک</label></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showBc = false">انصراف</button>
+        <button class="btn btn-success" @onclick="DoBroadcast"><i class="bi bi-send"></i> ارسال</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faManage => Auth.Has("FaCom.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaComAnnouncementDto> rows = new();
+    private List<HrMainOrgNodeDto> units = new();
+
+    private bool showEdit;
+    private int? editId;
+    private FaComAnnouncementSaveDto form = new();
+    private string EditTitle => editId == null ? "اطلاعیه جدید" : "ویرایش اطلاعیه";
+
+    private bool showBc;
+    private int bcId;
+    private string bcSubject = "";
+    private bool bcEmail = true, bcPush = true, bcSms;
+    private string BcTitle => $"ارسال همگانی: {bcSubject}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        try { units = await OrgSvc.ListOrgNodesAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { rows = await Svc.ListAnnouncementsAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void OpenEdit(FaComAnnouncementDto? a)
+    {
+        editId = a?.Id;
+        form = a == null
+            ? new FaComAnnouncementSaveDto { IsActive = true }
+            : new FaComAnnouncementSaveDto { Title = a.Title, Body = a.Body, Audience = a.Audience, OrgUnitId = a.OrgUnitId, PublishFrom = a.PublishFrom, PublishTo = a.PublishTo, IsActive = a.IsActive };
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        try
+        {
+            await Svc.SaveAnnouncementAsync(editId, form);
+            showEdit = false;
+            Toast.Success("ذخیره شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Del(FaComAnnouncementDto a)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"اطلاعیه «{a.Title}» حذف شود؟")) return;
+        try { await Svc.DeleteAnnouncementAsync(a.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenBroadcast(FaComAnnouncementDto a)
+    {
+        bcId = a.Id;
+        bcSubject = a.Title;
+        bcEmail = true; bcPush = true; bcSms = false;
+        showBc = true;
+    }
+
+    private async Task DoBroadcast()
+    {
+        try
+        {
+            var n = await Svc.BroadcastAsync(bcId, bcEmail, bcPush, bcSms);
+            showBc = false;
+            Toast.Success($"ارسال شد به {Fa.Digits(n.ToString())} نفر.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string PublishText(FaComAnnouncementDto a)
+    {
+        if (a.PublishFrom != null && a.PublishFrom > DateTime.Now) return "زمان‌بندی‌شده";
+        if (a.NotifiedAt != null) return "منتشرشده";
+        return "پیش‌نویس انتشار";
+    }
+
+    private static string PublishBadge(FaComAnnouncementDto a)
+    {
+        if (a.PublishFrom != null && a.PublishFrom > DateTime.Now) return "text-bg-warning";
+        if (a.NotifiedAt != null) return "text-bg-success";
+        return "text-bg-secondary";
+    }
+
+    private async Task PublishNow(FaComAnnouncementDto a)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"اطلاعیه «{a.Title}» همین حالا منتشر و اعلان شود؟")) return;
+        try
+        {
+            var n = await Svc.PublishNowAsync(a.Id);
+            Toast.Success($"منتشر شد؛ اعلان به {Fa.Digits(n.ToString())} نفر ارسال شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task CheckDue()
+    {
+        try
+        {
+            var n = await Svc.CheckDueAnnouncementsAsync();
+            Toast.Success(n == 0 ? "مورد فرارسیده‌ای نیست." : $"{Fa.Digits(n.ToString())} اطلاعیه منتشر شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task CheckBirthdays()
+    {
+        try
+        {
+            var n = await Svc.CheckBirthdaysAsync();
+            Toast.Success(n == 0 ? "تولد جدیدی امروز نیست." : $"تبریک تولد {Fa.Digits(n.ToString())} نفر ارسال شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

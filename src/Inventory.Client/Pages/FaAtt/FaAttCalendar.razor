@@ -1,0 +1,264 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/calendar"
+@using System.Globalization
+@inject IFaAttService Svc
+@inject IHrCoreService EmpSvc
+@inject IHrMainService OrgSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>تقویم یکپارچه غیبت</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-calendar3"></i> تقویم یکپارچه غیبت</h1>
+            <div class="lead">مرخصی + مأموریت + شیفت + آموزش + تعطیلات در یک نما</div>
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+            <button class="btn btn-outline-secondary" @onclick="PrevMonth"><i class="bi bi-chevron-right"></i></button>
+            <strong class="px-2">@FaAttUi.MonthName(jm) @FaAttUi.Num(jy)</strong>
+            <button class="btn btn-outline-secondary" @onclick="NextMonth"><i class="bi bi-chevron-left"></i></button>
+            <button class="btn btn-outline-primary" @onclick="ThisMonth">امروز</button>
+        </div>
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-5">
+                <label class="form-label small text-muted">پرسنل</label>
+                <select class="form-select" @bind="fEmp">
+                    <option value="">همه</option>
+                    @foreach (var e in emps)
+                    {
+                        <option value="@e.Id">@e.FirstName @e.LastName (@e.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-5">
+                <label class="form-label small text-muted">واحد سازمانی</label>
+                <select class="form-select" @bind="fUnit">
+                    <option value="">همه</option>
+                    @foreach (var u in units)
+                    {
+                        <option value="@u.Id">@u.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2"><button class="btn btn-primary w-100" @onclick="Reload"><i class="bi bi-search"></i> نمایش</button></div>
+        </div>
+        <div class="d-flex gap-3 flex-wrap mt-2 small">
+            <span><i class="bi bi-square-fill" style="color:#16a34a"></i> مرخصی</span>
+            <span><i class="bi bi-square-fill" style="color:#2563eb"></i> مأموریت</span>
+            <span><i class="bi bi-square-fill" style="color:#64748b"></i> شیفت</span>
+            <span><i class="bi bi-square-fill" style="color:#9333ea"></i> آموزش</span>
+            <span><i class="bi bi-square-fill" style="color:#dc2626"></i> تعطیل رسمی</span>
+            <span><i class="bi bi-square-fill" style="color:#d97706"></i> در انتظار تأیید</span>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body p-2">
+        <div class="cal-grid cal-head">
+            @foreach (var d in WeekDays)
+            {
+                <div class="cal-cell cal-dow">@d</div>
+            }
+        </div>
+        <div class="cal-grid">
+            @for (int i = 0; i < leadBlanks; i++)
+            {
+                <div class="cal-cell cal-blank"></div>
+            }
+            @foreach (var day in MonthDays)
+            {
+                var evs = EventsOf(day);
+                var isToday = day == DateTime.Today;
+                var isFri = day.DayOfWeek == DayOfWeek.Friday;
+                <div class="cal-cell @(isToday ? "cal-today" : "") @(isFri ? "cal-fri" : "")" @onclick="() => OpenDay(day)">
+                    <div class="cal-num">@FaAttUi.Num(Pc.GetDayOfMonth(day))</div>
+                    <div class="cal-chips">
+                        @foreach (var e in evs.Take(3))
+                        {
+                            <span class="cal-chip" style="background:@e.Color" title="@e.Title — @e.EmployeeName"></span>
+                        }
+                        @if (evs.Count > 3)
+                        {
+                            <span class="cal-more">+@FaAttUi.Num(evs.Count - 3)</span>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<Modal Visible="showDay" Title="@DayTitle" Size="modal-lg" OnClose="() => showDay = false">
+<ChildContent>
+    @if (dayEvents.Count == 0)
+    {
+        <div class="text-center text-muted py-4">رویدادی ثبت نشده است.</div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light"><tr><th>نوع</th><th>عنوان</th><th>پرسنل</th><th>بازه</th><th>وضعیت</th></tr></thead>
+                <tbody>
+                    @foreach (var e in dayEvents)
+                    {
+                        <tr>
+                            <td><span class="badge" style="background:@e.Color">@KindName(e.Kind)</span></td>
+                            <td>@e.Title</td>
+                            <td>@(e.EmployeeName ?? "—")</td>
+                            <td class="num small">@e.FromDate.ToFa() @(e.ToDate.Date != e.FromDate.Date ? "تا " + e.ToDate.ToFa() : "")</td>
+                            <td>
+                                @if (e.Kind is "Leave" or "Mission")
+                                {
+                                    <span class="badge @(e.Status == 1 ? "text-bg-success" : "text-bg-warning")">@(e.Status == 1 ? "تأییدشده" : "در انتظار")</span>
+                                }
+                                else
+                                {
+                                    <span class="badge text-bg-light">—</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-light" @onclick="() => showDay = false">بستن</button>
+    </div>
+</Footer>
+</Modal>
+
+<style>
+    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+    .cal-head { margin-bottom: 4px; }
+    .cal-cell { min-height: 64px; border: 1px solid #e9ecef; border-radius: 8px; padding: 4px 6px; background: #fff; cursor: pointer; }
+    .cal-cell:hover { border-color: #0d6efd; }
+    .cal-dow { min-height: 0; text-align: center; font-weight: bold; background: #f8f9fa; cursor: default; padding: 6px; }
+    .cal-blank { background: transparent; border: none; cursor: default; }
+    .cal-today { border: 2px solid #0d6efd; }
+    .cal-fri { background: #fff7f7; }
+    .cal-num { font-weight: bold; font-size: 0.9rem; }
+    .cal-chips { display: flex; gap: 3px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
+    .cal-chip { display: inline-block; width: 22px; height: 8px; border-radius: 4px; }
+    .cal-more { font-size: 0.7rem; color: #6c757d; }
+</style>
+
+@code {
+    private static readonly PersianCalendar Pc = new();
+    private static readonly string[] WeekDays = new[] { "شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه" };
+
+    private bool faRead => Auth.Has("FaAtt.Read") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<HrEmployeeDto> emps = new();
+    private List<HrMainOrgNodeDto> units = new();
+    private List<FaAttCalendarEventDto> events = new();
+
+    private int jy = FaAttUi.CurrentYear;
+    private int jm = FaAttUi.CurrentMonth;
+    private string? fEmp;
+    private string? fUnit;
+
+    private List<DateTime> MonthDays = new();
+    private int leadBlanks;
+
+    private bool showDay;
+    private DateTime dayDate = DateTime.Today;
+    private List<FaAttCalendarEventDto> dayEvents = new();
+    private string DayTitle => $"رویدادهای {dayDate.ToFa()}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        try
+        {
+            emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items;
+            units = await OrgSvc.ListOrgNodesAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        await Reload();
+    }
+
+    private void BuildMonth()
+    {
+        MonthDays.Clear();
+        var first = Pc.ToDateTime(jy, jm, 1, 0, 0, 0, 0);
+        var days = Pc.GetDaysInMonth(jy, jm);
+        leadBlanks = ((int)first.DayOfWeek + 1) % 7;
+        for (int d = 0; d < days; d++) MonthDays.Add(first.AddDays(d));
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            BuildMonth();
+            int? empId = int.TryParse(fEmp, out var v) ? v : null;
+            int? unitId = int.TryParse(fUnit, out var u) ? u : null;
+            events = await Svc.GetAbsenceCalendarAsync(MonthDays.First(), MonthDays.Last(), empId, unitId);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private async Task PrevMonth()
+    {
+        if (jm == 1) { jy--; jm = 12; } else jm--;
+        await Reload();
+    }
+
+    private async Task NextMonth()
+    {
+        if (jm == 12) { jy++; jm = 1; } else jm++;
+        await Reload();
+    }
+
+    private async Task ThisMonth()
+    {
+        jy = FaAttUi.CurrentYear; jm = FaAttUi.CurrentMonth;
+        await Reload();
+    }
+
+    private List<FaAttCalendarEventDto> EventsOf(DateTime day)
+        => events.Where(e => e.FromDate.Date <= day && e.ToDate.Date >= day).ToList();
+
+    private void OpenDay(DateTime day)
+    {
+        dayDate = day;
+        dayEvents = EventsOf(day);
+        showDay = true;
+    }
+
+    private static string KindName(string k) => k switch
+    {
+        "Leave" => "مرخصی",
+        "Mission" => "مأموریت",
+        "Shift" => "شیفت",
+        "Training" => "آموزش",
+        "Holiday" => "تعطیل",
+        _ => k
+    };
+}

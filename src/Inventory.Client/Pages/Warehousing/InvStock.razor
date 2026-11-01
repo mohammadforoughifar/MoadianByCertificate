@@ -1,0 +1,284 @@
+@page "/inv/stock"
+@inject IInvReportService ReportSvc
+@inject IInvWarehouseService WarehouseSvc
+@inject IInvCategoryService CategorySvc
+@inject IToastService Toast
+@inject LayoutState Layout
+
+<PageTitle>موجودی انبار</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>موجودی انبار</h1>
+        <p class="lead">مانده مقداری و ریالی کالاها به تفکیک انبار</p>
+    </div>
+    <a class="btn btn-outline-primary ms-auto" href="/inv/docs/new"><i class="bi bi-plus-lg"></i> سند جدید</a>
+</div>
+
+@* ---------- کارت‌های خلاصه ---------- *@
+<div class="row g-2 mb-3">
+    <div class="col-6 col-lg-3">
+        <div class="mini-kpi">
+            <i class="bi bi-box-seam bg-soft-primary text-primary"></i>
+            <div><div class="k-val num">@total.Num()</div><div class="k-lbl">قلم کالا</div></div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="mini-kpi">
+            <i class="bi bi-boxes bg-soft-info text-info"></i>
+            <div><div class="k-val num">@items.Sum(r => r.Quantity).Num()</div><div class="k-lbl">جمع مقدار (صفحه جاری)</div></div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="mini-kpi">
+            <i class="bi bi-cash-stack bg-soft-success text-success"></i>
+            <div><div class="k-val num">@items.Sum(r => r.Value).Money()</div><div class="k-lbl">ارزش موجودی (صفحه جاری)</div></div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="mini-kpi">
+            <i class="bi bi-exclamation-triangle bg-soft-danger text-danger"></i>
+            <div><div class="k-val num">@items.Count(r => r.BelowReorder).Num()</div><div class="k-lbl">زیر نقطه سفارش</div></div>
+        </div>
+    </div>
+</div>
+
+@* ---------- نوار فیلتر ---------- *@
+<div class="card mb-3">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-4">
+                <label class="form-label">جستجو</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="نام یا کد کالا…" value="@search"
+                           @oninput="OnSearchInput" @onkeyup="OnSearchKey" />
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">انبار</label>
+                <select class="form-select" value="@(warehouseId?.ToString() ?? "")" @onchange="OnWarehouse">
+                    <option value="">همه انبارها</option>
+                    @foreach (var w in warehouses)
+                    {
+                        <option value="@w.Id">@w.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">گروه کالا</label>
+                <select class="form-select" value="@(categoryId?.ToString() ?? "")" @onchange="OnCategory">
+                    <option value="">همه گروه‌ها</option>
+                    @foreach (var c in categories)
+                    {
+                        <option value="@c.Id">@Indent(c.Depth)@c.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-12 col-md-2">
+                <div class="form-check form-switch mt-2">
+                    <input class="form-check-input" type="checkbox" id="chkBelow" checked="@below" @onchange="OnBelow" />
+                    <label class="form-check-label" for="chkBelow">فقط زیر نقطه سفارش</label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span><i class="bi bi-clipboard-check text-primary"></i> فهرست موجودی</span>
+        <span class="badge badge-soft-primary num ms-auto">@total.Num() ردیف</span>
+    </div>
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state">
+                <i class="bi bi-inboxes"></i>
+                <h5>موجودی‌ای یافت نشد</h5>
+                <p class="text-muted">با ثبت و قطعی کردن اسناد رسید، موجودی انبار شکل می‌گیرد.</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>کالا</th>
+                            <th>گروه</th>
+                            <th>انبار</th>
+                            <th>واحد</th>
+                            <th class="text-center">موجودی</th>
+                            <th class="text-center">نقطه سفارش</th>
+                            <th class="text-center">بهای میانگین</th>
+                            <th class="text-center">ارزش موجودی</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in items)
+                        {
+                            <tr class="@(r.BelowReorder ? "table-danger-soft" : "")">
+                                <td>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="stat-icon bg-soft-primary" style="width:34px;height:34px;font-size:.95rem"><i class="bi bi-box-seam"></i></span>
+                                        <div>
+                                            <div class="fw-500">@r.ProductName</div>
+                                            <div class="text-muted num" style="font-size:.72rem">@r.ProductCode</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="text-muted">@(r.CategoryName ?? "—")</td>
+                                <td>@(r.WarehouseName ?? "—")</td>
+                                <td class="text-muted">@r.Unit</td>
+                                <td class="text-center">
+                                    <span class="badge @(r.Quantity <= 0 ? "badge-soft-danger" : r.BelowReorder ? "badge-soft-warning" : "badge-soft-success") num">
+                                        @r.Quantity.Num()
+                                    </span>
+                                </td>
+                                <td class="text-center num text-muted">@(r.ReorderPoint > 0 ? r.ReorderPoint.Num() : "—")</td>
+                                <td class="text-center num">@r.AvgCost.Money()</td>
+                                <td class="text-center num fw-600">@r.Value.Money()</td>
+                                <td class="text-end text-nowrap">
+                                    <a class="btn btn-sm btn-light" title="کاردکس کالا"
+                                       href="@($"/inv/kardex?productId={r.ProductId}{(r.WarehouseId > 0 ? $"&warehouseId={r.WarehouseId}" : "")}")">
+                                        <i class="bi bi-clipboard-data text-primary"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var r in items)
+                {
+                    <div class="m-card @(r.BelowReorder ? "st-cancelled" : "st-ready")">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi bi-box-seam"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="fw-700 text-truncate">@r.ProductName</div>
+                                <div class="fs-8 text-muted num text-truncate">@r.ProductCode — @(r.WarehouseName ?? "—")</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">موجودی</div>
+                                <div class="num fw-800 @(r.BelowReorder ? "text-danger" : "text-primary")">@r.Quantity.Num()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-money"><span>ارزش موجودی</span><b class="num">@r.Value.Money() <small>ریال</small></b></div>
+                            <div class="m-card-row"><span><i class="bi bi-tag text-muted"></i> بهای میانگین</span><b class="num">@r.AvgCost.Money()</b></div>
+                        </div>
+                        <div class="m-card-actions">
+                            <a class="btn btn-light text-primary" href="@($"/inv/kardex?productId={r.ProductId}")"><i class="bi bi-clipboard-data"></i> کاردکس</a>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="OnPage" />
+        }
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "warehouseId")] public int? QueryWarehouseId { get; set; }
+    [SupplyParameterFromQuery(Name = "categoryId")] public int? QueryCategoryId { get; set; }
+
+    private List<InvStockRow> items = new();
+    private List<LookupItem> warehouses = new();
+    private List<InvCategory> categories = new();
+
+    private bool loading = true, below;
+    private int page = 1, total;
+    private const int PageSize = 20;
+    private int? warehouseId, categoryId;
+    private string search = "";
+
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("موجودی انبار");
+        warehouseId = QueryWarehouseId;
+        categoryId = QueryCategoryId;
+        try
+        {
+            warehouses = await WarehouseSvc.GetLookupsAsync();
+            categories = await CategorySvc.GetFlatAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var res = await ReportSvc.GetStockAsync(warehouseId, categoryId,
+                string.IsNullOrWhiteSpace(search) ? null : search.Trim(), below, page, PageSize);
+            items = res.Items;
+            total = res.TotalCount;
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task Reload()
+    {
+        page = 1;
+        await Load();
+    }
+
+    private void OnSearchInput(ChangeEventArgs e) => search = e.Value?.ToString() ?? "";
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Reload();
+    }
+
+    private async Task OnWarehouse(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        warehouseId = string.IsNullOrEmpty(raw) ? null : int.Parse(raw);
+        await Reload();
+    }
+
+    private async Task OnCategory(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        categoryId = string.IsNullOrEmpty(raw) ? null : int.Parse(raw);
+        await Reload();
+    }
+
+    private async Task OnBelow(ChangeEventArgs e)
+    {
+        below = e.Value is bool b && b;
+        await Reload();
+    }
+
+    private async Task OnPage(int p)
+    {
+        page = p;
+        await Load();
+    }
+
+    private static string Indent(int depth) => depth <= 0 ? "" : string.Concat(Enumerable.Repeat("— ", depth));
+}

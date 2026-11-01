@@ -1,0 +1,155 @@
+@namespace Inventory.Client.Pages
+@page "/fa-pay/items"
+@inject IFaPayClientService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>اقلام حقوقی</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-list-check"></i> اقلام حقوقی</h1>
+            <div class="lead">مزایای ثابت (حق مسکن، بن، ایاب‌ذهاب) و اقلام متغیر (کارانه، پاداش، مأموریت، مساعده)</div>
+        </div>
+        @if (faManage)
+        {
+            <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> قلم جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد حقوق و دستمزد است.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>کد</th>
+                        <th>نام</th>
+                        <th>نوع</th>
+                        <th class="text-center">ثابت ماهانه؟</th>
+                        <th>مبلغ پیش‌فرض (ریال)</th>
+                        <th class="text-center">فعال؟</th>
+                        <th style="width:120px">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var t in rows)
+                    {
+                        <tr>
+                            <td><code>@t.Code</code></td>
+                            <td><strong>@t.Name</strong></td>
+                            <td><span class="badge @FaPayUi.KindBadge(t.Kind)">@FaPayUi.Kind(t.Kind)</span></td>
+                            <td class="text-center">@if (t.IsFixed) { <i class="bi bi-check-circle text-success"></i> } else { <span class="text-muted">—</span> }</td>
+                            <td>@FaPayUi.Money(t.DefaultAmount)</td>
+                            <td class="text-center">@if (t.IsActive) { <i class="bi bi-check-circle text-success"></i> } else { <i class="bi bi-x-circle text-danger"></i> }</td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button class="btn btn-outline-primary" title="ویرایش" @onclick="() => OpenEdit(t)"><i class="bi bi-pen"></i></button>
+                                    <button class="btn btn-outline-danger" title="حذف" @onclick="() => Del(t)"><i class="bi bi-trash"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0)
+                    {
+                        <tr><td colspan="7" class="text-center text-muted py-4">قلمی تعریف نشده است.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="@EditTitle" OnClose="() => showEdit = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-md-6"><label class="form-label">کد (انگلیسی)</label><input class="form-control" dir="ltr" @bind="form.Code" /></div>
+        <div class="col-md-6"><label class="form-label">نام</label><input class="form-control" @bind="form.Name" /></div>
+        <div class="col-md-6">
+            <label class="form-label">نوع</label>
+            <select class="form-select" @bind="form.Kind">
+                <option value="0">مزایا</option>
+                <option value="1">کسور</option>
+            </select>
+        </div>
+        <div class="col-md-6"><label class="form-label">مبلغ پیش‌فرض (ریال)</label><input class="form-control" type="number" step="any" @bind="form.DefaultAmount" /></div>
+        <div class="col-md-4"><label class="form-label">ترتیب</label><input class="form-control" type="number" @bind="form.SortOrder" /></div>
+        <div class="col-md-4 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" @bind="form.IsFixed" id="payItFix" /><label class="form-check-label" for="payItFix">ثابت ماهانه</label></div></div>
+        <div class="col-md-4 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" @bind="form.IsActive" id="payItAct" /><label class="form-check-label" for="payItAct">فعال</label></div></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" @onclick="Save"><i class="bi bi-check-lg"></i> ذخیره</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faManage => Auth.Has("FaPay.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaPayItemTypeDto> rows = new();
+
+    private bool showEdit;
+    private int? editId;
+    private FaPayItemTypeSaveDto form = new();
+    private string EditTitle => editId == null ? "قلم جدید" : "ویرایش قلم";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { rows = await Svc.ListItemTypesAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void OpenEdit(FaPayItemTypeDto? t)
+    {
+        editId = t?.Id;
+        form = t == null
+            ? new FaPayItemTypeSaveDto { Kind = 0, IsActive = true }
+            : new FaPayItemTypeSaveDto { Code = t.Code, Name = t.Name, Kind = t.Kind, IsFixed = t.IsFixed, DefaultAmount = t.DefaultAmount, SortOrder = t.SortOrder, IsActive = t.IsActive };
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        try
+        {
+            await Svc.SaveItemTypeAsync(editId, form);
+            showEdit = false;
+            Toast.Success("ذخیره شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Del(FaPayItemTypeDto t)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"قلم «{t.Name}» حذف شود؟")) return;
+        try { await Svc.DeleteItemTypeAsync(t.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

@@ -1,0 +1,392 @@
+@namespace Inventory.Client.Pages
+@page "/sales/visits/{Id:int}"
+@inject ISalesVisitApi Api
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+
+<PageTitle>@(order?.Number ?? "سفارش ویزیتوری")</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>@(order?.Number ?? "…")</h1>
+        <p class="lead">
+            @if (order is not null)
+            {
+                <span class="@VisUi.BadgeCss(order.Status)">@VisUi.StatusText(order.Status)</span>
+                <span class="ms-2">@order.PartyName — @order.Date.ToFa()</span>
+            }
+        </p>
+    </div>
+    <button class="btn btn-light ms-auto" @onclick="@(() => Nav.NavigateTo("/sales/visits"))">
+        <i class="bi bi-arrow-right"></i> فهرست
+    </button>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else if (order is null)
+{
+    <div class="empty-state"><i class="bi bi-search"></i><h5>سفارش یافت نشد یا به شما تعلق ندارد</h5></div>
+}
+else
+{
+    @if (!string.IsNullOrWhiteSpace(order.DecisionNote) &&
+         order.Status is VisOrderStatus.Returned or VisOrderStatus.Rejected or VisOrderStatus.Canceled)
+    {
+        <div class="alert @(order.Status == VisOrderStatus.Returned ? "alert-warning" : "alert-danger") py-2">
+            <b>دلیل @VisUi.StatusText(order.Status):</b> @order.DecisionNote
+            @if (!string.IsNullOrWhiteSpace(order.DecidedBy))
+            {
+                <span class="text-muted fs-8"> — @order.DecidedBy</span>
+            }
+        </div>
+    }
+
+    <div class="row g-3">
+        <div class="col-12 col-lg-8">
+            <div class="card">
+                <div class="card-header"><i class="bi bi-box-seam"></i><span class="card-title">اقلام سفارش</span></div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>کالا</th>
+                                    <th class="text-start">مقدار</th>
+                                    <th class="text-start">قیمت واحد</th>
+                                    <th class="text-start">تخفیف</th>
+                                    <th class="text-start">جمع</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var (l, i) in order.Lines.Select((l, i) => (l, i)))
+                                {
+                                    <tr>
+                                        <td class="fs-8 text-muted">@Fa.Digits(i + 1)</td>
+                                        <td>
+                                            <div class="fw-600 fs-8">@l.ProductName</div>
+                                            <div class="fs-9 text-muted">@l.ProductCode @(string.IsNullOrWhiteSpace(l.Note) ? "" : $"— {l.Note}")</div>
+                                        </td>
+                                        <td class="text-start fs-8">@Fa.Number(l.Quantity) @l.Unit</td>
+                                        <td class="text-start fs-8">@Fa.Money(l.UnitPrice)</td>
+                                        <td class="text-start fs-8">@l.DiscountText</td>
+                                        <td class="text-start fs-8 fw-600">@Fa.Money(l.LineTotal)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="5" class="text-start fs-8">جمع کل</td>
+                                    <td class="text-start fs-8">@Fa.Money(order.TotalGross)</td>
+                                </tr>
+                                <tr>
+                                    <td colspan="5" class="text-start fs-8">تخفیف</td>
+                                    <td class="text-start fs-8 text-danger">@Fa.Money(order.TotalDiscount)</td>
+                                </tr>
+                                <tr>
+                                    <td colspan="5" class="text-start fw-700">قابل پرداخت</td>
+                                    <td class="text-start fw-700">@Fa.Money(order.TotalNet)</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header"><i class="bi bi-clock-history"></i><span class="card-title">گردش سفارش</span></div>
+                <div class="card-body">
+                    @if (order.History.Count == 0)
+                    {
+                        <div class="text-muted fs-8">هنوز گردشی ثبت نشده است.</div>
+                    }
+                    else
+                    {
+                        <div class="vis-timeline">
+                            @foreach (var h in order.History)
+                            {
+                                <div class="vis-tl-item">
+                                    <div class="vis-tl-dot"></div>
+                                    <div>
+                                        <div class="fs-8 fw-600">
+                                            @VisUi.StatusText(h.ToStatus)
+                                            <span class="text-muted fw-normal">— @h.UserName</span>
+                                        </div>
+                                        <div class="fs-9 text-muted">@h.At.ToFa() @h.At.HHMM()</div>
+                                        @if (!string.IsNullOrWhiteSpace(h.Comment))
+                                        {
+                                            <div class="fs-8 mt-1">@h.Comment</div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-lg-4">
+            <div class="card">
+                <div class="card-header"><i class="bi bi-info-circle"></i><span class="card-title">اطلاعات</span></div>
+                <div class="card-body fs-8">
+                    <div class="vis-row"><span>ویزیتور</span><b>@order.ReferrerName</b></div>
+                    <div class="vis-row"><span>مشتری</span><b>@order.PartyName</b></div>
+                    <div class="vis-row"><span>انبار</span><b>@order.WarehouseName</b></div>
+                    <div class="vis-row"><span>پرداخت</span><b>@VisUi.PaymentText(order.PaymentMethod)</b></div>
+                    <div class="vis-row"><span>تاریخ سفارش</span><b>@order.Date.ToFa()</b></div>
+                    <div class="vis-row">
+                        <span>دریافت محصول (ویزیتور)</span>
+                        <b>@(order.DeliveryDate?.ToFa() ?? "—")</b>
+                    </div>
+                    <div class="vis-row">
+                        <span>تاریخ نهایی تحویل (مدیر)</span>
+                        @if (order.FinalDeliveryDate is null)
+                        {
+                            <b class="text-muted">در انتظار تصمیم مدیر</b>
+                        }
+                        else
+                        {
+                            <b class="@(order.FinalDateChanged ? "text-warning" : "")">
+                                @order.FinalDeliveryDate.Value.ToFa()
+                                @if (order.FinalDateChanged)
+                                {
+                                    <i class="bi bi-exclamation-triangle ms-1" title="با تاریخ ویزیتور متفاوت است"></i>
+                                }
+                            </b>
+                        }
+                    </div>
+                    @if (order.FinalDateSetBy is not null)
+                    {
+                        <div class="fs-9 text-muted mb-1">
+                            تعیین‌شده توسط @order.FinalDateSetBy
+                            @if (order.FinalDateSetAt is not null)
+                            {
+                                <text> — @order.FinalDateSetAt.Value.ToFa()</text>
+                            }
+                        </div>
+                    }
+                    <div class="vis-row"><span>ثبت</span><b>@order.CreatedAt.ToFa() @order.CreatedAt.HHMM()</b></div>
+                    @if (order.SubmittedAt is not null)
+                    {
+                        <div class="vis-row"><span>ارسال</span><b>@order.SubmittedAt.Value.ToFa()</b></div>
+                    }
+                    @if (order.DecidedAt is not null)
+                    {
+                        <div class="vis-row"><span>تصمیم</span><b>@order.DecidedAt.Value.ToFa()</b></div>
+                    }
+                    @if (order.DiscountOverLimit)
+                    {
+                        <div class="alert alert-warning py-1 px-2 mt-2 mb-2 fs-8">
+                            <i class="bi bi-exclamation-triangle"></i> تخفیف بالای سقف مجاز
+                        </div>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(order.Note))
+                    {
+                        <div class="mt-2 text-muted">«@order.Note»</div>
+                    }
+                    @if (order.Status == VisOrderStatus.Invoiced && !string.IsNullOrWhiteSpace(order.SaleNumber))
+                    {
+                        <hr />
+                        <div class="vis-row"><span>شماره فروش</span><b>@order.SaleNumber</b></div>
+                        <a class="btn btn-sm btn-outline-secondary mt-1" href="/orders/sale">
+                            <i class="bi bi-cart3"></i> دیدن در فهرست فروش
+                        </a>
+                    }
+                </div>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header"><i class="bi bi-lightning-charge"></i><span class="card-title">اقدام‌ها</span></div>
+                <div class="card-body d-grid gap-2">
+                    @if (order.Status == VisOrderStatus.Submitted && me?.CanApprove != true)
+                    {
+                        <div class="alert alert-info py-2 px-2 fs-8 mb-1" data-edit-window>
+                            <i class="bi bi-pencil-square"></i>
+                            تا زمانی که مدیر سفارش را تأیید نکرده می‌توانید آن را ویرایش کنید؛
+                            ویرایش، سفارش را در صف تأیید نگه می‌دارد و به مدیر اطلاع داده می‌شود.
+                        </div>
+                    }
+
+                    @if (CanEdit)
+                    {
+                        <button class="btn btn-outline-primary" data-edit-btn
+                                @onclick="@(() => Nav.NavigateTo($"/sales/visits/{order.Id}/edit"))">
+                            <i class="bi bi-pencil"></i> ویرایش
+                        </button>
+                        <button class="btn btn-success" @onclick="SubmitAsync">
+                            <i class="bi bi-send"></i> ارسال برای تأیید
+                        </button>
+                    }
+
+                    @if (me?.CanApprove == true && order.Status == VisOrderStatus.Submitted)
+                    {
+                        <button class="btn btn-primary" @onclick="ApproveAsync">
+                            <i class="bi bi-patch-check"></i> تأیید سفارش
+                        </button>
+                        <button class="btn btn-outline-warning" @onclick="@(() => StartDecision(DecisionKind.Return))">
+                            <i class="bi bi-arrow-return-right"></i> برگشت برای اصلاح
+                        </button>
+                        <button class="btn btn-outline-danger" @onclick="@(() => StartDecision(DecisionKind.Reject))">
+                            <i class="bi bi-x-octagon"></i> رد سفارش
+                        </button>
+                    }
+
+                    @if ((me?.CanFinance == true || me?.CanApprove == true) && order.Status == VisOrderStatus.Approved)
+                    {
+                        <button class="btn btn-success" data-fin-open @onclick="@(() => showFinance = true)">
+                            <i class="bi bi-check2-circle"></i> تأیید مالی و ثبت فروش
+                        </button>
+                    }
+
+                    @if (CanCancel)
+                    {
+                        <button class="btn btn-outline-danger" @onclick="CancelAsync">
+                            <i class="bi bi-slash-circle"></i> ابطال سفارش
+                        </button>
+                    }
+
+                    @if (!CanEdit && me?.CanApprove != true && order.Status == VisOrderStatus.Draft)
+                    {
+                        <div class="text-muted fs-8">اقدامی برای شما تعریف نشده است.</div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (decision is not null)
+    {
+        <div class="vis-modal-back" @onclick="@(() => decision = null)">
+            <div class="vis-modal" @onclick:stopPropagation="true">
+                <h6 class="mb-2">
+                    @(decision == DecisionKind.Return ? "برگشت برای اصلاح" : "رد سفارش")
+                </h6>
+                <label class="form-label">دلیل (اجباری)</label>
+                <textarea class="form-control" rows="3" @bind="comment"></textarea>
+                <div class="d-flex gap-2 mt-3">
+                    <button class="btn @(decision == DecisionKind.Return ? "btn-warning" : "btn-danger")" @onclick="SendDecisionAsync">
+                        ثبت
+                    </button>
+                    <button class="btn btn-light" @onclick="@(() => decision = null)">انصراف</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+<VisFinanceModal Visible="showFinance" Order="order" OnClose="@(() => showFinance = false)" OnDone="OnFinanceDone" />
+
+<style>
+    .vis-row { display: flex; justify-content: space-between; gap: .5rem; padding: .25rem 0; border-bottom: 1px dashed #eef2f7; }
+    .vis-tl-item { display: flex; gap: .55rem; padding: .35rem 0; position: relative; }
+    .vis-tl-dot { width: 9px; height: 9px; border-radius: 50%; background: #2563eb; margin-top: .45rem; flex: 0 0 auto; }
+    .vis-modal-back { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 1rem; }
+    .vis-modal { background: #fff; border-radius: 14px; padding: 1.1rem 1.2rem; width: 100%; max-width: 460px; }
+    .vis-badge { display: inline-block; font-size: .68rem; border-radius: 99px; padding: .1rem .5rem; border: 1px solid transparent; }
+    .vis-secondary { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+    .vis-warning { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+    .vis-primary { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
+    .vis-orange { background: #ffedd5; color: #9a3412; border-color: #fed7aa; }
+    .vis-danger { background: #ffe4e6; color: #9f1239; border-color: #fecdd3; }
+    .vis-success { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
+    .vis-dark { background: #e2e8f0; color: #0f172a; border-color: #cbd5e1; }
+    .fs-8 { font-size: .78rem; }
+    .fs-9 { font-size: .7rem; }
+</style>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private enum DecisionKind { Return, Reject }
+
+    private bool loading = true;
+    private VisOrderDto? order;
+    private VisActorInfo? me;
+    private DecisionKind? decision;
+    private string? comment;
+
+    /// <summary>ویرایش تا زمانی که مدیر تأیید نکرده: پیش‌نویس، ارسال‌شده و برگشتی.</summary>
+    private bool CanEdit => order is not null
+        && order.Status is VisOrderStatus.Draft or VisOrderStatus.Submitted or VisOrderStatus.Returned
+        && (me?.CanCreate == true || me?.CanApprove == true);
+
+    private bool CanCancel => order is not null
+        && order.Status is VisOrderStatus.Draft or VisOrderStatus.Returned or VisOrderStatus.Submitted;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true;
+        try
+        {
+            me = await Api.MeAsync();
+            order = await Api.GetAsync(Id);
+            Layout.SetTitle(order?.Number ?? "سفارش ویزیتوری");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task SubmitAsync()
+    {
+        try
+        {
+            order = await Api.SubmitAsync(Id);
+            Toast.Success("سفارش برای تأیید مدیر فروش ارسال شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task ApproveAsync()
+    {
+        try
+        {
+            order = await Api.ApproveAsync(Id, null);
+            Toast.Success("سفارش تأیید شد و به صف مالی رفت.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void StartDecision(DecisionKind kind)
+    {
+        decision = kind;
+        comment = "";
+    }
+
+    private async Task SendDecisionAsync()
+    {
+        if (string.IsNullOrWhiteSpace(comment)) { Toast.Error("دلیل را وارد کنید."); return; }
+        try
+        {
+            order = decision == DecisionKind.Return
+                ? await Api.ReturnAsync(Id, comment!)
+                : await Api.RejectAsync(Id, comment!);
+            Toast.Success("تصمیم ثبت شد.");
+            decision = null;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private bool showFinance;
+
+    private async Task OnFinanceDone(VisOrderDto res)
+    {
+        showFinance = false;
+        order = res;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task CancelAsync()
+    {
+        try
+        {
+            order = await Api.CancelAsync(Id, "ابطال از صفحهٔ سفارش");
+            Toast.Info("سفارش ابطال شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

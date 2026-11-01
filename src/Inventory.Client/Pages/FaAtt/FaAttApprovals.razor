@@ -1,0 +1,128 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/approvals"
+@inject IFaAttService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>تأییدیه‌های مدیر</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-person-check"></i> تأییدیه‌های مدیر</h1>
+            <div class="lead">درخواست‌های مرخصی تیم شما در مرحله تأیید مدیر (پس از تأیید، نزد منابع انسانی می‌رود)</div>
+        </div>
+        @if (selected.Count > 0)
+        {
+            <div class="d-flex gap-2">
+                <button class="btn btn-success" @onclick="() => BatchDecide(true)"><i class="bi bi-check-all"></i> تأیید گروهی (@FaAttUi.Num(selected.Count))</button>
+                <button class="btn btn-outline-danger" @onclick="() => BatchDecide(false)"><i class="bi bi-x-lg"></i> رد گروهی</button>
+            </div>
+        }
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (team.Count == 0)
+        {
+            <div class="text-center text-muted py-5"><i class="bi bi-check2-all fs-3 d-block mb-2"></i>درخواستی از تیم شما در انتظار تأیید نیست.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th style="width:40px"><input class="form-check-input" type="checkbox" @onchange="ToggleAll" checked="@allChecked" title="انتخاب همه" /></th><th>پرسنل</th><th>نوع</th><th>بازه</th><th>مدت</th><th>علت</th><th style="width:150px"></th></tr></thead>
+                <tbody>
+                    @foreach (var l in team)
+                    {
+                        <tr class="@(selected.Contains(l.Id) ? "table-active" : "")">
+                            <td><input class="form-check-input" type="checkbox" checked="@selected.Contains(l.Id)" @onchange="() => Toggle(l.Id)" /></td>
+                            <td><b>@l.EmployeeName</b></td>
+                            <td>@l.LeaveTypeName</td>
+                            <td class="num">@l.FromDate.ToFa() تا @l.ToDate.ToFa()</td>
+                            <td class="num">@(l.HoursPerDay == null ? FaAttUi.Num((l.ToDate - l.FromDate).Days + 1) + " روز" : FaAttUi.Num(l.HoursPerDay.Value) + " ساعت/روز")</td>
+                            <td>@(l.Reason ?? "—")</td>
+                            <td class="text-end">
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-success" @onclick="() => Decide(l, true)"><i class="bi bi-check-lg"></i> تأیید</button>
+                                    <button class="btn btn-outline-danger" @onclick="() => Decide(l, false)"><i class="bi bi-x-lg"></i> رد</button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+@code {
+    private bool faRead => Auth.Has("FaAtt.Read") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaAttLeaveDto> team = new();
+    private HashSet<int> selected = new();
+    private bool allChecked => team.Count > 0 && team.All(l => selected.Contains(l.Id));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        selected.Clear();
+        try { team = await Svc.TeamLeavesAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void Toggle(int id)
+    {
+        if (!selected.Add(id)) selected.Remove(id);
+    }
+
+    private void ToggleAll(ChangeEventArgs e)
+    {
+        selected.Clear();
+        if ((bool)(e.Value ?? false))
+            foreach (var l in team) selected.Add(l.Id);
+    }
+
+    private async Task Decide(FaAttLeaveDto l, bool approve)
+    {
+        try
+        {
+            await Svc.ManagerDecideAsync(l.Id, approve);
+            Toast.Success(approve ? "تأیید شد و نزد منابع انسانی قرار گرفت." : "رد شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task BatchDecide(bool approve)
+    {
+        if (selected.Count == 0) return;
+        if (!await JS.InvokeAsync<bool>("confirm", $"{FaAttUi.Num(selected.Count)} درخواست به‌صورت گروهی {(approve ? "تأیید" : "رد")} شود؟")) return;
+        try
+        {
+            var r = await Svc.ManagerDecideBatchAsync(selected.ToList(), approve);
+            if (r.Failed == 0) Toast.Success($"هر {FaAttUi.Num(r.Ok)} درخواست {(approve ? "تأیید" : "رد")} شد.");
+            else Toast.Error($"{FaAttUi.Num(r.Ok)} موفق — {FaAttUi.Num(r.Failed)} ناموفق: {string.Join("؛ ", r.Errors.Take(3))}");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

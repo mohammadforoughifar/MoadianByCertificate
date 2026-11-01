@@ -1,0 +1,683 @@
+@namespace Inventory.Client.Pages
+@page "/system-info"
+@inject HttpClient Http
+
+<PageTitle>شناسنامه سیستم‌ها</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-cpu-fill"></i> شناسنامه سیستم‌ها</h1>
+    <div class="lead">فهرست تجهیزات رایانه‌ای، وضعیت ایجنت و تغییرات سخت‌افزاری</div>
+</div>
+
+@if (pendingAlarm > 0)
+{
+    <div class="alert alert-danger d-flex flex-wrap justify-content-between align-items-center gap-2 alarm-banner">
+        <span class="fw-800"><i class="bi bi-bell-fill"></i> آلارم: <b>@pendingAlarm</b> سیستم تغییرات سخت‌افزاری گزارش داده — ایجنت با بانک اطلاعاتی اختلاف دارد و منتظر تایید شماست</span>
+        @if (firstPendingId > 0)
+        {
+            <a href="/system-id/@firstPendingId" class="btn btn-sm btn-success rounded-pill fw-800">
+                <i class="bi bi-arrow-left-right"></i> بررسی و مقایسه
+            </a>
+        }
+    </div>
+}
+
+@if (items != null && items.Count > 0)
+{
+    <div class="row g-3 mb-4">
+        @* ---------- نمودار دایره‌ای: سیستم‌عامل ---------- *@
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-800"><i class="bi bi-window-fill text-primary"></i> سیستم‌عامل <span class="small text-muted fw-600">(نمودار دایره‌ای)</span></div>
+                <div class="card-body d-flex align-items-center justify-content-center gap-3 flex-wrap">
+                    @OsDonut
+                    <div class="os-legend">
+                        @foreach (var seg in OsSegments)
+                        {
+                            <div class="os-leg">
+                                <span class="os-dot" style="background:@seg.Color;"></span>
+                                <span class="os-name">@seg.Name</span>
+                                <b class="num">@seg.Count</b>
+                                <span class="os-pct num">@seg.Pct٪</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @* ---------- نمودار میله‌ای: میانگین رم به تفکیک دپارتمان ---------- *@
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-800"><i class="bi bi-bar-chart-fill text-success"></i> میانگین رم به تفکیک دپارتمان <span class="small text-muted fw-600">(GB)</span></div>
+                <div class="card-body">
+                    @if (RamByDept.Count == 0)
+                    {
+                        <div class="text-muted small">داده‌ای برای نمایش نیست.</div>
+                    }
+                    else
+                    {
+                        @foreach (var dr in RamByDept)
+                        {
+                            var w = dr.Avg > 0 ? (int)Math.Round(dr.Avg * 100.0 / MaxDeptRam) : 0;
+                            <div class="dept-bar-row">
+                                <div class="dept-name" title="@dr.Name">@dr.Name <span class="small text-muted num">(@dr.Count)</span></div>
+                                <div class="dept-track">
+                                    <div class="dept-fill" style="width:@w%;"></div>
+                                </div>
+                                <div class="dept-val num fw-800">@(dr.Avg > 0 ? dr.Avg.ToString("0.#") + " GB" : "—")</div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+
+        @* ---------- لیست ۱۰ سیستم ضعیف‌تر برای ارتقا ---------- *@
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-800"><i class="bi bi-arrow-down-up-square text-danger"></i> ۱۰ سیستم ضعیف‌تر برای ارتقا</div>
+                <div class="card-body weakest-list">
+                    @if (Weakest10.Count == 0)
+                    {
+                        <div class="text-muted small">هنوز امتیاز سلامت محاسبه نشده است.</div>
+                    }
+                    else
+                    {
+                        @for (var i = 0; i < Weakest10.Count; i++)
+                        {
+                            var w = Weakest10[i];
+                            <a href="/system-id/@w.Id" class="wk-item">
+                                <span class="wk-rank num">@(i + 1)</span>
+                                <HealthGauge Score="w.Health" Size="34" />
+                                <div class="wk-info">
+                                    <b class="wk-agent" dir="auto">@(string.IsNullOrEmpty(w.Cpu) ? w.AgentId : w.Cpu)</b>
+                                    <div class="small text-muted">
+                                        @w.AgentId
+                                        @if (w.TotalRamGb > 0) { <span>— @w.TotalRamGb GB رم</span> }
+                                    </div>
+                                </div>
+                                <span class="badge bg-light text-dark border wk-tip">@weakestTips.TryGetValue(w.Id, out var tip) ? tip : "—"</span>
+                            </a>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center" style="background:linear-gradient(135deg,#4f8cff,#8e5cff);color:#fff;border-radius:14px 14px 0 0;">
+        <span><i class="bi bi-buildings-fill me-2"></i>لیست سیستم‌ها به تفکیک شرکت</span>
+        <a href="/system-id/manual" class="btn btn-light btn-sm fw-700 shadow-sm" style="border-radius:8px;color:#4f5b8a;"><i class="bi bi-plus-lg"></i> ثبت دستی سیستم</a>
+    </div>
+    <div class="card-body">
+        @if (items == null)
+        {
+            <div class="text-center py-4 text-muted">در حال بارگذاری...</div>
+        }
+        else if (!items.Any())
+        {
+            <div class="alert alert-info rounded-3">هنوز داده‌ای ثبت نشده است.</div>
+        }
+        else
+        {
+            <div class="company-grouping-note"><i class="bi bi-info-circle"></i> هر بخش زیر، سیستم‌های یک شرکت را جداگانه نمایش می‌دهد.</div>
+            <div class="table-responsive"><table class="table table-hover align-middle mb-0 systems-by-company" style="border-radius:12px;white-space:nowrap;">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th><th>ایجنت</th><th>CPU</th><th>RAM</th>
+                        <th>مادربرد</th><th>IP</th><th>سلامت</th><th>زمان</th><th>واحد</th><th>کاربر</th><th>وضعیت</th><th>عملیات</th>
+                    </tr>
+                </thead>
+                @foreach (var companyGroup in CompanyGroups)
+                {
+                    <tbody class="@(companyGroup.CompanyId.HasValue ? "company-systems" : "company-systems company-unassigned")">
+                        <tr class="company-divider">
+                            <td colspan="12">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="company-divider-icon"><i class="bi @(companyGroup.CompanyId.HasValue ? "bi-building-fill" : "bi-question-circle-fill")"></i></span>
+                                    <b>@companyGroup.Name</b>
+                                    @if (!string.IsNullOrWhiteSpace(companyGroup.Code))
+                                    {
+                                        <span class="badge bg-light text-dark border">@companyGroup.Code</span>
+                                    }
+                                    <span class="company-count ms-auto">@companyGroup.Items.Count سیستم</span>
+                                </div>
+                            </td>
+                        </tr>
+                        @foreach (var item in companyGroup.Items)
+                        {
+                            <tr class="@(item.IsApproved ? "table-success" : "")">
+                                <td class="fw-600 text-secondary">@item.Id</td>
+                                <td><span class="badge bg-dark">@item.AgentId</span></td>
+                                <td>
+                                    @{ var pCpu = PendingCpu(item); }
+                                    @if (!string.IsNullOrEmpty(pCpu) && pCpu != item.Cpu)
+                                    {
+                                        <div class="text-muted text-decoration-line-through small">@(string.IsNullOrEmpty(item.Cpu) ? "—" : item.Cpu)</div>
+                                        <div class="text-success fw-800">⚠️ @pCpu</div>
+                                    }
+                                    else
+                                    {
+                                        <b>@(string.IsNullOrEmpty(item.Cpu) ? "—" : item.Cpu)</b>
+                                    }
+                                </td>
+                                <td>@(item.TotalRamGb > 0 ? item.TotalRamGb + " GB" : (string.IsNullOrEmpty(item.Ram) ? "—" : item.Ram))</td>
+                                <td>@(string.IsNullOrEmpty(item.Motherboard) ? "—" : item.Motherboard)</td>
+                                <td><span class="badge bg-dark">@GetFirstIp(item)</span></td>
+                                <td class="text-center">
+                                    @if (item.Health.HasValue)
+                                    {
+                                        <HealthGauge Score="item.Health" Size="40" Tooltip="@HealthTip(item.Health)" />
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-light text-dark border">—</span>
+                                    }
+                                </td>
+                                <td>@item.ReceivedAt.ToString("yyyy/MM/dd HH:mm")</td>
+                                <td>@GetDepartmentName(item.DepartmentId)</td>
+                                <td>
+                                    @if (item.UserId is > 0)
+                                    {
+                                        <div class="uv-wrap">
+                                            <UserAvatar SystemUserId="item.UserId.Value" Size="30" />
+                                            <span class="uv-name">@GetUserName(item.UserId)</span>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        @GetUserName(item.UserId)
+                                    }
+                                </td>
+                                <td>
+                                    @if (item.IsApproved)
+                                    {
+                                        <span class="badge bg-success">تأیید شده</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-warning text-dark">در انتظار</span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(item.PendingPayloadJson))
+                                    {
+                                        <div class="mt-1"><span class="badge bg-danger">🔄 تغییر در انتظار تایید</span></div>
+                                    }
+                                </td>
+                                <td>
+                                    <div class="ops d-flex gap-1 justify-content-center align-items-center">
+                                        @if (!item.IsApproved)
+                                        {
+                                            <button class="btn btn-sm btn-success ops-btn" @onclick="() => Approve(item.Id)" title="تأیید">
+                                                <i class="bi bi-check-circle-fill"></i>
+                                            </button>
+                                        }
+                                        <a href="/system-id/@item.Id" class="btn btn-sm btn-outline-info ops-btn" title="جزئیات">
+                                            <i class="bi bi-eye-fill"></i>
+                                        </a>
+                                        <button class="btn btn-sm btn-outline-secondary ops-btn" title="تاریخچه تغییرات" @onclick="() => OpenHistory(item)">
+                                            <i class="bi bi-clock-history"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger ops-btn" @onclick="() => Delete(item.Id)" title="حذف رکورد">
+                                            <i class="bi bi-trash-fill"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                }
+            </table></div>
+        }
+    </div>
+</div>
+
+@* ---------- مودال تاریخچه تغییرات ---------- *@
+@if (historySys != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.55)">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-clock-history"></i> تایم‌لاین تغییرات — سیستم #@historySys.Id</h5>
+                    <button type="button" class="btn-close" @onclick="CloseHistory"></button>
+                </div>
+                <div class="modal-body">
+                    @if (historyLoading)
+                    {
+                        <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+                    }
+                    else
+                    {
+                        <ChangeTimeline Entries="sysHistory.Select(h => new ChangeTimeline.TimelineEntry
+                        {
+                            Id = h.Id,
+                            ChangedAt = h.ChangedAt,
+                            ChangeCount = h.ChangeCount,
+                            Diffs = h.Diffs.Select(d => new ChangeTimeline.TimelineDiff { Field = d.Field, Old = d.Old, New = d.New, Changed = d.Changed }).ToList()
+                        }).ToList()" />
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+/* ====== تحلیل‌های ناوگان ====== */
+.os-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+.os-num{font-size:1.7rem;font-weight:900;color:#1c2130;line-height:1;}
+.os-lbl{font-size:.72rem;color:#8a90a5;font-weight:700;}
+.os-legend{display:flex;flex-direction:column;gap:.45rem;min-width:150px;}
+.os-leg{display:flex;align-items:center;gap:.5rem;font-size:.85rem;color:#3c4358;}
+.os-dot{width:12px;height:12px;border-radius:4px;flex-shrink:0;}
+.os-name{flex:1;font-weight:600;}
+.os-pct{font-size:.72rem;color:#8a90a5;}
+.dept-bar-row{display:flex;align-items:center;gap:.6rem;margin-bottom:.55rem;}
+.dept-name{width:34%;font-size:.8rem;font-weight:700;color:#3c4358;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dept-track{flex:1;height:22px;background:#eef0f7;border-radius:7px;overflow:hidden;border:1px solid #e3e7f2;}
+.dept-fill{height:100%;border-radius:7px 0 0 7px;background:linear-gradient(90deg,#2ec47e,#0ea5a4);transition:width .4s ease;}
+.dept-val{width:64px;text-align:center;font-size:.78rem;color:#0e8a55;background:#e6f9ef;border-radius:7px;padding:.25rem 0;}
+.weakest-list{max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:.4rem;}
+.wk-item{display:flex;align-items:center;gap:.6rem;background:#f8f9fd;border:1px solid #edf0f8;border-radius:11px;padding:.45rem .65rem;text-decoration:none;transition:all .15s ease;}
+.wk-item:hover{border-color:#c9b8ff;background:#f4f1ff;box-shadow:0 3px 10px rgba(120,90,255,.12);}
+.wk-rank{width:24px;height:24px;border-radius:8px;background:#fff;border:1px solid #e3e7f2;color:#8a90a5;font-weight:800;font-size:.75rem;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.wk-info{flex:1;min-width:0;}
+.wk-agent{font-size:.8rem;color:#1c2130;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px;}
+.wk-tip{font-size:.68rem;font-weight:700;white-space:nowrap;}
+@@media (max-width: 575.98px){
+    .wk-agent{max-width:90px;}
+    .dept-name{width:40%;}
+}
+.alarm-banner{animation:alarmPulse 1.8s infinite;border-width:2px;}
+@@keyframes alarmPulse{0%,100%{box-shadow:0 0 0 0 rgba(224,36,94,.35);}50%{box-shadow:0 0 0 8px rgba(224,36,94,0);}}
+.hist-box{border-right:4px solid #8e5cff;background:#fafbff;border-radius:12px;padding:.7rem .95rem;margin-bottom:.6rem;}
+.hist-diff{font-size:.84rem;color:#3c4358;padding:.14rem 0;line-height:1.9;}
+.ops-btn{width:34px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;border-radius:8px;}
+/* ====== تفکیک سیستم‌ها بر اساس شرکت ====== */
+.company-grouping-note{display:inline-flex;align-items:center;gap:.4rem;margin-bottom:.8rem;padding:.42rem .7rem;background:#f4f1ff;border:1px solid #ddd3ff;color:#594d80;border-radius:9px;font-size:.8rem;font-weight:700;}
+.systems-by-company .company-divider td{padding:.68rem .85rem;background:linear-gradient(135deg,#eef5ff,#f5f0ff);border-top:2px solid #c7d9ff;border-bottom:1px solid #dbe5fb;color:#303a5d;}
+.systems-by-company .company-divider-icon{width:29px;height:29px;border-radius:9px;background:#6850df;color:#fff;display:inline-flex;align-items:center;justify-content:center;}
+.systems-by-company .company-count{background:#fff;border:1px solid #d7def0;border-radius:999px;padding:.18rem .58rem;font-size:.76rem;font-weight:800;color:#56617d;}
+.systems-by-company .company-unassigned .company-divider td{background:linear-gradient(135deg,#fff8e8,#fff0f1);border-top-color:#f2d494;}
+.systems-by-company .company-unassigned .company-divider-icon{background:#c58a18;}
+</style>
+
+@code {
+    private List<SystemInfoItem> items = new();
+    private List<SystemUserItem> users = new();
+    private List<SystemCompanyItem> companies = new();
+
+    private static string GetFirstIp(SystemInfoItem it)
+    {
+        if (!string.IsNullOrWhiteSpace(it.Ip)) return it.Ip;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(it.DetailsJson)) return "—";
+            using var doc = System.Text.Json.JsonDocument.Parse(it.DetailsJson);
+            if (doc.RootElement.TryGetProperty("netAdapters", out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var a in arr.EnumerateArray())
+                {
+                    if (a.TryGetProperty("ipv4", out var ip) && ip.ValueKind == System.Text.Json.JsonValueKind.String)
+                    {
+                        var s = ip.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)) return s.Split(',')[0].Trim();
+                    }
+                }
+            }
+        }
+        catch { }
+        return "—";
+    }
+
+    /// <summary>CPU جدیدِ در انتظار تایید (اگر تغییر قطعه گزارش شده باشد).</summary>
+    private static string? PendingCpu(SystemInfoItem it)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(it.PendingPayloadJson)) return null;
+            using var doc = System.Text.Json.JsonDocument.Parse(it.PendingPayloadJson);
+            return doc.RootElement.TryGetProperty("cpu", out var c) &&
+                   c.ValueKind == System.Text.Json.JsonValueKind.String ? c.GetString() : null;
+        }
+        catch { return null; }
+    }
+
+    private string GetUserName(int? userId)
+    {
+        if (userId is not > 0) return "—";
+        var u = users.FirstOrDefault(x => x.Id == userId);
+        return u is null ? $"#{userId}" : $"{u.FirstName} {u.LastName}";
+    }
+
+    private string GetDepartmentName(int? departmentId)
+    {
+        if (departmentId is not > 0) return "—";
+        return departments.FirstOrDefault(x => x.Id == departmentId)?.Name ?? $"واحد #{departmentId}";
+    }
+
+    private sealed class CompanySystemGroup
+    {
+        public int? CompanyId { get; init; }
+        public string Name { get; init; } = "";
+        public string? Code { get; init; }
+        public List<SystemInfoItem> Items { get; init; } = new();
+    }
+
+    private List<CompanySystemGroup> CompanyGroups => items
+        .GroupBy(item => item.CompanyId)
+        .Select(group =>
+        {
+            var company = group.Key is > 0 ? companies.FirstOrDefault(c => c.Id == group.Key.Value) : null;
+            return new CompanySystemGroup
+            {
+                CompanyId = group.Key,
+                Name = company?.Name ?? (group.Key is > 0 ? $"شرکت حذف‌شده / ناشناخته (#{group.Key})" : "بدون شرکت"),
+                Code = company?.Code,
+                Items = group.OrderByDescending(item => item.ReceivedAt).ToList()
+            };
+        })
+        .OrderBy(group => group.CompanyId.HasValue ? 0 : 1)
+        .ThenBy(group => group.Name)
+        .ToList();
+
+    private static string HealthTip(int? h) => h.HasValue ? "امتیاز سلامت: " + h.Value + "از ۱۰۰" : "";
+
+    // ---------- تاریخچه ----------
+    private SystemInfoItem? historySys;
+    private List<HistoryEntry> sysHistory = new();
+    private bool historyLoading;
+
+    private async Task OpenHistory(SystemInfoItem it)
+    {
+        historySys = it;
+        historyLoading = true;
+        try { sysHistory = await Http.GetFromJsonAsync<List<HistoryEntry>>($"/api/SystemInfo/history/{it.Id}") ?? new(); }
+        catch { sysHistory = new(); }
+        finally { historyLoading = false; }
+    }
+
+    private void CloseHistory()
+    {
+        historySys = null;
+        sysHistory = new();
+    }
+
+    private async Task Delete(int id)
+    {
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/SystemInfo/{id}");
+            if (resp.IsSuccessStatusCode) await OnInitializedAsync();
+        }
+        catch { }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Load();
+    }
+
+    private int pendingAlarm;
+    private int firstPendingId;
+
+    private void ComputeAlarm()
+    {
+        pendingAlarm = items.Count(i => !string.IsNullOrEmpty(i.PendingPayloadJson));
+        firstPendingId = items.FirstOrDefault(i => !string.IsNullOrEmpty(i.PendingPayloadJson))?.Id ?? 0;
+    }
+
+    private async Task Load()
+    {
+        try
+        {
+            var all = await Http.GetFromJsonAsync<List<SystemInfoItem>>("/api/SystemInfo") ?? new();
+            // همه‌ی سیستم‌ها (تأییدشده و در انتظار) — جدیدترین اول
+            items = all.OrderByDescending(x => x.ReceivedAt).ToList();
+            try { users = await Http.GetFromJsonAsync<List<SystemUserItem>>("/api/SystemUsers") ?? new(); }
+            catch { users = new(); }
+            try { companies = await Http.GetFromJsonAsync<List<SystemCompanyItem>>("/api/SystemCompanies") ?? new(); }
+            catch { companies = new(); }
+            try { departments = await Http.GetFromJsonAsync<List<DeptItem>>("/api/SystemDepartments") ?? new(); }
+            catch { departments = new(); }
+            ComputeAlarm();
+            await LoadWeakestTips();
+        }
+        catch
+        {
+            items = new();
+        }
+    }
+
+    // ================== تحلیل‌های ناوگان ==================
+    public class DeptItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+    }
+    private List<DeptItem> departments = new();
+
+    private class OsSegment
+    {
+        public string Name { get; set; } = "";
+        public int Count { get; set; }
+        public int Pct { get; set; }
+        public string Color { get; set; } = "";
+    }
+
+    private static string NormOs(string? os)
+    {
+        var o = (os ?? "").Trim();
+        if (o.Length == 0) return "نامشخص";
+        if (o.Contains("11")) return "Windows 11";
+        if (o.Contains("10")) return "Windows 10";
+        return "سایر";
+    }
+
+    private static readonly string[] OsColors = { "#0ea5a4", "#8e5cff", "#f4a23c", "#b6bccb" };
+
+    private List<OsSegment> OsSegments
+    {
+        get
+        {
+            var groups = items
+                .GroupBy(x => NormOs(x.OsName))
+                .Select(g => new { Name = g.Key, Count = g.Count() })
+                .OrderByDescending(x => x.Count)
+                .ToList();
+            var total = Math.Max(1, items.Count);
+            return groups.Select((g, i) => new OsSegment
+            {
+                Name = g.Name,
+                Count = g.Count,
+                Pct = (int)Math.Round(g.Count * 100.0 / total),
+                Color = OsColors[i % OsColors.Length]
+            }).ToList();
+        }
+    }
+
+    /// <summary>SVG دونات چندبخشی برای نمودار سیستم‌عامل</summary>
+    private RenderFragment OsDonut => __builder =>
+    {
+        var segs = OsSegments;
+        const double R = 42;
+        const double C = 2 * Math.PI * R;
+        double acc = 0;
+        <div style="position:relative;width:150px;height:150px;flex-shrink:0;">
+            <svg viewBox="0 0 110 110" style="width:150px;height:150px;">
+                <circle cx="55" cy="55" r="@R" fill="none" stroke="#eef0f7" stroke-width="14"></circle>
+                @foreach (var seg in segs)
+                {
+                    var len = seg.Count * C / Math.Max(1, items.Count);
+                    <circle cx="55" cy="55" r="@R" fill="none" stroke="@seg.Color" stroke-width="14"
+                            stroke-dasharray="@len.ToString(System.Globalization.CultureInfo.InvariantCulture) 9999"
+                            stroke-dashoffset="@(-acc).ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                            transform="rotate(-90 55 55)"></circle>
+                    acc += len;
+                }
+            </svg>
+            <div class="os-center">
+                <div class="os-num num">@items.Count</div>
+                <div class="os-lbl">سیستم</div>
+            </div>
+        </div>
+    };
+
+    private class DeptRam
+    {
+        public string Name { get; set; } = "";
+        public double Avg { get; set; }
+        public int Count { get; set; }
+    }
+
+    private List<DeptRam> RamByDept
+    {
+        get
+        {
+            var groups = items
+                .GroupBy(x => x.DepartmentId)
+                .Select(g =>
+                {
+                    var withRam = g.Where(x => x.TotalRamGb > 0).ToList();
+                    return new DeptRam
+                    {
+                        Name = g.Key.HasValue
+                            ? (departments.FirstOrDefault(d => d.Id == g.Key.Value)?.Name ?? $"واحد #{g.Key.Value}")
+                            : "بدون واحد",
+                        Avg = withRam.Count > 0 ? Math.Round(withRam.Average(x => x.TotalRamGb), 1) : 0,
+                        Count = g.Count()
+                    };
+                })
+                .OrderByDescending(x => x.Avg)
+                .ToList();
+            return groups;
+        }
+    }
+
+    private int MaxDeptRam => Math.Max(1, RamByDept.Max(x => (int)Math.Ceiling(x.Avg)));
+
+    private List<SystemInfoItem> Weakest10 => items
+        .Where(x => x.Health.HasValue)
+        .OrderBy(x => x.Health!.Value)
+        .ThenByDescending(x => x.ReceivedAt)
+        .Take(10)
+        .ToList();
+
+    private Dictionary<int, string> weakestTips = new();
+
+    private async Task LoadWeakestTips()
+    {
+        weakestTips = new();
+        var targets = Weakest10;
+        if (targets.Count == 0) return;
+        var tasks = targets.Select(async it =>
+        {
+            try
+            {
+                var r = await Http.GetFromJsonAsync<HealthMini>($"/api/SystemInfo/health/{it.Id}");
+                if (r != null && r.Categories.Count > 0)
+                {
+                    var worst = r.Categories.OrderBy(c => (double)c.Score / Math.Max(1, c.Max)).First();
+                    weakestTips[it.Id] = TipFor(worst.Key);
+                    return (it.Id, true);
+                }
+            }
+            catch { }
+            return (it.Id, false);
+        });
+        await Task.WhenAll(tasks);
+    }
+
+    private static string TipFor(string key) => key switch
+    {
+        "storage" => "آزادسازی فضا / ارتقا درایو",
+        "ram" => "ارتقا حافظه رم",
+        "media" => "جایگزینی با SSD",
+        "cpu" => "ارتقا پردازنده",
+        "fresh" => "به‌روزرسانی اطلاعات (اجرای ایجنت)",
+        "status" => "تکمیل فرآیند تایید",
+        _ => "بررسی و ارتقا"
+    };
+
+    public class HealthMini
+    {
+        public int Score { get; set; }
+        public string GradeFa { get; set; } = "";
+        public List<HealthMiniCat> Categories { get; set; } = new();
+    }
+    public class HealthMiniCat
+    {
+        public string Key { get; set; } = "";
+        public int Score { get; set; }
+        public int Max { get; set; }
+    }
+
+    private async Task Approve(int id)
+    {
+        try
+        {
+            var resp = await Http.PostAsync($"/api/SystemInfo/approve/{id}", null);
+            if (resp.IsSuccessStatusCode)
+            {
+                await Load();
+            }
+        }
+        catch { }
+    }
+
+    public class DiffItem
+    {
+        public string Field { get; set; } = "";
+        public string? Old { get; set; }
+        public string? New { get; set; }
+        public bool Changed { get; set; }
+    }
+
+    public class HistoryEntry
+    {
+        public int Id { get; set; }
+        public DateTime ChangedAt { get; set; }
+        public int ChangeCount { get; set; }
+        public List<DiffItem> Diffs { get; set; } = new();
+    }
+
+    public class SystemUserItem
+    {
+        public int Id { get; set; }
+        public string FirstName { get; set; } = "";
+        public string LastName { get; set; } = "";
+        public string StaffNumber { get; set; } = "";
+        public int? CompanyId { get; set; }
+    }
+
+    public class SystemCompanyItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public string? Code { get; set; }
+        public bool IsActive { get; set; }
+    }
+
+    public class SystemInfoItem
+    {
+        public int Id { get; set; }
+        public string? DetailsJson { get; set; }
+        public string? PendingPayloadJson { get; set; }
+        public string? Ip { get; set; }
+        public string AgentId { get; set; } = "";
+        public string? Cpu { get; set; }
+        public string? Ram { get; set; }
+        public string? Motherboard { get; set; }
+        public string? OsName { get; set; }
+        public int TotalRamGb { get; set; }
+        public bool IsApproved { get; set; }
+        public int? CompanyId { get; set; }
+        public int? DepartmentId { get; set; }
+        public int? UserId { get; set; }
+        public DateTime ReceivedAt { get; set; }
+        public int? Health { get; set; }  // امتیاز سلامت 0-100 (محاسبه‌شده سمت سرور)
+    }
+}

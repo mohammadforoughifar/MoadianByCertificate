@@ -1,0 +1,113 @@
+@page "/personal-settings/letter-groups"
+@page "/settings/letter-groups"
+@using Inventory.Shared.Dtos
+@inject ILetterService Letters
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>گروه‌های گیرندگان نامه</PageTitle>
+
+@if (!Auth.Has("PersonalSettings.ManageLetterGroups") && !Auth.Has("InnerLetters.Create"))
+{
+    <div class="alert alert-danger">شما مجوز مدیریت گروه‌های گیرندگان را ندارید.</div>
+    return;
+}
+
+<div class="page-head">
+    <div>
+        <h1><i class="bi bi-people-fill text-primary me-2"></i>گروه‌های گیرندگان نامه</h1>
+        <p class="lead">گروه را یک‌بار تعریف کنید تا در نامه داخلی، ارجاع و هامش قابل انتخاب باشد.</p>
+    </div>
+</div>
+
+<div class="row g-3">
+    <div class="col-12 col-lg-5">
+        <div class="card shadow-sm border-0">
+            <div class="card-header fw-bold">@(editing.GroupId == 0 ? "گروه جدید" : "ویرایش گروه")</div>
+            <div class="card-body">
+                <label class="form-label">نام گروه</label>
+                <input class="form-control mb-3" @bind="editing.NameGroup" placeholder="مثلاً: مدیران واحد مالی" />
+                <label class="form-label">اعضای گروه</label>
+                <MultiSearchSelect Items="people" Values="editing.MemberUserIds" ValuesChanged="v => editing.MemberUserIds = v" Placeholder="جستجو و انتخاب اعضا…" />
+                <div class="d-flex gap-2 mt-3">
+                    <button class="btn btn-primary" disabled="@busy" @onclick="Save">
+                        <i class="bi bi-check-lg me-1"></i>ذخیره گروه
+                    </button>
+                    <button class="btn btn-outline-secondary" @onclick="Reset">پاک کردن فرم</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-lg-7">
+        <div class="card shadow-sm border-0">
+            <div class="card-header fw-bold">گروه‌های تعریف‌شده</div>
+            <div class="card-body p-0">
+                @if (groups.Count == 0)
+                {
+                    <div class="p-4 text-muted text-center">گروهی تعریف نشده است.</div>
+                }
+                else
+                {
+                    <div class="list-group list-group-flush">
+                        @foreach (var g in groups)
+                        {
+                            <div class="list-group-item d-flex align-items-center gap-2">
+                                <div class="flex-grow-1">
+                                    <div class="fw-semibold">@g.NameGroup</div>
+                                    <div class="small text-muted">@g.MemberCount نفر</div>
+                                </div>
+                                <button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(g)"><i class="bi bi-pencil"></i></button>
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => Remove(g)"><i class="bi bi-trash"></i></button>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<LetterGroupDto> groups = new();
+    private List<LookupItem> people = new();
+    private SaveLetterGroupDto editing = new();
+    private bool busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        people = (await Letters.GetReciversAsync())
+            .Select(x => new LookupItem { Id = x.UserId, Name = x.FullName })
+            .ToList();
+        await Load();
+    }
+
+    private async Task Load() => groups = await Letters.GetGroupsAsync();
+
+    private void Edit(LetterGroupDto g)
+    {
+        editing = new SaveLetterGroupDto
+        {
+            GroupId = g.GroupId,
+            NameGroup = g.NameGroup,
+            MemberUserIds = g.Members.Select(x => x.UserId).ToList()
+        };
+    }
+
+    private void Reset() => editing = new SaveLetterGroupDto();
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(editing.NameGroup)) { Toast.Error("نام گروه الزامی است."); return; }
+        if (editing.MemberUserIds.Count == 0) { Toast.Error("حداقل یک عضو انتخاب کنید."); return; }
+        busy = true;
+        try { await Letters.SaveGroupAsync(editing); await Load(); Reset(); Toast.Success("گروه ذخیره شد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task Remove(LetterGroupDto g)
+    {
+        try { await Letters.DeleteGroupAsync(g.GroupId); await Load(); Toast.Success("گروه حذف شد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

@@ -1,0 +1,949 @@
+@namespace Inventory.Client.Pages
+@page "/sales/visits/new"
+@page "/sales/visits/{Id:int}/edit"
+@inject ISalesVisitApi Api
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+
+<PageTitle>@(Id > 0 ? "ویرایش سفارش" : "سفارش جدید")</PageTitle>
+
+@if (lastSaved is not null)
+{
+    <div class="alert alert-success d-flex flex-wrap align-items-center gap-2" data-last-saved>
+        <i class="bi bi-check2-circle fs-5"></i>
+        <div>
+            سفارش <b>@lastSaved.Number</b> ثبت و برای تأیید مدیر فروش ارسال شد.
+            فرم برای ثبت <b>سفارش بعدی</b> پاک شد.
+        </div>
+        <div class="ms-auto d-flex gap-2">
+            <button class="btn btn-sm btn-light" @onclick="OpenLastSaved">
+                <i class="bi bi-receipt"></i> مشاهدهٔ سفارش
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="@(() => lastSaved = null)">
+                <i class="bi bi-x-lg"></i> بستن
+            </button>
+        </div>
+    </div>
+}
+
+<div class="page-head">
+    <div>
+        <h1>@(Id > 0 ? "ویرایش سفارش ویزیتوری" : "سفارش ویزیتوری جدید")</h1>
+        <p class="lead">مشتری، کالاها و تخفیف مجاز را ثبت کنید؛ سپس «ذخیره و ارسال» برای تأیید مدیر</p>
+        @if (!string.IsNullOrWhiteSpace(me?.CompanyName))
+        {
+            <div class="fs-8 text-muted mt-1" data-company-scope>
+                <i class="bi bi-buildings"></i>
+                شرکت: <b>@me!.CompanyName</b>
+                — مشتری‌ها، انبارها و کالاها فقط از همین شرکت نمایش داده می‌شوند.
+            </div>
+        }
+    </div>
+    <button class="btn btn-light ms-auto" @onclick="@(() => Nav.NavigateTo("/sales/visits"))">
+        <i class="bi bi-arrow-right"></i> بازگشت
+    </button>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else if (blocked is not null)
+{
+    <div class="empty-state" data-form-blocked>
+        <i class="bi bi-shield-lock"></i>
+        <h5>ثبت سفارش برای شما مجاز نیست</h5>
+        <div class="text-muted fs-8">@blocked</div>
+    </div>
+}
+else
+{
+    <div class="row g-3">
+        @* ---------------- ستون فرم ---------------- *@
+        <div class="col-12 col-xl-8">
+            <div class="card">
+                <div class="card-header"><i class="bi bi-person-vcard"></i><span class="card-title">مشخصات سفارش</span></div>
+                <div class="card-body">
+                    <div class="row g-2">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">مشتری <span class="text-danger">*</span></label>
+                            @* جستجو داخل خود کمبو است: نام، موبایل یا تلفن را تایپ کنید (فیلتر سمت سرور) *@
+                            <div class="d-flex gap-2">
+                                <div class="flex-grow-1 min-w-0">
+                                    <SearchSelect @key="formKey"
+                                                  Items="customerLookup"
+                                                  Value="model.PartyId"
+                                                  ValueChanged="OnCustomerPicked"
+                                                  RemoteSearch="true"
+                                                  SearchChanged="SearchCustomersAsync"
+                                                  Placeholder="جستجوی مشتری — نام، موبایل یا تلفن…" />
+                                </div>
+                                <button class="btn btn-outline-primary flex-shrink-0" @onclick="OpenCustomer"
+                                        title="مشتری جدید — فرم تعریف مشتری (طرف حساب)">
+                                    <i class="bi bi-person-plus"></i>
+                                </button>
+                            </div>
+                            @if (customers.Count == 0)
+                            {
+                                <div class="form-text text-warning">
+                                    برای شرکت شما مشتری فعالی ثبت نشده است؛ با دکمهٔ «مشتری جدید» همین‌جا اضافه کنید.
+                                </div>
+                            }
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">انبار <span class="text-danger">*</span></label>
+                            <select class="form-select" @bind="model.WarehouseId" @bind:after="ReloadProductLookupAsync">
+                                <option value="0">— انتخاب انبار —</option>
+                                @foreach (var w in warehouses)
+                                {
+                                    <option value="@w.Id">@w.Name</option>
+                                }
+                            </select>
+                            @if (warehouses.Count == 0)
+                            {
+                                <div class="form-text text-danger" data-no-warehouse>
+                                    هیچ انبار فعالی برای شرکت شما تعریف نشده است؛ از مدیر سیستم بخواهید
+                                    در «انبارها» انبار این شرکت را ثبت کند.
+                                </div>
+                            }
+                            <div class="row g-2 mt-1">
+                                <div class="col-6">
+                                    <label class="form-label">روش پرداخت</label>
+                                    <select class="form-select" @bind="model.PaymentMethod">
+                                        <option value="@PaymentMethod.Cash">نقدی</option>
+                                        <option value="@PaymentMethod.Credit">نسیه</option>
+                                        <option value="@PaymentMethod.Cheque">چک</option>
+                                        <option value="@PaymentMethod.Installment">اقساطی</option>
+                                    </select>
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label">تاریخ سفارش</label>
+                                    <DatePicker @bind-Value="orderDate" />
+                                </div>
+                            </div>
+                            <div class="row g-2 mt-1">
+                                <div class="col-12 col-sm-6">
+                                    <label class="form-label">
+                                        تاریخ دریافت محصول <span class="text-danger">*</span>
+                                        <i class="bi bi-info-circle text-muted" title="تاریخ تحویل مورد نظر شما؛ مدیر می‌تواند تاریخ نهایی را تغییر دهد و هر دو تاریخ در سابقه می‌ماند."></i>
+                                    </label>
+                                    <DatePicker @bind-Value="deliveryDate" />
+                                </div>
+                                <div class="col-12 col-sm-6 d-flex align-items-end">
+                                    @if (deliveryDate.HasValue)
+                                    {
+                                        <div class="alert alert-info py-2 px-2 fs-8 mb-0 w-100">
+                                            <i class="bi bi-truck"></i>
+                                            تحویل: <b>@deliveryDate.Value.ToFa()</b>
+                                            <span class="text-muted">(@PersianDate.DayName(deliveryDate.Value))</span>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">توضیحات</label>
+                            <input class="form-control" @bind="model.Note" placeholder="توضیح کوتاه (اختیاری)" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            @* ---------------- سطرهای کالا ---------------- *@
+            <div class="card mt-3">
+                <div class="card-header">
+                    <i class="bi bi-box-seam"></i><span class="card-title">کالاها</span>
+                    <span class="ms-auto fs-8 text-muted ms-2">@Fa.Digits(model.Lines.Count) سطر</span>
+                    @* همان رفتار و همان کلید میانبر فرم فروش: دکمه سطر خالی می‌سازد (F2) *@
+                    <button class="btn btn-sm btn-outline-primary me-2" data-hotkey="f2" title="کلید میانبر: F2"
+                            @onclick="AddEmptyLine" disabled="@(model.WarehouseId <= 0)">
+                        <i class="bi bi-plus-lg"></i> افزودن سطر (F2)
+                    </button>
+                </div>
+                <div class="card-body">
+                    @* جستجوی سریع (اختیاری): انتخاب کالا از فهرست، سطر همان کالا را اضافه/زیاد می‌کند *@
+                    <div class="input-group mb-2">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input class="form-control" placeholder="افزودن کالا — نام، کد یا بارکد… (یا با F2 سطر جدید)"
+                               @bind="productSearch" @bind:event="oninput" @bind:after="SearchProductsAsync" />
+                    </div>
+
+                    @if (me is not null && me.ProductCount == 0)
+                    {
+                        <div class="alert alert-warning py-2 px-2 fs-8" data-no-product>
+                            <i class="bi bi-exclamation-triangle"></i>
+                            برای شرکت <b>@(string.IsNullOrWhiteSpace(me.CompanyName) ? "شما" : me.CompanyName)</b>
+                            هیچ کالای فعالی تعریف نشده است؛ از مدیر سیستم بخواهید کالاهای این شرکت را ثبت کند.
+                        </div>
+                    }
+
+                    @if (productResults.Count > 0)
+                    {
+                        <div class="vis-suggest">
+                            @foreach (var p in productResults)
+                            {
+                                <div class="vis-suggest-item" @onclick="@(() => AddLine(p))">
+                                    <div>
+                                        <div class="fw-600 fs-8">@p.Name</div>
+                                        <div class="fs-9 text-muted">@p.Code — موجودی: @Fa.Number(p.Stock) @p.Unit</div>
+                                    </div>
+                                    <div class="text-start fs-8">@Fa.Money(p.SalePrice) ریال</div>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @if (model.WarehouseId <= 0)
+                    {
+                        <div class="form-text text-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            ابتدا انبار را انتخاب کنید تا بتوانید سطر کالا اضافه کنید.
+                        </div>
+                    }
+
+                    @if (model.Lines.Count == 0)
+                    {
+                        <div class="text-center text-muted py-4 fs-8">
+                            <i class="bi bi-basket d-block fs-3 mb-1"></i>هنوز کالایی اضافه نشده است
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle">
+                                <thead>
+                                    <tr>
+                                        <th style="width:27%">کالا</th>
+                                        <th style="width:10%">مقدار</th>
+                                        <th style="width:16%">قیمت واحد (ریال)</th>
+                                        <th style="width:21%" title="تا ۹۹ = درصد | از ۱۰۰ به بالا = مبلغ ریالی">تخفیف</th>
+                                        <th class="text-start" style="width:15%">جمع</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var l in model.Lines)
+                                    {
+                                        var available = AvailableOf(l);
+                                        var shortage = ShortageOf(l);
+                                        <tr class="@(shortage > 0 ? "table-warning" : "")" data-shortage="@(shortage > 0 ? "1" : "0")">
+                                            <td>
+                                                @* انتخاب کالا داخل خود سطر — مثل فرم فروش *@
+                                                <SearchSelect Items="productLookup"
+                                                              Value="l.ProductId"
+                                                              ValueChanged="id => OnLineProductPicked(l, id)"
+                                                              Placeholder="جستجوی کالا…" />
+                                                @if (!string.IsNullOrWhiteSpace(l.Unit))
+                                                {
+                                                    <div class="fs-9 text-muted mt-1">@l.ProductCode — واحد: @l.Unit</div>
+                                                }
+                                            </td>
+                                            <td>
+                                                <input class="form-control form-control-sm" value="@l.Quantity.ToString("0.##")"
+                                                       @onchange="e => SetQty(l, e.Value?.ToString())" />
+                                                @if (shortage > 0)
+                                                {
+                                                    <div class="fs-9 text-danger mt-1" data-stock-alarm>
+                                                        <i class="bi bi-exclamation-triangle"></i>
+                                                        موجودی @Fa.Number(available) — کسری @Fa.Number(shortage)
+                                                    </div>
+                                                }
+                                                else if (l.ProductId > 0)
+                                                {
+                                                    <div class="fs-9 text-muted mt-1">موجودی: @Fa.Number(available) @l.Unit</div>
+                                                }
+                                            </td>
+                                            <td>
+                                                @* قیمت واحد برای ویزیتور خاکستری و غیرقابل ویرایش است (فقط خواندنی) *@
+                                                <MoneyInput Value="l.UnitPrice"
+                                                            ValueChanged="v => SetPrice(l, v)"
+                                                            Disabled="@(me?.CanApprove != true && me?.IsAdmin != true)"
+                                                            ReadOnly="@(me?.CanApprove != true && me?.IsAdmin != true)"
+                                                            CssClass="@($"form-control form-control-sm text-center num {(me?.CanApprove != true && me?.IsAdmin != true ? "bg-light text-muted" : "")}")" />
+                                            </td>
+                                            <td>
+                                                @* دو حالته: تا ۹۹ = درصد، از ۱۰۰ به بالا = مبلغ ریالی *@
+                                                <div class="input-group input-group-sm">
+                                                    <input class="form-control form-control-sm text-center num"
+                                                           value="@DiscountText(l)"
+                                                           @oninput="e => OnDiscountInput(l, e.Value?.ToString())"
+                                                           @onblur="e => OnDiscountBlur(l)"
+                                                           inputmode="numeric" dir="ltr" />
+                                                    <span class="input-group-text @(l.DiscountIsAmount ? "text-primary" : "")"
+                                                          title="@(l.DiscountIsAmount ? "مبلغ ریالی" : "درصد")">
+                                                        @(l.DiscountIsAmount ? "ریال" : "٪")
+                                                    </span>
+                                                </div>
+                                                @* مبلغ تخفیف همان ردیف — همیشه به ریال نمایش داده می‌شود *@
+                                                @if (LineDiscount(l) > 0)
+                                                {
+                                                    <div class="fs-9 mt-1 discount-line" data-line-discount="@LineDiscount(l)">
+                                                        <span class="text-danger num">@Fa.Money(LineDiscount(l)) ریال</span>
+                                                        @if (l.DiscountIsAmount)
+                                                        {
+                                                            <span class="text-muted">(@Fa.Digits(l.DiscountPercent) درصد)</span>
+                                                        }
+                                                    </div>
+                                                }
+                                            </td>
+                                            <td class="text-start fs-8">@Fa.Money(l.LineTotal)</td>
+                                            <td>
+                                                <button class="btn btn-sm btn-outline-danger" @onclick="@(() => model.Lines.Remove(l))">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+
+                    @if (me?.CanApprove == true || me?.IsAdmin == true)
+                    {
+                        <div class="badge bg-info-subtle text-info border border-info-subtle p-2 mt-2 d-inline-flex align-items-center gap-1">
+                            <i class="bi bi-shield-check"></i> دسترسی مدیر: شما مجاز به اعمال هر مقدار تخفیف بدون محدودیت سقف هستید.
+                        </div>
+                    }
+                    else if (me?.MaxDiscountPercent > 0)
+                    {
+                        <div class="form-text mt-2 text-warning-emphasis">
+                            <i class="bi bi-info-circle ms-1"></i> سقف تخفیف مجاز شما: <b>@Fa.Digits(me.MaxDiscountPercent) درصد</b> (تخفیف بالاتر نیازمند تأیید مدیر است).
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        @* ---------------- ستون جمع‌بندی ---------------- *@
+        <div class="col-12 col-xl-4">
+            <div class="card sticky-top" style="top:.75rem">
+                <div class="card-header"><i class="bi bi-calculator"></i><span class="card-title">جمع سفارش</span></div>
+                <div class="card-body">
+                    <div class="d-flex justify-content-between fs-8 py-1">
+                        <span>جمع کل</span><span>@Fa.Money(Gross) ریال</span>
+                    </div>
+                    <div class="d-flex justify-content-between fs-8 py-1">
+                        <span>تخفیف</span><span class="text-danger">@Fa.Money(Discount) ریال</span>
+                    </div>
+                    <hr class="my-2" />
+                    <div class="d-flex justify-content-between align-items-baseline p-2 mt-2 rounded bg-light border">
+                        <span class="fw-bold fs-7 text-dark">مبلغ نهایی سفارش:</span>
+                        <div class="text-start">
+                            <span class="fw-900 fs-4 text-primary num">@Fa.Money(Net)</span>
+                            <small class="fs-8 text-secondary ms-1">ریال</small>
+                        </div>
+                    </div>
+
+                    @if (OverLimit)
+                    {
+                        <div class="alert alert-warning py-2 px-2 mt-3 fs-8 mb-0">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            تخفیف یک یا چند سطر از سقف مجاز شما بیشتر است؛ سفارش با علامت «تأیید ویژه» به مدیر می‌رود.
+                        </div>
+                    }
+
+                    @if (ShortLines.Count > 0)
+                    {
+                        <div class="alert alert-warning py-2 px-2 mt-3 mb-0 fs-8" data-stock-summary>
+                            <b><i class="bi bi-exclamation-triangle"></i> کسری موجودی در @Fa.Digits(ShortLines.Count) قلم:</b>
+                            @foreach (var sh in ShortLines)
+                            {
+                                <div class="fs-9">
+                                    @sh.Line.ProductName — موجودی @Fa.Number(sh.Available)، نیاز @Fa.Number(sh.Line.Quantity)
+                                </div>
+                            }
+                            <div class="fs-9 mt-1">ثبت سفارش انجام می‌شود؛ ولی پیش از ثبت فروش باید موجودی تأمین شود.</div>
+                        </div>
+                    }
+
+                    <div class="d-grid gap-2 mt-3">
+                        <button class="btn btn-primary" disabled="@saving" @onclick="@(() => SaveAsync(true))">
+                            <i class="bi bi-send-check"></i> ذخیره و ارسال برای تأیید
+                        </button>
+                        <button class="btn btn-outline-secondary" disabled="@saving" @onclick="@(() => SaveAsync(false))">
+                            <i class="bi bi-save"></i> ذخیرهٔ پیش‌نویس
+                        </button>
+                    </div>
+                    <div class="form-text mt-2">
+                        تا زمانی که ارسال نکنید، سفارش روی موجودی و حساب مشتری هیچ اثری ندارد.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ================== آلارم کسری موجودی — پیش از ثبت ==================
+   قاعدهٔ کارفرما: اگر موجودی کافی نیست آلارم داده شود؛ با «تأیید» کاربر ثبت انجام
+   می‌شود و با «انصراف» کار متوقف می‌ماند (هیچ سفارشی ذخیره نمی‌شود).
+   ==================================================================== *@
+@if (showStockConfirm)
+{
+    <div class="vis-modal-back">
+        <div class="vis-modal" data-stock-confirm>
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <i class="bi bi-exclamation-triangle-fill text-warning fs-4"></i>
+                <b>کسری موجودی انبار</b>
+            </div>
+            <div class="fs-8 mb-2">
+                برای @Fa.Digits(ShortLines.Count) قلم، موجودی انبار «@WarehouseName» کمتر از مقدار سفارش است:
+            </div>
+            <table class="table table-sm mb-2">
+                <thead><tr><th>کالا</th><th class="text-start">نیاز</th><th class="text-start">موجودی</th><th class="text-start">کسری</th></tr></thead>
+                <tbody>
+                    @foreach (var sh in ShortLines)
+                    {
+                        <tr>
+                            <td class="fs-8">@sh.Line.ProductName</td>
+                            <td class="text-start fs-8 num">@Fa.Number(sh.Line.Quantity)</td>
+                            <td class="text-start fs-8 num">@Fa.Number(sh.Available)</td>
+                            <td class="text-start fs-8 num text-danger">@Fa.Number(sh.Shortage)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <div class="fs-8 text-muted mb-3">
+                با تأیید شما، سفارش با همین مقادیر ثبت و ارسال می‌شود؛ تأمین موجودی پیش از ثبت فروش لازم است.
+            </div>
+            <div class="d-flex gap-2 justify-content-end">
+                <button class="btn btn-light" data-stock-cancel @onclick="CancelStockSave">انصراف</button>
+                <button class="btn btn-warning" data-stock-proceed @onclick="ProceedWithShortage">
+                    <i class="bi bi-check2-circle"></i> تأیید و ادامهٔ ثبت سفارش
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@* ================== مشتری جدید ==================
+   فرم واقعی «طرف حساب جدید» ماژول تعریف مشتری — همان کامپوننت /parties
+   ================================================== *@
+<PartyFormModal Visible="showCustomerForm"
+                Type="PartyType.Customer"
+                AllowReferrerPicker="false"
+                OnSaved="OnCustomerSaved"
+                OnCancel="CloseCustomer" />
+
+<style>
+    .vis-suggest { border: 1px solid #e2e8f0; border-radius: 10px; max-height: 220px; overflow: auto; margin-bottom: .6rem; }
+    .vis-suggest-item { display: flex; justify-content: space-between; gap: .5rem; padding: .45rem .6rem; cursor: pointer; border-bottom: 1px solid #f1f5f9; }
+    .vis-suggest-item:hover { background: #eff6ff; }
+    .vis-modal-back { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 1rem; }
+    .vis-modal { background: #fff; border-radius: 14px; padding: 1.1rem 1.2rem; width: 100%; max-width: 460px; }
+    .fs-8 { font-size: .78rem; }
+    .fs-9 { font-size: .7rem; }
+    .discount-line { text-align: center; line-height: 1.4; }
+    .discount-line > span { display: inline-block; margin: 0 .1rem; }
+</style>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private bool loading = true;
+    private bool saving;
+    private bool showCustomerForm;
+
+    private VisActorInfo? me;
+    private VisOrderCommand model = new() { Date = DateTime.Now };
+
+    /// <summary>آخرین سفارشِ ثبت‌شده در همین صفحه — بعد از ثبت، فرم پاک می‌شود تا سفارش بعدی زده شود.</summary>
+    private VisOrderDto? lastSaved;
+
+    /// <summary>کلید بازسازی کنترل‌ها — با پاک‌سازی فرم زیاد می‌شود تا متن انتخابگرها هم خالی شود.</summary>
+    private int formKey;
+
+    /// <summary>تاریخ سفارش (شمسی در UI) — پیش‌فرض امروز</summary>
+    private DateTime? orderDate = DateTime.Today;
+
+    /// <summary>تاریخ درخواستی دریافت محصول — پیش‌فرض امروز</summary>
+    private DateTime? deliveryDate = DateTime.Today;
+    private List<VisWarehouseLite> warehouses = new();
+    private List<VisCustomerLite> customers = new();
+
+    /// <summary>گزینه‌های کمبوی مشتری (نام — موبایل) برای انتخابگر جستجودار.</summary>
+    private List<LookupItem> customerLookup = new();
+
+    private System.Threading.CancellationTokenSource? _custDebounce;
+    private List<VisProductLite> productResults = new();
+
+    /// <summary>فهرست کالاهای انبار برای انتخابگر داخل سطر (در تغییر انبار تازه می‌شود).</summary>
+    private List<LookupItem> productLookup = new();
+
+    /// <summary>فهرست کامل کالاهای انبار بر اساس شناسه — برای پر کردن قیمت/واحد سطر پس از انتخاب.</summary>
+    private Dictionary<int, VisProductLite> productIndex = new();
+
+    private string? productSearch;
+    private System.Threading.CancellationTokenSource? _prodDebounce;
+
+    private decimal Gross => model.Lines.Sum(l => l.Quantity * l.UnitPrice);
+    private decimal Discount => model.Lines.Sum(LineDiscount);
+    private decimal Net => Gross - Discount;
+    private bool OverLimit => me?.CanApprove != true && me?.IsAdmin != true
+                              && me?.MaxDiscountPercent > 0
+                              && model.Lines.Any(l => l.DiscountPercent > me.MaxDiscountPercent);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle(Id > 0 ? "ویرایش سفارش" : "سفارش جدید");
+        try
+        {
+            me = await Api.MeAsync();
+
+            // نقش تأییدکننده/مالی، نقش ثبت‌کننده نیست: مدیر فروش هیچ مسیر «ثبت سفارش جدید» ندارد.
+            // (مدیر سیستم که هم Create دارد هم Approve، برای پشتیبانی از همین آدرس می‌تواند فرم را ببیند،
+            //  ولی در منو و فهرست هیچ دکمهٔ «سفارش جدید» نمی‌بیند.)
+            if (Id == 0 && !me.CanCreate)
+            {
+                blocked = me.CanApprove
+                    ? "شما نقش تأییدکننده دارید و ثبت سفارش از طریق ویزیتور انجام می‌شود؛ برای بررسی و تأیید از «همهٔ درخواست‌ها» استفاده کنید."
+                    : "مجوز «ثبت سفارش ویزیتوری» برای شما فعال نیست.";
+                loading = false;
+                return;
+            }
+
+            warehouses = await Api.WarehousesAsync();
+            if (model.WarehouseId == 0) model.WarehouseId = me.DefaultWarehouseId;
+            await ReloadProductLookupAsync();
+            customers = await Api.CustomersAsync(null);
+            RebuildCustomerLookup();
+
+            if (Id > 0)
+            {
+                var o = await Api.GetAsync(Id);
+                if (o is null)
+                {
+                    Toast.Error("سفارش یافت نشد.");
+                    Nav.NavigateTo("/sales/visits");
+                    return;
+                }
+                // ویزیتور فقط پیش‌نویس، برگشتی یا ارسال‌شده را می‌تواند ویرایش کند؛ مدیر در هر وضعیتی قبل از فاکتورشدن حق ویرایش دارد
+                var canEditThis = me.CanApprove || me.IsAdmin
+                    ? o.Status is VisOrderStatus.Draft or VisOrderStatus.Submitted or VisOrderStatus.Returned or VisOrderStatus.Approved
+                    : o.Status is VisOrderStatus.Draft or VisOrderStatus.Returned or VisOrderStatus.Submitted;
+
+                if (!canEditThis)
+                {
+                    Toast.Error("این سفارش در وضعیتی نیست که قابل ویرایش باشد.");
+                    Nav.NavigateTo($"/sales/visits/{o.Id}");
+                    return;
+                }
+                model = new VisOrderCommand
+                {
+                    Id = o.Id,
+                    Date = o.Date,
+                    DeliveryDate = o.DeliveryDate,
+                    PartyId = o.PartyId,
+                    WarehouseId = o.WarehouseId,
+                    PaymentMethod = o.PaymentMethod,
+                    Note = o.Note,
+                    Lines = o.Lines.ToList()
+                };
+                if (!customers.Any(c => c.Id == o.PartyId))
+                    customers.Insert(0, new VisCustomerLite { Id = o.PartyId, Name = o.PartyName });
+
+                orderDate = o.Date.Date;
+                deliveryDate = (o.DeliveryDate ?? o.Date).Date;
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    /// <summary>ساخت فهرست کالاهای انبار برای انتخابگر سطرها (مثل فرم فروش).</summary>
+    private async Task ReloadProductLookupAsync()
+    {
+        if (model.WarehouseId <= 0) { productLookup = new(); return; }
+        try
+        {
+            var list = await Api.ProductsAsync(model.WarehouseId, null);
+            productIndex = list.ToDictionary(p => p.Id);
+            productLookup = list.Select(p => new LookupItem
+            {
+                Id = p.Id,
+                Name = string.IsNullOrWhiteSpace(p.Code) ? p.Name : $"{p.Code} — {p.Name}",
+                InfoText = $"موجودی: {Fa.Number(p.Stock)} {p.Unit}"
+            }).ToList();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    /// <summary>ساخت گزینه‌های کمبو؛ نام و موبایل با هم تا جستجو روی هر دو ممکن باشد.</summary>
+    private void RebuildCustomerLookup()
+    {
+        customerLookup = customers.Select(c => new LookupItem
+        {
+            Id = c.Id,
+            Name = string.IsNullOrWhiteSpace(c.Mobile) ? c.Name : $"{c.Name} — {c.Mobile}",
+            InfoText = CustomerInfo(c)
+        }).ToList();
+    }
+
+    /// <summary>زیرنویس مشتری در کمبو: تلفن + ویزیتورِ مسئول (اگر مشتریِ ویزیتور دیگری در همین شرکت باشد).</summary>
+    private static string? CustomerInfo(VisCustomerLite c)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(c.Phone)) parts.Add($"تلفن: {c.Phone}");
+        if (!string.IsNullOrWhiteSpace(c.ReferrerName))
+            parts.Add(c.OwnedByMe ? "پروندهٔ شما" : $"ویزیتور: {c.ReferrerName}");
+        return parts.Count == 0 ? null : string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// جستجوی مشتری داخل خود کمبو (سمت سرور): نام، موبایل یا تلفن.
+    /// انتخابگر در حالت RemoteSearch کار می‌کند، پس هر متنی که کاربر تایپ کند به سرور می‌رود.
+    /// </summary>
+    private async Task SearchCustomersAsync(string? search)
+    {
+        _custDebounce?.Cancel();
+        _custDebounce = new System.Threading.CancellationTokenSource();
+        var token = _custDebounce.Token;
+        try { await Task.Delay(250, token); if (token.IsCancellationRequested) return; }
+        catch (TaskCanceledException) { return; }
+
+        var selected = customers.FirstOrDefault(c => c.Id == model.PartyId);
+        try
+        {
+            customers = await Api.CustomersAsync(search);
+            // مشتری انتخاب‌شده حتی اگر در نتیجهٔ جستجو نباشد، باید در فهرست بماند تا نامش نمایش داده شود
+            if (selected is not null && customers.All(c => c.Id != selected.Id))
+                customers.Insert(0, selected);
+            RebuildCustomerLookup();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    /// <summary>انتخاب مشتری از کمبوی جستجودار.</summary>
+    private void OnCustomerPicked(int partyId) => model.PartyId = partyId;
+
+    private async Task SearchProductsAsync()
+    {
+        if (string.IsNullOrWhiteSpace(productSearch)) { productResults.Clear(); return; }
+
+        _prodDebounce?.Cancel();
+        _prodDebounce = new System.Threading.CancellationTokenSource();
+        var token = _prodDebounce.Token;
+        try
+        {
+            await Task.Delay(300, token);
+            if (token.IsCancellationRequested) return;
+            productResults = await Api.ProductsAsync(model.WarehouseId, productSearch);
+        }
+        catch (TaskCanceledException) { }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void AddLine(VisProductLite p)
+    {
+        var existing = model.Lines.FirstOrDefault(l => l.ProductId == p.Id);
+        if (existing is not null)
+        {
+            existing.Quantity += 1;
+            existing.LineTotal = Round2(existing.Quantity * existing.UnitPrice) - LineDiscount(existing);
+        }
+        else
+        {
+            model.Lines.Add(new VisOrderLineDto
+            {
+                ProductId = p.Id,
+                ProductCode = p.Code,
+                ProductName = p.Name,
+                Unit = p.Unit,
+                Quantity = 1,
+                UnitPrice = p.SalePrice,
+                DiscountPercent = 0,
+                LineTotal = p.SalePrice
+            });
+        }
+
+        productSearch = "";
+        productResults.Clear();
+    }
+
+    /// <summary>
+    /// دکمه/کلید میانبر F2 — یک سطر خالی می‌سازد و کاربر داخل خود سطر کالا را انتخاب می‌کند
+    /// (دقیقاً مثل فرم فروش). این روش جایگزین «جستجو و افزودن» نیست، کنار آن است.
+    /// </summary>
+    private void AddEmptyLine()
+    {
+        if (model.WarehouseId <= 0) { Toast.Error("ابتدا انبار را انتخاب کنید."); return; }
+
+        model.Lines.Add(new VisOrderLineDto
+        {
+            ProductId = 0,
+            ProductName = "",
+            ProductCode = "",
+            Unit = "",
+            Quantity = 1,
+            UnitPrice = 0,
+            DiscountPercent = 0,
+            DiscountAmount = 0,
+            LineTotal = 0
+        });
+    }
+
+    /// <summary>انتخاب کالا برای یک سطر (از انتخابگر داخل سطر).</summary>
+    private void OnLineProductPicked(VisOrderLineDto line, int productId)
+    {
+        var p = productLookup.FirstOrDefault(x => x.Id == productId);
+        var full = productIndex.TryGetValue(productId, out var cached)
+            ? cached
+            : productResults.FirstOrDefault(x => x.Id == productId);
+
+        if (productId <= 0)
+        {
+            line.ProductId = 0;
+            line.ProductName = "";
+            line.ProductCode = "";
+            line.Unit = "";
+            line.UnitPrice = 0;
+            RecalcLine(line);
+            return;
+        }
+
+        var name = full?.Name ?? p?.Name ?? "";
+        // نام کالا در LookupItem به شکل «کد — نام» است؛ برای نمایش سطر، کد را جدا می‌کنیم
+        line.ProductId = productId;
+        line.ProductName = name;
+        if (full is not null)
+        {
+            line.ProductCode = full.Code;
+            line.Unit = full.Unit;
+            line.UnitPrice = full.SalePrice;
+        }
+        if (full is not null && !productIndex.ContainsKey(productId)) productIndex[productId] = full;
+        if (string.IsNullOrWhiteSpace(line.Unit)) line.Unit = "";
+        if (line.Quantity <= 0) line.Quantity = 1;
+        RecalcLine(line);
+
+        // سطرهای دیگر نباید همان کالا را داشته باشند
+        var dup = model.Lines.Where(l => !ReferenceEquals(l, line) && l.ProductId == productId).ToList();
+        foreach (var d in dup) model.Lines.Remove(d);
+    }
+
+    private void SetQty(VisOrderLineDto line, string? value)
+    {
+        line.Quantity = Math.Max(0, Fa.ParseDecimal(value));
+        RecalcLine(line);
+    }
+
+    private void SetPrice(VisOrderLineDto line, string? value)
+    {
+        line.UnitPrice = Math.Max(0, Fa.ParseDecimal(value));
+        RecalcLine(line);
+    }
+
+    /// <summary>قیمت واحد از کامپوننت MoneyInput (مقدار عددی آماده)</summary>
+    private void SetPrice(VisOrderLineDto line, decimal value)
+    {
+        line.UnitPrice = Math.Max(0, value);
+        RecalcLine(line);
+    }
+
+    private void SetDiscount(VisOrderLineDto line, string? value) => OnDiscountInput(line, value);
+
+    /// <summary>
+    /// تخفیف ریالی یک سطر — منبع واحد محاسبه در فرم.
+    /// <para>قاعدهٔ ورود: عدد تا ۹۹ درصد است و از ۱۰۰ به بالا مبلغ ریالی؛ در حالت ریالی
+    /// مبلغ بیش از جمع سطر پذیرفته نمی‌شود.</para>
+    /// </summary>
+    private static decimal LineDiscount(VisOrderLineDto line)
+    {
+        var gross = Round2(line.Quantity * line.UnitPrice);
+        if (line.DiscountIsAmount)
+            return Math.Clamp(Math.Round(line.DiscountAmount, 0), 0, Math.Max(0, gross));
+        return Math.Round(gross * Math.Clamp(line.DiscountPercent, 0, 99) / 100m, 0);
+    }
+
+    private static void RecalcLine(VisOrderLineDto line)
+    {
+        var gross = Round2(line.Quantity * line.UnitPrice);
+        var discount = LineDiscount(line);
+        // درصد معادل برای نمایش و سنجش سقف مدیر
+        line.DiscountPercent = line.DiscountIsAmount
+            ? (gross > 0 ? Math.Round(discount * 100m / gross, 2) : 0)
+            : Math.Clamp(line.DiscountPercent, 0, 99);
+        line.DiscountAmount = discount;
+        line.LineTotal = gross - discount;
+    }
+
+    /// <summary>متن نمایشی فیلد تخفیف: درصدی بدون جداکننده، ریالی با جداکنندهٔ سه‌رقمی.</summary>
+    private static string DiscountText(VisOrderLineDto line)
+        => line.DiscountIsAmount
+            ? Fa.FormatTyping(line.DiscountAmount.ToString("0", System.Globalization.CultureInfo.InvariantCulture))
+            : line.DiscountPercent.ToString("0.##");
+
+    /// <summary>
+    /// ورودی تخفیف — هستهٔ قاعدهٔ دو حالته.
+    /// مقدار پاک‌شده اگر ≤ ۹۹ باشد درصد و از ۱۰۰ به بالا مبلغ ریالی در نظر گرفته می‌شود.
+    /// چون مقدارها در DOM نگه‌داری می‌شوند (و نه با @bind)، تایپ کاربر وسط کار پرش نمی‌کند.
+    /// </summary>
+    private void OnDiscountInput(VisOrderLineDto line, string? raw)
+    {
+        var value = Math.Max(0, Fa.ParseDecimal(raw));
+        if (value <= 99)
+        {
+            line.DiscountIsAmount = false;
+            line.DiscountPercent = value;
+            line.DiscountAmount = 0;
+        }
+        else
+        {
+            line.DiscountIsAmount = true;
+            line.DiscountAmount = value;   // سقف با جمع سطر در RecalcLine اعمال می‌شود
+        }
+        RecalcLine(line);
+    }
+
+    /// <summary>پس از خروج از فیلد، متن با قالب درست (جداکننده/بدون جداکننده) بازنویسی می‌شود.</summary>
+    private void OnDiscountBlur(VisOrderLineDto line)
+    {
+        RecalcLine(line);
+        StateHasChanged();
+    }
+
+    private static decimal Round2(decimal v) => Math.Round(v, 2);
+
+    // ================== آلارم کسری موجودی ==================
+    /// <summary>پیام مسدود بودن فرم (نقش تأییدکننده یا نداشتن مجوز ثبت).</summary>
+    private string? blocked;
+
+    private bool showStockConfirm;
+    private bool pendingSubmit;
+
+    /// <summary>موجودی همین انبار برای کالای سطر (از فهرست کالاهای انبار).</summary>
+    private decimal AvailableOf(VisOrderLineDto l)
+        => l.ProductId > 0 && productIndex.TryGetValue(l.ProductId, out var p) ? p.Stock : 0m;
+
+    /// <summary>مقدار کسری همان سطر (صفر = موجودی کافی است).</summary>
+    private decimal ShortageOf(VisOrderLineDto l)
+        => l.ProductId > 0 ? Math.Max(0, l.Quantity - AvailableOf(l)) : 0m;
+
+    private sealed record ShortLine(VisOrderLineDto Line, decimal Available, decimal Shortage);
+
+    /// <summary>سطرهای دارای کسری موجودی — برای آلارم ردیف و پنجرهٔ تأیید.</summary>
+    private List<ShortLine> ShortLines => model.Lines
+        .Where(l => l.ProductId > 0 && ShortageOf(l) > 0)
+        .Select(l => new ShortLine(l, AvailableOf(l), ShortageOf(l)))
+        .ToList();
+
+    private string WarehouseName => warehouses.FirstOrDefault(w => w.Id == model.WarehouseId)?.Name ?? "—";
+
+    /// <summary>انصراف در پنجرهٔ کسری: هیچ چیزی ذخیره نمی‌شود (کار متوقف می‌شود).</summary>
+    private void CancelStockSave()
+    {
+        showStockConfirm = false;
+        Toast.Info("ثبت سفارش متوقف شد؛ مقدار سفارش را با موجودی انبار متناسب کنید یا موجودی را تأمین کنید.");
+    }
+
+    /// <summary>تأیید کاربر روی آلارم کسری: ثبت سفارش ادامه پیدا می‌کند.</summary>
+    private async Task ProceedWithShortage()
+    {
+        showStockConfirm = false;
+        await DoSaveAsync(pendingSubmit);
+    }
+
+    private async Task SaveAsync(bool submit)
+    {
+        if (model.PartyId <= 0) { Toast.Error("مشتری را انتخاب کنید."); return; }
+        if (model.WarehouseId <= 0) { Toast.Error("انبار را انتخاب کنید."); return; }
+        if (model.Lines.Count == 0) { Toast.Error("حداقل یک کالا اضافه کنید."); return; }
+        if (model.Lines.Any(l => l.ProductId <= 0)) { Toast.Error("در هر سطر یک کالا انتخاب کنید (یا سطر خالی را حذف کنید)."); return; }
+        if (model.Lines.Any(l => l.Quantity <= 0)) { Toast.Error("مقدار هر سطر باید بزرگ‌تر از صفر باشد."); return; }
+        if (deliveryDate is null) { Toast.Error("تاریخ دریافت محصول را انتخاب کنید."); return; }
+
+        // محدودیت سقف تخفیف برای ویزیتور (مدیر محدودیت ندارد)
+        if (me?.CanApprove != true && me?.IsAdmin != true && me?.MaxDiscountPercent > 0)
+        {
+            var invalidLine = model.Lines.FirstOrDefault(l => l.DiscountPercent > me.MaxDiscountPercent);
+            if (invalidLine is not null)
+            {
+                Toast.Error($"درصد تخفیف سطر «{invalidLine.ProductName}» ({Fa.Digits(invalidLine.DiscountPercent)}٪) بیش از سقف مجاز شما ({Fa.Digits(me.MaxDiscountPercent)}٪) است.");
+                return;
+            }
+        }
+
+        // آلارم کسری موجودی: کاربر باید صریحاً تأیید کند، وگرنه ثبت متوقف می‌شود
+        if (ShortLines.Count > 0)
+        {
+            pendingSubmit = submit;
+            showStockConfirm = true;
+            return;
+        }
+
+        await DoSaveAsync(submit);
+    }
+
+    private async Task DoSaveAsync(bool submit)
+    {
+        saving = true;
+        try
+        {
+            model.Date = orderDate?.Date ?? DateTime.Today;
+            model.DeliveryDate = deliveryDate.Value.Date;
+            model.SubmitAfterSave = submit;
+            var saved = await Api.SaveAsync(model);
+            Toast.Success(submit
+                ? $"سفارش {saved.Number} برای تأیید مدیر فروش ارسال شد."
+                : $"پیش‌نویس سفارش {saved.Number} ذخیره شد.");
+
+            if (Id > 0)
+            {
+                // ویرایش سفارش موجود: بازگشت به همان سفارش
+                Nav.NavigateTo($"/sales/visits/{saved.Id}");
+                return;
+            }
+
+            // سفارش جدید: فرم پاک می‌شود تا بلافاصله سفارش بعدی ثبت شود (بدون رفتن به صفحهٔ دیگر)
+            lastSaved = saved;
+            await ResetForNextOrderAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    /// <summary>پس از ثبت سفارش: پاک‌سازی کامل فرم برای سفارش بعدی (انبار انتخاب‌شده می‌ماند تا ثبت سریع‌تر شود).</summary>
+    private async Task ResetForNextOrderAsync()
+    {
+        model = new VisOrderCommand
+        {
+            Date = DateTime.Today,
+            DeliveryDate = DateTime.Today,
+            WarehouseId = model.WarehouseId,
+            PaymentMethod = model.PaymentMethod
+        };
+        orderDate = DateTime.Today;
+        deliveryDate = DateTime.Today;
+        productSearch = null;
+        productResults = new();
+        formKey++;   // انتخابگر مشتری از نو ساخته می‌شود (متن قبلی پاک می‌شود)
+        try { customers = await Api.CustomersAsync(null); }
+        catch { /* فهرست قبلی کافی است */ }
+        RebuildCustomerLookup();
+        await ReloadProductLookupAsync();
+    }
+
+    private void OpenLastSaved()
+    {
+        if (lastSaved is not null) Nav.NavigateTo($"/sales/visits/{lastSaved.Id}");
+    }
+
+    /// <summary>باز کردن «فرم تعریف مشتری» — همان فرم واقعی طرف حساب.</summary>
+    private void OpenCustomer() => showCustomerForm = true;
+
+    private void CloseCustomer() => showCustomerForm = false;
+
+    /// <summary>پس از ثبت مشتری در فرم واقعی طرف حساب: انتخاب خودکار و تازه‌سازی فهرست.</summary>
+    private async Task OnCustomerSaved(Party created)
+    {
+        showCustomerForm = false;
+        try { customers = await Api.CustomersAsync(null); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        model.PartyId = created.Id;
+        if (!customers.Any(c => c.Id == created.Id))
+            customers.Insert(0, new VisCustomerLite { Id = created.Id, Name = created.Name, Mobile = created.Mobile, Phone = created.Phone, Address = created.Address });
+        RebuildCustomerLookup();
+        Toast.Success($"مشتری «{created.Name}» در تعریف مشتریان ثبت شد و انتخاب شد.");
+    }
+}

@@ -1,0 +1,207 @@
+@page "/acc/reports/trial-balance"
+@inject IAccReportService ReportSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>تراز آزمایشی</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>تراز آزمایشی</h1>
+        <p class="lead">گزارش هشت‌ستونی: مانده ابتدای دوره، گردش دوره، گردش تجمعی و مانده پایان دوره</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-outline-secondary" @onclick="Print"><i class="bi bi-printer"></i> چاپ</button>
+    </div>
+</div>
+
+<div class="card mb-3 d-print-none">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-6 col-md-3">
+                <label class="form-label">سطح گزارش</label>
+                <select class="form-select" value="@((int)level)" @onchange="OnLevel">
+                    <option value="0">گروه</option>
+                    <option value="1">کل</option>
+                    <option value="2">معین</option>
+                    <option value="3">تفصیلی</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">از تاریخ</label>
+                <DatePicker Value="from" ValueChanged="OnFrom" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">تا تاریخ</label>
+                <DatePicker Value="to" ValueChanged="OnTo" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="form-check form-switch mt-4">
+                    <input class="form-check-input" type="checkbox" id="hideZero" checked="@hideZero" @onchange="OnHideZero" />
+                    <label class="form-check-label" for="hideZero">پنهان کردن حساب‌های بدون گردش</label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else if (result is null || result.Rows.Count == 0)
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="bi bi-table"></i>
+                <h5>داده‌ای برای نمایش وجود ندارد</h5>
+                <p class="text-muted">فقط اسناد «قطعی» در تراز آزمایشی منظور می‌شوند.</p>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <div class="alert @(result.IsBalanced ? "alert-success" : "alert-danger") d-flex align-items-center gap-2">
+        <i class="bi @(result.IsBalanced ? "bi-check-circle-fill" : "bi-exclamation-triangle-fill")"></i>
+        @if (result.IsBalanced)
+        {
+            <span>تراز است — جمع ستون‌های بدهکار و بستانکار برابر است.</span>
+        }
+        else
+        {
+            <span>
+                تراز نیست! اختلاف گردش دوره:
+                <b class="num">@Math.Abs(result.SumPeriodDebit - result.SumPeriodCredit).Money()</b> ریال
+            </span>
+        }
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-table text-primary"></i>
+            <span class="card-title">تراز در سطح @LevelTitle(result.Level)</span>
+            <span class="badge badge-soft-primary ms-auto num">@result.Rows.Count.Num() حساب</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover table-sm align-middle mb-0 text-nowrap">
+                    <thead>
+                        <tr>
+                            <th rowspan="2" style="width:44px">#</th>
+                            <th rowspan="2">کد</th>
+                            <th rowspan="2">نام حساب</th>
+                            <th colspan="2" class="text-center border-start">مانده ابتدای دوره</th>
+                            <th colspan="2" class="text-center border-start">گردش طی دوره</th>
+                            <th colspan="2" class="text-center border-start">گردش تجمعی</th>
+                            <th colspan="2" class="text-center border-start">مانده پایان دوره</th>
+                        </tr>
+                        <tr>
+                            <th class="text-center border-start">بدهکار</th>
+                            <th class="text-center">بستانکار</th>
+                            <th class="text-center border-start">بدهکار</th>
+                            <th class="text-center">بستانکار</th>
+                            <th class="text-center border-start">بدهکار</th>
+                            <th class="text-center">بستانکار</th>
+                            <th class="text-center border-start">بدهکار</th>
+                            <th class="text-center">بستانکار</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{ var row = 1; }
+                        @foreach (var r in result.Rows)
+                        {
+                            <tr>
+                                <td class="num text-muted">@((row++).FaDigits())</td>
+                                <td class="num">@r.AccountCode.FaDigits()</td>
+                                <td>
+                                    <a href="@($"/acc/reports/ledger?accountId={r.AccountId}")">@r.AccountName</a>
+                                </td>
+                                <td class="text-center num border-start">@Cell(r.OpeningDebit)</td>
+                                <td class="text-center num">@Cell(r.OpeningCredit)</td>
+                                <td class="text-center num text-success border-start">@Cell(r.PeriodDebit)</td>
+                                <td class="text-center num text-danger">@Cell(r.PeriodCredit)</td>
+                                <td class="text-center num border-start">@Cell(r.TotalDebit)</td>
+                                <td class="text-center num">@Cell(r.TotalCredit)</td>
+                                <td class="text-center num fw-600 border-start">@Cell(r.ClosingDebit)</td>
+                                <td class="text-center num fw-600">@Cell(r.ClosingCredit)</td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot class="table-light">
+                        <tr>
+                            <th colspan="3" class="text-end">جمع کل</th>
+                            <th class="text-center num border-start">@result.SumOpeningDebit.Money()</th>
+                            <th class="text-center num">@result.SumOpeningCredit.Money()</th>
+                            <th class="text-center num text-success border-start">@result.SumPeriodDebit.Money()</th>
+                            <th class="text-center num text-danger">@result.SumPeriodCredit.Money()</th>
+                            <th class="text-center num border-start">@((result.SumOpeningDebit + result.SumPeriodDebit).Money())</th>
+                            <th class="text-center num">@((result.SumOpeningCredit + result.SumPeriodCredit).Money())</th>
+                            <th class="text-center num border-start">@result.SumClosingDebit.Money()</th>
+                            <th class="text-center num">@result.SumClosingCredit.Money()</th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private AccTrialBalanceResult? result;
+    private AccountLevel level = AccountLevel.General;
+    private DateTime? from, to;
+    private bool hideZero = true, loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("تراز آزمایشی");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try { result = await ReportSvc.GetTrialBalanceAsync(level, from, to, hideZero); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnLevel(ChangeEventArgs e)
+    {
+        level = (AccountLevel)int.Parse(e.Value?.ToString() ?? "1");
+        await Load();
+    }
+
+    private async Task OnFrom(DateTime? d)
+    {
+        from = d;
+        await Load();
+    }
+
+    private async Task OnTo(DateTime? d)
+    {
+        to = d;
+        await Load();
+    }
+
+    private async Task OnHideZero(ChangeEventArgs e)
+    {
+        hideZero = e.Value is bool b && b;
+        await Load();
+    }
+
+    private static string Cell(decimal v) => v == 0 ? "—" : v.Money();
+
+    private static string LevelTitle(AccountLevel l) => l switch
+    {
+        AccountLevel.Group => "گروه",
+        AccountLevel.General => "کل",
+        AccountLevel.Subsidiary => "معین",
+        _ => "تفصیلی"
+    };
+
+    private async Task Print() => await JS.InvokeVoidAsync("window.print");
+}

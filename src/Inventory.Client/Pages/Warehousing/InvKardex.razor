@@ -1,0 +1,353 @@
+@page "/inv/kardex"
+@page "/operations/reports/kardex-rial"
+@inject IInvReportService ReportSvc
+@inject IInvProductService ProductSvc
+@inject IInvWarehouseService WarehouseSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>کاردکس کالا</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>گزارش کاردکس کالا</h1>
+        <p class="lead">گردش مقداری و ریالی کالا بر اساس اسناد قطعی‌شده انبار</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-outline-primary" disabled="@(result is null)" @onclick="Print">
+            <i class="bi bi-printer"></i> چاپ
+        </button>
+    </div>
+</div>
+
+@* ---------- نوار فیلتر ---------- *@
+<div class="card mb-3">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-4">
+                <label class="form-label">کالا <span class="text-danger">*</span></label>
+                <SearchSelect Items="products" Value="productId" ValueChanged="OnProduct" Placeholder="جستجوی کالا…" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">انبار</label>
+                <select class="form-select" value="@(warehouseId?.ToString() ?? "")" @onchange="OnWarehouse">
+                    <option value="">همه انبارها</option>
+                    @foreach (var w in warehouses)
+                    {
+                        <option value="@w.Id">@w.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">از تاریخ</label>
+                <DatePicker Value="from" ValueChanged="OnFrom" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">تا تاریخ</label>
+                <DatePicker Value="to" ValueChanged="OnTo" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-1">
+                <button class="btn btn-primary w-100" disabled="@(productId <= 0 || loading)" @onclick="Load">
+                    <i class="bi bi-search"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else if (result is null)
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="bi bi-clipboard-data"></i>
+                <h5>کالایی انتخاب نشده است</h5>
+                <p class="text-muted">برای مشاهده گردش مقداری و ریالی، یک کالا انتخاب کنید.</p>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    @* ---------- سربرگ گزارش ---------- *@
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="d-flex flex-wrap align-items-center gap-3">
+                <span class="stat-icon bg-soft-primary" style="width:46px;height:46px;font-size:1.2rem"><i class="bi bi-box-seam"></i></span>
+                <div>
+                    <div class="fw-700" style="font-size:1.05rem">@result.ProductName</div>
+                    <div class="text-muted num" style="font-size:.78rem">
+                        کد: @result.ProductCode — واحد: @result.Unit — انبار: @(result.WarehouseName ?? "همه انبارها")
+                    </div>
+                </div>
+                <span class="badge badge-soft-info ms-auto">
+                    <i class="bi bi-calculator"></i> روش قیمت‌گذاری: @result.MethodTitle
+                </span>
+            </div>
+        </div>
+    </div>
+
+    @* ---------- کارت‌های خلاصه ---------- *@
+    <div class="row g-2 mb-3">
+        <div class="col-6 col-lg-3">
+            <div class="mini-kpi">
+                <i class="bi bi-hourglass-top bg-soft-muted text-muted"></i>
+                <div>
+                    <div class="k-val num">@result.OpeningQty.Num()</div>
+                    <div class="k-lbl">مانده ابتدای دوره — @result.OpeningValue.Money() ریال</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="mini-kpi">
+                <i class="bi bi-box-arrow-in-down bg-soft-success text-success"></i>
+                <div>
+                    <div class="k-val num">@result.TotalInQty.Num()</div>
+                    <div class="k-lbl">جمع وارده — @result.TotalInValue.Money() ریال</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="mini-kpi">
+                <i class="bi bi-box-arrow-up bg-soft-danger text-danger"></i>
+                <div>
+                    <div class="k-val num">@result.TotalOutQty.Num()</div>
+                    <div class="k-lbl">جمع صادره — @result.TotalOutValue.Money() ریال</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="mini-kpi">
+                <i class="bi bi-boxes bg-soft-primary text-primary"></i>
+                <div>
+                    <div class="k-val num">@result.ClosingQty.Num()</div>
+                    <div class="k-lbl">مانده پایان دوره — @result.ClosingValue.Money() ریال</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* ---------- جدول کاردکس ---------- *@
+    <div class="card">
+        <div class="card-header">
+            <span><i class="bi bi-table text-primary"></i> گردش کالا</span>
+            <span class="badge badge-soft-primary num ms-auto">@result.Rows.Count.Num() گردش</span>
+        </div>
+        <div class="card-body p-0">
+            @if (result.Rows.Count == 0)
+            {
+                <div class="empty-state">
+                    <i class="bi bi-inboxes"></i>
+                    <h5>در این بازه گردشی ثبت نشده است</h5>
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive grid-desktop">
+                    <table class="table table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th rowspan="2" style="width:8px"></th>
+                                <th rowspan="2">تاریخ</th>
+                                <th rowspan="2">سند</th>
+                                <th rowspan="2">شرح</th>
+                                <th colspan="3" class="text-center table-success-soft">وارده</th>
+                                <th colspan="3" class="text-center table-danger-soft">صادره</th>
+                                <th colspan="3" class="text-center">مانده</th>
+                            </tr>
+                            <tr>
+                                <th class="text-center">مقدار</th>
+                                <th class="text-center">فی</th>
+                                <th class="text-center">مبلغ</th>
+                                <th class="text-center">مقدار</th>
+                                <th class="text-center">فی</th>
+                                <th class="text-center">مبلغ</th>
+                                <th class="text-center">مقدار</th>
+                                <th class="text-center">میانگین</th>
+                                <th class="text-center">مبلغ</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="table-light">
+                                <td class="p-0"></td>
+                                <td colspan="3" class="fw-600">مانده ابتدای دوره</td>
+                                <td colspan="6"></td>
+                                <td class="text-center num fw-600">@result.OpeningQty.Num()</td>
+                                <td class="text-center num">@(result.OpeningQty != 0 ? (result.OpeningValue / result.OpeningQty).Money() : "—")</td>
+                                <td class="text-center num fw-600">@result.OpeningValue.Money()</td>
+                            </tr>
+                            @foreach (var r in result.Rows)
+                            {
+                                <tr>
+                                    <td class="p-0"><div class="nature-strip @NatureCls(r.Nature)" style="height:40px"></div></td>
+                                    <td class="num">@r.Date.ToFaDate()</td>
+                                    <td>
+                                        <a href="@($"/inv/docs/edit/{r.DocId}")" class="text-decoration-none">
+                                            <span class="fw-500 num">@r.Number</span>
+                                        </a>
+                                        <div class="text-muted" style="font-size:.72rem">@r.DocTypeName@(string.IsNullOrWhiteSpace(r.WarehouseName) ? "" : $" — {r.WarehouseName}")</div>
+                                    </td>
+                                    <td class="text-muted" style="font-size:.8rem">
+                                        @(string.IsNullOrWhiteSpace(r.PartyName) ? "" : r.PartyName)
+                                        @(string.IsNullOrWhiteSpace(r.Description) ? "" : $" — {r.Description}")
+                                    </td>
+                                    <td class="text-center num text-success">@(r.InQty != 0 ? r.InQty.Num() : "")</td>
+                                    <td class="text-center num">@(r.InQty != 0 ? r.InPrice.Money() : "")</td>
+                                    <td class="text-center num">@(r.InQty != 0 ? r.InValue.Money() : "")</td>
+                                    <td class="text-center num text-danger">@(r.OutQty != 0 ? r.OutQty.Num() : "")</td>
+                                    <td class="text-center num">@(r.OutQty != 0 ? r.OutPrice.Money() : "")</td>
+                                    <td class="text-center num">@(r.OutQty != 0 ? r.OutValue.Money() : "")</td>
+                                    <td class="text-center num fw-600">@r.BalanceQty.Num()</td>
+                                    <td class="text-center num text-muted">@r.BalanceAvg.Money()</td>
+                                    <td class="text-center num fw-600">@r.BalanceValue.Money()</td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot>
+                            <tr class="table-light fw-700">
+                                <td class="p-0"></td>
+                                <td colspan="3">جمع دوره</td>
+                                <td class="text-center num text-success">@result.TotalInQty.Num()</td>
+                                <td></td>
+                                <td class="text-center num">@result.TotalInValue.Money()</td>
+                                <td class="text-center num text-danger">@result.TotalOutQty.Num()</td>
+                                <td></td>
+                                <td class="text-center num">@result.TotalOutValue.Money()</td>
+                                <td class="text-center num">@result.ClosingQty.Num()</td>
+                                <td></td>
+                                <td class="text-center num">@result.ClosingValue.Money()</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                @* ---------- نمای کارتی (موبایل) ---------- *@
+                <div class="cards-mobile">
+                    @foreach (var r in result.Rows)
+                    {
+                        <div class="m-card @(r.InQty != 0 ? "st-ready" : r.OutQty != 0 ? "st-cancelled" : "st-received")">
+                            <div class="m-card-head">
+                                <div class="m-card-icon"><i class="bi @NatureIcon(r.Nature)"></i></div>
+                                <div class="flex-grow-1 min-w-0">
+                                    <div class="fw-700 num text-truncate">@r.Number</div>
+                                    <div class="fs-8 text-muted text-truncate">@r.DocTypeName — @r.Date.ToFaDate()</div>
+                                </div>
+                                <div class="text-end">
+                                    <div class="fs-8 text-muted">مانده</div>
+                                    <div class="num fw-800 text-primary">@r.BalanceQty.Num()</div>
+                                </div>
+                            </div>
+                            <div class="m-card-body">
+                                @if (r.InQty != 0)
+                                {
+                                    <div class="m-card-row"><span><i class="bi bi-box-arrow-in-down text-success"></i> وارده</span><b class="num">@r.InQty.Num() × @r.InPrice.Money()</b></div>
+                                }
+                                @if (r.OutQty != 0)
+                                {
+                                    <div class="m-card-row"><span><i class="bi bi-box-arrow-up text-danger"></i> صادره</span><b class="num">@r.OutQty.Num() × @r.OutPrice.Money()</b></div>
+                                }
+                                <div class="m-card-money"><span>ارزش مانده</span><b class="num">@r.BalanceValue.Money() <small>ریال</small></b></div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "productId")] public int? QueryProductId { get; set; }
+    [SupplyParameterFromQuery(Name = "warehouseId")] public int? QueryWarehouseId { get; set; }
+
+    private List<LookupItem> products = new();
+    private List<LookupItem> warehouses = new();
+    private InvKardexResult? result;
+    private bool loading;
+    private int productId;
+    private int? warehouseId;
+    private DateTime? from, to;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("کاردکس کالا");
+        try
+        {
+            products = await ProductSvc.GetLookupsAsync();
+            warehouses = await WarehouseSvc.GetLookupsAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+
+        productId = QueryProductId ?? 0;
+        warehouseId = QueryWarehouseId;
+        if (productId > 0) await Load();
+    }
+
+    private async Task Load()
+    {
+        if (productId <= 0) return;
+        loading = true;
+        try
+        {
+            result = await ReportSvc.GetKardexAsync(productId, warehouseId, from, to);
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task OnProduct(int id)
+    {
+        productId = id;
+        if (id > 0) await Load();
+        else result = null;
+    }
+
+    private async Task OnWarehouse(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        warehouseId = string.IsNullOrEmpty(raw) ? null : int.Parse(raw);
+        await Load();
+    }
+
+    private async Task OnFrom(DateTime? d)
+    {
+        from = d;
+        await Load();
+    }
+
+    private async Task OnTo(DateTime? d)
+    {
+        to = d;
+        await Load();
+    }
+
+    private async Task Print() => await JS.InvokeVoidAsync("window.print");
+
+    private static string NatureIcon(StockNature n) => n switch
+    {
+        StockNature.Increase => "bi-box-arrow-in-down",
+        StockNature.Decrease => "bi-box-arrow-up",
+        _ => "bi-arrow-left-right"
+    };
+
+    private static string NatureCls(StockNature n) => n switch
+    {
+        StockNature.Increase => "inc",
+        StockNature.Decrease => "dec",
+        _ => "neu"
+    };
+}

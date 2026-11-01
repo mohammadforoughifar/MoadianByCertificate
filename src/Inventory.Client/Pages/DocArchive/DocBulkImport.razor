@@ -1,0 +1,386 @@
+@page "/doc-archive/import"
+@inject IDocImportClient Import
+@inject IDocArchiveService Svc
+@inject IApiClient Api
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject IAuthState Auth
+@implements IDisposable
+
+<PageTitle>ورود انبوه آرشیو</PageTitle>
+
+<div class="doc-archive-shell">
+    <div class="card shadow-sm mb-3">
+        <div class="card-body">
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <i class="bi bi-folder-symlink fs-4"></i>
+                <h5 class="mb-0">ورود انبوه آرشیو</h5>
+            </div>
+            <div class="text-muted fs-8">
+                یک پوشه از کامپیوتر خودتان انتخاب کنید. ساختار پوشه‌ها در آرشیو ساخته می‌شود
+                و هر فایل با نام «عنوان+شماره» یک سند می‌شود. نام هیچ فایلی عوض نمی‌شود.
+                فایل‌هایی که این الگو را ندارند هم وارد می‌شوند و به‌جای خطا،
+                شمارهٔ مدرکشان به‌صورت خودکار تخصیص می‌یابد.
+            </div>
+        </div>
+    </div>
+
+    @if (cfg != null && !cfg.Enabled)
+    {
+        <div class="alert alert-warning">
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <i class="bi bi-exclamation-triangle-fill"></i>
+                <strong>ورود انبوه هنوز آماده نیست</strong>
+            </div>
+            <div class="mb-2">@cfg.ProblemFa</div>
+            <div class="fs-8">
+                ورود انبوه به‌طور پیش‌فرض همیشه روشن است. اگر این پیام را می‌بینید، روی سرور متغیر محیطی
+                <code>DocArchiveImport__Enabled=false</code> تنظیم شده — آن را حذف کنید و سرویس را ری‌استارت کنید.
+            </div>
+        </div>
+    }
+
+    <!-- ============ ۱) انتخاب پوشه ============ -->
+    <div class="card mb-3">
+        <div class="card-header fw-700"><span class="badge bg-dark ms-2">۱</span>انتخاب پوشه</div>
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-5">
+                    <label class="form-label fw-600">مقصد در آرشیو</label>
+                    <DocFolderTreeSelect Folders="folders" @bind-Value="rootFolderId" Disabled="@busy"
+                                         Placeholder="ریشهٔ آرشیو (جستجو یا انتخاب پوشه…)" RootTitle="ریشهٔ آرشیو" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-600">سقف حجم هر فایل</label>
+                    <input class="form-control" readonly value="@(((cfg?.MaxFileBytes ?? 0) / 1048576)) مگابایت" />
+                </div>
+                <div class="col-md-3">
+                    <button class="btn btn-success w-100" @onclick="PickFolder" disabled="@(busy || cfg?.Enabled != true)">
+                        @if (busy && stage is "picked" or "batch" or "preview")
+                        {
+                            <span class="spinner-border spinner-border-sm ms-1"></span>
+                        }
+                        <i class="bi bi-folder-plus"></i> انتخاب پوشه
+                    </button>
+                </div>
+            </div>
+
+            @if (busy && stage is "picked" or "batch" or "preview")
+            {
+                <div class="mt-3 text-muted fs-8">
+                    @StageText()
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ============ ۲) نتیجهٔ بررسی ============ -->
+    @if (preview != null)
+    {
+        <div class="card mb-3">
+            <div class="card-header fw-700"><span class="badge bg-dark ms-2">۲</span>بررسی نام فایل‌ها</div>
+            <div class="card-body">
+                <div class="row g-2 text-center mb-3">
+                    <div class="col"><div class="border rounded p-2"><div class="fs-4 fw-700">@preview.Total.Num()</div><div class="fs-8 text-muted">فایل</div></div></div>
+                    <div class="col"><div class="border rounded p-2 text-success"><div class="fs-4 fw-700">@preview.Ready.Num()</div><div class="fs-8">آمادهٔ ورود</div></div></div>
+                    <div class="col"><div class="border rounded p-2 text-danger"><div class="fs-4 fw-700">@preview.Failed.Num()</div><div class="fs-8">مشکل‌دار</div></div></div>
+                    <div class="col"><div class="border rounded p-2 text-warning"><div class="fs-4 fw-700">@preview.Duplicate.Num()</div><div class="fs-8">تکراری</div></div></div>
+                    <div class="col"><div class="border rounded p-2 text-secondary"><div class="fs-4 fw-700">@preview.Skipped.Num()</div><div class="fs-8">نادیده</div></div></div>
+                </div>
+
+                @if (preview.Ready > 0)
+                {
+                    <div class="alert alert-success py-2">
+                        @preview.Ready.Num() فایل آمادهٔ ورود است. در مرحلهٔ بعد همین‌ها وارد آرشیو می‌شوند.
+                    </div>
+                }
+
+                @if (preview.Problems.Count > 0)
+                {
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="fw-600">فایل‌هایی که وارد نمی‌شوند (@preview.Problems.Count.Num() مورد اول)</span>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="DownloadReport">
+                            <i class="bi bi-file-earmark-excel"></i> گزارش کامل اکسل
+                        </button>
+                    </div>
+                    <div class="table-responsive" style="max-height:280px; overflow:auto;">
+                        <table class="table table-sm table-striped fs-8 mb-0">
+                            <thead class="table-light"><tr><th>فایل</th><th>دلیل</th></tr></thead>
+                            <tbody>
+                                @foreach (var p in preview.Problems)
+                                {
+                                    <tr><td>@p.RelativePath</td><td>@p.MessageFa</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+
+                <div class="mt-3 d-flex gap-2 flex-wrap">
+                    <button class="btn btn-primary" @onclick="RunImport" disabled="@(busy || preview.Ready == 0)">
+                        <i class="bi bi-box-arrow-in-down"></i> ورود @preview.Ready.Num() فایل
+                    </button>
+                    @if (busy && stage == "progress")
+                    {
+                        <button class="btn btn-outline-danger" @onclick="Cancel">توقف</button>
+                    }
+                </div>
+
+                @if (busy && stage == "progress")
+                {
+                    <div class="progress mt-3" style="height:22px;">
+                        <div class="progress-bar bg-primary" style="width:@Percent()%;">@Percent().Num()٪</div>
+                    </div>
+                    <div class="d-flex justify-content-between fs-8 text-muted mt-1">
+                        <span>@(state?.Name ?? "")</span>
+                        <span>واردشده: @(state?.Imported ?? 0) | ناموفق: @(state?.Failed ?? 0) | تکراری: @(state?.Duplicate ?? 0)</span>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <!-- ============ ۳) نتیجه ============ -->
+    @if (result != null)
+    {
+        <div class="card mb-3">
+            <div class="card-header fw-700"><span class="badge bg-dark ms-2">۳</span>نتیجه</div>
+            <div class="card-body">
+                <div class="alert @(result.Failed == 0 ? "alert-success" : "alert-warning") py-2">
+                    @result.Imported.Num() فایل وارد آرشیو شد
+                    @if (result.Duplicate > 0) { <span>· @result.Duplicate.Num() تکراری</span> }
+                    @if (result.Failed > 0) { <span>· @result.Failed.Num() ناموفق</span> }
+                    @if (result.Skipped > 0) { <span>· @result.Skipped.Num() نادیده</span> }
+                </div>
+
+                @if (result.FailedNames.Count > 0)
+                {
+                    <div class="fs-8 text-muted mb-2">نمونهٔ فایل‌های ناموفق:</div>
+                    <ul class="fs-8">
+                        @foreach (var n in result.FailedNames.Take(10))
+                        {
+                            <li>@n</li>
+                        }
+                    </ul>
+                }
+
+                <button class="btn btn-outline-success" @onclick="DownloadReport">
+                    <i class="bi bi-file-earmark-excel"></i> گزارش اکسل
+                </button>
+                <button class="btn btn-outline-primary ms-2" @onclick="PickFolder" disabled="@busy">
+                    <i class="bi bi-folder-plus"></i> پوشهٔ بعدی
+                </button>
+            </div>
+        </div>
+    }
+
+    <!-- ============ سابقه ============ -->
+    <div class="card">
+        <div class="card-header fw-700 d-flex justify-content-between align-items-center">
+            <span>سابقهٔ ورودها</span>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="LoadBatches" disabled="@busy">بازخوانی</button>
+        </div>
+        <div class="card-body p-0">
+            @if (batches == null || batches.Count == 0)
+            {
+                <div class="p-3 text-muted fs-8">هنوز ورودی انجام نشده است.</div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0 fs-8">
+                        <thead class="table-light">
+                            <tr>
+                                <th>#</th><th>زمان</th><th>کاربر</th><th>فایل</th>
+                                <th>واردشده</th><th>ناموفق</th><th>پوشهٔ جدید</th><th>وضعیت</th><th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var b in batches)
+                            {
+                                <tr>
+                                    <td>@b.Id.Num()</td>
+                                    <td>@b.StartedAt.ToString("yyyy/MM/dd HH:mm")</td>
+                                    <td>@b.CreatedByName</td>
+                                    <td>@b.TotalFiles.Num()</td>
+                                    <td class="text-success">@b.ImportedCount.Num()</td>
+                                    <td class="text-danger">@b.FailedCount.Num()</td>
+                                    <td>@b.CreatedFolderCount.Num()</td>
+                                    <td>@b.StatusFa</td>
+                                    <td>
+                                        <button class="btn btn-sm btn-link p-0" @onclick="() => DownloadReport(b.Id)">اکسل</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private DocImportConfigDto? cfg;
+    private List<DocFolderDto> folders = new();
+    private List<DocImportBatchDto>? batches;
+    private int? rootFolderId;
+
+    private string stage = "";
+    private bool busy;
+    private DocImportUploadStateDto? state;
+    private DocImportPreviewSummaryDto? preview;
+    private DocImportUploadStateDto? result;
+
+    private DotNetObjectReference<DocBulkImport>? selfRef;
+    private int currentBatchId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadConfigAsync();
+        try { folders = await Svc.GetFoldersAsync(); } catch { folders = new(); }
+        await LoadBatches();
+    }
+
+    private async Task LoadConfigAsync()
+    {
+        try { cfg = await Import.GetConfigAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task LoadBatches()
+    {
+        try { batches = await Import.GetBatchesAsync(20); StateHasChanged(); }
+        catch { }
+    }
+
+    private string StageText() => stage switch
+    {
+        "picked" => "پوشه خوانده شد؛ در حال ساخت نوبت ورود…",
+        "batch" => "در حال بررسی نام فایل‌ها…",
+        "preview" => $"بررسی نام فایل‌ها… {state?.Index.Num()} از {state?.Total.Num()}",
+        "progress" => "در حال ورود فایل‌ها…",
+        _ => ""
+    };
+
+    private int Percent()
+        => state is { Total: > 0 } ? (int)(state.Index * 100L / state.Total) : 0;
+
+    /// <summary>انتخاب پوشه و بررسی نام‌ها — هیچ فایلی هنوز آپلود نمی‌شود.</summary>
+    private async Task PickFolder()
+    {
+        if (busy) return;
+        busy = true;
+        preview = null;
+        result = null;
+        state = null;
+        try
+        {
+            selfRef ??= DotNetObjectReference.Create(this);
+            // پوشهٔ مقصدِ انتخاب‌شده در dropdown هم به سرور می‌رود تا فایل‌ها زیر همان بروند
+            await JS.InvokeVoidAsync("importPickFolder", selfRef, "OnImportProgress",
+                Import.ApiBase, Auth.Token ?? "", rootFolderId);
+        }
+        catch (Exception ex)
+        {
+            busy = false;
+            Toast.Error("باز کردن پنجرهٔ انتخاب پوشه ناموفق بود: " + ex.Message +
+                        " — صفحه را یک بار کامل تازه کنید (Ctrl+F5).");
+        }
+    }
+
+    private async Task RunImport()
+    {
+        if (busy) return;
+        busy = true;
+        result = null;
+        try
+        {
+            selfRef ??= DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("importRun", selfRef, "OnImportProgress",
+                Import.ApiBase, Auth.Token ?? "");
+        }
+        catch (Exception ex)
+        {
+            busy = false;
+            Toast.Error("شروع ورود ناموفق بود: " + ex.Message);
+        }
+    }
+
+    private async Task Cancel()
+    {
+        try { await JS.InvokeVoidAsync("importCancel"); } catch { }
+    }
+
+    [JSInvokable]
+    public async Task OnImportProgress(DocImportUploadStateDto s)
+    {
+        state = s;
+        stage = s.Stage;
+
+        if (!string.IsNullOrEmpty(s.Fatal))
+        {
+            busy = false;
+            stage = "";
+            Toast.Error(s.Fatal);
+            StateHasChanged();
+            return;
+        }
+
+        switch (s.Stage)
+        {
+            case "previewed":
+                preview = new DocImportPreviewSummaryDto
+                {
+                    BatchId = s.BatchId,
+                    Total = s.Total,
+                    Ready = s.Ready,
+                    Failed = s.Failed,
+                    Skipped = s.Skipped,
+                    Duplicate = s.Duplicate,
+                    Problems = s.Problems ?? new()
+                };
+                currentBatchId = s.BatchId;
+                busy = false;
+                stage = "";
+                Toast.Success($"{s.Ready.Num()} فایل آمادهٔ ورود است.");
+                break;
+
+            case "done":
+                if (s.Cancelled)
+                {
+                    Toast.Error("توقف کردید. فایل‌های واردشده در آرشیو می‌مانند.");
+                }
+                else if (s.Imported > 0 || s.Failed > 0 || s.Duplicate > 0)
+                {
+                    result = s;
+                    currentBatchId = s.BatchId;
+                    Toast.Success($"{s.Imported.Num()} فایل وارد آرشیو شد.");
+                }
+                busy = false;
+                stage = "";
+                await LoadBatches();
+                break;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task DownloadReport() => await DownloadReport(currentBatchId);
+
+    private async Task DownloadReport(int batchId)
+    {
+        if (batchId == 0) return;
+        try
+        {
+            var (data, name, contentType) = await Api.GetFileAsync(
+                $"api/doc-archive/import/batches/{batchId}/report.xlsx");
+            await JS.InvokeVoidAsync("downloadBlob",
+                string.IsNullOrWhiteSpace(name) ? $"import-report-{batchId}.xlsx" : name,
+                contentType, Convert.ToBase64String(data));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    public void Dispose() => selfRef?.Dispose();
+}

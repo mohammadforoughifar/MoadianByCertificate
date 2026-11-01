@@ -1,0 +1,251 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/trials"
+@inject IHrTalentService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>دوره آزمایشی</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-hourglass-split"></i> دوره آزمایشی</h1>
+    <div class="lead">۱ ماهه (ساده) / ۳ ماهه (ماهر) + نتیجه قبول/مردود</div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به ماژول کارگزینی برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body d-flex flex-wrap gap-2 align-items-end">
+        <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="tra" @bind="onlyActive" @bind:after="Reload" />
+            <label class="form-check-label" for="tra">فقط فعال‌ها</label>
+        </div>
+        <div class="ms-auto d-flex gap-2">
+            @if (canCreate)
+            {
+                <button class="btn btn-outline-primary" @onclick="Auto"><i class="bi bi-magic"></i> ایجاد خودکار</button>
+                <button class="btn btn-success" @onclick="() => showNew = true"><i class="bi bi-plus-lg"></i> دوره جدید</button>
+            }
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+}
+else
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>پرسنل</th><th>شروع</th><th>مدت</th><th>پایان</th><th>مانده</th><th>نتیجه</th><th>تصمیم‌گیرنده</th><th style="width:130px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var t in items)
+                        {
+                            <tr class="@(t.Result == 0 && t.DaysLeft is not null && t.DaysLeft <= 15 ? "table-warning" : "")">
+                                <td><a href="hr-core/employees/@t.EmployeeId" class="fw-bold text-decoration-none">@t.EmployeeName</a></td>
+                                <td class="num">@t.StartDate.ToFa()</td>
+                                <td class="num">@t.Months.Num() ماه</td>
+                                <td class="num">@t.EndDate.ToFa()</td>
+                                <td>
+                                    @if (t.DaysLeft == null)
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                    else if (t.DaysLeft < 0)
+                                    {
+                                        <span class="badge text-bg-danger">@((-t.DaysLeft!.Value).Num()) روز گذشته</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-info">@t.DaysLeft.Value.Num() روز</span>
+                                    }
+                                </td>
+                                <td><span class="badge @HrCoreUi.TrialBadge(t.Result)">@HrCoreUi.TrialResult(t.Result)</span></td>
+                                <td class="small">@(t.DecidedBy ?? "—")</td>
+                                <td>
+                                    @if (canUpdate && t.Result == 0)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="ثبت نتیجه" @onclick="() => OpenDecide(t)"><i class="bi bi-check2-square text-success"></i></button>
+                                    }
+                                    @if (canDelete && t.Result == 0)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(t.Id)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+<Modal Visible="showNew" Title="دوره آزمایشی جدید" OnClose="() => showNew = false">
+<ChildContent>
+    <div class="row g-2">
+        <div class="col-md-6">
+            <label class="form-label">پرسنل</label>
+            <select class="form-select" @bind="nEmp">
+                @foreach (var m in employees)
+                {
+                    <option value="@m.Id">@m.FirstName @m.LastName (@m.Code)</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">شروع</label>
+            <DatePicker @bind-Value="nStart" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">مدت</label>
+            <select class="form-select" @bind="nMonths">
+                <option value="1">۱ ماهه (ساده)</option>
+                <option value="3">۳ ماهه (ماهر)</option>
+            </select>
+        </div>
+    </div>
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-light" @onclick="() => showNew = false">انصراف</button>
+        <button class="btn btn-success" disabled="@saving" @onclick="Create">ثبت</button>
+    </div>
+</Footer>
+</Modal>
+
+<Modal Visible="showDecide" Title="@($"نتیجه دوره آزمایشی — {decideName}")" OnClose="() => showDecide = false">
+<ChildContent>
+    <div class="row g-2">
+        <div class="col-md-6">
+            <label class="form-label">نتیجه</label>
+            <select class="form-select" @bind="dPass">
+                <option value="true">قبول</option>
+                <option value="false">مردود (فسخ)</option>
+            </select>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">تصمیم‌گیرنده</label>
+            <input class="form-control" @bind="dBy" />
+        </div>
+        <div class="col-12">
+            <label class="form-label">یادداشت</label>
+            <textarea class="form-control" rows="2" @bind="dNote"></textarea>
+        </div>
+    </div>
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-light" @onclick="() => showDecide = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="Decide">ثبت نتیجه</button>
+    </div>
+</Footer>
+</Modal>
+
+@code {
+    private bool canRead => Auth.Has("HrCore.Read") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrCore.Create") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrCore.Update") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrCore.Delete") || Auth.IsAdmin;
+
+    private bool loading = true, saving, showNew, showDecide, onlyActive = true;
+    private List<HrTrialPeriodDto> items = new();
+    private List<HrEmployeeDto> employees = new();
+
+    private int nEmp, nMonths = 3;
+    private DateTime? nStart = DateTime.Today;
+
+    private int decideId;
+    private string decideName = "";
+    private bool dPass = true;
+    private string? dBy, dNote;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) { loading = false; return; }
+        await Reload();
+        try
+        {
+            employees = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items;
+            nEmp = employees.FirstOrDefault()?.Id ?? 0;
+            dBy = Auth.DisplayName;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { items = await Svc.GetTrialsAsync(onlyActive ? true : null); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private async Task Auto()
+    {
+        try
+        {
+            var n = await Svc.AutoCreateTrialsAsync();
+            Toast.Success(n == 0 ? "مورد جدیدی برای ایجاد خودکار یافت نشد." : $"{n.Num()} دوره آزمایشی ساخته شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Create()
+    {
+        saving = true;
+        try
+        {
+            await Svc.SaveTrialAsync(new HrTrialSaveDto
+                { EmployeeId = nEmp, StartDate = nStart ?? DateTime.Today, Months = nMonths });
+            showNew = false;
+            Toast.Success("دوره آزمایشی ثبت شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+
+    private void OpenDecide(HrTrialPeriodDto t)
+    {
+        decideId = t.Id;
+        decideName = t.EmployeeName;
+        dPass = true;
+        dNote = null;
+        showDecide = true;
+    }
+
+    private async Task Decide()
+    {
+        saving = true;
+        try
+        {
+            await Svc.DecideTrialAsync(decideId, new HrTrialDecideDto { Pass = dPass, Note = dNote, DecidedBy = dBy });
+            showDecide = false;
+            Toast.Success(dPass ? "قبول ثبت شد." : "مردود ثبت شد؛ برای فسخ از «ترک‌کار» اقدام کنید.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+
+    private async Task Delete(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "این دوره حذف شود؟")) return;
+        try
+        {
+            await Svc.DeleteTrialAsync(id);
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

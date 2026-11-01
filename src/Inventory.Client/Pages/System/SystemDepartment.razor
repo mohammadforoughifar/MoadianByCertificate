@@ -1,0 +1,218 @@
+@namespace Inventory.Client.Pages
+@page "/system-department"
+@inject HttpClient Http
+
+<PageTitle>واحدهای سازمانی</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-diagram-3-fill"></i> واحدهای سازمانی</h1>
+    <p class="lead">ساختار سازمانی، دپارتمان‌ها و بخش‌های اداری و عملیاتی</p>
+</div>
+
+<div class="card shadow mb-4" style="background:#fff;border:1px solid #e8e8f0;border-radius:18px;overflow:hidden;">
+    <div class="d-flex justify-content-between align-items-center px-4 py-3" style="background:linear-gradient(135deg,#8e5cff,#4f8cff);color:#fff;border-radius:18px 18px 0 0;">
+        <h4 class="m-0 fw-700"><i class="bi bi-diagram-3-fill me-2"></i>لیست واحدها</h4>
+        <button class="btn btn-light btn-sm fw-700 shadow-sm" @onclick="OpenForm" style="border-radius:10px;color:#4f5b8a;">
+            <i class="bi bi-plus-lg"></i> افزودن
+        </button>
+    </div>
+    <div class="p-4">
+        @if (items == null)
+        {
+            <div class="text-center py-4 text-muted">در حال بارگذاری...</div>
+        }
+        else if (!items.Any())
+        {
+            <div class="alert alert-info rounded-3">واحدی ثبت نشده است.</div>
+        }
+        else
+        {
+            <div class="d-md-none">
+            @foreach (var d in items)
+            {
+                <div class="m-card">
+                    <div class="m-title">@d.Name</div>
+                    <div class="m-row"><span class="m-label">کمپانی</span><span class="m-val">@GetCompanyName(d.CompanyId)</span></div>
+                    <div class="m-row"><span class="m-label">وضعیت</span><span class="m-val">@(d.IsActive ? "فعال ✅" : "غیرفعال")</span></div>
+                    <div class="m-actions">
+                        <button class="btn btn-sm @(d.IsActive ? "btn-success" : "btn-secondary")" @onclick="() => ToggleStatus(d)">@(d.IsActive ? "فعال" : "غیرفعال")</button>
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => EditDept(d)"><i class="bi bi-pencil-fill"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteDept(d.Id)" disabled="@(d.SystemCount > 0)"><i class="bi bi-trash-fill"></i></button>
+                    </div>
+                </div>
+            }
+        </div>
+        <div class="d-none d-md-block">
+            <table class="table table-hover align-middle" style="border-radius:14px;overflow:hidden;">
+                <thead style="background:#f0f3ff;color:#4f5b8a;">
+                    <tr><th>#</th><th>نام واحد</th><th>کمپانی</th><th>وضعیت</th><th>عملیات</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var d in items)
+                    {
+                        <tr style="border-bottom:1px solid #f0f3ff;">
+                            <td class="fw-600 text-secondary">@d.Id</td>
+                            <td><b style="color:#2a2a4a;">@d.Name</b></td>
+                            <td><span class="badge rounded-pill" style="background:#e8ecff;color:#4f5b8a;">@GetCompanyName(d.CompanyId)</span></td>
+                            
+                            <td>
+                                <button class="btn btn-sm @(d.IsActive ? "btn-success" : "btn-secondary") rounded-pill" @onclick="() => ToggleStatus(d)" title="تغییر وضعیت">@(d.IsActive ? "فعال" : "غیرفعال")</button>
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary" @onclick="() => EditDept(d)" title="ویرایش"><i class="bi bi-pencil-fill"></i></button>
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteDept(d.Id)" disabled="@(d.SystemCount > 0)" title="@(d.SystemCount > 0 ? "سیستم اختصاص داده شده" : "حذف")"><i class="bi bi-trash-fill"></i></button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        }
+    </div>
+</div>
+
+@if (ShowForm)
+{
+    <Modal Visible="ShowForm" Title="@(editingDept ? "ویرایش واحد" : "واحد جدید")" OnClose="CloseForm">
+        <ChildContent>
+            <div class="row g-3">
+                <div class="col-12">
+                    <label class="form-label">نام واحد <span class="text-danger">*</span></label>
+                    <input class="form-control" @bind="newDept.Name" placeholder="نام واحد" />
+                </div>
+                <div class="col-12">
+                    <label class="form-label">کمپانی</label>
+                    <select class="form-select" @bind="newDept.CompanyId">
+                        <option value="0">-- انتخاب کمپانی --</option>
+                        @foreach (var c in companies.Where(x => x.IsActive)) { <option value="@c.Id">@c.Name</option> }
+                    </select>
+                </div>
+                <div class="col-12">
+                    <div class="form-check form-switch mt-1">
+                        <input class="form-check-input" type="checkbox" id="deptActive" @bind="newDept.IsActive" />
+                        <label class="form-check-label" for="deptActive">فعال باشد</label>
+                    </div>
+                </div>
+            </div>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-light" @onclick="CloseForm">انصراف (Esc)</button>
+            <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="SaveDepartment" disabled="@(newDept.CompanyId == null || newDept.CompanyId == 0 || string.IsNullOrWhiteSpace(newDept.Name))">ذخیره</button>
+        </Footer>
+    </Modal>
+}
+
+<script>
+window.addEventListener('keydown', function(e) {
+    if (e.key === 'F1') {
+        var saveBtn = document.querySelector('.btn-success');
+        if (saveBtn && !saveBtn.disabled) saveBtn.click();
+    }
+    if (e.key === 'Escape') {
+        var closeBtn = document.querySelector('.btn-outline-secondary');
+        if (closeBtn) closeBtn.click();
+    }
+});
+</script>
+
+@code {
+    private List<SystemDepartmentItem> items = new();
+    private List<SystemCompanyItem> companies = new();
+    private bool ShowForm = false;
+    private SystemDepartmentItem newDept = new();
+    private bool editingDept = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { items = await Http.GetFromJsonAsync<List<SystemDepartmentItem>>("/api/SystemDepartments") ?? new(); var sysInfos = await Http.GetFromJsonAsync<List<SystemInfoItem>>("/api/SystemInfo") ?? new(); foreach(var d in items) { d.SystemCount = sysInfos.Count(x => x.DepartmentId == d.Id); } }
+        catch { items = new(); }
+        try { companies = await Http.GetFromJsonAsync<List<SystemCompanyItem>>("/api/SystemCompanies") ?? new(); }
+        catch { companies = new(); }
+    }
+
+    private string GetCompanyName(int? companyId)
+    {
+        if (companyId == null || companyId == 0) return "—";
+        return companies.FirstOrDefault(c => c.Id == companyId)?.Name ?? "—";
+    }
+
+    private void OpenForm() { newDept = new(); editingDept = false; ShowForm = true; StateHasChanged(); }
+    private void CloseForm() { ShowForm = false; editingDept = false; StateHasChanged(); }
+
+    private void EditDept(SystemDepartmentItem d)
+    {
+        newDept = new() { Id = d.Id, Name = d.Name, CompanyId = d.CompanyId, IsActive = d.IsActive };
+        editingDept = true; ShowForm = true; StateHasChanged();
+    }
+
+    private async Task SaveDepartment()
+    {
+        try
+        {
+            HttpResponseMessage resp;
+            if (editingDept && newDept.Id > 0)
+            {
+                resp = await Http.PutAsJsonAsync($"/api/SystemDepartments/{newDept.Id}", newDept);
+            }
+            else
+            {
+                resp = await Http.PostAsJsonAsync("/api/SystemDepartments", newDept);
+            }
+            if (resp.IsSuccessStatusCode)
+            {
+                ShowForm = false; editingDept = false;
+                newDept = new();
+                await OnInitializedAsync();
+            }
+        }
+        catch { }
+    }
+
+    private async Task ToggleStatus(SystemDepartmentItem d)
+    {
+        try
+        {
+            d.IsActive = !d.IsActive;
+            await Http.PutAsJsonAsync($"/api/SystemDepartments/{d.Id}", d);
+            await OnInitializedAsync();
+        }
+        catch { }
+    }
+
+    private async Task DeleteDept(int id)
+    {
+        try
+        {
+            var systemInfos = await Http.GetFromJsonAsync<List<SystemInfoItem>>("/api/SystemInfo") ?? new();
+            var count = systemInfos.Count(x => x.DepartmentId == id);
+            if (count > 0) { return; }
+            var resp = await Http.DeleteAsync($"/api/SystemDepartments/{id}");
+            if (resp.IsSuccessStatusCode) await OnInitializedAsync();
+        }
+        catch { }
+    }
+
+    public class SystemDepartmentItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+                public int? CompanyId { get; set; }
+        public bool IsActive { get; set; } = true;
+        public int SystemCount { get; set; }
+    }
+
+    public class SystemInfoItem
+    {
+        public int Id { get; set; }
+        public int? DepartmentId { get; set; }
+        public int? CompanyId { get; set; }
+    }
+
+    public class SystemCompanyItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public string? Code { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+}

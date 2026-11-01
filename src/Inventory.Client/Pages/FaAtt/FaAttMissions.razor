@@ -1,0 +1,254 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/missions"
+@inject IFaAttService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>مأموریت‌ها</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-briefcase"></i> مأموریت‌ها</h1>
+            <div class="lead">ثبت درخواست مأموریت + تأیید منابع انسانی</div>
+        </div>
+        @if (faCreate)
+        {
+            <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> درخواست جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white fw-bold"><i class="bi bi-person"></i> مأموریت‌های من</div>
+    <div class="card-body p-0">
+        @if (mine.Count == 0)
+        {
+            <div class="text-center text-muted py-4">درخواستی ثبت نکرده‌اید.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>بازه</th><th>مقصد</th><th>علت</th><th>وضعیت</th><th>تصمیم‌گیرنده</th><th style="width:80px"></th></tr></thead>
+                <tbody>
+                    @foreach (var m in mine)
+                    {
+                        <tr>
+                            <td class="num">@m.FromDate.ToFa() تا @m.ToDate.ToFa()</td>
+                            <td><b>@(m.Destination ?? "—")</b></td>
+                            <td>@(m.Reason ?? "—")</td>
+                            <td><span class="badge @FaAttUi.ReqBadge(m.Status)">@FaAttUi.ReqStatus(m.Status)</span></td>
+                            <td>@(m.DecidedByName ?? "—")</td>
+                            <td class="text-end">@if (m.Status == 0 && faCreate){<button class="btn btn-sm btn-outline-secondary" @onclick="() => OpenEdit(m)"><i class="bi bi-pencil"></i></button>}</td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+@if (faManage)
+{
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+            <div class="row g-2">
+                <div class="col-md-5"><label class="form-label small text-muted">پرسنل</label><select class="form-select" @bind="fEmp"><option value="">همه</option>@foreach (var e in emps){<option value="@e.Id">@e.FirstName @e.LastName</option>}</select></div>
+                <div class="col-md-3"><label class="form-label small text-muted">وضعیت</label><select class="form-select" @bind="fStatus"><option value="">همه</option><option value="0">در انتظار</option><option value="1">تأییدشده</option><option value="2">ردشده</option></select></div>
+                <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary" @onclick="ReloadAll">جستجو</button></div>
+            </div>
+        </div>
+    </div>
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white fw-bold"><i class="bi bi-inbox"></i> همه مأموریت‌ها</div>
+        <div class="card-body p-0">
+            @if (all.Count == 0)
+            {
+                <div class="text-center text-muted py-4">موردی وجود ندارد.</div>
+            }
+            else
+            {
+                @if (selected.Count > 0)
+                {
+                    <div class="d-flex gap-2 align-items-center p-2 border-bottom bg-light">
+                        <span class="small text-muted">@FaAttUi.Num(selected.Count) انتخاب‌شده:</span>
+                        <button class="btn btn-sm btn-success" @onclick="() => BatchDecide(true)"><i class="bi bi-check-all"></i> تأیید گروهی</button>
+                        <button class="btn btn-sm btn-outline-warning" @onclick="() => BatchDecide(false)"><i class="bi bi-x-lg"></i> رد گروهی</button>
+                        <button class="btn btn-sm btn-light" @onclick="() => selected.Clear()">لغو انتخاب</button>
+                    </div>
+                }
+                <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th style="width:40px"><input class="form-check-input" type="checkbox" @onchange="ToggleAll" checked="@allChecked" title="انتخاب همه در انتظار" /></th><th>پرسنل</th><th>بازه</th><th>مقصد</th><th>وضعیت</th><th style="width:150px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var m in all)
+                        {
+                            <tr class="@(selected.Contains(m.Id) ? "table-active" : "")">
+                                <td>
+                                    @if (m.Status == 0)
+                                    {
+                                        <input class="form-check-input" type="checkbox" checked="@selected.Contains(m.Id)" @onchange="() => Toggle(m.Id)" />
+                                    }
+                                </td>
+                                <td><b>@m.EmployeeName</b></td>
+                                <td class="num">@m.FromDate.ToFa() تا @m.ToDate.ToFa()</td>
+                                <td>@(m.Destination ?? "—")</td>
+                                <td><span class="badge @FaAttUi.ReqBadge(m.Status)">@FaAttUi.ReqStatus(m.Status)</span></td>
+                                <td class="text-end">
+                                    <div class="btn-group btn-group-sm">
+                                        @if (m.Status == 0)
+                                        {
+                                            <button class="btn btn-success" title="تأیید" @onclick="() => Decide(m, true)"><i class="bi bi-check-lg"></i></button>
+                                            <button class="btn btn-outline-warning" title="رد" @onclick="() => Decide(m, false)"><i class="bi bi-x-lg"></i></button>
+                                        }
+                                        <button class="btn btn-outline-danger" title="حذف" @onclick="() => Delete(m)"><i class="bi bi-trash"></i></button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table></div>
+            }
+        </div>
+    </div>
+}
+
+<Modal Visible="showEdit" Title="درخواست مأموریت" OnClose="() => showEdit = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-md-6"><label class="form-label">از تاریخ</label><DatePicker @bind-Value="dFrom" /></div>
+        <div class="col-md-6"><label class="form-label">تا تاریخ</label><DatePicker @bind-Value="dTo" /></div>
+        <div class="col-12"><label class="form-label">مقصد</label><input class="form-control" @bind="form.Destination" /></div>
+        <div class="col-12"><label class="form-label">علت</label><textarea class="form-control" rows="2" @bind="form.Reason"></textarea></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" @onclick="Save">ثبت درخواست</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faRead => Auth.Has("FaAtt.Read") || Auth.IsAdmin;
+    private bool faCreate => Auth.Has("FaAtt.Create") || Auth.IsAdmin;
+    private bool faManage => Auth.Has("FaAtt.Manage") || Auth.IsAdmin;
+    private bool loading = true, showEdit;
+    private List<FaAttMissionDto> mine = new(), all = new();
+    private List<HrEmployeeDto> emps = new();
+    private string? fEmp, fStatus;
+    private int? editId;
+    private FaAttMissionSaveDto form = new();
+    private DateTime? dFrom = DateTime.Today, dTo = DateTime.Today;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        try
+        {
+            if (faManage) emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            mine = await Svc.MyMissionsAsync();
+            if (faManage) await ReloadAll();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task ReloadAll()
+    {
+        selected.Clear();
+        int? e = int.TryParse(fEmp, out var x) ? x : null;
+        int? st = int.TryParse(fStatus, out var s) ? s : null;
+        all = await Svc.GetMissionsAsync(e, st);
+    }
+
+    private void OpenEdit(FaAttMissionDto? m)
+    {
+        editId = m?.Id;
+        form = new FaAttMissionSaveDto { Destination = m?.Destination, Reason = m?.Reason };
+        dFrom = m?.FromDate ?? DateTime.Today;
+        dTo = m?.ToDate ?? DateTime.Today;
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        form.FromDate = dFrom ?? DateTime.Today;
+        form.ToDate = dTo ?? DateTime.Today;
+        try
+        {
+            if (editId == null) await Svc.RequestMyMissionAsync(form);
+            else await Svc.UpdateMyMissionAsync(editId.Value, form);
+            Toast.Success("درخواست ثبت شد.");
+            showEdit = false;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Decide(FaAttMissionDto m, bool approve)
+    {
+        try { await Svc.DecideMissionAsync(m.Id, approve); Toast.Success(approve ? "تأیید شد." : "رد شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private HashSet<int> selected = new();
+    private bool allChecked => all.Any(m => m.Status == 0) && all.Where(m => m.Status == 0).All(m => selected.Contains(m.Id));
+
+    private void Toggle(int id)
+    {
+        if (!selected.Add(id)) selected.Remove(id);
+    }
+
+    private void ToggleAll(ChangeEventArgs e)
+    {
+        selected.Clear();
+        if ((bool)(e.Value ?? false))
+            foreach (var m in all.Where(m => m.Status == 0)) selected.Add(m.Id);
+    }
+
+    private async Task BatchDecide(bool approve)
+    {
+        if (selected.Count == 0) return;
+        if (!await JS.InvokeAsync<bool>("confirm", $"{FaAttUi.Num(selected.Count)} مأموریت به‌صورت گروهی {(approve ? "تأیید" : "رد")} شود؟")) return;
+        try
+        {
+            var r = await Svc.DecideMissionBatchAsync(selected.ToList(), approve);
+            if (r.Failed == 0) Toast.Success($"هر {FaAttUi.Num(r.Ok)} مأموریت انجام شد.");
+            else Toast.Error($"{FaAttUi.Num(r.Ok)} موفق — {FaAttUi.Num(r.Failed)} ناموفق: {string.Join("؛ ", r.Errors.Take(3))}");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Delete(FaAttMissionDto m)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "مأموریت حذف شود؟")) return;
+        try { await Svc.DeleteMissionAsync(m.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

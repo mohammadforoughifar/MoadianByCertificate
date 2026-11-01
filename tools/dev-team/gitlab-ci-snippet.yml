@@ -1,0 +1,27 @@
+# تکه برای .gitlab-ci.yml — بعد از job بیلد
+# CI/CD Variables: DEVTEAM_API_BASE, DEVTEAM_GIT_WEBHOOK_SECRET
+
+devteam_notify_failure:
+  stage: .post
+  image: curlimages/curl:8.5.0
+  rules:
+    - if: $CI_PIPELINE_STATUS == "failed"
+      when: always
+    - when: never
+  script:
+    - |
+      BODY=$(printf '%s' "{
+        \"provider\":\"gitlab-ci\",
+        \"status\":\"failure\",
+        \"pipelineId\":\"$CI_PIPELINE_ID\",
+        \"jobName\":\"$CI_JOB_NAME\",
+        \"repo\":\"$CI_PROJECT_PATH\",
+        \"branch\":\"$CI_COMMIT_REF_NAME\",
+        \"commitSha\":\"$CI_COMMIT_SHA\",
+        \"commitMessage\":$(echo "$CI_COMMIT_MESSAGE" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'),
+        \"url\":\"$CI_PIPELINE_URL\"
+      }")
+      curl -sS -X POST "$DEVTEAM_API_BASE/api/dev-team/hooks/ci" \
+        -H "Content-Type: application/json" \
+        -H "X-DevTeam-Token: $DEVTEAM_GIT_WEBHOOK_SECRET" \
+        -d "$BODY"

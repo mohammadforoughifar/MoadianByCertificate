@@ -1,0 +1,252 @@
+@using Inventory.Shared.Dtos
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+@* =====================================================================
+     یک ویجت داشبورد — رندر بر اساس نوع (KPI / نمودار / جدول / فهرست)
+     در حالت ویرایش، دستگیرهٔ درگ و تغییر اندازه فعال می‌شود.
+   ===================================================================== *@
+<div class="dash-card dash-kind-@Def.Kind.ToString().ToLowerInvariant() @(Editing ? "editing" : "")"
+     data-wid="@Inst.Id" data-w="@Inst.W" data-h="@Inst.H"
+     style="grid-column: span @Inst.W; grid-row: span @Inst.H;"
+     draggable="@(Editing ? "true" : "false")">
+
+    <div class="dash-card-head">
+        @if (Editing)
+        {
+            <i class="bi bi-grip-vertical dash-grip" title="بکش و جابه‌جا کن"></i>
+        }
+        <span class="dash-card-title" title="@Title">
+            <i class="bi @Def.Icon"></i> @Title
+        </span>
+
+        <div class="dash-card-tools">
+            @if (Editing)
+            {
+                <button type="button" class="dash-tool" title="تنظیمات ویجت" @onclick="() => showCfg = !showCfg">
+                    <i class="bi bi-sliders"></i>
+                </button>
+                <button type="button" class="dash-tool dash-tool-danger" title="حذف از داشبورد" @onclick="OnRemove">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            }
+            else if (!string.IsNullOrEmpty(Data?.Drilldown))
+            {
+                <a class="dash-tool" href="@Data.Drilldown" title="بازکردن صفحهٔ مربوطه"><i class="bi bi-box-arrow-up-left"></i></a>
+            }
+            <button type="button" class="dash-tool" title="به‌روزرسانی" @onclick="OnRefresh"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+    </div>
+
+    @if (Editing && showCfg)
+    {
+        <div class="dash-cfg">
+            <label class="dash-cfg-row">
+                <span>عنوان</span>
+                <input class="form-control form-control-sm" value="@(Inst.Title ?? "")" placeholder="@Def.Title"
+                       @onchange="e => OnRename.InvokeAsync(e.Value?.ToString())" />
+            </label>
+
+            @if (Def.HasRange)
+            {
+                <label class="dash-cfg-row">
+                    <span>بازه</span>
+                    <select class="form-select form-select-sm" value="@((int)Inst.Range)"
+                            @onchange="e => OnRangeChange.InvokeAsync(e.Value?.ToString())">
+                        <option value="0">امروز</option>
+                        <option value="1">این هفته</option>
+                        <option value="2">این ماه</option>
+                        <option value="3">این فصل</option>
+                        <option value="4">امسال</option>
+                        <option value="5">همه</option>
+                    </select>
+                </label>
+            }
+
+            @if (Def.Kind == DashWidgetKind.Chart && Def.ChartTypes.Count > 1)
+            {
+                <label class="dash-cfg-row">
+                    <span>نوع نمودار</span>
+                    <select class="form-select form-select-sm" value="@((int)(Inst.ChartType ?? Def.ChartTypes[0]))"
+                            @onchange="e => OnChartTypeChange.InvokeAsync(e.Value?.ToString())">
+                        @foreach (var ct in Def.ChartTypes)
+                        {
+                            <option value="@((int)ct)">@ChartTypeName(ct)</option>
+                        }
+                    </select>
+                </label>
+            }
+
+            @foreach (var opt in Def.Options)
+            {
+                var o = opt;
+                <label class="dash-cfg-row">
+                    <span>@o.Label</span>
+                    @if (o.Kind == "select")
+                    {
+                        <select class="form-select form-select-sm" value="@(Inst.Config.GetValueOrDefault(o.Key, o.Default))"
+                                @onchange="e => SetConfig(o.Key, e.Value?.ToString())">
+                            @foreach (var c in o.Choices)
+                            {
+                                <option value="@c">@c</option>
+                            }
+                        </select>
+                    }
+                    else
+                    {
+                        <input class="form-control form-control-sm" value="@(Inst.Config.GetValueOrDefault(o.Key, o.Default))"
+                               @onchange="e => SetConfig(o.Key, e.Value?.ToString())" />
+                    }
+                </label>
+            }
+        </div>
+    }
+
+    <div class="dash-card-body">
+        @if (Loading)
+        {
+            <div class="dash-loading"><div class="spinner-border spinner-border-sm text-primary"></div></div>
+        }
+        else if (Data is null || !string.IsNullOrEmpty(Data.Error))
+        {
+            <div class="dash-empty text-danger">
+                <i class="bi bi-exclamation-triangle"></i>
+                <span>@(Data?.Error ?? "داده‌ای دریافت نشد")</span>
+            </div>
+        }
+        else
+        {
+            @switch (Data.Kind)
+            {
+                case DashWidgetKind.Kpi:
+                    <div class="dash-kpi">
+                        <div class="dash-kpi-value num">@FormatNumber(Data.Value ?? 0)<span class="dash-kpi-unit">@Data.Unit</span></div>
+                        @if (!string.IsNullOrEmpty(Data.DeltaText))
+                        {
+                            <div class="dash-kpi-delta @(Data.DeltaUp == true ? "up" : "down")">
+                                <i class="bi @(Data.DeltaUp == true ? "bi-arrow-up-short" : "bi-arrow-down-short")"></i>
+                                @Data.DeltaText
+                            </div>
+                        }
+                        @if (Data.SubValue is not null && !string.IsNullOrEmpty(Data.SubLabel))
+                        {
+                            <div class="dash-kpi-sub"><span class="num">@FormatNumber(Data.SubValue.Value)</span> @Data.SubLabel</div>
+                        }
+                    </div>
+                    break;
+
+                case DashWidgetKind.Chart:
+                    <div class="dash-chart"><canvas id="@CanvasId"></canvas></div>
+                    break;
+
+                case DashWidgetKind.Table:
+                case DashWidgetKind.List:
+                    @if (Data.Rows.Count == 0)
+                    {
+                        <div class="dash-empty"><i class="bi bi-inbox"></i> موردی برای نمایش نیست</div>
+                    }
+                    else
+                    {
+                        <div class="dash-table-wrap">
+                            <table class="table table-sm dash-table mb-0">
+                                @if (Data.Columns.Count > 0)
+                                {
+                                    <thead><tr>@foreach (var c in Data.Columns) { <th>@c</th> }</tr></thead>
+                                }
+                                <tbody>
+                                    @foreach (var r in Data.Rows)
+                                    {
+                                        <tr class="@(r.Tone is null ? "" : "tone-" + r.Tone)"
+                                            @onclick="() => OpenRow(r.Href)">
+                                            @foreach (var cell in r.Cells)
+                                            {
+                                                <td>@cell</td>
+                                            }
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    break;
+            }
+        }
+    </div>
+
+    @if (Editing)
+    {
+        <span class="dash-resize" data-resize="1" title="بکش تا اندازه عوض شود"></span>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public WidgetDefDto Def { get; set; } = default!;
+    [Parameter, EditorRequired] public UserDashWidgetDto Inst { get; set; } = default!;
+    [Parameter] public WidgetDataDto? Data { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public bool Editing { get; set; }
+    [Parameter] public EventCallback OnRemove { get; set; }
+    [Parameter] public EventCallback OnRefresh { get; set; }
+    [Parameter] public EventCallback<string?> OnRename { get; set; }
+    [Parameter] public EventCallback<string?> OnRangeChange { get; set; }
+    [Parameter] public EventCallback<string?> OnChartTypeChange { get; set; }
+    [Parameter] public EventCallback<(string Key, string Value)> OnConfigChange { get; set; }
+    [Inject] public NavigationManager Nav { get; set; } = default!;
+
+    private bool showCfg;
+    private string? lastRendered;
+    private string CanvasId => $"dash-chart-{Inst.Id}";
+    private string Title => string.IsNullOrWhiteSpace(Inst.Title) ? Def.Title : Inst.Title!;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Data is null || Def.Kind != DashWidgetKind.Chart) return;
+
+        // فقط وقتی داده عوض شده دوباره نمودار را بکش
+        var sig = string.Join("|", Data.Series.Select(s => s.Name + ":" + string.Join(",", s.Values)));
+        if (!firstRender && sig == lastRendered) return;
+        lastRendered = sig;
+
+        try
+        {
+            await JS.InvokeVoidAsync("appDash.renderChart", CanvasId,
+                ChartJsType(Data.ChartType),
+                Data.Series.FirstOrDefault()?.Labels ?? new List<string>(),
+                Data.Series.Select(s => new { name = s.Name, values = s.Values }).ToArray());
+        }
+        catch { /* Chart.js در دسترس نبود — بدنهٔ ویجت خالی می‌ماند */ }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await JS.InvokeVoidAsync("appDash.destroyChart", CanvasId); } catch { }
+    }
+
+    private static string ChartJsType(DashChartType t) => t switch
+    {
+        DashChartType.Line => "line",
+        DashChartType.Pie => "pie",
+        DashChartType.Doughnut => "doughnut",
+        _ => "bar"
+    };
+
+    private static string ChartTypeName(DashChartType t) => t switch
+    {
+        DashChartType.Line => "خطی",
+        DashChartType.Pie => "دایره‌ای",
+        DashChartType.Doughnut => "حلقه‌ای",
+        _ => "میله‌ای"
+    };
+
+    /// <summary>هزارگان + ارقام فارسی برای عددهای بزرگ.</summary>
+    private static string FormatNumber(decimal v) =>
+        Inventory.Shared.Fa.Digits(v.ToString(Math.Abs(v) >= 1000 ? "N0" : "N2"));
+
+    private void SetConfig(string key, string? value) =>
+        OnConfigChange.InvokeAsync((key, value ?? ""));
+
+    private void OpenRow(string? href)
+    {
+        if (!string.IsNullOrWhiteSpace(href)) Nav.NavigateTo(href);
+    }
+}

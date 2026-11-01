@@ -1,0 +1,135 @@
+@namespace Inventory.Client.Pages
+@page "/fa-lms/enrollments"
+@inject IFaLmsService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>کارتابل ثبت‌نام‌ها</PageTitle>
+
+<div class="page-head mb-4">
+    <div>
+        <h1><i class="bi bi-inbox"></i> کارتابل ثبت‌نام‌ها</h1>
+        <div class="lead">بررسی و تأیید درخواست‌های ثبت‌نام در دوره‌ها</div>
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد آموزش است.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2">
+            <div class="col-md-5"><label class="form-label small text-muted">دوره</label><select class="form-select" @bind="fCourse"><option value="">همه دوره‌ها</option>@foreach (var c in courses){<option value="@c.Id">@c.Title</option>}</select></div>
+            <div class="col-md-3"><label class="form-label small text-muted">وضعیت</label><select class="form-select" @bind="fStatus"><option value="">همه</option><option value="0">در انتظار تأیید</option><option value="1">تأییدشده</option><option value="2">ردشده</option><option value="3">انصرافی</option></select></div>
+            <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary" @onclick="Reload"><i class="bi bi-search"></i> جستجو</button></div>
+        </div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (enrolls.Count == 0)
+        {
+            <div class="text-center text-muted py-5">درخواستی وجود ندارد.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>پرسنل</th><th>دوره</th><th>تاریخ درخواست</th><th>وضعیت</th><th>تصمیم‌گیرنده</th><th style="width:150px"></th></tr></thead>
+                <tbody>
+                    @foreach (var e in enrolls)
+                    {
+                        <tr>
+                            <td><b>@e.EmployeeName</b></td>
+                            <td><a href="@CourseUrl(e.CourseId)">@e.CourseTitle</a></td>
+                            <td class="num">@e.EnrolledAt.ToFa()</td>
+                            <td><span class="badge @FaLmsUi.EnrollBadge(e.Status)">@FaLmsUi.EnrollStatus(e.Status)</span></td>
+                            <td>@(e.DecidedByName ?? "—")</td>
+                            <td class="text-end">
+                                <div class="btn-group btn-group-sm">
+                                    @if (e.Status == 0)
+                                    {
+                                        <button class="btn btn-outline-success" title="تأیید" @onclick="() => Decide(e, true)"><i class="bi bi-check-lg"></i></button>
+                                        <button class="btn btn-outline-warning" title="رد" @onclick="() => Decide(e, false)"><i class="bi bi-x-lg"></i></button>
+                                    }
+                                    <button class="btn btn-outline-danger" title="حذف" @onclick="() => Delete(e)"><i class="bi bi-trash"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+@code {
+    private static string CourseUrl(int id) => "fa-lms/courses/" + id;
+    private bool faManage => Auth.Has("FaLms.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaLmsEnrollmentDto> enrolls = new();
+    private List<FaLmsCourseDto> courses = new();
+    private string? fCourse, fStatus = "0";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        try { courses = await Svc.ListCoursesAsync(null, null, null, null); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            int? c = int.TryParse(fCourse, out var x) ? x : null;
+            int? st = int.TryParse(fStatus, out var s) ? s : null;
+            enrolls = await Svc.ListEnrollmentsAsync(c, st);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Decide(FaLmsEnrollmentDto e, bool approve)
+    {
+        if (approve)
+        {
+            try
+            {
+                var cf = await Svc.CheckConflictsAsync(e.CourseId, e.EmployeeId);
+                if (cf.Count > 0)
+                {
+                    var first = cf.Take(3).Select(x => x.SessionDate.ToFa() + " (" + KindName(x.Kind) + ")");
+                    var msg = $"هشدار تداخل آموزشی برای {e.EmployeeName} ({cf.Count} مورد):\n" + string.Join("\n", first)
+                        + "\n\nبا این وجود تأیید شود؟";
+                    if (!await JS.InvokeAsync<bool>("confirm", msg)) return;
+                }
+            }
+            catch { }
+        }
+        try { await Svc.DecideEnrollmentAsync(e.Id, approve); Toast.Success(approve ? "تأیید شد." : "رد شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string KindName(string k) => k switch
+    {
+        "Leave" => "مرخصی", "Mission" => "مأموریت", "Shift" => "شیفت", _ => k
+    };
+
+    private async Task Delete(FaLmsEnrollmentDto e)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "ثبت‌نام حذف شود؟")) return;
+        try { await Svc.DeleteEnrollmentAsync(e.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

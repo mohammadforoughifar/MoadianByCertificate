@@ -1,0 +1,372 @@
+@page "/acc/vouchers"
+@inject IAccVoucherService VoucherSvc
+@inject IAccFiscalYearService YearSvc
+@inject NavigationManager Nav
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>اسناد حسابداری</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>اسناد حسابداری</h1>
+        <p class="lead">ثبت، قطعی‌سازی و پیگیری اسناد دفتر روزنامه</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-primary" href="/acc/vouchers/new"><i class="bi bi-plus-lg"></i> سند جدید</a>
+    </div>
+</div>
+
+@* ---------- فیلتر وضعیت ---------- *@
+<div class="mtabs mb-3">
+    <button class="mtab @(fStatus is null ? "active" : "")" @onclick="() => SetStatus(null)">
+        <i class="bi bi-collection"></i> همه اسناد
+    </button>
+    <button class="mtab @(fStatus == VoucherStatus.Draft ? "active" : "")" @onclick="() => SetStatus(VoucherStatus.Draft)">
+        <i class="bi bi-pencil-square"></i> پیش‌نویس
+    </button>
+    <button class="mtab @(fStatus == VoucherStatus.Confirmed ? "active" : "")" @onclick="() => SetStatus(VoucherStatus.Confirmed)">
+        <i class="bi bi-check2-circle"></i> قطعی
+    </button>
+    <button class="mtab @(fStatus == VoucherStatus.Cancelled ? "active" : "")" @onclick="() => SetStatus(VoucherStatus.Cancelled)">
+        <i class="bi bi-x-circle"></i> ابطال شده
+    </button>
+</div>
+
+@* ---------- نوار فیلترها ---------- *@
+<div class="card mb-3">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-3">
+                <label class="form-label">جستجو</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="شماره سند، عطف، شرح…" value="@search"
+                           @oninput="OnSearchInput" @onkeyup="OnSearchKey" />
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">سال مالی</label>
+                <select class="form-select" value="@(fYearId?.ToString() ?? "")" @onchange="OnYear">
+                    <option value="">همه دوره‌ها</option>
+                    @foreach (var y in years)
+                    {
+                        <option value="@y.Id">@y.Title</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">منشأ سند</label>
+                <select class="form-select" value="@(fSource is null ? "" : ((int)fSource).ToString())" @onchange="OnSource">
+                    <option value="">همه</option>
+                    <option value="0">دستی</option>
+                    <option value="1">سند انبار</option>
+                    <option value="2">فاکتور</option>
+                    <option value="3">افتتاحیه</option>
+                    <option value="4">اختتامیه</option>
+                </select>
+            </div>
+            <div class="col-12 col-md-4">
+                <label class="form-label">بازه تاریخ</label>
+                <div class="d-flex gap-1">
+                    <DatePicker Value="fFrom" ValueChanged="OnFrom" AllowClear="true" />
+                    <DatePicker Value="fTo" ValueChanged="OnTo" AllowClear="true" />
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span><i class="bi bi-journal-text text-primary"></i> فهرست اسناد</span>
+        <span class="badge badge-soft-primary num ms-auto">@total.Num() سند</span>
+    </div>
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state">
+                <i class="bi bi-journal-x"></i>
+                <h5>سندی یافت نشد</h5>
+                <p class="text-muted">با دکمه «سند جدید» اولین سند حسابداری را ثبت کنید.</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th style="width:8px"></th>
+                            <th>شماره</th>
+                            <th>تاریخ</th>
+                            <th>شرح</th>
+                            <th>منشأ</th>
+                            <th class="text-center">آرتیکل</th>
+                            <th class="text-center">بدهکار</th>
+                            <th class="text-center">بستانکار</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var v in items)
+                        {
+                            <tr>
+                                <td class="p-0"><div class="nature-strip @StatusStrip(v.Status)" style="height:44px"></div></td>
+                                <td class="num fw-600">@v.Number.FaDigits()</td>
+                                <td class="num">@v.Date.ToFaDate()</td>
+                                <td>
+                                    <div class="text-truncate" style="max-width:280px">@(string.IsNullOrWhiteSpace(v.Description) ? "—" : v.Description)</div>
+                                    @if (!string.IsNullOrWhiteSpace(v.SourceTitle))
+                                    {
+                                        <div class="fs-8 text-muted">@v.SourceTitle</div>
+                                    }
+                                </td>
+                                <td><span class="badge @SourceBadge(v.Source)">@v.SourceTitleFa</span></td>
+                                <td class="text-center num">@v.LineCount.Num()</td>
+                                <td class="text-center num text-success">@v.TotalDebit.Money()</td>
+                                <td class="text-center num text-danger">@v.TotalCredit.Money()</td>
+                                <td>
+                                    <span class="badge @StatusBadge(v.Status)">@v.StatusTitle</span>
+                                    @if (!v.IsBalanced)
+                                    {
+                                        <span class="badge badge-soft-danger fs-8" title="سند تراز نیست">ناتراز</span>
+                                    }
+                                </td>
+                                <td class="text-end text-nowrap">
+                                    <a class="btn btn-sm btn-light" title="مشاهده / ویرایش" href="@($"/acc/vouchers/edit/{v.Id}")"><i class="bi bi-pencil text-primary"></i></a>
+                                    @if (v.Status == VoucherStatus.Draft)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="قطعی کردن" @onclick="() => Confirm(v)"><i class="bi bi-check2-circle text-success"></i></button>
+                                        <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(v)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                    else if (v.Status == VoucherStatus.Confirmed)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="برگشت از قطعی" @onclick="() => Unconfirm(v)"><i class="bi bi-arrow-counterclockwise text-warning"></i></button>
+                                        <button class="btn btn-sm btn-light" title="ابطال" @onclick="() => Cancel(v)"><i class="bi bi-x-circle text-danger"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var v in items)
+                {
+                    <div class="m-card @StatusCard(v.Status)">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi bi-journal-text"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-700 num text-truncate">سند @v.Number.FaDigits()</span>
+                                    <span class="badge @StatusBadge(v.Status) fs-8">@v.StatusTitle</span>
+                                </div>
+                                <div class="fs-8 text-muted text-truncate">@(string.IsNullOrWhiteSpace(v.Description) ? v.SourceTitleFa : v.Description)</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">تاریخ</div>
+                                <div class="num fw-700">@v.Date.ToFaDate()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-money">
+                                <span>جمع سند</span>
+                                <b class="num">@v.TotalDebit.Money() <small>ریال</small></b>
+                            </div>
+                            <div class="m-card-row"><span><i class="bi bi-list-ol text-muted"></i> آرتیکل</span><b class="num">@v.LineCount.Num()</b></div>
+                            <div class="m-card-row"><span><i class="bi bi-diagram-2 text-muted"></i> منشأ</span><b>@v.SourceTitleFa</b></div>
+                        </div>
+                        <div class="m-card-actions">
+                            <a class="btn btn-light text-primary" href="@($"/acc/vouchers/edit/{v.Id}")"><i class="bi bi-pencil"></i> مشاهده</a>
+                            @if (v.Status == VoucherStatus.Draft)
+                            {
+                                <button class="btn btn-light text-success" @onclick="() => Confirm(v)"><i class="bi bi-check2-circle"></i></button>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="OnPage" />
+        }
+    </div>
+</div>
+
+@code {
+    private List<AccVoucher> items = new();
+    private List<AccFiscalYear> years = new();
+
+    private bool loading = true;
+    private int page = 1, total;
+    private const int PageSize = 15;
+
+    private int? fYearId;
+    private VoucherStatus? fStatus;
+    private VoucherSource? fSource;
+    private DateTime? fFrom, fTo;
+    private string search = "";
+
+    private int PageCount => total == 0 ? 1 : (int)Math.Ceiling(total / (double)PageSize);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("اسناد حسابداری");
+        try { years = await YearSvc.GetAllAsync(); }
+        catch { /* فهرست دوره‌ها اختیاری است */ }
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var res = await VoucherSvc.GetAllAsync(fYearId, fStatus, fSource, search, fFrom, fTo, page, PageSize);
+            items = res.Items;
+            total = res.TotalCount;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Reload()
+    {
+        page = 1;
+        await Load();
+    }
+
+    private async Task SetStatus(VoucherStatus? s)
+    {
+        fStatus = s;
+        await Reload();
+    }
+
+    private async Task OnYear(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        fYearId = string.IsNullOrEmpty(raw) ? null : int.Parse(raw);
+        await Reload();
+    }
+
+    private async Task OnSource(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        fSource = string.IsNullOrEmpty(raw) ? null : (VoucherSource)int.Parse(raw);
+        await Reload();
+    }
+
+    private async Task OnFrom(DateTime? d)
+    {
+        fFrom = d;
+        await Reload();
+    }
+
+    private async Task OnTo(DateTime? d)
+    {
+        fTo = d;
+        await Reload();
+    }
+
+    private void OnSearchInput(ChangeEventArgs e) => search = e.Value?.ToString() ?? "";
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Reload();
+    }
+
+    private async Task OnPage(int p)
+    {
+        page = p;
+        await Load();
+    }
+
+    // ---------- عملیات روی سند ----------
+    private async Task Confirm(AccVoucher v)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"سند شماره {v.Number} قطعی شود؟ پس از قطعی شدن در دفاتر و تراز منظور می‌شود."))
+            return;
+        try
+        {
+            await VoucherSvc.ConfirmAsync(v.Id);
+            Toast.Success("سند قطعی شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Unconfirm(AccVoucher v)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"سند شماره {v.Number} به پیش‌نویس برگردد؟ اثر آن در دفاتر حذف می‌شود."))
+            return;
+        try
+        {
+            await VoucherSvc.UnconfirmAsync(v.Id);
+            Toast.Success("سند به پیش‌نویس برگشت.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Cancel(AccVoucher v)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"سند شماره {v.Number} ابطال شود؟")) return;
+        try
+        {
+            await VoucherSvc.CancelAsync(v.Id);
+            Toast.Success("سند ابطال شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Delete(AccVoucher v)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"سند شماره {v.Number} حذف شود؟")) return;
+        try
+        {
+            await VoucherSvc.DeleteAsync(v.Id);
+            Toast.Success("سند حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- کمکی‌های نمایش ----------
+    private static string StatusBadge(VoucherStatus s) => s switch
+    {
+        VoucherStatus.Draft => "badge-soft-warning",
+        VoucherStatus.Confirmed => "badge-soft-success",
+        _ => "badge-soft-muted"
+    };
+
+    private static string StatusStrip(VoucherStatus s) => s switch
+    {
+        VoucherStatus.Draft => "neu",
+        VoucherStatus.Confirmed => "inc",
+        _ => "dec"
+    };
+
+    private static string StatusCard(VoucherStatus s) => s switch
+    {
+        VoucherStatus.Draft => "st-progress",
+        VoucherStatus.Confirmed => "st-ready",
+        _ => "st-cancelled"
+    };
+
+    private static string SourceBadge(VoucherSource s) => s switch
+    {
+        VoucherSource.Manual => "badge-soft-secondary",
+        VoucherSource.InventoryDoc => "badge-soft-info",
+        VoucherSource.Invoice => "badge-soft-primary",
+        _ => "badge-soft-warning"
+    };
+}

@@ -1,0 +1,507 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/recruitment"
+@inject IHrCoreService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>جذب و استخدام</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-person-plus"></i> جذب و استخدام</h1>
+    <div class="lead">آگهی‌ها، متقاضیان، مصاحبه‌ها و تبدیل یک‌کلیکه به پرسنل</div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به بخش جذب و استخدام برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="row g-3">
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white d-flex align-items-center gap-2">
+                <strong><i class="bi bi-megaphone text-primary"></i> آگهی‌ها</strong>
+                <div class="form-check ms-2 mb-0 small">
+                    <input class="form-check-input" type="checkbox" id="openonly" @bind="onlyOpen" @bind:after="ReloadPostings" />
+                    <label class="form-check-label" for="openonly">فقط منتشرشده‌ها</label>
+                </div>
+                @if (canCreate)
+                {
+                    <button class="btn btn-sm btn-success ms-auto" @onclick="() => OpenPosting(null)"><i class="bi bi-plus-lg"></i> آگهی جدید</button>
+                }
+            </div>
+            <div class="list-group list-group-flush" style="max-height:60vh;overflow:auto">
+                @foreach (var p in postings)
+                {
+                    <div class="list-group-item list-group-item-action @(p.Id == selPostingId ? "active" : "")" style="cursor:pointer" @onclick="() => SelectPosting(p.Id)">
+                        <div class="d-flex justify-content-between align-items-center gap-2">
+                            <strong>@p.Title</strong>
+                            <span class="badge @HrCoreUi.PostStatusBadge(p.Status)">@HrCoreUi.PostStatus(p.Status)</span>
+                        </div>
+                        <div class="small @(p.Id == selPostingId ? "" : "text-muted")">
+                            <span class="num">@p.ApplicantsCount.Num()</span> متقاضی
+                            @if (!string.IsNullOrWhiteSpace(p.OrgUnitName)) { <span> • @p.OrgUnitName</span> }
+                            @if (p.ExpireDate != null) { <span> • انقضا <span class="num">@p.ExpireDate.Value.ToFa()</span></span> }
+                        </div>
+                        @if (p.Id == selPostingId && (canUpdate || canDelete))
+                        {
+                            <div class="mt-1 d-flex gap-1" @onclick:stopPropagation="true">
+                                @if (canUpdate)
+                                {
+                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenPosting(p)"><i class="bi bi-pencil"></i></button>
+                                }
+                                @if (canDelete)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => DeletePosting(p.Id)"><i class="bi bi-trash"></i></button>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+                @if (postings.Count == 0)
+                {
+                    <div class="text-center text-muted py-4">آگهی‌ای ثبت نشده است.</div>
+                }
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2">
+                <strong><i class="bi bi-people text-primary"></i> متقاضیان</strong>
+                @if (selPosting != null) { <span class="text-muted small">@selPosting.Title</span> }
+                <select class="form-select form-select-sm ms-auto" style="width:auto" @bind="filterStatus" @bind:after="ReloadApplicants">
+                    <option value="-1">همه وضعیت‌ها</option>
+                    @for (var s = 0; s <= 6; s++) { var st = s; <option value="@st">@HrCoreUi.AppStatus(st)</option> }
+                </select>
+                @if (canCreate && selPostingId is > 0)
+                {
+                    <button class="btn btn-sm btn-success" @onclick="() => OpenApplicant(null)"><i class="bi bi-plus-lg"></i> متقاضی جدید</button>
+                }
+            </div>
+            <div class="card-body p-0">
+                @if (loading)
+                {
+                    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0 align-middle">
+                            <thead class="table-light"><tr><th>نام</th><th>موبایل</th><th>وضعیت</th><th>امتیاز</th><th>ثبت</th><th style="width:120px"></th></tr></thead>
+                            <tbody>
+                                @foreach (var a in applicants)
+                                {
+                                    <tr>
+                                        <td><strong>@a.FullName</strong>@if (a.EmployeeId is > 0) { <i class="bi bi-patch-check-fill text-success" title="استخدام‌شده"></i> }</td>
+                                        <td class="num">@(a.Mobile ?? "—")</td>
+                                        <td><span class="badge @HrCoreUi.AppStatusBadge(a.Status)">@HrCoreUi.AppStatus(a.Status)</span></td>
+                                        <td class="num">@(a.Score?.Num() ?? "—")</td>
+                                        <td class="num">@a.CreatedAt.ToFa()</td>
+                                        <td>
+                                            <div class="btn-group btn-group-sm">
+                                                <button class="btn btn-outline-info" title="پرونده" @onclick="() => OpenDetail(a)"><i class="bi bi-eye"></i></button>
+                                                @if (canUpdate)
+                                                {
+                                                    <button class="btn btn-outline-primary" title="ویرایش" @onclick="() => OpenApplicant(a)"><i class="bi bi-pencil"></i></button>
+                                                }
+                                                @if (canDelete && a.EmployeeId is not > 0)
+                                                {
+                                                    <button class="btn btn-outline-danger" title="حذف" @onclick="() => DeleteApplicant(a.Id)"><i class="bi bi-trash"></i></button>
+                                                }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                                @if (applicants.Count == 0)
+                                {
+                                    <tr><td colspan="6" class="text-center text-muted py-4">@(selPostingId is > 0 ? "متقاضی‌ای برای این آگهی ثبت نشده است." : "یک آگهی انتخاب کنید.")</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<Modal Visible="showPosting" Title="آگهی استخدام" Size="modal-lg" OnClose="() => showPosting = false">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-8"><label class="form-label">عنوان آگهی *</label><input class="form-control" @bind="pForm.Title" /></div>
+            <div class="col-md-4"><label class="form-label">وضعیت</label>
+                <select class="form-select" @bind="pForm.Status">
+                    @for (var s = 0; s <= 2; s++) { var st = s; <option value="@st">@HrCoreUi.PostStatus(st)</option> }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">واحد سازمانی</label>
+                <select class="form-select" @bind="pForm.OrgUnitId">
+                    <option value="">—</option>
+                    @foreach (var u in units) { <option value="@u.Id">@u.Name</option> }
+                </select>
+            </div>
+            <div class="col-md-4"><label class="form-label">ظرفیت (نفر)</label><input class="form-control num" type="number" min="1" @bind="pForm.Headcount" /></div>
+            <div class="col-md-4"></div>
+            <div class="col-md-4"><label class="form-label">انتشار</label><DatePicker @bind-Value="pPub" /></div>
+            <div class="col-md-4"><label class="form-label">انقضا</label><DatePicker @bind-Value="pExp" /></div>
+            <div class="col-12"><label class="form-label">شرح آگهی</label><textarea class="form-control" rows="2" @bind="pForm.Description"></textarea></div>
+            <div class="col-12"><label class="form-label">شرایط و نیازمندی‌ها</label><textarea class="form-control" rows="2" @bind="pForm.Requirements"></textarea></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showPosting = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="SavePosting">ذخیره</button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showApplicant" Title="متقاضی" OnClose="() => showApplicant = false">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-6"><label class="form-label">نام *</label><input class="form-control" @bind="aForm.FirstName" /></div>
+            <div class="col-md-6"><label class="form-label">نام خانوادگی *</label><input class="form-control" @bind="aForm.LastName" /></div>
+            <div class="col-md-6"><label class="form-label">موبایل</label><input class="form-control num" dir="ltr" @bind="aForm.Mobile" /></div>
+            <div class="col-md-6"><label class="form-label">ایمیل</label><input class="form-control" dir="ltr" @bind="aForm.Email" /></div>
+            <div class="col-md-6"><label class="form-label">امتیاز (۰ تا ۱۰۰)</label><input class="form-control num" type="number" min="0" max="100" @bind="aForm.Score" /></div>
+            <div class="col-12"><label class="form-label">یادداشت</label><textarea class="form-control" rows="2" @bind="aForm.Note"></textarea></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showApplicant = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="SaveApplicant">ذخیره</button>
+    </Footer>
+</Modal>
+
+@if (detail != null)
+{
+    <Modal Visible="showDetail" Title="@($"پرونده {detail.FullName}")" Size="modal-xl" OnClose="() => showDetail = false">
+        <ChildContent>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                <span class="badge @HrCoreUi.AppStatusBadge(detail.Status) fs-6">@HrCoreUi.AppStatus(detail.Status)</span>
+                <span class="text-muted small">آگهی: @detail.JobPostingTitle</span>
+                @if (!string.IsNullOrWhiteSpace(detail.Mobile)) { <span class="text-muted small num" dir="ltr">@detail.Mobile</span> }
+                @if (!string.IsNullOrWhiteSpace(detail.Note)) { <span class="text-muted small">@detail.Note</span> }
+                @if (detail.EmployeeId is > 0)
+                {
+                    <span class="badge text-bg-success">کد پرسنلی ثبت شد</span>
+                }
+                else if (canCreate && detail.Status != 5)
+                {
+                    <button class="btn btn-sm btn-success ms-auto" @onclick="OpenConvert"><i class="bi bi-person-check"></i> تبدیل به پرسنل</button>
+                }
+            </div>
+            @if (canUpdate && detail.EmployeeId is not > 0)
+            {
+                <div class="d-flex flex-wrap gap-1 mb-3">
+                    <span class="text-muted small align-self-center">تغییر مرحله:</span>
+                    @for (var s = 0; s <= 5; s++)
+                    {
+                        var st = s;
+                        <button class="btn btn-sm @(st == detail.Status ? "btn-primary" : "btn-outline-secondary")" disabled="@(st == detail.Status)" @onclick="() => Move(st)">@HrCoreUi.AppStatus(st)</button>
+                    }
+                </div>
+            }
+            <div class="row g-3">
+                <div class="col-lg-6">
+                    <div class="d-flex align-items-center mb-2">
+                        <strong><i class="bi bi-calendar-check text-primary"></i> مصاحبه‌ها</strong>
+                        @if (canCreate)
+                        {
+                            <button class="btn btn-sm btn-outline-success ms-auto" @onclick="() => OpenInterview(null)"><i class="bi bi-plus-lg"></i> مصاحبه</button>
+                        }
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover mb-0 align-middle">
+                            <thead class="table-light"><tr><th>تاریخ</th><th>مصاحبه‌کننده</th><th>نمره</th><th>نتیجه</th><th style="width:70px"></th></tr></thead>
+                            <tbody>
+                                @foreach (var i in interviews)
+                                {
+                                    <tr>
+                                        <td class="num">@i.InterviewDate.ToFa()</td>
+                                        <td>@(i.InterviewerName ?? "—")</td>
+                                        <td class="num">@(i.Score?.Num() ?? "—")</td>
+                                        <td>@HrCoreUi.InterviewResult(i.Result)</td>
+                                        <td>
+                                            <div class="btn-group btn-group-sm">
+                                                @if (canUpdate) { <button class="btn btn-outline-primary" @onclick="() => OpenInterview(i)"><i class="bi bi-pencil"></i></button> }
+                                                @if (canDelete) { <button class="btn btn-outline-danger" @onclick="() => DeleteInterview(i.Id)"><i class="bi bi-trash"></i></button> }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    @if (!string.IsNullOrWhiteSpace(i.Note)) { <tr><td colspan="5" class="small text-muted">@i.Note</td></tr> }
+                                }
+                                @if (interviews.Count == 0) { <tr><td colspan="5" class="text-center text-muted py-3">مصاحبه‌ای ثبت نشده است.</td></tr> }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="col-lg-6">
+                    <strong><i class="bi bi-paperclip text-primary"></i> رزومه و مدارک</strong>
+                    <AttachmentBox Module="HrApplicant" RefId="detail.Id" CanUpload="@canUpdate" />
+                </div>
+            </div>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-light" @onclick="() => showDetail = false">بستن</button>
+        </Footer>
+    </Modal>
+}
+
+<Modal Visible="showInterview" Title="مصاحبه" OnClose="() => showInterview = false">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-6"><label class="form-label">تاریخ مصاحبه</label><DatePicker @bind-Value="iDate" /></div>
+            <div class="col-md-6"><label class="form-label">مصاحبه‌کننده</label><input class="form-control" @bind="iForm.InterviewerName" /></div>
+            <div class="col-md-6"><label class="form-label">نمره (۰ تا ۱۰۰)</label><input class="form-control num" type="number" min="0" max="100" @bind="iForm.Score" /></div>
+            <div class="col-md-6"><label class="form-label">نتیجه</label>
+                <select class="form-select" @bind="iForm.Result">
+                    @for (var r = 0; r <= 3; r++) { var rs = r; <option value="@rs">@HrCoreUi.InterviewResult(rs)</option> }
+                </select>
+            </div>
+            <div class="col-12"><label class="form-label">یادداشت</label><textarea class="form-control" rows="2" @bind="iForm.Note"></textarea></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showInterview = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="SaveInterview">ذخیره</button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showConvert" Title="@($"تبدیل {detail?.FullName} به پرسنل")" OnClose="() => showConvert = false">
+    <ChildContent>
+        <div class="alert alert-info small">با تأیید، پرونده پرسنلی با کد خودکار ساخته می‌شود و وضعیت متقاضی «استخدام‌شده» می‌گردد.</div>
+        <div class="row g-3">
+            <div class="col-md-6"><label class="form-label">کد ملی *</label><input class="form-control num" dir="ltr" maxlength="10" @bind="convNational" /></div>
+            <div class="col-md-6"><label class="form-label">تاریخ استخدام</label><DatePicker @bind-Value="convHire" /></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showConvert = false">انصراف</button>
+        <button class="btn btn-success" disabled="@saving" @onclick="DoConvert"><i class="bi bi-person-check"></i> تبدیل به پرسنل</button>
+    </Footer>
+</Modal>
+
+@code {
+    private bool canRead => Auth.Has("HrCore.Read") || Auth.Has("HrCore.Recruitment") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrCore.Create") || Auth.Has("HrCore.Recruitment") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrCore.Update") || Auth.Has("HrCore.Recruitment") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrCore.Delete") || Auth.Has("HrCore.Recruitment") || Auth.IsAdmin;
+
+    private bool loading = true, saving, onlyOpen;
+    private bool showPosting, showApplicant, showDetail, showInterview, showConvert;
+    private List<HrJobPostingDto> postings = new();
+    private List<HrApplicantDto> applicants = new();
+    private List<HrInterviewDto> interviews = new();
+    private List<HrOrgUnitDto> units = new();
+    private int? selPostingId;
+    private HrJobPostingDto? selPosting => postings.FirstOrDefault(p => p.Id == selPostingId);
+    private int filterStatus = -1;
+
+    private int? pEditId;
+    private HrJobPostingSaveDto pForm = new();
+    private DateTime? pPub, pExp;
+
+    private int? aEditId;
+    private HrApplicantSaveDto aForm = new();
+
+    private HrApplicantDto? detail;
+
+    private int? iEditId;
+    private HrInterviewSaveDto iForm = new();
+    private DateTime? iDate;
+
+    private string convNational = "";
+    private DateTime? convHire;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) return;
+        try { units = await Svc.GetOrgUnitsAsync(); } catch { }
+        await ReloadPostings();
+    }
+
+    private async Task ReloadPostings()
+    {
+        loading = true;
+        try
+        {
+            postings = await Svc.GetPostingsAsync(onlyOpen ? true : null);
+            if (selPostingId is not > 0 || !postings.Any(p => p.Id == selPostingId))
+                selPostingId = postings.FirstOrDefault()?.Id;
+            await ReloadApplicants();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private async Task SelectPosting(int id)
+    {
+        selPostingId = id;
+        await ReloadApplicants();
+    }
+
+    private async Task ReloadApplicants()
+    {
+        applicants = new();
+        if (selPostingId is not > 0) return;
+        try { applicants = await Svc.GetApplicantsAsync(selPostingId, filterStatus >= 0 ? filterStatus : null); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenPosting(HrJobPostingDto? p)
+    {
+        pEditId = p?.Id;
+        pForm = p == null
+            ? new HrJobPostingSaveDto { Status = 1 }
+            : new HrJobPostingSaveDto { Title = p.Title, OrgUnitId = p.OrgUnitId, Description = p.Description, Requirements = p.Requirements, Headcount = p.Headcount, Status = p.Status, PublishDate = p.PublishDate, ExpireDate = p.ExpireDate };
+        pPub = pForm.PublishDate; pExp = pForm.ExpireDate;
+        showPosting = true;
+    }
+
+    private async Task SavePosting()
+    {
+        saving = true;
+        try
+        {
+            pForm.PublishDate = pPub; pForm.ExpireDate = pExp;
+            var saved = await Svc.SavePostingAsync(pEditId, pForm);
+            showPosting = false;
+            Toast.Success("آگهی ذخیره شد.");
+            await ReloadPostings();
+            selPostingId = saved.Id;
+            await ReloadApplicants();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+
+    private async Task DeletePosting(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "آگهی حذف شود؟")) return;
+        try { await Svc.DeletePostingAsync(id); Toast.Success("حذف شد."); await ReloadPostings(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenApplicant(HrApplicantDto? a)
+    {
+        aEditId = a?.Id;
+        aForm = a == null
+            ? new HrApplicantSaveDto { JobPostingId = selPostingId }
+            : new HrApplicantSaveDto { JobPostingId = a.JobPostingId, FirstName = a.FirstName, LastName = a.LastName, Mobile = a.Mobile, Email = a.Email, Status = a.Status, Score = a.Score, Note = a.Note };
+        showApplicant = true;
+    }
+
+    private async Task SaveApplicant()
+    {
+        saving = true;
+        try
+        {
+            await Svc.SaveApplicantAsync(aEditId, aForm);
+            showApplicant = false;
+            Toast.Success("متقاضی ذخیره شد.");
+            await ReloadPostings();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+
+    private async Task DeleteApplicant(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "متقاضی حذف شود؟")) return;
+        try { await Svc.DeleteApplicantAsync(id); Toast.Success("حذف شد."); await ReloadPostings(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OpenDetail(HrApplicantDto a)
+    {
+        detail = a;
+        interviews = new();
+        showDetail = true;
+        try { interviews = await Svc.GetInterviewsAsync(a.Id); } catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task RefreshDetail()
+    {
+        await ReloadPostings();
+        if (detail != null)
+        {
+            detail = applicants.FirstOrDefault(a => a.Id == detail.Id);
+            if (detail == null) showDetail = false;
+            else try { interviews = await Svc.GetInterviewsAsync(detail.Id); } catch { }
+        }
+    }
+
+    private async Task Move(int status)
+    {
+        if (detail == null) return;
+        try
+        {
+            await Svc.MoveApplicantAsync(detail.Id, status);
+            Toast.Success("مرحله تغییر کرد.");
+            await RefreshDetail();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenInterview(HrInterviewDto? i)
+    {
+        iEditId = i?.Id;
+        iForm = i == null
+            ? new HrInterviewSaveDto { ApplicantId = detail?.Id, InterviewDate = DateTime.Today }
+            : new HrInterviewSaveDto { ApplicantId = i.ApplicantId, InterviewDate = i.InterviewDate, InterviewerName = i.InterviewerName, Score = i.Score, Result = i.Result, Note = i.Note };
+        iDate = iForm.InterviewDate;
+        showInterview = true;
+    }
+
+    private async Task SaveInterview()
+    {
+        saving = true;
+        try
+        {
+            iForm.InterviewDate = iDate ?? DateTime.Today;
+            await Svc.SaveInterviewAsync(iEditId, iForm);
+            showInterview = false;
+            Toast.Success("مصاحبه ذخیره شد.");
+            await RefreshDetail();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+
+    private async Task DeleteInterview(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "مصاحبه حذف شود؟")) return;
+        try { await Svc.DeleteInterviewAsync(id); Toast.Success("حذف شد."); await RefreshDetail(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenConvert()
+    {
+        convNational = "";
+        convHire = DateTime.Today;
+        showConvert = true;
+    }
+
+    private async Task DoConvert()
+    {
+        if (detail == null) return;
+        if (string.IsNullOrWhiteSpace(convNational))
+        {
+            Toast.Error("کد ملی الزامی است.");
+            return;
+        }
+        saving = true;
+        try
+        {
+            await Svc.ConvertApplicantAsync(detail.Id, convNational.Trim(), convHire);
+            showConvert = false;
+            Toast.Success("پرونده پرسنلی ساخته شد.");
+            await RefreshDetail();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+}

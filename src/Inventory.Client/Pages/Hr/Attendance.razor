@@ -1,0 +1,868 @@
+@namespace Inventory.Client.Pages
+@page "/attendance"
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject RealtimeService Rt
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>حضور و غیاب من</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-stopwatch"></i> حضور و غیاب</h1>
+    <div class="lead">ثبت ورود و خروج روزانه شما</div>
+</div>
+
+@if (!Auth.Has("Attendance.SelfCheckin") && !Auth.IsAdmin)
+{
+    <div class="alert alert-warning">دسترسی به حضور و غیاب برای شما فعال نیست.</div>
+    return;
+}
+
+<!-- ======== ساعت زنده + دکمه ورود/خروج ======== -->
+<div class="row g-3 mb-4">
+    <div class="col-lg-5">
+        <div class="card border-0 shadow-sm att-clock-card h-100">
+            <div class="card-body text-center py-5">
+                <div class="att-date">@todayFa</div>
+                <div class="att-time" dir="ltr">@liveClock</div>
+                <div class="att-shift mt-2">
+                    @if (myShift != null)
+                    {
+                        <span class="badge bg-primary-subtle text-primary"><i class="bi bi-clock-history"></i> شیفت: @myShift.Name</span>
+                        <div class="small text-muted mt-1">ورود: @FmtTime(myShift.StartTime) — خروج: @FmtTime(myShift.EndTime)</div>
+                    }
+                    else
+                    {
+                        <span class="badge bg-secondary-subtle text-secondary"><i class="bi bi-info-circle"></i> شیفت مشخص نیست (با مدیر هماهنگ کنید)</span>
+                    }
+                </div>
+
+                <div class="d-flex justify-content-center gap-3 mt-4">
+                    <button class="btn att-btn att-enter"
+                            disabled="@(busy || !CanCheckIn)"
+                            @onclick="CheckIn">
+                        <i class="bi bi-box-arrow-in-right"></i>
+                        @(CanCheckIn ? "ثبت ورود" : (IsInNow ? "در حال حاضر در محل هستید" : "سقف ورود روزانه تمام شده"))
+                    </button>
+                    <button class="btn att-btn att-exit"
+                            disabled="@(busy || !CanCheckOut)"
+                            @onclick="CheckOut">
+                        <i class="bi bi-box-arrow-right"></i>
+                        @(IsInNow ? "ثبت خروج" : "ابتدا ورود بزنید")
+                    </button>
+                </div>
+                <div class="text-center small text-muted mt-2">
+                    ورود/خروج امروز: <b>@Fa.Digits(UsedPairs)</b> از @Fa.Digits(MaxPairs)
+                </div>
+
+                @if (today != null)
+                {
+                    <div class="att-status mt-4 w-100">
+                        @if (TodaySegs.Count > 0)
+                        {
+                            @foreach (var s in TodaySegs)
+                            {
+                                <div class="d-flex align-items-center gap-2 att-seg">
+                                    <span class="att-seg-num" dir="ltr">@Fa.Digits(s.Seq)</span>
+                                    <div class="flex-grow-1 att-seg-times" dir="ltr">
+                                        <span class="fw-bold">@FmtDT(s.EnterAt)</span>
+                                        @if (s.LateMinutes > 0)
+                                        {
+                                            <span class="badge bg-danger ms-1" dir="rtl">تاخیر @Fa.Digits(s.LateMinutes) دقیقه</span>
+                                        }
+                                        <span class="mx-1 text-muted">←</span>
+                                        @if (s.ExitAt.HasValue)
+                                        {
+                                            <span class="fw-bold">@FmtDT(s.ExitAt)</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="att-now">● در محل</span>
+                                        }
+                                    </div>
+                                    @CoverageBadge(s)
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <div class="small text-muted text-center py-1">هنوز ورود/خروجی برای امروز ثبت نشده.</div>
+                        }
+                        @if (today.WorkMinutes > 0)
+                        {
+                            <div class="small mt-2">
+                                <span class="badge bg-success">کارکرد تا کنون @WorkText(today.WorkMinutes)</span>
+                                @if (today.CoveredGapMinutes > 0)
+                                {
+                                    <span class="badge bg-primary">غیبت پوشش‌شده @WorkText(today.CoveredGapMinutes)</span>
+                                }
+                            </div>
+                        }
+                        @if (today.DeficitMinutes > 0)
+                        {
+                            <div class="small mt-1 text-danger">
+                                <i class="bi bi-exclamation-circle"></i> کسری کار امروز: @WorkText(today.DeficitMinutes)
+                            </div>
+                        }
+                        @if (today.HasApprovedLeave)
+                        {
+                            <div class="small mt-1 text-primary">
+                                <i class="bi bi-calendar2-check"></i> مرخصی تاییدشده دارید
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-7">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-white fw-800 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span><i class="bi bi-calendar-week text-primary"></i> خلاصه @PersianDate.MonthName(filterMonth) @Fa.Digits(filterYear)</span>
+                <div class="d-flex gap-1">
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="PrevMonth"><i class="bi bi-chevron-right"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="GoCurrent">امروز</button>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="NextMonth"><i class="bi bi-chevron-left"></i></button>
+                </div>
+            </div>
+            <div class="card-body">
+                @if (summary != null)
+                {
+                    <div class="row g-3 text-center">
+                        <div class="col-12 col-sm">
+                            <div class="att-stat text-success"><i class="bi bi-check2-circle"></i><div>@Fa.Digits(summary.Present)</div><small>حاضر</small></div>
+                        </div>
+                        <div class="col-12 col-sm">
+                            <div class="att-stat text-primary"><i class="bi bi-calendar2-check"></i><div>@D0(summary.Leave)</div><small>مرخصی</small></div>
+                        </div>
+                        <div class="col-12 col-sm">
+                            <div class="att-stat text-danger"><i class="bi bi-x-circle"></i><div>@Fa.Digits(summary.Absent)</div><small>غایب</small></div>
+                        </div>
+                        <div class="col-12 col-sm">
+                            <div class="att-stat text-warning"><i class="bi bi-clock"></i><div>@Fa.Digits(summary.Late)</div><small>با تاخیر</small></div>
+                        </div>
+                        <div class="col-12 col-sm">
+                            <div class="att-stat text-info"><i class="bi bi-hourglass-split"></i><div>@Fa.Digits((int)Math.Round(summary.WorkMinutes / 60.0))<span class="small">ساعت</span></div><small>کل کارکرد</small></div>
+                        </div>
+                    </div>
+                    <hr />
+                    <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center">
+                        <div class="small text-muted">
+                            <i class="bi bi-info-circle"></i>
+                            روزهای کاری این ماه: @Fa.Digits(summary.Workdays) روز
+                        </div>
+                        @if (summary.DeficitMinutes > 0)
+                        {
+                            <span class="badge bg-danger-subtle text-danger">
+                                <i class="bi bi-dash-circle"></i> مجموع کسری کار: @WorkText(summary.DeficitMinutes)
+                            </span>
+                        }
+                        @if (summary.TotalLateMinutes > 0)
+                        {
+                            <span class="badge bg-warning-subtle text-dark">
+                                <i class="bi bi-clock-history"></i> مجموع تاخیر: @Fa.Digits(summary.TotalLateMinutes) دقیقه
+                            </span>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="text-center text-muted py-4">
+                        <div class="spinner-border spinner-border-sm text-primary"></div>
+                        در حال بارگذاری...
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ======== کل تردد ماه ======== -->
+<div class="card border-0 shadow-sm mv-card">
+    <div class="card-header bg-white mv-head">
+        <span class="mv-title"><i class="bi bi-calendar2-week text-primary"></i> کل تردد ماه — @PersianDate.MonthName(filterMonth) @Fa.Digits(filterYear)</span>
+        <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-secondary" @onclick="PrevMonth" title="ماه قبل"><i class="bi bi-chevron-right"></i></button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="GoCurrent">امروز</button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="NextMonth" title="ماه بعد"><i class="bi bi-chevron-left"></i></button>
+        </div>
+    </div>
+    <div class="card-body">
+        @if (monthViewLoading)
+        {
+            <div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary"></div> در حال بارگذاری...</div>
+        }
+        else if (monthView != null)
+        {
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <span class="mv-pill mv-pill-present"><b>@Fa.Digits(MvCount("Present"))</b> حاضر</span>
+                <span class="mv-pill mv-pill-leave"><b>@Fa.Digits(MvCount("Leave"))</b> مرخصی/ماموریت</span>
+                <span class="mv-pill mv-pill-holiday"><b>@Fa.Digits(MvCount("Holiday"))</b> تعطیل</span>
+                <span class="mv-pill mv-pill-red"><b>@Fa.Digits(MvCount("Red"))</b> دارای کسری</span>
+                <span class="mv-pill mv-pill-unauthorized"><b>@Fa.Digits(MvCount("Unauthorized"))</b> تردد غیرمجاز</span>
+                <span class="mv-pill mv-pill-yellow"><b>@Fa.Digits(MvCount("Yellow"))</b> در حال انجام</span>
+            </div>
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <button class="btn btn-sm mv-filter @(mvFilter == "All" ? "active" : "")" @onclick='() => mvFilter = "All"'>همه</button>
+                <button class="btn btn-sm mv-filter @(mvFilter == "Present" ? "active" : "")" @onclick='() => mvFilter = "Present"'>حاضر</button>
+                <button class="btn btn-sm mv-filter @(mvFilter == "Leave" ? "active" : "")" @onclick='() => mvFilter = "Leave"'>مرخصی/ماموریت</button>
+                <button class="btn btn-sm mv-filter @(mvFilter == "Holiday" ? "active" : "")" @onclick='() => mvFilter = "Holiday"'>تعطیل</button>
+                <button class="btn btn-sm mv-filter @(mvFilter == "Red" ? "active" : "")" @onclick='() => mvFilter = "Red"'>دارای کسری</button>
+                <button class="btn btn-sm mv-filter @(mvFilter == "Unauthorized" ? "active" : "")" @onclick='() => mvFilter = "Unauthorized"'>تردد غیرمجاز</button>
+                <button class="btn btn-sm mv-filter @(mvFilter == "Yellow" ? "active" : "")" @onclick='() => mvFilter = "Yellow"'>امروز/در حال انجام</button>
+            </div>
+            @if (FilteredDays.Count == 0)
+            {
+                <div class="text-center text-muted py-4">روزی با این فیلتر پیدا نشد.</div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table align-middle mv-table mb-0">
+                        <thead>
+                            <tr><th>تاریخ</th><th>روز</th><th>وضعیت</th><th>ورود</th><th>خروج</th><th>کسری</th><th>مازاد</th><th>اقدام</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var d in FilteredDays)
+                            {
+                                var isOpen = IsOpen(d.Date);
+                                <tr class="mv-row mv-row-@d.Status.ToLower()" @onclick="() => ToggleDay(d.Date)">
+                                    <td class="fw-bold" dir="ltr">
+                                        <i class="bi @((isOpen ? "bi-chevron-down" : "bi-chevron-right") + " text-muted me-1")"></i>
+                                        @PersianDate.ToShort(d.Date)
+                                    </td>
+                                    <td>@PersianDate.WeekdayName(d.Date)</td>
+                                    <td>@StatusChip(d)</td>
+                                    <td dir="ltr" class="mv-times">@(d.EnterTimes.Count > 0 ? string.Join("، ", d.EnterTimes) : "—")</td>
+                                    <td dir="ltr" class="mv-times">@(d.ExitTimes.Count > 0 ? string.Join("، ", d.ExitTimes) : "—")</td>
+                                    <td>
+                                        @if (d.DeficitMinutes > 0) { <span class="text-danger fw-800">@WorkText(d.DeficitMinutes)</span> }
+                                        else { <span class="text-muted">—</span> }
+                                    </td>
+                                    <td>
+                                        @if (d.PendingOvertimeMinutes > 0)
+                                        { <span class="text-warning fw-800" title="ماندنِ اضافه بر ساعت شیفت — منتظر تصمیم مدیر">@WorkText(d.PendingOvertimeMinutes)</span> }
+                                        else if (d.OvertimeMinutes > 0)
+                                        { <span class="text-info" title="اضافه‌کار تأییدشده">@WorkText(d.OvertimeMinutes)</span> }
+                                        else { <span class="text-muted">—</span> }
+                                    </td>
+                                    <td>
+                                        @if (d.Status == "Red")
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger mv-req-btn" @onclick:stopPropagation
+                                                    @onclick="() => OpenLeaveModal(d.Date, d.Ranges.FirstOrDefault()?.Start, d.Ranges.FirstOrDefault()?.End)">
+                                                <i class="bi bi-plus-circle"></i> درخواست مرخصی
+                                            </button>
+                                        }
+                                        else { <span class="text-muted small">—</span> }
+                                    </td>
+                                </tr>
+                                @if (isOpen)
+                                {
+                                    <tr class="mv-detail-row">
+                                        <td colspan="8" class="bg-light">
+                                            <div class="d-flex flex-column gap-2">
+                                                @if (!string.IsNullOrWhiteSpace(d.HolidayName))
+                                                {
+                                                    <div class="small"><i class="bi bi-calendar-x text-primary"></i> تعطیلی مجموعه: <b>@d.HolidayName</b></div>
+                                                }
+                                                @if (d.Segments.Count > 0)
+                                                {
+                                                    <div class="d-flex flex-column gap-1">
+                                                        @foreach (var s in d.Segments)
+                                                        {
+                                                            <div class="d-flex align-items-center gap-2 att-seg-detail" dir="ltr">
+                                                                <span class="att-seg-num">@Fa.Digits(s.Seq)</span>
+                                                                <span class="fw-bold">@FmtDT(s.EnterAt)</span>
+                                                                @if (s.LateMinutes > 0) { <span class="badge bg-danger" dir="rtl">تاخیر @Fa.Digits(s.LateMinutes) دقیقه</span> }
+                                                                <span class="text-muted">←</span>
+                                                                @if (s.ExitAt.HasValue)
+                                                                {
+                                                                    <span class="fw-bold">@FmtDT(s.ExitAt)</span>
+                                                                }
+                                                                else
+                                                                {
+                                                                    <span class="att-now">● بدون خروج ثبت‌شده</span>
+                                                                }
+                                                                @if (s.IsUnauthorized)
+                                                                {
+                                                                    <span class="badge bg-purple" dir="rtl"><i class="bi bi-shield-x"></i> تردد غیرمجاز</span>
+                                                                }
+                                                                else if (s.PendingMinutes > 0)
+                                                                {
+                                                                    <span class="badge bg-warning text-dark" dir="rtl" title="ماندنِ اضافه بر ساعت شیفت — در انتظار تصمیم مدیر (نه کسری، نه اضافه‌کار)">
+                                                                        <i class="bi bi-hourglass-split"></i> مازاد @Fa.Digits(s.PendingMinutes) دقیقه — در انتظار تصمیم مدیر
+                                                                    </span>
+                                                                }
+                                                                else if (s.ExtraDecision == 1)
+                                                                {
+                                                                    <span class="badge bg-success" dir="rtl" title="مازادِ این بازه به اضافه‌کار تبدیل شد"><i class="bi bi-check2"></i> مازاد تأیید‌شده (اضافه‌کار)</span>
+                                                                }
+                                                                else if (s.ExitAt.HasValue)
+                                                                {
+                                                                    @if (s.ExitCovered)
+                                                                    {
+                                                                        <span class="badge bg-primary" dir="rtl">
+                                                                            <i class="bi bi-shield-check"></i> غیبت پوشش‌شده@(string.IsNullOrWhiteSpace(s.LinkedLeaveNumber) ? "" : " — " + s.LinkedLeaveNumber)
+                                                                        </span>
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <span class="badge bg-warning text-dark" dir="rtl"><i class="bi bi-exclamation-triangle"></i> بدون پوشش (کسری)</span>
+                                                                    }
+                                                                }
+                                                                @if (s.OvertimeMinutes > 0)
+                                                                {
+                                                                    <span class="badge bg-info text-dark" dir="rtl"><i class="bi bi-plus-circle"></i> اضافه‌کاری @WorkText(s.OvertimeMinutes)</span>
+                                                                }
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                }
+                                                @if (d.Ranges.Count > 0)
+                                                {
+                                                    <div class="small">
+                                                        <b>بازه‌های بدون پوشش:</b>
+                                                        @foreach (var rg in d.Ranges)
+                                                        {
+                                                            <span class="badge def-range me-1" dir="ltr">@rg.Start.HHMM() ← @rg.End.HHMM() (@WorkText(rg.Minutes))</span>
+                                                        }
+                                                    </div>
+                                                }
+                                                @if (d.Segments.Count == 0 && d.Ranges.Count == 0 && string.IsNullOrWhiteSpace(d.HolidayName))
+                                                {
+                                                    <div class="small text-muted" dir="rtl">
+                                                        @if (d.IsFuture) { <span>هنوز به این تاریخ نرسیده است.</span> }
+                                                        else { <span>برای این روز ثبتی وجود ندارد.</span> }
+                                                    </div>
+                                                }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+<!-- ======== مودال درخواست مرخصی/ماموریت از بازه‌ی کسری ======== -->
+<Modal Visible="showLeaveModal" Title="درخواست مرخصی / ماموریت ساعتی" OnClose="() => showLeaveModal = false">
+    <ChildContent>
+    @if (!string.IsNullOrEmpty(leaveError))
+    {
+        <div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle-fill"></i> @leaveError</div>
+    }
+    <div class="row g-2">
+        <div class="col-12">
+            <label class="form-label small fw-800">نوع درخواست</label>
+            <div class="d-flex gap-2">
+                <div class="lv-type-sm @(leaveType == "Hourly" ? "active" : "")" @onclick='() => leaveType = "Hourly"'>
+                    <i class="bi bi-clock-history"></i> مرخصی ساعتی
+                </div>
+                <div class="lv-type-sm @(leaveType == "HourlyMission" ? "active" : "")" @onclick='() => leaveType = "HourlyMission"'>
+                    <i class="bi bi-clipboard2-check"></i> ماموریت ساعتی
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-4">
+            <label class="form-label small fw-800">تاریخ</label>
+            <DatePicker Value="leaveDate" ValueChanged="v => leaveDate = v" CssClass="form-control-sm" />
+        </div>
+        <div class="col-12 col-sm-4">
+            <label class="form-label small fw-800">ساعت شروع</label>
+            <TimeTextInput @bind-Value="leaveStart" Default="08:00" />
+        </div>
+        <div class="col-12 col-sm-4">
+            <label class="form-label small fw-800">ساعت پایان</label>
+            <TimeTextInput @bind-Value="leaveEnd" Default="10:00" />
+        </div>
+        @if (leaveType == "HourlyMission")
+        {
+            <div class="col-12">
+                <label class="form-label small fw-800">مقصد <span class="text-danger">*</span></label>
+                <input class="form-control form-control-sm" @bind="leaveDestination" placeholder="مثلاً: تهران" />
+            </div>
+        }
+        <div class="col-12">
+            <label class="form-label small fw-800">دلیل (اختیاری)</label>
+            <input class="form-control form-control-sm" @bind="leaveReason" placeholder="مثلاً: ویزیت پزشکی" />
+        </div>
+        <div class="col-12 small text-muted">
+            <i class="bi bi-info-circle"></i> درخواست برای تاریخ گذشته هم قابل ثبت است؛ بعد از تایید، کسری آن روز به‌صورت خودکار اصلاح می‌شود.
+        </div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end mt-3 gap-2">
+        <button class="btn btn-sm btn-light" @onclick="() => showLeaveModal = false">انصراف</button>
+        <button class="btn btn-sm btn-primary" @onclick="SubmitLeave" disabled="@leaveBusy">
+            @if (leaveBusy)
+            {
+                <span class="spinner-border spinner-border-sm me-1"></span>
+                <span>در حال ارسال…</span>
+            }
+            else
+            {
+                <i class="bi bi-send-fill me-1"></i>
+                <span>ارسال درخواست</span>
+            }
+        </button>
+    </div>
+    </Footer>
+</Modal>
+
+<style>
+    .att-clock-card { background: linear-gradient(145deg, #f4f0ff 0%, #ffffff 50%, #eaf2ff 100%); border-radius: 20px; }
+    .att-date { color:#5b21b6; font-weight:800; font-size:1rem; }
+    .att-time { font-size: 3.2rem; font-weight: 900; color: #1c2130; letter-spacing: 2px; font-variant-numeric: tabular-nums; direction: ltr; }
+    .att-btn { padding: .7rem 1.6rem; border-radius: 999px; font-weight:800; box-shadow:0 4px 12px rgba(0,0,0,.08); }
+    .att-enter { background: linear-gradient(135deg,#2ec47e,#25a86b); color:#fff; }
+    .att-enter:hover:not(:disabled) { color:#fff; filter:brightness(1.08); }
+    .att-enter:disabled { background:#9cdcbb; color:#fff; }
+    .att-exit { background: linear-gradient(135deg,#e0245e,#b01a4b); color:#fff; }
+    .att-exit:hover:not(:disabled) { color:#fff; filter:brightness(1.08); }
+    .att-exit:disabled { background:#f0a0b8; color:#fff; }
+    .att-status { background:#f8f7fd; padding:.8rem 1rem; border-radius:12px; display:inline-block; }
+    .att-seg { padding:.35rem 0; border-bottom:1px dashed #e3ddf5; }
+    .att-seg:last-of-type { border-bottom:none; }
+    .att-seg-num { min-width:26px; height:26px; border-radius:8px; background:#efeaff; color:#5b21b6; font-weight:800; font-size:.8rem; display:inline-flex; align-items:center; justify-content:center; }
+    .att-seg-times { font-size:.9rem; font-variant-numeric: tabular-nums; }
+    .att-now { color:#2ec47e; font-weight:800; font-size:.85rem; }
+    .att-stat div { font-size: 1.4rem; font-weight: 900; }
+    .att-stat small { font-size: .75rem; color:#8a90a5; font-weight:700; }
+    .att-table { font-size:.88rem; }
+    .att-table thead th { font-size:.78rem; background:#f8f7fd; color:#5f688a; font-weight:800; border-bottom:2px solid #e8e2fb; }
+    .def-ok { color:#0e8a55; font-weight:800; padding:.6rem 0; }
+    .def-range { background:#fdecef; color:#b21b4c; border:1px solid #f3b9c8; font-weight:800; font-variant-numeric:tabular-nums; cursor:pointer; }
+    .def-range:hover { background:#f8d7de; transform:translateY(-1px); }
+    .def-req-btn { white-space:nowrap; }
+    .lv-type-sm { border:2px solid #e5e0f5; border-radius:10px; padding:.45rem .9rem; cursor:pointer; font-weight:700; font-size:.85rem; background:#fbfaff; }
+    .lv-type-sm:hover { border-color:#b9a5f5; }
+    .lv-type-sm.active { background:linear-gradient(135deg,#8e5cff,#4f8cff); color:#fff; border-color:transparent; }
+    .att-hist-row { cursor:pointer; }
+    .att-hist-row:hover td { background:#f8f7fd; }
+    .att-detail-row td { padding:.7rem 1rem !important; }
+    .att-seg-detail { font-variant-numeric:tabular-nums; font-size:.88rem; }
+
+    /* ===== کل تردد ماه ===== */
+    .mv-card { border-radius:18px; overflow:hidden; }
+    .mv-head { border-bottom:2px solid #e8e2fb !important; }
+    .mv-title { font-weight:800; }
+    .mv-pills { gap:.5rem !important; }
+    .mv-pill { display:inline-flex; align-items:center; gap:.45rem; border-radius:999px; padding:.4rem .9rem; font-size:.82rem; font-weight:700; color:#5f688a; background:#f6f5fb; border:1px solid #e8e2fb; }
+    .mv-pill b { font-size:1rem; color:#1c2130; }
+    .mv-pill-present { background:#f0fdf4; border-color:#bbf7d0; } .mv-pill-present b { color:#15803d; }
+    .mv-pill-leave { background:#eff6ff; border-color:#bfdbfe; } .mv-pill-leave b { color:#1d4ed8; }
+    .mv-pill-holiday { background:#f5f3ff; border-color:#ddd6fe; } .mv-pill-holiday b { color:#6d28d9; }
+    .mv-pill-red { background:#fef2f2; border-color:#fecaca; } .mv-pill-red b { color:#b91c1c; }
+    .mv-pill-unauthorized { background:#f5f3ff; border-color:#ddd6fe; } .mv-pill-unauthorized b { color:#6d28d9; }
+    .mv-pill-yellow { background:#fffbeb; border-color:#fde68a; } .mv-pill-yellow b { color:#b45309; }
+    .mv-filter { border-radius:999px; font-size:.8rem; font-weight:700; color:#5f688a; border-color:#ddd6fe; }
+    .mv-filter.active { background:linear-gradient(135deg,#8e5cff,#4f8cff) !important; color:#fff !important; border-color:transparent !important; }
+    .mv-table { font-size:.88rem; }
+    .mv-table thead th { font-size:.78rem; background:#f8f7fd; color:#5f688a; font-weight:800; border-bottom:2px solid #e8e2fb; text-align:center !important; }
+    .mv-table td { text-align:center !important; vertical-align:middle; }
+    .mv-row { cursor:pointer; transition:filter .12s ease; }
+    .mv-row:hover { filter:brightness(.985); }
+    .mv-row-red { background:#fef2f2 !important; box-shadow:inset 3px 0 0 #ef4444; }
+    .mv-row-unauthorized { background:#f5f3ff !important; box-shadow:inset 3px 0 0 #8b5cf6; }
+    .mv-row-green { background:#f7fef9 !important; box-shadow:inset 3px 0 0 #22c55e; }
+    .mv-row-yellow { background:#fffdf3 !important; box-shadow:inset 3px 0 0 #f59e0b; }
+    .mv-row-white { opacity:.55; }
+    .mv-row-white:hover { filter:none; }
+    .mv-times { font-variant-numeric:tabular-nums; font-weight:700; color:#1c2130; white-space:nowrap; }
+    .mv-req-btn { white-space:nowrap; border-radius:999px; }
+    .mv-detail-row td { padding:.8rem 1.2rem !important; background:#fafaff !important; }
+    .chip { display:inline-flex; align-items:center; gap:.3rem; border-radius:999px; padding:.28rem .7rem; font-size:.76rem; font-weight:800; white-space:nowrap; }
+    .chip i { font-size:.85rem; }
+    .chip-white { background:#f1f5f9; color:#94a3b8; }
+    .chip-yellow { background:#fef3c7; color:#92400e; }
+    .chip-red { background:#fee2e2; color:#b91c1c; }
+    .chip-unauthorized { background:#ede9fe; color:#6d28d9; }
+    .bg-purple { background:#7c3aed !important; color:#fff !important; }
+    .chip-green { background:#dcfce7; color:#15803d; }
+    .chip-leave { background:#dbeafe; color:#1d4ed8; }
+    .chip-mission { background:#ccfbf1; color:#0f766e; }
+    .chip-holiday { background:#ede9fe; color:#6d28d9; }
+</style>
+
+@code {
+    private const int MaxPairs = 5;
+    private bool busy;
+    private MyToday? today;
+    private MyShift? myShift;
+    private MonthSummary? summary;
+    private int currentYear, currentMonth;
+    private int filterYear, filterMonth;
+    private string apiBase = "";
+    private string liveClock = "";
+    private string todayFa = "";
+    private PeriodicTimer? _tick;
+    private CancellationTokenSource? _cts;
+
+    // ---------- کسری + درخواست آسان ----------
+    private bool monthViewLoading;
+    private MonthView? monthView;
+    private string mvFilter = "All";
+    private bool showLeaveModal;
+    private DateTime? leaveDate;
+    private string? leaveStart;
+    private string? leaveEnd;
+    private string leaveType = "Hourly";
+    private string? leaveDestination;
+    private string? leaveReason;
+    private string leaveError = "";
+    private bool leaveBusy;
+
+    // ---------- جزئیات روز در تاریخچه ----------
+    private readonly HashSet<string> _expandedDays = new();
+    private void ToggleDay(DateTime date)
+    {
+        var k = date.ToString("yyyy-MM-dd");
+        if (!_expandedDays.Add(k)) _expandedDays.Remove(k);
+    }
+    private bool IsOpen(DateTime date) => _expandedDays.Contains(date.ToString("yyyy-MM-dd"));
+
+    private void OpenLeaveModal(DateTime date, TimeSpan? start, TimeSpan? end)
+    {
+        leaveDate = date.Date;
+        leaveStart = (start ?? new TimeSpan(8, 0, 0)).HHMM();
+        leaveEnd = (end ?? new TimeSpan(10, 0, 0)).HHMM();
+        leaveType = "Hourly";
+        leaveDestination = null;
+        leaveReason = null;
+        leaveError = "";
+        showLeaveModal = true;
+    }
+
+    private async Task LoadMonthView()
+    {
+        monthViewLoading = true;
+        try
+        {
+            monthView = await Http.GetFromJsonAsync<MonthView>($"/api/Attendance/my-month-view?jy={filterYear}&jm={filterMonth}");
+        }
+        catch { monthView = null; }
+        monthViewLoading = false;
+    }
+
+    private List<MonthDay> FilteredDays
+    {
+        get
+        {
+            if (monthView == null) return new();
+            return monthView.Items.Where(d => mvFilter switch
+            {
+                "All" => true,
+                "Present" => d.Status == "Green" && d.LeaveType == "None",
+                "Leave" => d.Status == "Green" && d.LeaveType is "Daily" or "Hourly" or "HourlyMission" or "Mission",
+                "Holiday" => d.Status == "Green" && d.LeaveType == "Holiday",
+                "Red" => d.Status == "Red",
+                "Unauthorized" => d.Status == "Unauthorized",
+                "Yellow" => d.Status == "Yellow",
+                _ => true
+            }).ToList();
+        }
+    }
+
+    private int MvCount(string cat)
+    {
+        if (monthView == null) return 0;
+        return monthView.Items.Count(d => cat switch
+        {
+            "Present" => d.Status == "Green" && d.LeaveType == "None",
+            "Leave" => d.Status == "Green" && d.LeaveType is "Daily" or "Hourly" or "HourlyMission" or "Mission",
+            "Holiday" => d.Status == "Green" && d.LeaveType == "Holiday",
+            "Red" => d.Status == "Red",
+            "Unauthorized" => d.Status == "Unauthorized",
+            "Yellow" => d.Status == "Yellow",
+            _ => false
+        });
+    }
+
+    private Microsoft.AspNetCore.Components.MarkupString StatusChip(MonthDay d)
+    {
+        if (d.Status == "White")
+            return new("<span class=\"chip chip-white\">نرسیده</span>");
+        if (d.Status == "Yellow")
+            return new("<span class=\"chip chip-yellow\"><i class=\"bi bi-hourglass-split\"></i> در حال انجام</span>");
+        if (d.Status == "Red")
+            return new("<span class=\"chip chip-red\"><i class=\"bi bi-exclamation-triangle\"></i> کسری</span>");
+        if (d.Status == "Unauthorized")
+            return new("<span class=\"chip chip-unauthorized\"><i class=\"bi bi-shield-x\"></i> تردد غیرمجاز</span>");
+        // Green
+        switch (d.LeaveType)
+        {
+            case "Holiday":
+                return new("<span class=\"chip chip-holiday\"><i class=\"bi bi-calendar-x\"></i> تعطیلی مجموعه</span>");
+            case "Daily":
+                return new("<span class=\"chip chip-leave\"><i class=\"bi bi-calendar2-check\"></i> مرخصی</span>");
+            case "Mission":
+                return new("<span class=\"chip chip-mission\"><i class=\"bi bi-plane\"></i> ماموریت</span>");
+            case "Hourly":
+                return new("<span class=\"chip chip-leave\"><i class=\"bi bi-clock-history\"></i> مرخصی ساعتی</span>");
+            case "HourlyMission":
+                return new("<span class=\"chip chip-mission\"><i class=\"bi bi-clipboard2-check\"></i> ماموریت ساعتی</span>");
+            default:
+                return new("<span class=\"chip chip-green\"><i class=\"bi bi-check2-circle\"></i> حاضر</span>");
+        }
+    }
+
+    private async Task SubmitLeave()
+    {
+        leaveError = "";
+        if (leaveDate == null) { leaveError = "تاریخ را انتخاب کنید."; return; }
+        if (string.IsNullOrWhiteSpace(leaveStart) || string.IsNullOrWhiteSpace(leaveEnd))
+        { leaveError = "ساعت شروع و پایان را وارد کنید."; return; }
+        if (!TimeSpan.TryParse(leaveStart, out var st) || !TimeSpan.TryParse(leaveEnd, out var en) || en <= st)
+        { leaveError = "ساعت پایان باید بعد از ساعت شروع باشد."; return; }
+        if ((en - st).TotalHours > 8) { leaveError = "بازه نمی‌تواند بیش از ۸ ساعت باشد."; return; }
+        if (leaveType == "HourlyMission" && string.IsNullOrWhiteSpace(leaveDestination))
+        { leaveError = "مقصد ماموریت را وارد کنید."; return; }
+
+        leaveBusy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync("/api/LeaveRequests", new
+            {
+                Type = leaveType,
+                StartDate = leaveDate.Value.Date,
+                EndDate = leaveDate.Value.Date,
+                StartTime = leaveStart,
+                EndTime = leaveEnd,
+                Destination = leaveType == "HourlyMission" ? leaveDestination : null,
+                Reason = leaveReason
+            });
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success("درخواست شما ثبت شد؛ بعد از تایید، کسری به‌صورت خودکار اصلاح می‌شود.");
+                showLeaveModal = false;
+                await LoadMonthView();
+            }
+            else leaveError = await ExtractError(resp);
+        }
+        catch (Exception ex) { leaveError = ex.Message; }
+        leaveBusy = false;
+    }
+
+    // ---------- وضعیت ورود/خروج‌های امروز ----------
+    private List<SegmentItem> TodaySegs => today?.Segments ?? new();
+    private bool IsInNow => TodaySegs.LastOrDefault() is { ExitAt: null };
+    private int UsedPairs => TodaySegs.Count;
+    private bool CanCheckIn => !IsInNow && UsedPairs < MaxPairs;
+    private bool CanCheckOut => IsInNow;
+
+    private static string FmtDT(DateTime? dt) => dt.HHMM();
+
+    private Microsoft.AspNetCore.Components.MarkupString CoverageBadge(SegmentItem s)
+    {
+        if (s.ExitAt == null)
+            return new("<span class=\"badge bg-success\"><i class=\"bi bi-check2\"></i> در حال کار</span>");
+        if (s.ExitCovered)
+            return new($"<span class=\"badge bg-primary\" title=\"پوشش‌شده با {s.LinkedLeaveNumber}\"><i class=\"bi bi-shield-check\"></i> پوشش‌شده{(string.IsNullOrWhiteSpace(s.LinkedLeaveNumber) ? "" : " — " + s.LinkedLeaveNumber)}</span>");
+        return new("<span class=\"badge bg-warning text-dark\"><i class=\"bi bi-exclamation-triangle\"></i> بدون پوشش (کسری)</span>");
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(Auth.Token))
+            Http.DefaultRequestHeaders.Authorization = new("Bearer", Auth.Token);
+        apiBase = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+
+        (currentYear, currentMonth, _) = PersianDate.FromGregorian(DateTime.Now);
+        filterYear = currentYear; filterMonth = currentMonth;
+
+        await LoadToday();
+        await LoadShift();
+        await LoadSummary();
+        await LoadMonthView();
+
+        Rt.DataChanged += OnRtChanged;
+        await Rt.EnsureStartedAsync(apiBase, Auth.UserId);
+
+        _cts = new();
+        _ = RunClock(_cts.Token);
+    }
+
+    private async Task RunClock(CancellationToken ct)
+    {
+        _tick = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (await _tick.WaitForNextTickAsync(ct))
+            {
+                var now = DateTime.Now;
+                liveClock = now.ToString("HH:mm:ss");
+                todayFa = PersianDate.ToLong(now);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async void OnRtChanged(string scope)
+    {
+        if (scope != "attendance") return;
+        await InvokeAsync(async () =>
+        {
+            await LoadToday();
+            await LoadSummary();
+            await LoadMonthView();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Rt.DataChanged -= OnRtChanged;
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+
+    private void PrevMonth()
+    {
+        if (filterMonth == 1) { filterMonth = 12; filterYear--; } else filterMonth--;
+        _ = LoadSummary(); _ = LoadMonthView();
+    }
+    private void NextMonth()
+    {
+        if (filterMonth == 12) { filterMonth = 1; filterYear++; } else filterMonth++;
+        _ = LoadSummary(); _ = LoadMonthView();
+    }
+    private void GoCurrent()
+    {
+        filterYear = currentYear; filterMonth = currentMonth;
+        _ = LoadSummary(); _ = LoadMonthView();
+    }
+
+    private async Task LoadShift()
+    { try { myShift = await Http.GetFromJsonAsync<MyShift>("/api/Attendance/my-shift"); } catch { myShift = null; } }
+
+    private async Task LoadToday()
+    { try { today = await Http.GetFromJsonAsync<MyToday>("/api/Attendance/my-today"); } catch { today = null; } }
+
+    private async Task LoadSummary()
+    {
+        try
+        {
+            summary = await Http.GetFromJsonAsync<MonthSummary>($"/api/Attendance/my-summary?jy={filterYear}&jm={filterMonth}");
+        }
+        catch { summary = null; }
+    }
+
+    private class GeoPos { public double lat { get; set; } public double lng { get; set; } }
+
+    private async Task<string?> GetDeviceIdAsync()
+    {
+        try { return await JS.InvokeAsync<string>("attGetDeviceId"); } catch { return null; }
+    }
+
+    private async Task<GeoPos?> GetPositionAsync()
+    {
+        try { return await JS.InvokeAsync<GeoPos?>("attGetPosition", 8000); } catch { return null; }
+    }
+
+    private async Task<(string DeviceId, double? Lat, double? Lng)> AttMetaAsync()
+    {
+        var deviceId = await GetDeviceIdAsync() ?? "";
+        double? lat = null, lng = null;
+        var pos = await GetPositionAsync();
+        if (pos != null) { lat = pos.lat; lng = pos.lng; }
+        return (deviceId, lat, lng);
+    }
+
+    private async Task CheckIn()
+    {
+        busy = true;
+        try
+        {
+            var (deviceId, lat, lng) = await AttMetaAsync();
+            var resp = await Http.PostAsJsonAsync("/api/Attendance/check-in", new { ShiftGroupId = myShift?.Id, DeviceId = deviceId, Lat = lat, Lng = lng });
+            if (resp.IsSuccessStatusCode) { Toast.Success("ورود با موفقیت ثبت شد."); await LoadToday(); await LoadSummary(); await LoadMonthView(); }
+            else Toast.Error(await ExtractError(resp));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+
+    private async Task CheckOut()
+    {
+        busy = true;
+        try
+        {
+            var (deviceId, lat, lng) = await AttMetaAsync();
+            var resp = await Http.PostAsJsonAsync("/api/Attendance/check-out", new { DeviceId = deviceId, Lat = lat, Lng = lng });
+            if (resp.IsSuccessStatusCode)
+            {
+                string msg = "خروج با موفقیت ثبت شد.";
+                try
+                {
+                    var b = await resp.Content.ReadAsStringAsync();
+                    using var d = System.Text.Json.JsonDocument.Parse(b);
+                    if (d.RootElement.TryGetProperty("message", out var m) && m.ValueKind == System.Text.Json.JsonValueKind.String)
+                        msg = m.GetString() ?? msg;
+                }
+                catch { }
+                Toast.Success(msg);
+                await LoadToday(); await LoadSummary(); await LoadMonthView();
+            }
+            else Toast.Error(await ExtractError(resp));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+
+    private async Task<string> ExtractError(HttpResponseMessage resp)
+    {
+        try { var b = await resp.Content.ReadAsStringAsync(); using var d = System.Text.Json.JsonDocument.Parse(b); if (d.RootElement.TryGetProperty("message", out var m)) return m.GetString() ?? ""; } catch { }
+        return "خطا در ثبت";
+    }
+
+    private static string FmtTime(TimeSpan t) => t.HHMM();
+
+    private static string WorkText(int m)
+    {
+        if (m <= 0) return "—";
+        int h = m / 60; int mm = m % 60;
+        if (h == 0) return $"{Fa.Digits(mm)} دقیقه";
+        if (mm == 0) return $"{Fa.Digits(h)} ساعت";
+        return $"{Fa.Digits(h)}:{mm.ToString().PadLeft(2, '0')} ساعت";
+    }
+
+    private static string D0(double v) => v == (long)v ? Fa.Digits((long)v) : Fa.Digits((decimal)Math.Round(v, 1));
+
+    // =========== Models ===========
+    public class MyShift { public int Id { get; set; } public string Name { get; set; } = ""; public string? Description { get; set; } public TimeSpan StartTime { get; set; } public TimeSpan EndTime { get; set; } public int GraceMinutes { get; set; } public bool IncludeFriday { get; set; } }
+    public class SegmentItem { public int Id { get; set; } public int Seq { get; set; } public DateTime? EnterAt { get; set; } public DateTime? ExitAt { get; set; } public string? EnterStatus { get; set; } public int LateMinutes { get; set; } public bool ExitCovered { get; set; } public bool IsUnauthorized { get; set; } public int OvertimeMinutes { get; set; } public int PendingMinutes { get; set; } public int ExtraDecision { get; set; } public string? ExtraDecisionNote { get; set; } public string? LinkedLeaveNumber { get; set; } public string? Note { get; set; } }
+    public class MyToday { public int Id { get; set; } public DateTime WorkDate { get; set; } public int? ShiftGroupId { get; set; } public string? ShiftName { get; set; } public DateTime? EnterAt { get; set; } public DateTime? ExitAt { get; set; } public string? EnterStatus { get; set; } public int LateMinutes { get; set; } public int EarlyLeaveMinutes { get; set; } public int WorkMinutes { get; set; } public int DeficitMinutes { get; set; } public int CoveredGapMinutes { get; set; } public bool HasApprovedLeave { get; set; } public string? FinalStatus { get; set; } public string? Note { get; set; } public int InOutCount { get; set; } public List<SegmentItem> Segments { get; set; } = new(); }
+    public class MonthSummary { public int Year { get; set; } public int Month { get; set; } public int Present { get; set; } public int Absent { get; set; } public int Leave { get; set; } public int Late { get; set; } public int WorkMinutes { get; set; } public int DeficitMinutes { get; set; } public int TotalLateMinutes { get; set; } public int Workdays { get; set; } }
+    public class DeficitRange { public TimeSpan? Start { get; set; } public TimeSpan? End { get; set; } public int Minutes { get; set; } public string Kind { get; set; } = ""; public string? PendingNumber { get; set; } }
+    public class MonthDay
+    {
+        public DateTime Date { get; set; }
+        public bool IsFuture { get; set; }
+        public bool IsToday { get; set; }
+        public string Status { get; set; } = "";
+        public string LeaveType { get; set; } = "";
+        public string? HolidayName { get; set; }
+        public int DeficitMinutes { get; set; }
+        public int OvertimeMinutes { get; set; }
+        public int PendingOvertimeMinutes { get; set; }
+        public int UnauthorizedMinutes { get; set; }
+        public bool IsWorkday { get; set; } = true;
+        public string RuleSource { get; set; } = "";
+        public List<string> EnterTimes { get; set; } = new();
+        public List<string> ExitTimes { get; set; } = new();
+        public List<SegmentItem> Segments { get; set; } = new();
+        public List<DeficitRange> Ranges { get; set; } = new();
+    }
+    public class MonthView { public int Year { get; set; } public int Month { get; set; } public List<MonthDay> Items { get; set; } = new(); }
+}

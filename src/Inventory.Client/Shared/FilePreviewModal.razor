@@ -1,0 +1,299 @@
+@* Real eye-click preview: authorized bytes → local PDF canvas / image / sandboxed Office HTML.
+   TextPreviewApi remains an explicit extracted-text fallback, never a silent retry of HTTP errors. *@
+@using System.Net.Http.Headers
+@using System.Text.Json
+@using Inventory.Shared.Files
+@implements IAsyncDisposable
+@inject IAuthState Auth
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject IToastService Toast
+
+@if (visible)
+{
+    <div class="fpv-backdrop">
+        <div class="fpv-dialog" @ref="dialog" role="dialog" aria-modal="true" aria-label="@fileName" tabindex="-1">
+            <div class="fpv-head">
+                <div class="text-truncate d-flex align-items-center gap-2">
+                    <i class="bi @FileIcon"></i><b class="fs-8 text-truncate">@fileName</b>
+                    @if (kind == "html") { <span class="badge bg-primary fs-9">پیش‌نمایش آفیس</span> }
+                    @if (kind == "extracted") { <span class="badge bg-info fs-9">متن استخراج‌شده</span> }
+                </div>
+                <div class="d-flex align-items-center gap-1">
+                    @if (canDownload)
+                    {
+                        <button type="button" class="btn btn-sm btn-light" disabled="@downloading" @onclick="Download" title="دانلود فایل">
+                            <i class="@(downloading ? "spinner-border spinner-border-sm text-primary" : "bi bi-download text-primary")"></i>
+                        </button>
+                    }
+                    else { <span class="badge bg-warning text-dark fs-9"><i class="bi bi-eye ms-1"></i> فقط مشاهده</span> }
+                    <button type="button" class="btn btn-sm btn-light" @onclick="Close" title="بستن (Esc)" aria-label="بستن پیش‌نمایش"><i class="bi bi-x-lg"></i></button>
+                </div>
+            </div>
+            @if (kind == "pdf" && !loading && error == null && !pdfPasswordNeeded)
+            {
+                <div class="fpv-toolbar" aria-label="کنترل صفحات PDF">
+                    <button type="button" class="btn btn-sm btn-light" @onclick="PreviousPage" disabled="@(pdfBusy || page <= 1)" title="صفحه قبلی">قبلی</button>
+                    <span data-pdf-pages>صفحه @(page) از @pages</span>
+                    <button type="button" class="btn btn-sm btn-light" @onclick="NextPage" disabled="@(pdfBusy || page >= pages)" title="صفحه بعدی">بعدی</button>
+                    <button type="button" class="btn btn-sm btn-light" @onclick="ZoomOut" disabled="@(pdfBusy || zoom <= .5)" title="کوچک‌نمایی">−</button>
+                    <span>@((int)Math.Round(zoom * 100))٪</span>
+                    <button type="button" class="btn btn-sm btn-light" @onclick="ZoomIn" disabled="@(pdfBusy || zoom >= 3)" title="بزرگ‌نمایی">+</button>
+                    @if (pdfBusy) { <span class="spinner-border spinner-border-sm text-primary" aria-label="در حال نمایش صفحه"></span> }
+                </div>
+            }
+            <div class="fpv-body" aria-busy="@(loading || pdfBusy)">
+                @if (loading)
+                {
+                    <div class="text-center py-5" role="status"><div class="spinner-border text-primary"></div><div class="fs-8 text-muted mt-2">در حال بارگذاری پیش‌نمایش…</div></div>
+                }
+                else if (pdfPasswordNeeded)
+                {
+                    <div class="m-3 fpv-pdf-password">
+                        <p class="alert alert-info">@error</p>
+                        <label for="@passwordInputId">رمز خودِ فایل PDF (نه رمز ورود سامانه)</label>
+                        <input id="@passwordInputId" type="password" class="form-control form-control-sm" @bind="pdfPassword" @onkeydown="PdfPasswordKey" autocomplete="off" />
+                        <button type="button" class="btn btn-sm btn-primary mt-2" @onclick="UnlockPdf">باز کردن PDF</button>
+                    </div>
+                }
+                else if (error != null)
+                {
+                    <div class="m-3">
+                        <div class="alert alert-danger fs-8" role="alert"><i class="bi bi-exclamation-triangle-fill ms-1"></i>@error</div>
+                        <button type="button" class="btn btn-sm btn-outline-primary" @onclick="Retry">تلاش دوباره</button>
+                        @if (canExtractedFallback)
+                        {
+                            <button type="button" class="btn btn-sm btn-outline-secondary me-2" @onclick="LoadExtractedText">نمایش متن استخراج‌شده</button>
+                        }
+                    </div>
+                }
+                else if (kind is "text" or "extracted")
+                {
+                    <div class="fpv-stage">
+                        <pre class="fpv-text" dir="auto">@plainText</pre>
+                        @if (ShowCssWatermark) { @WatermarkOverlay }
+                    </div>
+                }
+                else if (objectUrl != null)
+                {
+                    <div class="fpv-stage">
+                        @if (kind == "image")
+                        {
+                            <div class="fpv-imgwrap"><img src="@objectUrl" alt="@fileName" class="fpv-img" @onerror="ImageFailed" /></div>
+                        }
+                        else if (kind == "pdf")
+                        {
+                            <div class="fpv-pdfhost" @ref="pdfHost" aria-label="پیش‌نمایش PDF"></div>
+                        }
+                        else if (kind == "html")
+                        {
+                            @* Empty sandbox intentionally grants neither scripts nor same-origin privileges. *@
+                            <iframe src="@objectUrl" class="fpv-frame" title="@fileName" sandbox="" referrerpolicy="no-referrer"></iframe>
+                        }
+                        @if (ShowCssWatermark) { @WatermarkOverlay }
+                    </div>
+                }
+            </div>
+            @if (!canDownload)
+            {
+                <div class="fpv-foot"><i class="bi bi-shield-lock ms-1"></i>اجازهٔ دانلود جداگانه ندارید؛ این پنجره فقط برای مشاهده است.</div>
+            }
+        </div>
+    </div>
+}
+
+<style>
+    .fpv-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.72);z-index:1080;display:flex;align-items:center;justify-content:center;padding:1rem}
+    .fpv-dialog{background:#fff;border-radius:16px;width:min(1100px,96vw);height:min(90vh,950px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.35);outline:none}
+    .fpv-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.6rem .9rem;border-bottom:1px solid #eef2f7;background:#f8fafc;flex-shrink:0}
+    .fpv-head i{color:#2563eb}.fpv-body{flex:1;min-height:0;overflow:auto;background:#f1f5f9}.fpv-stage{position:relative;width:100%;height:100%;min-height:100%}
+    .fpv-frame{display:block;width:100%;height:100%;border:0;background:white}.fpv-imgwrap{display:flex;align-items:center;justify-content:center;min-height:100%;padding:1rem}
+    .fpv-img{max-width:100%;max-height:calc(90vh - 105px);object-fit:contain;background:white;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.12)}
+    .fpv-pdfhost{height:100%;overflow:auto;direction:ltr;text-align:center;padding:12px;box-sizing:border-box;min-height:150px}.fpv-pdf-canvas{display:block;margin:0 auto;background:white;box-shadow:0 2px 12px rgba(0,0,0,.16)}
+    .fpv-toolbar{display:flex;align-items:center;justify-content:center;gap:.5rem;padding:.3rem;background:white;border-bottom:1px solid #e2e8f0;font-size:.8rem;flex-shrink:0}
+    .fpv-text{margin:0;padding:1rem;white-space:pre-wrap;word-break:break-word;font-size:.82rem;line-height:2;text-align:start;background:white;font-family:inherit;min-height:100%}
+    .fpv-watermark{position:absolute;inset:-10%;z-index:5;pointer-events:none;display:flex;flex-direction:column;justify-content:space-around;overflow:hidden}
+    .fpv-watermark-row{display:flex;justify-content:space-around;white-space:nowrap;transform:rotate(-24deg);font-size:1rem;font-weight:700;color:rgba(30,64,175,.15);gap:2rem}
+    .fpv-watermark-row span{padding:.6rem 1rem}.fpv-foot{padding:.45rem .9rem;border-top:1px solid #eef2f7;background:#fffbeb;color:#92400e;font-size:.72rem;flex-shrink:0}
+    .fpv-pdf-password{max-width:500px}.fs-9{font-size:.68rem}
+    @@media(max-width:600px){.fpv-backdrop{padding:.25rem}.fpv-dialog{width:100%;height:96vh;border-radius:10px}.fpv-toolbar{gap:.25rem;flex-wrap:wrap}}
+</style>
+
+@code {
+    [Parameter] public EventCallback<int> DownloadRequested { get; set; }
+    [Parameter] public EventCallback<AttachmentPreviewResult> ConfirmationRequired { get; set; }
+    public int CurrentAttachmentId => attachmentId;
+    private readonly string requestKey = "fpv-" + Guid.NewGuid().ToString("N");
+    private readonly string passwordInputId = "pdf-password-" + Guid.NewGuid().ToString("N");
+    private ElementReference dialog, pdfHost;
+    private DotNetObjectReference<FilePreviewModal>? self;
+    private bool disposed, visible, loading, downloading, mountPdf, attachDialog, pdfBusy, pdfPasswordNeeded;
+    private bool canDownload, canExtractedFallback;
+    private int revision, attachmentId, page = 1, pages = 1;
+    private double zoom = 1;
+    private string fileName = "", kind = "other", pdfPassword = "";
+    private string? contentType, objectUrl, plainText, error, watermarkText, extractedUrl;
+
+    // PDF/raster images and Office HTML receive their watermark from the server.
+    private bool ShowCssWatermark => !string.IsNullOrWhiteSpace(watermarkText) && (kind is "text" or "extracted" || kind == "image" && AttachmentPreviewFormats.Mime(fileName, contentType) == "image/svg+xml");
+    private string FileIcon => kind switch { "pdf" => "bi-file-earmark-pdf", "image" => "bi-file-earmark-image", "html" or "office" => "bi-file-earmark-richtext", _ => "bi-file-earmark-text" };
+    private string ApiRoot => (Http.BaseAddress?.ToString() ?? "").TrimEnd('/');
+    private RenderFragment WatermarkOverlay => @<div class="fpv-watermark" aria-hidden="true">
+        @for (var r = 0; r < 14; r++) { <div class="fpv-watermark-row">@for (var c = 0; c < 4; c++) { <span>@watermarkText</span> }</div> }
+    </div>;
+
+    public async Task ShowAsync(int id, string name, string? contentType, bool allowDownload, string? textPreviewUrl = null, string? watermarkText = null)
+    {
+        if (disposed) return;
+        var mine = ++revision;
+        await ReleaseAsync();
+        if (disposed || mine != revision) return;
+        attachmentId = id; fileName = name; this.contentType = contentType; canDownload = allowDownload;
+        this.watermarkText = watermarkText; extractedUrl = textPreviewUrl;
+        kind = AttachmentPreviewFormats.Kind(name, contentType);
+        error = plainText = null; pdfPassword = ""; pdfPasswordNeeded = false; canExtractedFallback = false;
+        page = pages = 1; zoom = 1; pdfBusy = false; mountPdf = false;
+        visible = loading = true; attachDialog = true;
+        StateHasChanged();
+        try
+        {
+            if (kind == "other") { error = "این فرمت پیش‌نمایش داخل برنامه ندارد."; return; }
+            var requestKind = kind == "office" ? "html" : kind;
+            var path = kind == "office" ? "preview-html" : "preview";
+            var result = await JS.InvokeAsync<AttachmentPreviewResult>("filePreview.load", $"{ApiRoot}/api/attachments/{path}/{id}", Auth.Token, requestKind,
+                AttachmentPreviewFormats.Mime(name, contentType), requestKey);
+            if (disposed || mine != revision) { if (result.Url != null) await RevokeAsync(result.Url); return; }
+            if (!result.Success)
+            {
+                if (result.Code == "CANCELLED") return;
+                error = result.Message ?? "ساخت پیش‌نمایش ممکن نشد.";
+                canExtractedFallback = kind == "office" && result.Status == 400 && !string.IsNullOrWhiteSpace(extractedUrl);
+                if (result.Code == "PASSWORD_CONFIRM_REQUIRED" && ConfirmationRequired.HasDelegate)
+                    await ConfirmationRequired.InvokeAsync(result);
+                return;
+            }
+            objectUrl = result.Url; plainText = result.Text;
+            if (kind == "office") kind = "html";
+            if (kind == "pdf") { mountPdf = true; pdfBusy = true; }
+        }
+        catch (JSException) { if (mine == revision) error = "اجزای پیش‌نمایش بارگذاری نشدند؛ صفحه را تازه کنید و مطمئن شوید نسخهٔ جدید فایل file-preview.js منتشر شده است."; }
+        catch (Exception) { if (mine == revision) error = "نمایش فایل انجام نشد؛ اتصال شبکه و نسخهٔ منتشرشدهٔ برنامه را بررسی کنید."; }
+        finally
+        {
+            if (!disposed && mine == revision) { loading = false; StateHasChanged(); }
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (disposed || !visible) return;
+        if (attachDialog)
+        {
+            attachDialog = false; self ??= DotNetObjectReference.Create(this);
+            try { await JS.InvokeVoidAsync("filePreview.attachModal", dialog, self, requestKey); } catch (JSException) { }
+        }
+        if (!mountPdf || loading || objectUrl == null || error != null) return;
+        mountPdf = false;
+        var mine = revision;
+        try
+        {
+            var result = await JS.InvokeAsync<AttachmentPreviewResult>("filePreview.openPdf", pdfHost, objectUrl, pdfPassword, requestKey);
+            if (disposed || mine != revision) return;
+            if (result.Success) pages = Math.Max(1, result.Pages);
+            else if (result.Code != "CANCELLED")
+            {
+                pdfPasswordNeeded = result.Code == "PDF_PASSWORD_REQUIRED";
+                error = result.Message ?? "نمایش PDF ممکن نشد.";
+            }
+        }
+        catch (JSException) { if (mine == revision) error = "نمایشگر محلی PDF در دسترس نیست؛ فایل‌های lib/pdfjs و نوع MIME فایل‌های آن را در IIS بررسی کنید."; }
+        finally { if (!disposed && mine == revision) { pdfBusy = false; StateHasChanged(); } }
+    }
+
+    private Task PreviousPage() => RenderPage(page - 1, zoom);
+    private Task NextPage() => RenderPage(page + 1, zoom);
+    private Task ZoomOut() => RenderPage(page, Math.Max(.5, zoom - .25));
+    private Task ZoomIn() => RenderPage(page, Math.Min(3, zoom + .25));
+    private async Task RenderPage(int number, double factor)
+    {
+        if (pdfBusy || number < 1 || number > pages || !visible) return;
+        var mine = revision; pdfBusy = true; page = number; zoom = factor;
+        try
+        {
+            var r = await JS.InvokeAsync<AttachmentPreviewResult>("filePreview.renderPdf", requestKey, number, factor);
+            if (mine == revision && !r.Success && r.Code != "CANCELLED") error = r.Message ?? "نمایش صفحه انجام نشد.";
+        }
+        catch (JSException) { if (mine == revision) error = "نمایش صفحه PDF انجام نشد."; }
+        finally { if (!disposed && mine == revision) pdfBusy = false; }
+    }
+    private void ImageFailed() { if (visible && kind == "image") error = "تصویر خراب است یا مرورگر فرمت آن را پشتیبانی نمی‌کند؛ یک نسخه PNG یا JPEG تهیه کنید."; }
+    private Task Retry() => ShowAsync(attachmentId, fileName, contentType, canDownload, extractedUrl, watermarkText);
+    private void UnlockPdf() { if (string.IsNullOrEmpty(pdfPassword)) return; error = null; pdfPasswordNeeded = false; mountPdf = pdfBusy = true; page = 1; zoom = 1; }
+    private void PdfPasswordKey(KeyboardEventArgs e) { if (e.Key == "Enter") UnlockPdf(); }
+
+    private async Task LoadExtractedText()
+    {
+        if (!canExtractedFallback || string.IsNullOrWhiteSpace(extractedUrl)) return;
+        var mine = revision; loading = true; error = null;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, extractedUrl);
+            if (!string.IsNullOrWhiteSpace(Auth.Token)) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Auth.Token);
+            using var response = await Http.SendAsync(request);
+            if (disposed || mine != revision) return;
+            if (!response.IsSuccessStatusCode)
+            {
+                var r = await response.Content.ReadFromJsonAsync<AttachmentPreviewResult>();
+                error = r?.Message ?? "دسترسی به متن استخراج‌شده ممکن نشد.";
+                if (r?.Code == "PASSWORD_CONFIRM_REQUIRED" && ConfirmationRequired.HasDelegate) await ConfirmationRequired.InvokeAsync(r);
+                return;
+            }
+            var info = await response.Content.ReadFromJsonAsync<OfficeTextInfo>();
+            if (disposed || mine != revision) return;
+            if (info?.Available != true || string.IsNullOrWhiteSpace(info.Text)) { error = "متن استخراج‌شدهٔ قابل نمایش هنوز در دسترس نیست."; return; }
+            kind = "extracted"; plainText = info.Text;
+        }
+        catch (Exception) { if (mine == revision) error = "دریافت متن استخراج‌شده انجام نشد."; }
+        finally { if (!disposed && mine == revision) { loading = false; StateHasChanged(); } }
+    }
+    private sealed class OfficeTextInfo { public bool Available { get; set; } public string? Text { get; set; } }
+
+    private async Task Download()
+    {
+        if (!canDownload || downloading) return;
+        downloading = true;
+        try
+        {
+            if (DownloadRequested.HasDelegate) await DownloadRequested.InvokeAsync(attachmentId);
+            else
+            {
+                var r = await JS.InvokeAsync<AttachmentDownloadResult>("filePreview.download", $"{ApiRoot}/api/attachments/download/{attachmentId}", Auth.Token, fileName);
+                if (!r.Success) Toast.Error(r.Message ?? "دانلود فایل انجام نشد.");
+            }
+        }
+        catch (Exception) { Toast.Error("دانلود فایل انجام نشد؛ صفحه را تازه کنید و دوباره تلاش کنید."); }
+        finally { downloading = false; }
+    }
+    [JSInvokable] public Task CloseFromJs() => InvokeAsync(Close);
+    public async Task Close()
+    {
+        ++revision; visible = false; loading = pdfBusy = mountPdf = false; pdfPassword = "";
+        await ReleaseAsync();
+        if (!disposed) StateHasChanged();
+    }
+    private async Task RevokeAsync(string url) { try { await JS.InvokeVoidAsync("filePreview.revoke", url); } catch (Exception) { } }
+    private async Task ReleaseAsync()
+    {
+        var oldUrl = objectUrl; objectUrl = null;
+        try { await JS.InvokeVoidAsync("filePreview.abort", requestKey); } catch (Exception) { }
+        try { await JS.InvokeVoidAsync("filePreview.destroyPdf", requestKey); } catch (Exception) { }
+        try { await JS.InvokeVoidAsync("filePreview.detachModal", requestKey); } catch (Exception) { }
+        if (oldUrl != null) await RevokeAsync(oldUrl);
+    }
+    public async ValueTask DisposeAsync()
+    {
+        if (disposed) return;
+        disposed = true; ++revision; visible = false; pdfPassword = "";
+        await ReleaseAsync(); self?.Dispose(); self = null;
+    }
+}

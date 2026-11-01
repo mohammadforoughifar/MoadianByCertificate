@@ -1,0 +1,812 @@
+@inject IOutgoingLetterService OutgoingSvc
+@inject IJSRuntime JS
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+@* ============================================================
+   فرم ایجاد نامه صادره — مشابه داخلی اما با گیرنده بیرونی
+   • گیرنده بیرونی الزامی (سازمان/شخص)
+   • گیرندگان داخلی جهت گردش تایید (اختیاری)
+   • فوریت و محرمانگی
+   • ادیتور متن غنی + پیوست + عطف/پیرو
+   • ذخیره پیش‌نویس + ویرایش
+   ============================================================ *@
+
+@if (visible)
+{
+<div class="ltx" style="animation:none;transform:none">
+    <div class="ov"></div>
+    <div class="sheet" @onclick="CloseCombos">
+        <div class="sheet-h">
+            <b><i class="bi bi-send" style="color:var(--p2)"></i> @SheetTitle</b>
+            <span class="dt"><i class="bi bi-calendar3"></i> @DateTime.Now.ToFa()</span>
+            <button class="x" @onclick="Close"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="sheet-b">
+
+            @* ---------- گیرنده بیرونی ---------- *@
+            <div class="fcard @(errReceiverOrg ? "err" : "")">
+                <label>سازمان مقصد <span class="req">* — نامه صادره</span></label>
+                <input class="tin" placeholder="نام سازمان/شرکت مقصد…" @bind="receiverOrg" @bind:event="oninput" />
+                @if (errReceiverOrg)
+                {
+                    <div class="ferr"><i class="bi bi-exclamation-circle"></i> نام سازمان مقصد الزامی است</div>
+                }
+            </div>
+
+            <div class="row3">
+                <div class="fcard">
+                    <label>نام گیرنده <span class="opt">اختیاری</span></label>
+                    <input class="tin" placeholder="نام شخص گیرنده…" @bind="receiverName" />
+                </div>
+                <div class="fcard">
+                    <label>سمت گیرنده <span class="opt">اختیاری</span></label>
+                    <input class="tin" placeholder="سمت در سازمان مقصد…" @bind="receiverTitle" />
+                </div>
+                <div class="fcard">
+                    <label>شماره مرجع خارجی <span class="opt">اختیاری</span></label>
+                    <input class="tin" placeholder="شماره نامه طرف مقابل…" @bind="externalRef" />
+                </div>
+            </div>
+
+            <div class="fcard">
+                <label>آدرس/توضیحات مقصد <span class="opt">اختیاری</span></label>
+                <input class="tin" placeholder="آدرس یا توضیحات…" @bind="receiverAddress" />
+            </div>
+
+            @* رونوشت‌گیرندگان — هر گیرنده یک ردیف مستقل در جدول OutgoingLetterCopyToes.
+               کاربر آن‌ها را یکی‌یکی با دکمهٔ «افزودن رونوشت» می‌سازد و چاپِ
+               «با رونوشت» مستقیماً از همین جدول می‌خواند. *@
+            <div class="fcard">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <label style="margin:0">رونوشت‌گیرندگان <span class="opt">اختیاری</span></label>
+                    <span style="flex:1"></span>
+                    <button type="button" class="lbtn ghost" style="padding:4px 10px;font-size:12px" @onclick="AddCopyRow">
+                        <i class="bi bi-plus-lg"></i> افزودن رونوشت
+                    </button>
+                </div>
+
+                @if (copyRows.Count == 0)
+                {
+                    <div style="color:#64748b;font-size:12.5px;padding:6px 0">
+                        رونوشتی ثبت نشده است — با دکمهٔ «افزودن رونوشت» گیرندگان را یکی‌یکی اضافه کنید.
+                    </div>
+                }
+                else
+                {
+                    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                        <thead>
+                            <tr style="background:#f8fafc">
+                                <th style="padding:6px 8px;border:1px solid #e2e8f0;width:34px">#</th>
+                                <th style="padding:6px 8px;border:1px solid #e2e8f0">نام رونوشت‌گیرنده <span class="req">*</span></th>
+                                <th style="padding:6px 8px;border:1px solid #e2e8f0">توضیح/سمت <span class="opt">اختیاری</span></th>
+                                <th style="padding:6px 8px;border:1px solid #e2e8f0;width:130px">شماره مرجع <span class="opt">اختیاری</span></th>
+                                <th style="padding:6px 8px;border:1px solid #e2e8f0;width:38px"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (var i = 0; i < copyRows.Count; i++)
+                            {
+                                var idx = i;
+                                var row = copyRows[idx];
+                                <tr>
+                                    <td class="num" style="padding:4px 8px;border:1px solid #e2e8f0;text-align:center;color:#64748b">@((idx + 1).FaDigits())</td>
+                                    <td style="padding:4px;border:1px solid #e2e8f0">
+                                        <input class="tin" style="width:100%" placeholder="مثلاً: واحد مالی" @bind="row.Name" />
+                                    </td>
+                                    <td style="padding:4px;border:1px solid #e2e8f0">
+                                        <input class="tin" style="width:100%" placeholder="مثلاً: جهت اطلاع" @bind="row.Desc" />
+                                    </td>
+                                    <td style="padding:4px;border:1px solid #e2e8f0">
+                                        <input class="tin num" style="width:100%" placeholder="اختیاری" @bind="row.RefNo" />
+                                    </td>
+                                    <td style="padding:4px;border:1px solid #e2e8f0;text-align:center">
+                                        <i class="bi bi-x-lg" style="cursor:pointer;color:#dc2626" title="حذف این رونوشت"
+                                           @onclick="() => copyRows.RemoveAt(idx)"></i>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    <div style="font-size:11.5px;color:#64748b;margin-top:5px">
+                        <i class="bi bi-info-circle"></i> در نسخهٔ چاپ «با رونوشت»، هر گیرنده در یک سطر جداگانه درج می‌شود.
+                    </div>
+                }
+            </div>
+
+            @* ---------- گردش داخلی جهت تایید + امضا کنندگان ---------- *@
+            <div class="row3">
+                <LetterPickCombo @ref="cbRcv" Label="گیرنده داخلی (تایید)" Icon="bi-person-check"
+                                 Users="allUsers" Groups="allGroups"
+                                 SelectedUsers="rcvUsers" SelectedGroups="rcvGroups"
+                                 Changed="OnRcvChanged" />
+                <LetterPickCombo @ref="cbErja" Label="ارجاع داخلی" Icon="bi-arrow-left-circle"
+                                 Users="allUsers" Groups="allGroups"
+                                 SelectedUsers="erjaUsers" SelectedGroups="erjaGroups" />
+                <LetterPickCombo @ref="cbHamesh" Label="هامش داخلی" Icon="bi-people"
+                                 Users="allUsers" Groups="allGroups"
+                                 SelectedUsers="hameshUsers" SelectedGroups="hameshGroups" />
+            </div>
+
+            <div class="row2">
+                <div>
+                    <LetterPickCombo @ref="cbSigners" Label="امضاکنندگان" Icon="bi-pen" Required="true" HasError="errSigners"
+                                     ErrorText="نامه صادره باید حداقل یک امضاکننده داشته باشد."
+                                     Users="signerUsers" Groups="allGroups" AllowSelectAll="false"
+                                     SelectedUsers="signerSelOptionIds" SelectedGroups="signerSelGroups"
+                                     Changed="OnSignerChanged" />
+                </div>
+                <div class="fcard" style="display:flex;align-items:center;gap:8px;padding:10px">
+                    <i class="bi bi-info-circle" style="color:var(--p2)"></i>
+                    <small>انتخاب <b>حداقل یک امضا کننده الزامی است</b>. امضا کنندگان از بین کاربران دارای دسترسی <code>OutgoingLetters.Sign</code> انتخاب می‌شوند و وقتی همه امضا کردند، شماره صادره (SadereNumber) مقدار می‌گیرد و نامه وارد دبیرخانه می‌شود.</small>
+                </div>
+            </div>
+
+            @* ---------- شرکت صادرکننده (سربرگ چاپ) ---------- *@
+            <div class="fcard">
+                <label>
+                    شرکت صادرکننده (سربرگ چاپ)
+                    <span class="opt">سربرگ و طرح چاپ از همین شرکت خوانده می‌شود؛ پیش‌فرض = شرکت فعال شما</span>
+                </label>
+                <select class="tin" @bind="companyId">
+                    <option value="0">— بدون انتخاب شرکت (چاپ بدون سربرگ شرکت) —</option>
+                    @foreach (var company in CompanyOptions)
+                    {
+                        <option value="@company.Id">
+                            @company.Name @(company.HasLetterhead ? "📄 سربرگ" : "(بدون سربرگ)")@(IsActiveCompany(company) ? " — شرکت فعال" : "")
+                        </option>
+                    }
+                </select>
+                @if (CompanyOptions.Count == 0)
+                {
+                    <span class="opt">
+                        هیچ شرکت فعالی برای انتخاب پیدا نشد؛ بدون شرکت، چاپ روی سربرگ شرکت انجام نمی‌شود.
+                    </span>
+                }
+            </div>
+
+            <div class="row2">
+                <div class="fcard">
+                    <label>فوریت نامه</label>
+                    <div class="rads">
+                        @foreach (var f in new[] { "عادی", "فوری", "آنی" })
+                        {
+                            var v = f;
+                            <div class="rad @(foriat == v ? "on" : "")" @onclick="() => foriat = v"><span class="rdot"></span> @v</div>
+                        }
+                    </div>
+                </div>
+                <div class="fcard">
+                    <label>محرمانگی نامه</label>
+                    <div class="rads">
+                        @foreach (var m in new[] { "عادی", "محرمانه", "سری" })
+                        {
+                            var v = m;
+                            <div class="rad @(mahram == v ? "on" : "")" @onclick="() => mahram = v"><span class="rdot"></span> @v</div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="fcard @(errTitle ? "err" : "")">
+                <label>عنوان نامه <span class="req">*</span></label>
+                <input class="tin" placeholder="عنوان نامه را وارد کنید…" @bind="title" @bind:event="oninput" />
+                @if (errTitle)
+                {
+                    <div class="ferr"><i class="bi bi-exclamation-circle"></i> عنوان نامه الزامی است</div>
+                }
+            </div>
+
+            <div class="fcard">
+                <label>متن نامه</label>
+                <RichTextEditor @ref="_richOut" Id="ltxOutEditor" Placeholder="متن نامه صادره را بنویسید…" @bind-Value="pendingBody" Height="260" />
+            </div>
+
+            <div class="fcard">
+                <label>پیوست</label>
+                <div class="dz">
+                    <div class="ic"><i class="bi bi-cloud-arrow-up"></i></div>
+                    <div><b>فایل را بکشید و رها کنید یا کلیک کنید</b><small>بدون محدودیت تعداد و حجم</small></div>
+                    <InputFile OnChange="OnFiles" multiple />
+                </div>
+                <div class="selpills">
+                    @foreach (var f in pendingFiles)
+                    {
+                        var ff = f;
+                        <span class="spill"><i class="bi @FileIcon(ff.Name)"></i> @ff.Name <small>(@FmtSize(ff.Size))</small> <i class="bi bi-x-lg" @onclick="() => pendingFiles.Remove(ff)"></i></span>
+                    }
+                    @foreach (var a in savedAtts)
+                    {
+                        var aa = a;
+                        <span class="spill"><i class="bi @FileIcon(aa.FileName)"></i> @aa.FileName <small>(@FmtSize(aa.Size))</small> <i class="bi bi-x-lg" @onclick="() => RemoveSavedAtt(aa)"></i></span>
+                    }
+                </div>
+                @if (!string.IsNullOrEmpty(fileErr))
+                {
+                    <div class="ferr"><i class="bi bi-exclamation-circle"></i> @fileErr</div>
+                }
+            </div>
+
+            <div class="fcard">
+                <label>نامه‌های مرتبط (عطف / پیرو) <span class="opt">اختیاری</span></label>
+                <div class="selpills" style="margin-top:0">
+                    @foreach (var r in related)
+                    {
+                        var rr = r;
+                        <span class="rpill">
+                            <span class="k @(rr.Related == 2 ? "atf" : "peyro")">@(rr.Related == 2 ? "عطف" : "پیرو")</span>
+                            <span class="num"># @rr.RelateLetterNumber.FaDigits()</span> @rr.RelateLetterTitle
+                            <i class="bi bi-x-lg" @onclick="() => related.Remove(rr)"></i>
+                        </span>
+                    }
+                    <button type="button" class="addrel" @onclick="OpenRel"><i class="bi bi-plus-lg"></i> ثبت نامه مرتبط</button>
+                </div>
+            </div>
+        </div>
+        <div class="sheet-f">
+            @if (isEditLetter)
+            {
+                <button class="lbtn grn" disabled="@busy" @onclick="SubmitEdit">
+                    @if (busy) { <span class="spinner-border spinner-border-sm"></span> }
+                    <i class="bi bi-check-lg"></i> ذخیره تغییرات
+                </button>
+            }
+            else
+            {
+                <button class="lbtn grn" disabled="@busy" @onclick="Send">
+                    @if (busy) { <span class="spinner-border spinner-border-sm"></span> }
+                    <i class="bi bi-send"></i> ثبت و ارسال صادره
+                </button>
+                <button class="lbtn pri" disabled="@busy" @onclick="SaveDraft"><i class="bi bi-save"></i> ذخیره پیش‌نویس</button>
+            }
+            <span class="spacer"></span>
+            <button class="lbtn red" @onclick="Close"><i class="bi bi-x-lg"></i> انصراف</button>
+        </div>
+    </div>
+
+    @if (relOpen)
+    {
+        <div class="gov">
+            <div class="gmodal" style="width:min(640px,96vw)" @onclick:stopPropagation="true">
+                <div class="gm-h">
+                    <div class="ttl"><b><i class="bi bi-link-45deg" style="color:var(--p2)"></i> ثبت نامه مرتبط</b><small>نوع رابطه و نامه‌ها را انتخاب کنید</small></div>
+                    <button class="x" @onclick="() => relOpen = false"><i class="bi bi-x-lg"></i></button>
+                </div>
+                <div class="gm-seg">
+                    <button class="@(relType == 2 ? "on" : "")" @onclick="() => relType = 2"><i class="bi bi-arrow-90deg-right"></i> عطف به</button>
+                    <button class="@(relType == 1 ? "on" : "")" @onclick="() => relType = 1"><i class="bi bi-arrow-return-left"></i> پیرو</button>
+                </div>
+                <div class="gm-b">
+                    <input class="tin" style="margin-bottom:9px" placeholder="جستجوی شماره یا عنوان…"
+                           @bind="relSearch" @bind:event="oninput" @bind:after="SearchRel" />
+                    @foreach (var l in relResults)
+                    {
+                        var rl = l;
+                        <div class="rl-row @(relSel.Contains(rl.LetterId) ? "on" : "")" @onclick="() => ToggleRelSel(rl.LetterId)">
+                            <span class="chk"><i class="bi bi-check"></i></span>
+                            <div class="inf"><b>@rl.Title</b><small class="num"># @rl.LetterNumber.FaDigits() · @rl.Date.ToFa() — @rl.SourceTypeTitle</small></div>
+                            <span class="rl-dir @(rl.IsSent ? "out" : "in")">
+                                <i class="bi @(rl.IsSent ? "bi-send" : "bi-box-arrow-in-down")"></i>
+                                @(rl.IsSent ? "ارسالی" : "دریافتی")
+                            </span>
+                        </div>
+                    }
+                    @if (relResults.Count == 0) { <div class="cempty">نامه‌ای یافت نشد</div> }
+                </div>
+                <div class="gm-f">
+                    <button class="lbtn ghost" @onclick="() => relOpen = false">انصراف</button>
+                    <button class="lbtn pri" @onclick="AddRel"><i class="bi bi-check-lg"></i> افزودن نامه‌های انتخابی</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+}
+
+
+
+@code {
+    [Parameter] public EventCallback OnSent { get; set; }
+
+    private const long MaxFile = 20L * 1024 * 1024;
+
+    private bool visible;
+    private bool busy;
+    private bool isEditLetter;
+    private int editLetterId;
+    private int? draftId;
+
+    private string title = "";
+    private string receiverOrg = "";
+    private string? receiverName;
+    private string? receiverTitle;
+    private string? receiverAddress;
+    /// <summary>رونوشت‌گیرندگان — هر ردیف یک گیرنده (جدول مستقل OutgoingLetterCopyToes)</summary>
+    private List<SaveOutgoingLetterCopyToDto> copyRows = new();
+
+    /// <summary>افزودن یک ردیف رونوشت خالی — کاربر آن را یکی‌یکی پر می‌کند</summary>
+    private void AddCopyRow() => copyRows.Add(new SaveOutgoingLetterCopyToDto { Name = "" });
+
+    /// <summary>ردیف‌های آماده برای ارسال — فقط موارد دارای نام، با چینشِ فعلی جدول</summary>
+    private List<SaveOutgoingLetterCopyToDto> CopyRowsForSave() =>
+        copyRows
+            .Where(r => !string.IsNullOrWhiteSpace(r.Name))
+            .Select(r => new SaveOutgoingLetterCopyToDto
+            {
+                Id = r.Id,
+                Name = r.Name.Trim(),
+                Desc = string.IsNullOrWhiteSpace(r.Desc) ? null : r.Desc.Trim(),
+                RefNo = string.IsNullOrWhiteSpace(r.RefNo) ? null : r.RefNo.Trim()
+            })
+            .ToList();
+    private string? externalRef;
+    private string foriat = "عادی";
+    private string mahram = "عادی";
+    private string pendingBody = "";
+
+    private bool errTitle, errReceiverOrg, errSigners;
+    private List<LetterReciverDto> allUsers = new();
+    private List<LetterGroupDto> allGroups = new();
+    private LetterCompanyDto? activeCompany;
+    /// <summary>شرکت‌هایی که کاربر می‌تواند نامه را با سربرگشان صادر کند (فعال‌ها).</summary>
+    private List<LetterCompanyDto> companyOptions = new();
+    private List<LetterCompanyDto> CompanyOptions => companyOptions.Count > 0
+        ? companyOptions
+        : (activeCompany is { } only ? new List<LetterCompanyDto> { only } : new List<LetterCompanyDto>());
+
+    private bool IsActiveCompany(LetterCompanyDto company) => activeCompany?.Id == company.Id;
+    private int companyId;
+
+    private LetterPickCombo? cbRcv, cbErja, cbHamesh, cbSigners;
+    private RichTextEditor? _richOut;
+    private HashSet<int> rcvUsers = new(), rcvGroups = new();
+    private HashSet<int> erjaUsers = new(), erjaGroups = new();
+    private HashSet<int> hameshUsers = new(), hameshGroups = new();
+    private HashSet<int> signerSelOptionIds = new(), signerSelGroups = new();
+    private HashSet<int> lastSignerSelOptionIds = new();
+    private List<OutgoingSignerSelectionDto> pendingSignerSelections = new();
+    private Dictionary<int, OutgoingSignerSelectionDto> signerOptionMap = new();
+    private List<LetterReciverDto> signerUsers = new();
+    private int nextSignerOptionId = -1;
+
+    private List<OutgoingSignerSelectionDto> SelectedSignerSelections => signerSelOptionIds
+        .Where(signerOptionMap.ContainsKey)
+        .Select(id => signerOptionMap[id])
+        .GroupBy(x => x.UserId)
+        .Select(g => g.First())
+        .ToList();
+
+    private void BuildSignerOptions(List<LetterReciverDto> available)
+    {
+        var restore = pendingSignerSelections.Count > 0
+            ? pendingSignerSelections.ToList()
+            : SelectedSignerSelections.ToList();
+        signerUsers.Clear();
+        signerOptionMap.Clear();
+        signerSelOptionIds.Clear();
+        nextSignerOptionId = -1;
+
+        foreach (var user in available)
+        {
+            var positions = user.PositionOptions is { Count: > 0 }
+                ? user.PositionOptions
+                : new List<LetterPositionDto>
+                {
+                    new() { SematId = user.SematId ?? 0, Title = user.SematTitle ?? "بدون سمت" }
+                };
+            foreach (var position in positions)
+            {
+                var optionId = nextSignerOptionId--;
+                int? sematId = position.SematId > 0 ? position.SematId : null;
+                signerOptionMap[optionId] = new OutgoingSignerSelectionDto { UserId = user.UserId, SematId = sematId };
+                signerUsers.Add(new LetterReciverDto
+                {
+                    UserId = optionId,
+                    FullName = user.FullName,
+                    SematId = sematId,
+                    SematTitle = position.Title,
+                    Positions = new List<string> { position.Title }
+                });
+            }
+        }
+        foreach (var selected in restore)
+        {
+            var match = signerOptionMap.FirstOrDefault(pair => pair.Value.UserId == selected.UserId
+                && pair.Value.SematId == selected.SematId);
+            if (match.Key != 0) signerSelOptionIds.Add(match.Key);
+        }
+        pendingSignerSelections.Clear();
+        lastSignerSelOptionIds = signerSelOptionIds.ToHashSet();
+    }
+
+    private void OnSignerChanged()
+    {
+        var addedOption = signerSelOptionIds.Except(lastSignerSelOptionIds).FirstOrDefault();
+        if (addedOption != 0 && signerOptionMap.TryGetValue(addedOption, out var addedSelection))
+        {
+            foreach (var optionId in signerSelOptionIds.ToList())
+                if (optionId != addedOption && signerOptionMap.TryGetValue(optionId, out var existing)
+                    && existing.UserId == addedSelection.UserId)
+                    signerSelOptionIds.Remove(optionId);
+        }
+        lastSignerSelOptionIds = signerSelOptionIds.ToHashSet();
+        if (signerSelOptionIds.Count + signerSelGroups.Count > 0) errSigners = false;
+    }
+
+    private List<Microsoft.AspNetCore.Components.Forms.IBrowserFile> pendingFiles = new();
+    private List<LetterAttachmentDto> savedAtts = new();
+    private string fileErr = "";
+
+    private List<RelatedLetterDto> related = new();
+    private bool relOpen;
+    private int relType = 2;
+    private string relSearch = "";
+    private List<OutgoingLetterPickDto> relResults = new();
+    private HashSet<int> relSel = new();
+
+    private string SheetTitle => isEditLetter ? "ویرایش نامه صادره" : draftId is > 0 ? "ادامه پیش‌نویس صادره" : "ایجاد نامه صادره جدید";
+
+    public void Open(string? prefTitle = null, string? prefText = null, int? pishnevisId = null, string? prefReceiverOrg = null,
+                     LetterCopyRecipients? prefRecivers = null)
+    {
+        ResetAll();
+        title = prefTitle ?? "";
+        pendingBody = prefText ?? "";
+        receiverOrg = prefReceiverOrg ?? "";
+        draftId = pishnevisId;
+        ApplyCopyRecipients(prefRecivers);
+        visible = true;
+        _ = LoadListsAsync();
+        if (pishnevisId is > 0) _ = LoadDraftAttsAsync(pishnevisId.Value);
+        StateHasChanged();
+        _ = SetEditorSoonAsync();
+    }
+
+    /// <summary>
+    /// پیش‌انتخاب افرادِ در گردشِ نامهٔ مبدأ هنگام «کپی نامه».
+    /// هر فرد دقیقاً در همان نقشی قرار می‌گیرد که در گردش نامهٔ مبدأ داشته است:
+    /// گیرنده ← «گیرنده داخلی (تایید)»، ارجاع ← «ارجاع داخلی»، هامش ← «هامش داخلی».
+    /// باید «پس از» ResetAll فراخوانی شود چون ResetAll این مجموعه‌ها را پاک می‌کند.
+    /// امضاکنندگان عمداً کپی نمی‌شوند: امضا یک اقدام حقوقی روی همان نامه است و
+    /// نامهٔ کپی‌شده شماره و امضای مستقل خود را می‌گیرد.
+    /// </summary>
+    private void ApplyCopyRecipients(LetterCopyRecipients? r)
+    {
+        if (r == null || r.IsEmpty) return;
+        foreach (var id in r.Girande) rcvUsers.Add(id);
+        foreach (var id in r.Erja) erjaUsers.Add(id);
+        foreach (var id in r.Hamesh) hameshUsers.Add(id);
+    }
+
+    public void OpenEdit(OutgoingLetterDetailDto letter)
+    {
+        ResetAll();
+        isEditLetter = true;
+        editLetterId = letter.LetterId;
+        title = letter.Title;
+        foriat = letter.Foriat;
+        mahram = letter.Mahramanegi;
+        pendingBody = letter.Text ?? "";
+        receiverOrg = letter.ReceiverOrganization;
+        receiverName = letter.ReceiverName;
+        receiverTitle = letter.ReceiverTitle;
+        receiverAddress = letter.ReceiverAddress;
+        copyRows = (letter.CopyTos ?? new())
+            .Select(c => new SaveOutgoingLetterCopyToDto
+            {
+                Id = c.Id, Name = c.Name, Desc = c.Desc, RefNo = c.RefNo
+            })
+            .ToList();
+        externalRef = letter.ExternalRefNumber;
+        companyId = letter.CompanyId ?? 0;
+
+        foreach (var r in letter.ReciversGirande) rcvUsers.Add(r.UserId);
+        foreach (var r in letter.ReciversErja) erjaUsers.Add(r.UserId);
+        foreach (var r in letter.ReciversHamesh) hameshUsers.Add(r.UserId);
+        pendingSignerSelections = letter.Signers.Select(s => new OutgoingSignerSelectionDto { UserId = s.UserId, SematId = s.SematId }).ToList();
+
+        related = letter.RelatedLetters.Select(r => new RelatedLetterDto
+        {
+            Related = r.Related,
+            RelateLetterId = r.RelateLetterId,
+            RelateLetterNumber = r.RelateLetterNumber,
+            RelateLetterTitle = r.RelateLetterTitle
+        }).ToList();
+
+        visible = true;
+        _ = LoadListsAsync();
+        _ = LoadLetterAttsAsync(letter.LetterId);
+        StateHasChanged();
+        _ = SetEditorSoonAsync();
+    }
+
+    private async Task LoadLetterAttsAsync(int letterId)
+    {
+        try { savedAtts = await OutgoingSvc.GetAttachmentsAsync(letterId); StateHasChanged(); }
+        catch { }
+    }
+
+    private void ResetAll()
+    {
+        isEditLetter = false; editLetterId = 0; draftId = null;
+        title = ""; receiverOrg = ""; receiverName = null; receiverTitle = null; receiverAddress = null; copyRows = new(); externalRef = null;
+        foriat = "عادی"; mahram = "عادی"; pendingBody = "";
+        // پیش‌فرضِ فرم، شرکت فعالِ کاربر است (نه «بدون شرکت»).
+        companyId = activeCompany?.Id ?? (companyOptions.Count == 1 ? companyOptions[0].Id : 0);
+        errTitle = errReceiverOrg = errSigners = false; fileErr = "";
+        rcvUsers.Clear(); rcvGroups.Clear();
+        erjaUsers.Clear(); erjaGroups.Clear();
+        hameshUsers.Clear(); hameshGroups.Clear();
+        signerSelOptionIds.Clear(); signerSelGroups.Clear(); lastSignerSelOptionIds.Clear(); pendingSignerSelections.Clear(); signerOptionMap.Clear(); signerUsers.Clear();
+        pendingFiles.Clear(); savedAtts.Clear();
+        related.Clear(); relOpen = false; relSel.Clear();
+    }
+
+    private async Task SetEditorSoonAsync()
+    {
+        await Task.Delay(60);
+        if (_richOut != null) await _richOut.SetContentAsync(pendingBody);
+    }
+
+    private async Task LoadListsAsync()
+    {
+        try
+        {
+            if (allUsers.Count == 0) allUsers = await OutgoingSvc.GetReciversAsync();
+            allGroups = await OutgoingSvc.GetGroupsAsync();
+            List<LetterReciverDto> availableSigners;
+            try { availableSigners = await OutgoingSvc.GetAvailableSignersAsync(); } catch { availableSigners = allUsers; }
+            BuildSignerOptions(availableSigners);
+            try { activeCompany = await OutgoingSvc.GetActiveCompanyAsync(); } catch { activeCompany = null; }
+            // قبلاً فقط «شرکت فعال» در کمبو بود؛ اگر شرکت فعال قابل تشخیص نبود، هیچ شرکتی
+            // قابل انتخاب نبود و نامه بدون CompanyId ذخیره می‌شد (چاپ روی طرح شرکت دیگر).
+            try { companyOptions = await OutgoingSvc.GetCompaniesAsync() ?? new(); } catch { companyOptions = new(); }
+            if (companyOptions.Count == 1 && companyId == 0) companyId = companyOptions[0].Id;
+            StateHasChanged();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task LoadDraftAttsAsync(int pishId)
+    {
+        try { savedAtts = await OutgoingSvc.GetPishnevisAttachmentsAsync(pishId); StateHasChanged(); }
+        catch { }
+    }
+
+    private async Task Close()
+    {
+        if (visible && (!string.IsNullOrWhiteSpace(title) || !string.IsNullOrWhiteSpace(pendingBody)) &&
+            !await JS.InvokeAsync<bool>("confirm", "اطلاعات فرم وارد شده است. فرم بسته شود؟")) return;
+        visible = false;
+    }
+    private void CloseCombos() { cbRcv?.Close(); cbErja?.Close(); cbHamesh?.Close(); cbSigners?.Close(); }
+    private void OnRcvChanged() { }
+
+    private async Task OnFiles(Microsoft.AspNetCore.Components.Forms.InputFileChangeEventArgs e)
+    {
+        var rejected = new List<string>();
+        foreach (var picked in e.GetMultipleFiles(int.MaxValue))
+        {
+            if (picked.Size <= 0) { rejected.Add($"{picked.Name} (خالی)"); continue; }
+            if (picked.Size > 20 * 1024 * 1024) { rejected.Add($"{picked.Name} (بیش از ۲۰MB)"); continue; }
+            // نسخهٔ فعلی وقتی مراجع رو IBrowserFile را مثل قبل نگه می‌داشتیم، در ثبت‌ها OnRead می‌شدند
+            // با «no file with ID N ... file list may have changed» می‌خوردند؛ چون سامانهٔ فایل مرورگر در
+            // ورود جدید یا رندر نو، ID های قدیمی را رها می‌کند. پس فایل فوراً در حافظه خوانده می‌شود.
+            MemoryBrowserFile f;
+            try
+            {
+                await using var src = picked.OpenReadStream(long.MaxValue);
+                using var ms = new MemoryStream(picked.Size > 0 ? (int)picked.Size : 0);
+                await src.CopyToAsync(ms);
+                f = new MemoryBrowserFile(picked.Name, picked.ContentType, ms.ToArray());
+            }
+            catch (Exception readEx) { rejected.Add($"{picked.Name} (خوانش: {readEx.Message})"); continue; }
+            if (pendingFiles.Any(x => x.Name == f.Name && x.Size == f.Size) ||
+                savedAtts.Any(x => x.FileName == f.Name && x.Size == f.Size))
+            { rejected.Add($"{f.Name} (تکراری)"); continue; }
+            pendingFiles.Add(f);
+        }
+        fileErr = rejected.Count > 0 ? "رد شده: " + string.Join("، ", rejected) : "";
+        if (rejected.Count > 0) Toast.Error("برخی فایل‌ها پذیرفته نشدند.");
+    }
+
+    private async Task RemoveSavedAtt(LetterAttachmentDto a)
+    {
+        try { await OutgoingSvc.DeleteAttachmentAsync(a.Id); savedAtts.Remove(a); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string FmtSize(long b) =>
+        b >= 1024 * 1024 ? $"{b / 1024.0 / 1024.0:0.#} مگابایت".FaDigits()
+        : b >= 1024 ? $"{b / 1024} کیلوبایت".FaDigits()
+        : $"{b} بایت".FaDigits();
+
+    private static string FileIcon(string name)
+    {
+        var e = (Path.GetExtension(name) ?? "").TrimStart('.').ToLowerInvariant();
+        return e switch
+        {
+            "pdf" => "bi-file-earmark-pdf",
+            "xls" or "xlsx" or "csv" => "bi-file-earmark-excel",
+            "doc" or "docx" => "bi-file-earmark-word",
+            "png" or "jpg" or "jpeg" or "gif" or "webp" or "svg" => "bi-file-earmark-image",
+            "zip" or "rar" or "7z" => "bi-file-earmark-zip",
+            _ => "bi-file-earmark"
+        };
+    }
+
+    private async Task OpenRel()
+    {
+        relSel.Clear(); relSearch = ""; relOpen = true;
+        await SearchRel();
+    }
+    private async Task SearchRel()
+    {
+        try
+        {
+            var res = await OutgoingSvc.PickAsync(string.IsNullOrWhiteSpace(relSearch) ? null : relSearch);
+            relResults = res.Where(r => related.All(x => x.RelateLetterId != r.LetterId)).ToList();
+        }
+        catch { relResults = new(); }
+    }
+    private void ToggleRelSel(int id) { if (!relSel.Remove(id)) relSel.Add(id); }
+    private void AddRel()
+    {
+        if (relSel.Count == 0) { Toast.Error("هیچ نامه‌ای انتخاب نشده."); return; }
+        foreach (var id in relSel)
+        {
+            var l = relResults.FirstOrDefault(x => x.LetterId == id);
+            if (l == null) continue;
+            related.Add(new RelatedLetterDto
+            {
+                Related = relType,
+                RelateLetterId = l.LetterId,
+                RelateLetterNumber = l.LetterNumber,
+                RelateLetterTitle = l.Title
+            });
+        }
+        relOpen = false;
+        Toast.Success("نامه مرتبط افزوده شد.");
+    }
+
+    private async Task<string> EditorHtmlAsync()
+    {
+        if (_richOut != null) return await _richOut.GetContentAsync();
+        return pendingBody;
+    }
+
+    private bool Validate()
+    {
+        errTitle = string.IsNullOrWhiteSpace(title);
+        errReceiverOrg = string.IsNullOrWhiteSpace(receiverOrg);
+        // 🔒 حداقل یک امضا کننده الزامی است
+        errSigners = signerSelOptionIds.Count == 0 && signerSelGroups.Count == 0;
+        if (errTitle || errReceiverOrg || errSigners)
+        {
+            Toast.Error(errSigners && !errTitle && !errReceiverOrg
+                ? "نامه صادره باید حداقل یک امضا کننده داشته باشد."
+                : "موارد الزامی را تکمیل کنید.");
+            return false;
+        }
+        return true;
+    }
+
+    private async Task Send()
+    {
+        if (!Validate()) return;
+        busy = true;
+        try
+        {
+            var dto = new AddOutgoingLetterDto
+            {
+                Title = title.Trim(),
+                Text = await EditorHtmlAsync(),
+                Foriat = foriat,
+                Mahramanegi = mahram,
+                ReceiverOrganization = receiverOrg.Trim(),
+                ReceiverName = receiverName?.Trim(),
+                ReceiverTitle = receiverTitle?.Trim(),
+                ReceiverAddress = receiverAddress?.Trim(),
+                CopyTo = null,
+                CopyTos = CopyRowsForSave(),
+                ExternalRefNumber = externalRef?.Trim(),
+                CompanyId = companyId > 0 ? companyId : null,
+                ReciversGirande = rcvUsers.ToList(),
+                GroupsGirande = rcvGroups.ToList(),
+                ReciversErja = erjaUsers.ToList(),
+                GroupsErja = erjaGroups.ToList(),
+                ReciversHamesh = hameshUsers.ToList(),
+                GroupsHamesh = hameshGroups.ToList(),
+                SignerSelections = SelectedSignerSelections,
+                SignerGroupIds = signerSelGroups.ToList(),
+                RelatedLetters = related,
+                FromPishnevisId = draftId
+            };
+            var letterId = await OutgoingSvc.SendAsync(dto);
+            await UploadPendingAsync(id => OutgoingSvc.UploadAttachmentAsync(letterId, id.stream, id.name, id.type));
+            Toast.Success("نامه صادره با موفقیت ثبت شد.");
+            visible = false;
+            await OnSent.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SaveDraft()
+    {
+        if (string.IsNullOrWhiteSpace(title)) { errTitle = true; Toast.Error("عنوان لازم است."); return; }
+        busy = true;
+        try
+        {
+            var id = await OutgoingSvc.SavePishnevisAsync(new OutgoingPishnevisDto
+            {
+                PishnevisId = draftId ?? 0,
+                Title = title.Trim(),
+                Text = await EditorHtmlAsync(),
+                ReceiverOrganization = receiverOrg?.Trim(),
+                ReceiverName = receiverName?.Trim(),
+                ReceiverTitle = receiverTitle?.Trim()
+            });
+            await UploadPendingAsync(x => OutgoingSvc.UploadPishnevisAttachmentAsync(id, x.stream, x.name, x.type));
+            Toast.Success("پیش‌نویس صادره ذخیره شد.");
+            visible = false;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SubmitEdit()
+    {
+        if (!Validate()) return;
+        busy = true;
+        try
+        {
+            await OutgoingSvc.EditAsync(editLetterId, new EditOutgoingLetterDto
+            {
+                Title = title.Trim(),
+                Text = await EditorHtmlAsync(),
+                Foriat = foriat,
+                Mahramanegi = mahram,
+                ReceiverOrganization = receiverOrg.Trim(),
+                ReceiverName = receiverName?.Trim(),
+                ReceiverTitle = receiverTitle?.Trim(),
+                ReceiverAddress = receiverAddress?.Trim(),
+                CopyTo = null,
+                CopyTos = CopyRowsForSave(),
+                ExternalRefNumber = externalRef?.Trim(),
+                CompanyId = companyId > 0 ? companyId : null,
+                ReciversGirande = rcvUsers.ToList(),
+                GroupsGirande = rcvGroups.ToList(),
+                ReciversErja = erjaUsers.ToList(),
+                GroupsErja = erjaGroups.ToList(),
+                ReciversHamesh = hameshUsers.ToList(),
+                GroupsHamesh = hameshGroups.ToList(),
+                SignerSelections = SelectedSignerSelections,
+                SignerGroupIds = signerSelGroups.ToList(),
+                RelatedLetters = related
+            });
+            // رونوشت‌گیرندگان پس از ویرایشِ خودِ نامه جایگزین می‌شوند (جدول مستقل)
+            await OutgoingSvc.ReplaceCopyTosAsync(editLetterId, CopyRowsForSave());
+            await UploadPendingAsync(x => OutgoingSvc.UploadAttachmentAsync(editLetterId, x.stream, x.name, x.type));
+            Toast.Success("نامه صادره ویرایش شد.");
+            visible = false;
+            await OnSent.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task UploadPendingAsync(Func<(Stream stream, string name, string type), Task> uploader)
+    {
+        foreach (var f in pendingFiles)
+        {
+            try
+            {
+                await using var s = f.OpenReadStream(long.MaxValue);
+                await uploader((s, f.Name, f.ContentType));
+            }
+            catch (Exception ex) { Toast.Error($"بارگذاری {f.Name}: {ex.Message}"); }
+        }
+        pendingFiles.Clear();
+    }
+}

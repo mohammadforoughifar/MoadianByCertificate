@@ -1,0 +1,220 @@
+@page "/acc/fixed-assets/runs"
+@inject IFixedAssetRunService RunSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>اجرای استهلاک</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>اجرای استهلاک دارایی‌ها</h1>
+        <p class="lead">محاسبه‌ی ماهانه‌ی استهلاک و ارسال به حسابداری</p>
+    </div>
+    <div class="ms-auto">
+        <a class="btn btn-outline-primary" href="acc/fixed-assets">
+            <i class="bi bi-arrow-right"></i> بازگشت به دارایی‌ها
+        </a>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">سال شمسی</label>
+                <input class="form-control num" type="number" @bind="runYear" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">ماه</label>
+                <select class="form-select" @bind="runMonth">
+                    @for (var m = 1; m <= 12; m++)
+                    {
+                        <option value="@m">@PersianDate.MonthName(m)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">یادداشت</label>
+                <input class="form-control" @bind="runNotes" placeholder="اختیاری" />
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-primary w-100" @onclick="Run" disabled="@running">
+                    @if (running)
+                    {
+                        <span class="spinner-border spinner-border-sm"></span>
+                    }
+                    <i class="bi bi-play-fill"></i> اجرا
+                </button>
+            </div>
+        </div>
+        <div class="fs-8 text-muted mt-2">
+            <i class="bi bi-info-circle"></i>
+            استهلاک برای دارایی‌های «به‌ره‌برداری» که تاریخ خریدشان قبل از پایان دوره است محاسبه می‌شود.
+            اجرای تکراری برای یک دوره مجاز نیست؛ برای تکرار، اجرای قبلی را حذف کنید.
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-calculator text-primary"></i>
+        <span class="card-title">اجراهای پیشین</span>
+        <span class="badge badge-soft-primary ms-auto">@runs.Count.Num() اجرا</span>
+    </div>
+    <div class="card-body">
+        @if (loading)
+        {
+            <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (runs.Count == 0)
+        {
+            <div class="empty-state">
+                <i class="bi bi-calculator"></i>
+                <h6>هنوز اجرایی انجام نشده است</h6>
+            </div>
+        }
+        else
+        {
+            @foreach (var r in runs)
+            {
+                <div class="border rounded-3 mb-3">
+                    <div class="d-flex align-items-center gap-2 p-3 bg-light rounded-top">
+                        <i class="bi bi-calendar-check text-primary"></i>
+                        <b>@PersianDate.MonthName(r.Month) @r.Year.FaDigits()</b>
+                        <span class="text-muted fs-8">@r.RunDate.ToFaDate()</span>
+                        <span class="ms-auto">
+                            @if (r.IsPosted)
+                            {
+                                <span class="badge badge-soft-success">ارسال به حسابداری ✓</span>
+                            }
+                            else
+                            {
+                                <span class="badge badge-soft-warning">در انتظار ارسال</span>
+                            }
+                            <span class="badge badge-soft-primary num">@r.TotalAmount.Money()</span>
+                        </span>
+                    </div>
+                    <div class="p-3">
+                        @if (r.Lines.Count == 0)
+                        {
+                            <div class="text-muted fs-8">جزئیاتی ثبت نشده</div>
+                        }
+                        else
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>دارایی</th>
+                                            <th class="text-center">استهلاک</th>
+                                            <th class="text-center">انباشته پس از دوره</th>
+                                            <th class="text-center">ارزش دفتری پس از دوره</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var l in r.Lines)
+                                        {
+                                            <tr>
+                                                <td class="num">@l.AssetCode — @l.AssetName</td>
+                                                <td class="text-center num text-danger">@l.Amount.Money()</td>
+                                                <td class="text-center num">@l.AccumulatedAfter.Money()</td>
+                                                <td class="text-center num text-success">@l.BookValueAfter.Money()</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        <div class="d-flex gap-2 mt-3">
+                            @if (!r.IsPosted)
+                            {
+                                <button class="btn btn-sm btn-success" @onclick="() => Post(r)">
+                                    <i class="bi bi-send"></i> ارسال به حسابداری
+                                </button>
+                                <button class="btn btn-sm btn-light" @onclick="() => DeleteRun(r)">
+                                    <i class="bi bi-trash text-danger"></i> حذف اجرا
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="fs-8 text-muted">سند حسابداری: #@r.VoucherId</span>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private List<FixedAssetDepreciationRun> runs = new();
+    private bool loading = true, running;
+
+    private int runYear = 1405;
+    private int runMonth = 1;
+    private string runNotes = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("اجرای استهلاک");
+        var fa = PersianDate.FromGregorian(DateTime.Now);
+        runYear = fa.Year;
+        runMonth = fa.Month;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try { runs = await RunSvc.GetAllAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Run()
+    {
+        if (runYear < 1300 || runMonth is < 1 or > 12)
+        {
+            Toast.Error("سال/ماه معتبر نیست.");
+            return;
+        }
+        running = true;
+        try
+        {
+            await RunSvc.RunAsync(new FixedAssetDepreciationRequest
+            {
+                Year = runYear, Month = runMonth,
+                Notes = string.IsNullOrWhiteSpace(runNotes) ? null : runNotes
+            });
+            Toast.Success("استهلاک محاسبه و ثبت شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { running = false; }
+    }
+
+    private async Task Post(FixedAssetDepreciationRun r)
+    {
+        try
+        {
+            await RunSvc.PostToAccountingAsync(r.Id);
+            Toast.Success("به حسابداری ارسال شد؛ سند قطعی صادر گردید.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteRun(FixedAssetDepreciationRun r)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"اجرای استهلاک {PersianDate.MonthName(r.Month)} {r.Year} حذف شود؟")) return;
+        try
+        {
+            await RunSvc.DeleteAsync(r.Id);
+            Toast.Success("حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

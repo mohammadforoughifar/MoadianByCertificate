@@ -1,0 +1,922 @@
+@namespace Inventory.Client.Pages
+@page "/fa-lms/courses/{id:int}"
+@inject IFaLmsService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>پرونده دوره</PageTitle>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning mt-3">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+    return;
+}
+@if (course == null)
+{
+    <div class="alert alert-danger mt-3">دوره یافت نشد. <a href="fa-lms/courses">بازگشت</a></div>
+    return;
+}
+
+<div class="page-head mb-3">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-folder2-open"></i> @course.Title</h1>
+            <div class="lead">کد <b class="num">@course.Code</b> | @FaLmsUi.Kind(course.Kind) | <span class="badge @FaLmsUi.CourseBadge(course.Status)">@FaLmsUi.CourseStatus(course.Status)</span></div>
+            <div class="small text-muted mt-1">مدرس: @(course.TrainerName ?? "—") | ساعت: <span class="num">@FaLmsUi.Num(course.DurationHours)</span> | سرانه: <span class="num">@FaLmsUi.Money(course.CostPerPerson)</span> ریال | شروع: <span class="num">@(course.StartDate == null ? "—" : course.StartDate.Value.ToFa())</span></div>
+        </div>
+        @if (faManage)
+        {
+            <div class="btn-group">
+                <button class="btn btn-sm btn-outline-success" @onclick="() => SetStatus(1)">باز</button>
+                <button class="btn btn-sm btn-outline-primary" @onclick="() => SetStatus(2)">آغاز</button>
+                <button class="btn btn-sm btn-outline-dark" @onclick="() => SetStatus(3)">اتمام</button>
+                <button class="btn btn-sm btn-outline-danger" @onclick="() => SetStatus(4)">لغو</button>
+            </div>
+        }
+    </div>
+</div>
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item"><button class="nav-link @(tab == 0 ? "active" : "")" @onclick="() => SwitchTab(0)">جلسات (@FaLmsUi.Num(sessions.Count))</button></li>
+    <li class="nav-item"><button class="nav-link @(tab == 1 ? "active" : "")" @onclick="() => SwitchTab(1)">ثبت‌نام‌شدگان (@FaLmsUi.Num(enrolls.Count))</button></li>
+    <li class="nav-item"><button class="nav-link @(tab == 2 ? "active" : "")" @onclick="() => SwitchTab(2)">آزمون‌ها (@FaLmsUi.Num(exams.Count))</button></li>
+    <li class="nav-item"><button class="nav-link @(tab == 3 ? "active" : "")" @onclick="() => SwitchTab(3)">گواهی‌ها (@FaLmsUi.Num(certs.Count))</button></li>
+    @if (faManage)
+    {
+        <li class="nav-item"><button class="nav-link @(tab == 4 ? "active" : "")" @onclick="() => SwitchTab(4)">گزارش دوره</button></li>
+        <li class="nav-item"><button class="nav-link @(tab == 5 ? "active" : "")" @onclick="() => SwitchTab(5)">نظرسنجی و اثربخشی</button></li>
+    }
+</ul>
+
+@if (tab == 0)
+{
+    @if (conflicts.Count > 0)
+    {
+        <div class="alert alert-warning">
+            <b><i class="bi bi-exclamation-triangle"></i> @FaLmsUi.Num(conflicts.Count) تداخل آموزشی:</b>
+            جلسات این دوره با مرخصی/مأموریت/شیفت برخی فراگیران هم‌پوشانی دارد.
+            <ul class="mb-0 mt-1 small">
+                @foreach (var cf in conflicts.Take(5))
+                {
+                    <li>@cf.EmployeeName — <span class="num">@cf.SessionDate.ToFa()</span> (@KindName(cf.Kind): @cf.Detail)</li>
+                }
+                @if (conflicts.Count > 5)
+                {
+                    <li>و @FaLmsUi.Num(conflicts.Count - 5) مورد دیگر…</li>
+                }
+            </ul>
+        </div>
+    }
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <b><i class="bi bi-calendar2-check"></i> جلسات و حضوروغیاب</b>
+            @if (faManage)
+            {
+                <button class="btn btn-sm btn-success" @onclick="() => OpenSession(null)"><i class="bi bi-plus-lg"></i> جلسه جدید</button>
+            }
+        </div>
+        <div class="card-body p-0">
+            @if (sessions.Count == 0)
+            {
+                <div class="text-center text-muted py-4">جلسه‌ای ثبت نشده است.</div>
+            }
+            else
+            {
+                <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>تاریخ</th><th>ساعت</th><th>موضوع</th><th>سالن/محل</th><th>حاضران</th><th style="width:130px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var s in sessions)
+                        {
+                            <tr>
+                                <td class="num">@s.SessionDate.ToFa()</td>
+                                <td class="num">@FmtTime(s.StartTime) تا @FmtTime(s.EndTime)</td>
+                                <td>@(s.Topic ?? "—")</td>
+                                <td>@(s.Location ?? course?.Location ?? "—")</td>
+                                <td class="num">@FaLmsUi.Num(s.PresentCount)</td>
+                                <td class="text-end">
+                                    <div class="btn-group btn-group-sm">
+                                        @if (faManage)
+                                        {
+                                            <button class="btn btn-outline-primary" title="حضور" @onclick="() => OpenAttendance(s)"><i class="bi bi-check2-square"></i></button>
+                                            <button class="btn btn-outline-secondary" title="ویرایش" @onclick="() => OpenSession(s)"><i class="bi bi-pencil"></i></button>
+                                            <button class="btn btn-outline-danger" title="حذف" @onclick="() => DeleteSession(s)"><i class="bi bi-trash"></i></button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table></div>
+            }
+        </div>
+    </div>
+}
+else if (tab == 1)
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <b><i class="bi bi-people"></i> ثبت‌نام‌شدگان</b>
+            @if (faManage)
+            {
+                <button class="btn btn-sm btn-success" @onclick="OpenEnrollBehalf"><i class="bi bi-person-plus"></i> ثبت‌نام توسط واحد آموزش</button>
+            }
+        </div>
+        <div class="card-body p-0">
+            @if (enrolls.Count == 0)
+            {
+                <div class="text-center text-muted py-4">ثبت‌نامی وجود ندارد.</div>
+            }
+            else
+            {
+                <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>پرسنل</th><th>تاریخ درخواست</th><th>وضعیت</th><th>نمره</th><th>حضور٪</th><th style="width:150px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var e in enrolls)
+                        {
+                            <tr>
+                                <td><b>@e.EmployeeName</b></td>
+                                <td class="num">@e.EnrolledAt.ToFa()</td>
+                                <td><span class="badge @FaLmsUi.EnrollBadge(e.Status)">@FaLmsUi.EnrollStatus(e.Status)</span></td>
+                                <td class="num">@FaLmsUi.Num(e.FinalScore)@if (e.Passed == true){<i class="bi bi-check-circle-fill text-success ms-1"></i>}else if (e.Passed == false){<i class="bi bi-x-circle-fill text-danger ms-1"></i>}</td>
+                                <td class="num">@FaLmsUi.Num(e.AttendancePercent)</td>
+                                <td class="text-end">
+                                    @if (faManage)
+                                    {
+                                        <div class="btn-group btn-group-sm">
+                                            @if (e.Status == 0)
+                                            {
+                                                <button class="btn btn-outline-success" title="تأیید" @onclick="() => DecideEnroll(e, true)"><i class="bi bi-check-lg"></i></button>
+                                                <button class="btn btn-outline-warning" title="رد" @onclick="() => DecideEnroll(e, false)"><i class="bi bi-x-lg"></i></button>
+                                            }
+                                            <button class="btn btn-outline-danger" title="حذف" @onclick="() => DeleteEnroll(e)"><i class="bi bi-trash"></i></button>
+                                        </div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table></div>
+            }
+        </div>
+    </div>
+}
+else if (tab == 2)
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <b><i class="bi bi-patch-question"></i> آزمون‌ها (چندتلاشه، تستی/تشریحی)</b>
+            @if (faManage)
+            {
+                <button class="btn btn-sm btn-success" @onclick="() => OpenExam(null)"><i class="bi bi-plus-lg"></i> آزمون جدید</button>
+            }
+        </div>
+        <div class="card-body p-0">
+            @if (exams.Count == 0)
+            {
+                <div class="text-center text-muted py-4">آزمونی ثبت نشده است.</div>
+            }
+            else
+            {
+                <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>عنوان</th><th>تاریخ</th><th>مدت (دقیقه)</th><th>تلاش</th><th>سؤال</th><th>وضعیت</th><th style="width:190px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var e in exams)
+                        {
+                            <tr>
+                                <td><b>@e.Title</b></td>
+                                <td class="num">@(e.ExamDate == null ? "—" : e.ExamDate.Value.ToFa())</td>
+                                <td class="num">@(e.DurationMinutes == null ? "بدون محدودیت" : FaLmsUi.Num(e.DurationMinutes.Value))</td>
+                                <td class="num">@FaLmsUi.Num(e.MaxAttempts) بار</td>
+                                <td class="num">@FaLmsUi.Num(e.QuestionsCount)</td>
+                                <td>@if (e.IsActive){<span class="badge text-bg-success">فعال</span>}else{<span class="badge text-bg-secondary">غیرفعال</span>}</td>
+                                <td class="text-end">
+                                    @if (faManage)
+                                    {
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-outline-primary" title="سؤال‌ها" @onclick="() => OpenQuestions(e)"><i class="bi bi-list-check"></i></button>
+                                            <button class="btn btn-outline-info" title="نتایج" @onclick="() => OpenAttempts(e)"><i class="bi bi-table"></i></button>
+                                            <button class="btn btn-outline-secondary" title="ویرایش" @onclick="() => OpenExam(e)"><i class="bi bi-pencil"></i></button>
+                                            <button class="btn btn-outline-danger" title="حذف" @onclick="() => DeleteExam(e)"><i class="bi bi-trash"></i></button>
+                                        </div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table></div>
+            }
+        </div>
+    </div>
+}
+else if (tab == 3)
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <b><i class="bi bi-award"></i> گواهی‌های داخلی</b>
+            @if (faManage)
+            {
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-primary" @onclick="IssueMissing"><i class="bi bi-magic"></i> صدور گروهی قبول‌شدگان</button>
+                    <button class="btn btn-sm btn-success" @onclick="() => showIssue = true"><i class="bi bi-plus-lg"></i> صدور تکی</button>
+                </div>
+            }
+        </div>
+        <div class="card-body p-0">
+            @if (certs.Count == 0)
+            {
+                <div class="text-center text-muted py-4">گواهی صادر نشده است.</div>
+            }
+            else
+            {
+                <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>شماره</th><th>پرسنل</th><th>تاریخ صدور</th><th>نمره</th><th>کد رهگیری</th><th style="width:60px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var c in certs)
+                        {
+                            <tr>
+                                <td class="num fw-bold">@c.CertNo</td>
+                                <td><b>@c.EmployeeName</b></td>
+                                <td class="num">@c.IssueDate.ToFa()</td>
+                                <td class="num">@FaLmsUi.Num(c.Score)</td>
+                                <td class="num">@c.VerifyCode</td>
+                                <td class="text-end"><div class="btn-group btn-group-sm"><button class="btn btn-outline-primary" title="چاپ" @onclick="() => PrintCert(c.Id)"><i class="bi bi-printer"></i></button>@if (faManage){<button class="btn btn-outline-danger" title="ابطال" @onclick="() => DeleteCert(c)"><i class="bi bi-trash"></i></button>}</div></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table></div>
+            }
+        </div>
+    </div>
+}
+else if (tab == 4 && faManage)
+{
+    @if (report == null)
+    {
+        <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+    }
+    else
+    {
+        <div class="row g-3">
+            <div class="col-6 col-md-3"><div class="card border-0 shadow-sm text-center py-3"><div class="fs-4 fw-bold num">@FaLmsUi.Num(report.ApprovedCount)<span class="text-muted fs-6"> / @FaLmsUi.Num(report.EnrolledCount)</span></div><div class="text-muted small">تأییدشده / کل ثبت‌نام</div></div></div>
+            <div class="col-6 col-md-3"><div class="card border-0 shadow-sm text-center py-3"><div class="fs-4 fw-bold num">@FaLmsUi.Num(report.AvgScore)</div><div class="text-muted small">میانگین نمره</div></div></div>
+            <div class="col-6 col-md-3"><div class="card border-0 shadow-sm text-center py-3"><div class="fs-4 fw-bold text-success num">@FaLmsUi.Num(report.PassRate)٪</div><div class="text-muted small">نرخ قبولی (@FaLmsUi.Num(report.PassCount) نفر)</div></div></div>
+            <div class="col-6 col-md-3"><div class="card border-0 shadow-sm text-center py-3"><div class="fs-4 fw-bold num">@FaLmsUi.Num(report.AvgAttendance)٪</div><div class="text-muted small">میانگین حضور</div></div></div>
+            <div class="col-6 col-md-3"><div class="card border-0 shadow-sm text-center py-3"><div class="fs-4 fw-bold num">@FaLmsUi.Num(report.SessionsCount)</div><div class="text-muted small">جلسات</div></div></div>
+            <div class="col-6 col-md-3"><div class="card border-0 shadow-sm text-center py-3"><div class="fs-4 fw-bold num">@FaLmsUi.Num(report.IssuedCerts)</div><div class="text-muted small">گواهی صادرشده</div></div></div>
+        </div>
+    }
+}
+else if (tab == 5 && faManage)
+{
+    <div class="row g-3">
+        <div class="col-lg-7">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white"><b><i class="bi bi-patch-question"></i> سؤال‌های نظرسنجی</b></div>
+                <div class="card-body">
+                    @if (surveyQs.Count == 0)
+                    {
+                        <div class="text-center text-muted py-3">سؤالی تعریف نشده است.</div>
+                    }
+                    else
+                    {
+                        <ul class="list-group list-group-flush">
+                            @foreach (var q in surveyQs)
+                            {
+                                <li class="list-group-item d-flex align-items-center gap-2 px-0">
+                                    <span class="flex-grow-1">@q.Text</span>
+                                    <span class="badge text-bg-info num">میانگین @FaLmsUi.Num(q.AvgScore)</span>
+                                    <span class="small text-muted num">@FaLmsUi.Num(q.AnswerCount) پاسخ</span>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => DeleteSurveyQ(q.Id)"><i class="bi bi-trash text-danger"></i></button>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    <div class="input-group mt-2">
+                        <input class="form-control" placeholder="متن سؤال جدید… (نمره ۱ تا ۵)" @bind="newSurveyQ" />
+                        <button class="btn btn-outline-primary" @onclick="AddSurveyQ"><i class="bi bi-plus-lg"></i> افزودن</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card border-0 shadow-sm text-center py-4">
+                <div class="fs-1 fw-bold text-success num">@FaLmsUi.Num(surveyResult?.OverallAvg)</div>
+                <div class="text-muted">میانگین کلی اثربخشی از ۵</div>
+                <div class="small text-muted mt-1 num">@FaLmsUi.Num(surveyResult?.RespondentCount ?? 0) پاسخ‌دهنده</div>
+            </div>
+        </div>
+    </div>
+}
+
+<Modal Visible="showSession" Title="جلسه آموزشی" OnClose="() => showSession = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-md-6"><label class="form-label">تاریخ</label><DatePicker @bind-Value="sesDate" /></div>
+        <div class="col-md-3"><label class="form-label">شروع</label><input type="time" class="form-control" @bind="sesStart" /></div>
+        <div class="col-md-3"><label class="form-label">پایان</label><input type="time" class="form-control" @bind="sesEnd" /></div>
+        <div class="col-md-6"><label class="form-label">موضوع جلسه</label><input class="form-control" @bind="sesForm.Topic" /></div>
+        <div class="col-md-6"><label class="form-label">سالن/محل (خالی = محل دوره)</label><input class="form-control" @bind="sesForm.Location" /></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showSession = false">انصراف</button>
+        <button class="btn btn-success" @onclick="SaveSession">ذخیره</button>
+    </div>
+    </Footer>
+</Modal>
+
+<Modal Visible="showAtt" Title="@AttTitle" Size="modal-lg" OnClose="() => showAtt = false">
+    <ChildContent>
+    @if (roster.Count == 0)
+    {
+        <div class="text-center text-muted py-4">ثبت‌نام تأییدشده‌ای برای این دوره وجود ندارد.</div>
+    }
+    else
+    {
+        <div class="table-responsive"><table class="table table-hover align-middle">
+            <thead class="table-light"><tr><th style="width:60px">حاضر</th><th>پرسنل</th><th>یادداشت</th></tr></thead>
+            <tbody>
+                @foreach (var r in roster)
+                {
+                    <tr>
+                        <td class="text-center"><input type="checkbox" class="form-check-input" style="width:1.3em;height:1.3em" @bind="r.Present" /></td>
+                        <td><b>@r.EmployeeName</b></td>
+                        <td><input class="form-control form-control-sm" @bind="r.Note" /></td>
+                    </tr>
+                }
+            </tbody>
+        </table></div>
+        <div class="d-flex justify-content-between mt-2">
+            <button class="btn btn-sm btn-outline-primary" @onclick="MarkAll">همه حاضر</button>
+            <div class="d-flex gap-2">
+                <button class="btn btn-secondary" @onclick="() => showAtt = false">انصراف</button>
+                <button class="btn btn-success" @onclick="SaveAttendance">ثبت حضور</button>
+            </div>
+        </div>
+    }
+    </ChildContent>
+</Modal>
+
+<Modal Visible="showEnroll" Title="ثبت‌نام توسط واحد آموزش" OnClose="() => showEnroll = false">
+    <ChildContent>
+    <label class="form-label">پرسنل</label>
+    <select class="form-select" @bind="behalfEmpId">
+        @foreach (var e in emps)
+        {
+            <option value="@e.Id">@e.FirstName @e.LastName</option>
+        }
+    </select>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEnroll = false">انصراف</button>
+        <button class="btn btn-success" @onclick="SaveEnrollBehalf">ثبت‌نام</button>
+    </div>
+    </Footer>
+</Modal>
+
+<Modal Visible="showExam" Title="آزمون" OnClose="() => showExam = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-12"><label class="form-label">عنوان *</label><input class="form-control" @bind="examForm.Title" /></div>
+        <div class="col-md-6"><label class="form-label">تاریخ آزمون</label><DatePicker @bind-Value="examForm.ExamDate" /></div>
+        <div class="col-md-6"><label class="form-label">مدت (دقیقه — خالی = بدون محدودیت)</label><input type="number" class="form-control" @bind="examForm.DurationMinutes" /></div>
+        <div class="col-md-6"><label class="form-label">سقف تلاش (۱ تا ۱۰)</label><input type="number" min="1" max="10" class="form-control" @bind="examForm.MaxAttempts" /></div>
+        <div class="col-12"><div class="form-check"><input type="checkbox" class="form-check-input" @bind="examForm.IsActive" /><label class="form-check-label">فعال (قابل شرکت برای ثبت‌نام‌شدگان)</label></div></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showExam = false">انصراف</button>
+        <button class="btn btn-success" @onclick="SaveExam">ذخیره</button>
+    </div>
+    </Footer>
+</Modal>
+
+<Modal Visible="showQuestions" Title="@QTitle" Size="modal-lg" OnClose="() => showQuestions = false">
+    <ChildContent>
+    <div class="d-flex justify-content-end mb-2">
+        <button class="btn btn-sm btn-outline-primary" @onclick="OpenBankPick"><i class="bi bi-collection"></i> افزودن از بانک سؤال</button>
+    </div>
+    @if (questions.Count == 0)
+    {
+        <div class="text-center text-muted py-3">سؤالی ثبت نشده است.</div>
+    }
+    else
+    {
+        <ol class="list-group list-group-numbered mb-3">
+            @foreach (var q in questions)
+            {
+                <li class="list-group-item">
+                    <div class="d-flex justify-content-between gap-2"><b>@q.Text</b><span class="text-nowrap"><span class="badge @(q.Type == 1 ? "text-bg-warning" : "text-bg-info") me-1">@(q.Type == 1 ? "تشریحی" : "تستی")</span><span class="badge text-bg-info num">@FaLmsUi.Num(q.Score) نمره</span></span></div>
+                    @if (q.Type == 0)
+                    {
+                        <div class="small text-muted mt-1">۱) @q.OptA | ۲) @q.OptB | ۳) @q.OptC | ۴) @q.OptD — <b class="text-success">صحیح: گزینه @(q.CorrectIndex + 1)</b></div>
+                    }
+                    <div class="mt-1 d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => OpenQuestion(q)">ویرایش</button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteQuestion(q)">حذف</button>
+                    </div>
+                </li>
+            }
+        </ol>
+    }
+    <hr />
+    <h6>@(qEditId == null ? "سؤال جدید" : "ویرایش سؤال")</h6>
+    <div class="row g-2">
+        <div class="col-12"><input class="form-control" placeholder="متن سؤال *" @bind="qForm.Text" /></div>
+        <div class="col-md-4"><label class="form-label small">نوع سؤال</label><select class="form-select" @bind="qForm.Type"><option value="0">تستی</option><option value="1">تشریحی</option></select></div>
+        @if (qForm.Type == 0)
+        {
+            <div class="col-md-6"><input class="form-control" placeholder="گزینه ۱" @bind="qForm.OptA" /></div>
+            <div class="col-md-6"><input class="form-control" placeholder="گزینه ۲" @bind="qForm.OptB" /></div>
+            <div class="col-md-6"><input class="form-control" placeholder="گزینه ۳" @bind="qForm.OptC" /></div>
+            <div class="col-md-6"><input class="form-control" placeholder="گزینه ۴" @bind="qForm.OptD" /></div>
+            <div class="col-md-4"><label class="form-label small">گزینه صحیح</label><select class="form-select" @bind="qForm.CorrectIndex"><option value="0">۱</option><option value="1">۲</option><option value="2">۳</option><option value="3">۴</option></select></div>
+        }
+        <div class="col-md-4"><label class="form-label small">نمره</label><input type="number" step="0.5" class="form-control" @bind="qForm.Score" /></div>
+        <div class="col-md-4"><label class="form-label small">ترتیب</label><input type="number" class="form-control" @bind="qForm.SortOrder" /></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-2">
+        <button class="btn btn-sm btn-outline-secondary" @onclick="ResetQForm">جدید</button>
+        <button class="btn btn-sm btn-success" @onclick="SaveQuestion">ذخیره سؤال</button>
+    </div>
+    </Footer>
+</Modal>
+
+<Modal Visible="showAttempts" Title="@AttExamTitle" Size="modal-lg" OnClose="() => showAttempts = false">
+    <ChildContent>
+    @if (attempts.Count == 0)
+    {
+        <div class="text-center text-muted py-3">کسی هنوز شرکت نکرده است.</div>
+    }
+    else
+    {
+        <div class="table-responsive"><table class="table table-hover align-middle">
+            <thead class="table-light"><tr><th>پرسنل</th><th>تلاش</th><th>شروع</th><th>ثبت</th><th>نمره</th><th>نتیجه</th><th style="width:110px"></th></tr></thead>
+            <tbody>
+                @foreach (var a in attempts)
+                {
+                    <tr>
+                        <td><b>@a.EmployeeName</b></td>
+                        <td class="num">@FaLmsUi.Num(a.AttemptNo)</td>
+                        <td class="num">@a.StartedAt.ToFaDateTime()</td>
+                        <td class="num">@(a.SubmittedAt == null ? "—" : a.SubmittedAt.Value.ToFaDateTime())</td>
+                        <td class="num">@FaLmsUi.Num(a.Score)</td>
+                        <td>@if (a.Passed == true){<span class="badge text-bg-success">قبول</span>}else if (a.Passed == false){<span class="badge text-bg-danger">مردود</span>}else if (a.NeedsGrading){<span class="badge text-bg-warning">در انتظار تصحیح</span>}else{<span class="badge text-bg-secondary">—</span>}</td>
+                        <td class="text-end">@if (a.NeedsGrading){<button class="btn btn-sm btn-warning" @onclick="() => OpenGrade(a)">تصحیح</button>}</td>
+                    </tr>
+                }
+            </tbody>
+        </table></div>
+    }
+    </ChildContent>
+</Modal>
+
+<Modal Visible="showBankPick" Title="افزودن سؤال از بانک" Size="modal-lg" OnClose="() => showBankPick = false">
+    <ChildContent>
+    <div class="row g-2 mb-2">
+        <div class="col-md-6">
+            <label class="form-label small">بانک سؤال</label>
+            <select class="form-select" @bind="pickBankId" @bind:after="LoadPickQuestions">
+                @foreach (var b in banks)
+                {
+                    <option value="@b.Id">@b.Title (@FaLmsUi.Num(b.QuestionsCount))</option>
+                }
+            </select>
+        </div>
+    </div>
+    @if (pickQuestions.Count == 0)
+    {
+        <div class="text-center text-muted py-3">سؤالی در این بانک نیست.</div>
+    }
+    else
+    {
+        <div class="list-group mb-2" style="max-height:40vh;overflow:auto">
+            @foreach (var q in pickQuestions)
+            {
+                <label class="list-group-item d-flex gap-2" style="cursor:pointer">
+                    <input type="checkbox" class="form-check-input mt-1" checked="@pickSel.Contains(q.Id)" @onchange="() => TogglePick(q.Id)" />
+                    <span>@q.Text <span class="badge @(q.Type == 1 ? "text-bg-warning" : "text-bg-info")">@(q.Type == 1 ? "تشریحی" : "تستی")</span></span>
+                </label>
+            }
+        </div>
+    }
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2">
+        <button class="btn btn-secondary" @onclick="() => showBankPick = false">انصراف</button>
+        <button class="btn btn-success" @onclick="DoCopyFromBank">افزودن (@FaLmsUi.Num(pickSel.Count))</button>
+    </div>
+    </Footer>
+</Modal>
+
+<Modal Visible="showGrade" Title="@GradeTitle" Size="modal-lg" OnClose="() => showGrade = false">
+    <ChildContent>
+    @if (gradeTexts.Count == 0)
+    {
+        <div class="text-center text-muted py-3">پاسخ تشریحی یافت نشد.</div>
+    }
+    else
+    {
+        @foreach (var g in gradeTexts)
+        {
+            <div class="card mb-2"><div class="card-body py-2">
+                <div class="fw-bold">@g.QuestionText <span class="badge text-bg-info num">@FaLmsUi.Num(g.QuestionScore) نمره</span></div>
+                <div class="border rounded bg-light p-2 my-1" style="white-space:pre-wrap">@(string.IsNullOrWhiteSpace(g.AnswerText) ? "— بی‌پاسخ —" : g.AnswerText)</div>
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-4"><label class="form-label small">نمره (۰ تا @FaLmsUi.Num(g.QuestionScore))</label><input type="number" step="0.5" min="0" class="form-control" @bind="gradeScores[g.QuestionId]" /></div>
+                </div>
+            </div></div>
+        }
+    }
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-2">
+        <button class="btn btn-secondary" @onclick="() => showGrade = false">انصراف</button>
+        <button class="btn btn-success" @onclick="SaveGrade">ثبت تصحیح و اعلام نتیجه</button>
+    </div>
+    </Footer>
+</Modal>
+
+<Modal Visible="showIssue" Title="صدور گواهی تکی" OnClose="() => showIssue = false">
+    <ChildContent>
+    <label class="form-label">قبول‌شدگان بدون گواهی</label>
+    <select class="form-select" @bind="issueEmpId">
+        @foreach (var e in enrolls.Where(x => x.Status == 1 && (course == null || !course.HasExam || x.Passed == true)))
+        {
+            <option value="@e.EmployeeId">@e.EmployeeName</option>
+        }
+    </select>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showIssue = false">انصراف</button>
+        <button class="btn btn-success" @onclick="IssueSingle">صدور</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public int id { get; set; }
+    private bool faRead => Auth.Has("FaLms.Read") || Auth.IsAdmin;
+    private bool faManage => Auth.Has("FaLms.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private string AttTitle => "حضور جلسه " + (attSession == null ? "" : attSession.SessionDate.ToFa());
+    private string QTitle => "سؤال‌های آزمون: " + (qExam == null ? "" : qExam.Title);
+    private string AttExamTitle => "نتایج آزمون: " + (attExam == null ? "" : attExam.Title);
+    private int tab;
+    private FaLmsCourseDto? course;
+    private List<FaLmsSessionDto> sessions = new();
+    private List<FaLmsEnrollmentDto> enrolls = new();
+    private List<FaLmsExamDto> exams = new();
+    private List<FaLmsCertificateDto> certs = new();
+    private FaLmsCourseReportDto? report;
+    private List<HrEmployeeDto> emps = new();
+
+    private bool showSession, showAtt, showEnroll, showExam, showQuestions, showAttempts, showIssue, showBankPick, showGrade;
+    private int? sesEditId;
+    private FaLmsSessionSaveDto sesForm = new();
+    private DateTime? sesDate = DateTime.Today;
+    private TimeOnly? sesStart, sesEnd;
+    private FaLmsSessionDto? attSession;
+    private List<FaLmsAttendanceDto> roster = new();
+    private int behalfEmpId;
+    private int? examEditId;
+    private FaLmsExamSaveDto examForm = new();
+    private FaLmsExamDto? qExam, attExam;
+    private List<FaLmsQuestionDto> questions = new();
+    private List<FaLmsAttemptDto> attempts = new();
+    private int? qEditId;
+    private FaLmsQuestionSaveDto qForm = new();
+    private List<FaLmsBankDto> banks = new();
+    private int pickBankId;
+    private List<FaLmsBankQuestionDto> pickQuestions = new();
+    private HashSet<int> pickSel = new();
+    private FaLmsAttemptDto? gradeAtt;
+    private List<FaLmsTextAnswerDto> gradeTexts = new();
+    private Dictionary<int, double> gradeScores = new();
+    private string GradeTitle => "تصحیح پاسخ‌نامه: " + (gradeAtt?.EmployeeName ?? "");
+    private int issueEmpId;
+    private List<FaLmsConflictDto> conflicts = new();
+    private List<FaLmsSurveyQuestionDto> surveyQs = new();
+    private FaLmsSurveyResultDto? surveyResult;
+    private string newSurveyQ = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        try
+        {
+            emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items;
+            behalfEmpId = emps.FirstOrDefault()?.Id ?? 0;
+            await ReloadAll();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task ReloadAll()
+    {
+        course = await Svc.GetCourseAsync(id);
+        sessions = await Svc.ListSessionsAsync(id);
+        enrolls = await Svc.ListEnrollmentsAsync(id, null);
+        exams = await Svc.ListExamsAsync(id);
+        certs = await Svc.ListCertificatesAsync(id, null, null);
+        try { conflicts = await Svc.CheckConflictsAsync(id, null); } catch { conflicts = new(); }
+        if (faManage)
+        {
+            try
+            {
+                surveyQs = await Svc.ListSurveyQuestionsAsync(id, null);
+                surveyResult = await Svc.SurveyResultsAsync(id);
+            }
+            catch { }
+        }
+    }
+
+    private static string KindName(string k) => k switch
+    {
+        "Leave" => "مرخصی", "Mission" => "مأموریت", "Shift" => "شیفت", _ => k
+    };
+
+    private async Task AddSurveyQ()
+    {
+        if (string.IsNullOrWhiteSpace(newSurveyQ)) return;
+        try
+        {
+            await Svc.SaveSurveyQuestionAsync(id, newSurveyQ);
+            newSurveyQ = "";
+            surveyQs = await Svc.ListSurveyQuestionsAsync(id, null);
+            surveyResult = await Svc.SurveyResultsAsync(id);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteSurveyQ(int qid)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "این سؤال و پاسخ‌هایش حذف شود؟")) return;
+        try
+        {
+            await Svc.DeleteSurveyQuestionAsync(qid);
+            surveyQs = await Svc.ListSurveyQuestionsAsync(id, null);
+            surveyResult = await Svc.SurveyResultsAsync(id);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task SwitchTab(int t)
+    {
+        tab = t;
+        if (t == 4 && faManage)
+        {
+            report = null;
+            try { report = await Svc.GetCourseReportAsync(id); }
+            catch (Exception ex) { Toast.Error(ex.Message); }
+        }
+    }
+
+    private static string FmtTime(TimeSpan? t) => t == null ? "—" : Inventory.Shared.Fa.Digits(DateTime.Today.Add(t.Value).ToString("HH:mm"));
+
+    private async Task SetStatus(int s)
+    {
+        try { course = await Svc.SetCourseStatusAsync(id, s); Toast.Success("وضعیت دوره تغییر کرد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- جلسات ----------
+    private void OpenSession(FaLmsSessionDto? s)
+    {
+        sesEditId = s?.Id;
+        sesForm = new FaLmsSessionSaveDto { CourseId = id, SessionDate = s?.SessionDate ?? DateTime.Today, Topic = s?.Topic, Location = s?.Location };
+        sesDate = sesForm.SessionDate;
+        sesStart = s?.StartTime == null ? null : TimeOnly.FromTimeSpan(s.StartTime.Value);
+        sesEnd = s?.EndTime == null ? null : TimeOnly.FromTimeSpan(s.EndTime.Value);
+        showSession = true;
+    }
+
+    private async Task SaveSession()
+    {
+        sesForm.SessionDate = sesDate ?? DateTime.Today;
+        sesForm.StartTime = sesStart?.ToTimeSpan();
+        sesForm.EndTime = sesEnd?.ToTimeSpan();
+        try { await Svc.SaveSessionAsync(sesEditId, sesForm); Toast.Success("جلسه ذخیره شد."); showSession = false; sessions = await Svc.ListSessionsAsync(id); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteSession(FaLmsSessionDto s)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "جلسه حذف شود؟")) return;
+        try { await Svc.DeleteSessionAsync(s.Id); Toast.Success("حذف شد."); sessions = await Svc.ListSessionsAsync(id); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OpenAttendance(FaLmsSessionDto s)
+    {
+        try { attSession = s; roster = await Svc.GetAttendanceAsync(s.Id); showAtt = true; }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void MarkAll() { foreach (var r in roster) r.Present = true; }
+
+    private async Task SaveAttendance()
+    {
+        if (attSession == null) return;
+        try
+        {
+            await Svc.SaveAttendanceAsync(attSession.Id, roster.Select(r => new FaLmsAttendanceItemDto { EmployeeId = r.EmployeeId, Present = r.Present, Note = r.Note }).ToList());
+            Toast.Success("حضور ثبت شد.");
+            showAtt = false;
+            sessions = await Svc.ListSessionsAsync(id);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- ثبت‌نام ----------
+    private void OpenEnrollBehalf() { behalfEmpId = emps.FirstOrDefault()?.Id ?? 0; showEnroll = true; }
+
+    private async Task SaveEnrollBehalf()
+    {
+        try { await Svc.EnrollAsync(id, behalfEmpId); Toast.Success("ثبت‌نام انجام شد."); showEnroll = false; enrolls = await Svc.ListEnrollmentsAsync(id, null); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DecideEnroll(FaLmsEnrollmentDto e, bool approve)
+    {
+        try { await Svc.DecideEnrollmentAsync(e.Id, approve); Toast.Success(approve ? "تأیید شد." : "رد شد."); enrolls = await Svc.ListEnrollmentsAsync(id, null); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteEnroll(FaLmsEnrollmentDto e)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "ثبت‌نام حذف شود؟")) return;
+        try { await Svc.DeleteEnrollmentAsync(e.Id); Toast.Success("حذف شد."); enrolls = await Svc.ListEnrollmentsAsync(id, null); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- آزمون ----------
+    private void OpenExam(FaLmsExamDto? e)
+    {
+        examEditId = e?.Id;
+        examForm = new FaLmsExamSaveDto { CourseId = id, Title = e?.Title ?? "", ExamDate = e?.ExamDate, DurationMinutes = e?.DurationMinutes, MaxAttempts = e?.MaxAttempts ?? 1, IsActive = e?.IsActive ?? true };
+        showExam = true;
+    }
+
+    private async Task SaveExam()
+    {
+        try { await Svc.SaveExamAsync(examEditId, examForm); Toast.Success("آزمون ذخیره شد."); showExam = false; exams = await Svc.ListExamsAsync(id); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteExam(FaLmsExamDto e)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "آزمون حذف شود؟")) return;
+        try { await Svc.DeleteExamAsync(e.Id); Toast.Success("حذف شد."); exams = await Svc.ListExamsAsync(id); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OpenQuestions(FaLmsExamDto e)
+    {
+        try { qExam = e; questions = await Svc.ListQuestionsAsync(e.Id); ResetQForm(); showQuestions = true; }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void ResetQForm() { qEditId = null; qForm = new FaLmsQuestionSaveDto { ExamId = qExam?.Id ?? 0, Score = 1, SortOrder = questions.Count + 1 }; }
+    private void OpenQuestion(FaLmsQuestionDto q) { qEditId = q.Id; qForm = new FaLmsQuestionSaveDto { ExamId = q.ExamId, Text = q.Text, OptA = q.OptA, OptB = q.OptB, OptC = q.OptC, OptD = q.OptD, CorrectIndex = q.CorrectIndex, Score = q.Score, Type = q.Type, SortOrder = q.SortOrder }; }
+
+    private async Task SaveQuestion()
+    {
+        if (qExam == null) return;
+        try { await Svc.SaveQuestionAsync(qEditId, qExam.Id, qForm); Toast.Success("سؤال ذخیره شد."); questions = await Svc.ListQuestionsAsync(qExam.Id); ResetQForm(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteQuestion(FaLmsQuestionDto q)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "سؤال حذف شود؟")) return;
+        try { await Svc.DeleteQuestionAsync(q.Id); questions = await Svc.ListQuestionsAsync(q.ExamId); ResetQForm(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OpenAttempts(FaLmsExamDto e)
+    {
+        try { attExam = e; attempts = await Svc.ListAttemptsAsync(e.Id); showAttempts = true; }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OpenBankPick()
+    {
+        try
+        {
+            banks = await Svc.ListBanksAsync();
+            if (banks.Count == 0) { Toast.Info("بانک سؤالی ثبت نشده است؛ ابتدا از منوی «بانک سؤال» بسازید."); return; }
+            pickBankId = banks[0].Id;
+            pickSel = new();
+            await LoadPickQuestions();
+            showBankPick = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task LoadPickQuestions()
+    {
+        try { pickQuestions = await Svc.ListBankQuestionsAsync(pickBankId); pickSel.Clear(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void TogglePick(int id)
+    {
+        if (pickSel.Contains(id)) pickSel.Remove(id);
+        else pickSel.Add(id);
+    }
+
+    private async Task DoCopyFromBank()
+    {
+        if (qExam == null || pickSel.Count == 0) return;
+        try
+        {
+            var n = await Svc.CopyFromBankAsync(qExam.Id, pickSel.ToList());
+            Toast.Success(n + " سؤال از بانک اضافه شد.");
+            showBankPick = false;
+            questions = await Svc.ListQuestionsAsync(qExam.Id);
+            exams = await Svc.ListExamsAsync(id);
+            ResetQForm();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OpenGrade(FaLmsAttemptDto a)
+    {
+        try
+        {
+            gradeAtt = a;
+            gradeTexts = await Svc.ListTextAnswersAsync(a.Id);
+            gradeScores = gradeTexts.ToDictionary(g => g.QuestionId, g => g.ManualScore ?? 0);
+            showGrade = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task SaveGrade()
+    {
+        if (gradeAtt == null) return;
+        foreach (var g in gradeTexts)
+        {
+            var v = gradeScores.GetValueOrDefault(g.QuestionId);
+            if (v < 0 || v > g.QuestionScore)
+            {
+                Toast.Error($"نمره باید بین ۰ تا {FaLmsUi.Num(g.QuestionScore)} باشد.");
+                return;
+            }
+        }
+        try
+        {
+            var items = gradeScores.Select(kv => new FaLmsGradeItemDto { QuestionId = kv.Key, ManualScore = kv.Value }).ToList();
+            await Svc.GradeAttemptAsync(gradeAtt.Id, items);
+            Toast.Success("تصحیح ثبت و نتیجه اعلام شد.");
+            showGrade = false;
+            if (attExam != null) attempts = await Svc.ListAttemptsAsync(attExam.Id);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- گواهی ----------
+    private async Task IssueSingle()
+    {
+        try { await Svc.IssueAsync(id, issueEmpId); Toast.Success("گواهی صادر شد."); showIssue = false; certs = await Svc.ListCertificatesAsync(id, null, null); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task IssueMissing()
+    {
+        try { var n = await Svc.IssueMissingAsync(id); Toast.Success(n + " گواهی صادر شد."); certs = await Svc.ListCertificatesAsync(id, null, null); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task PrintCert(int certId)
+    {
+        try
+        {
+            var f = await Svc.GetCertificatePdfAsync(certId);
+            await JS.InvokeVoidAsync("saveAsFile", f.FileName, System.Convert.ToBase64String(f.Data));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteCert(FaLmsCertificateDto c)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "گواهی " + c.CertNo + " ابطال شود؟")) return;
+        try { await Svc.DeleteCertificateAsync(c.Id); Toast.Success("ابطال شد."); certs = await Svc.ListCertificatesAsync(id, null, null); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

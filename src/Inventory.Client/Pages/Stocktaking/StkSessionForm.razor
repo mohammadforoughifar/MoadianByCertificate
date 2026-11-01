@@ -1,0 +1,624 @@
+@page "/stk/sessions/new"
+@page "/stk/sessions/{Id:int}"
+@inject IStkSessionService SessionSvc
+@inject IInvWarehouseService WarehouseSvc
+@inject IInvCategoryService CategorySvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>@(Id is null ? "دوره انبارگردانی جدید" : $"انبارگردانی {doc.Number}")</PageTitle>
+
+@if (loading)
+{
+    <div class="card"><div class="card-body text-center py-5"><div class="spinner-border text-primary"></div></div></div>
+}
+else
+{
+<div class="page-head">
+    <div>
+        <h1>
+            @(Id is null ? "دوره انبارگردانی جدید" : doc.Title)
+            @if (Id is not null)
+            {
+                <span class="badge badge-soft-@StatusColor(doc.Status) ms-2">@doc.StatusTitle</span>
+            }
+        </h1>
+        <p class="lead">
+            @if (Id is null)
+            {
+                <text>انبار و دامنه شمارش را انتخاب کنید؛ با شروع شمارش موجودی سیستم قفل می‌شود.</text>
+            }
+            else
+            {
+                <text>شماره @doc.Number.ToString().FaDigits() • @doc.WarehouseName • @doc.Date.ToFaDate()</text>
+            }
+        </p>
+    </div>
+    <div class="ms-auto d-flex gap-2 flex-wrap">
+        <a class="btn btn-outline-secondary" href="/stk/sessions"><i class="bi bi-arrow-right"></i> بازگشت</a>
+
+        @if (doc.Status is StocktakeStatus.Draft or StocktakeStatus.Counting)
+        {
+            <button class="btn btn-outline-primary" @onclick="Save" disabled="@saving">
+                <i class="bi bi-save"></i> ذخیره
+            </button>
+        }
+
+        @if (Id is not null)
+        {
+            @switch (doc.Status)
+            {
+                case StocktakeStatus.Draft:
+                    <button class="btn btn-primary" @onclick="Start" disabled="@saving">
+                        <i class="bi bi-play-fill"></i> شروع شمارش
+                    </button>
+                    break;
+
+                case StocktakeStatus.Counting:
+                    <a class="btn btn-success" href="/stk/scan/@doc.Id"><i class="bi bi-upc-scan"></i> صفحه اسکنر</a>
+                    <button class="btn btn-primary" @onclick="Finish" disabled="@saving">
+                        <i class="bi bi-clipboard-check"></i> پایان شمارش
+                    </button>
+                    break;
+
+                case StocktakeStatus.Review:
+                    <button class="btn btn-outline-warning" @onclick="Reopen" disabled="@saving">
+                        <i class="bi bi-arrow-counterclockwise"></i> بازگشت به شمارش
+                    </button>
+                    <a class="btn btn-outline-info" href="/stk/reports/diff?sessionId=@doc.Id">
+                        <i class="bi bi-file-earmark-bar-graph"></i> گزارش مغایرت
+                    </a>
+                    <button class="btn btn-primary" @onclick="() => showApply = true" disabled="@saving">
+                        <i class="bi bi-check2-circle"></i> اعمال و اصلاح موجودی
+                    </button>
+                    break;
+
+                case StocktakeStatus.Applied:
+                    <a class="btn btn-outline-info" href="/stk/reports/diff?sessionId=@doc.Id">
+                        <i class="bi bi-file-earmark-bar-graph"></i> گزارش مغایرت
+                    </a>
+                    <button class="btn btn-outline-danger" @onclick="Unapply" disabled="@saving">
+                        <i class="bi bi-arrow-counterclockwise"></i> برگشت اعمال
+                    </button>
+                    break;
+            }
+        }
+    </div>
+</div>
+
+<!-- ============ مشخصات دوره ============ -->
+<div class="card mb-3">
+    <div class="card-header"><span class="card-title"><i class="bi bi-info-circle"></i> مشخصات دوره</span></div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-12 col-md-5">
+                <label class="form-label">عنوان دوره <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="doc.Title" disabled="@(!doc.IsEditable)" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">انبار <span class="text-danger">*</span></label>
+                <select class="form-select" value="@doc.WarehouseId" @onchange="OnWarehouse"
+                        disabled="@(doc.Status != StocktakeStatus.Draft)">
+                    <option value="0">— انتخاب کنید —</option>
+                    @foreach (var w in warehouses)
+                    {
+                        <option value="@w.Id">@w.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">تاریخ</label>
+                <DatePicker Value="doc.Date" ValueChanged="OnDate" />
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">شماره</label>
+                <input class="form-control num" value="@doc.Number.ToString().FaDigits()" disabled />
+            </div>
+
+            <div class="col-12 col-md-4">
+                <label class="form-label">دامنه شمارش</label>
+                <select class="form-select" value="@doc.Scope" @onchange="OnScope"
+                        disabled="@(doc.Status != StocktakeStatus.Draft)">
+                    <option value="InStock">کالاهای دارای موجودی</option>
+                    <option value="AllProducts">همه کالاهای فعال</option>
+                    <option value="ByCategory">یک گروه کالا</option>
+                    <option value="ScanOnly">فقط کالاهای اسکن‌شده</option>
+                </select>
+                <div class="form-text">@ScopeHint()</div>
+            </div>
+
+            @if (doc.Scope == StocktakeScope.ByCategory)
+            {
+                <div class="col-12 col-md-4">
+                    <label class="form-label">گروه کالا <span class="text-danger">*</span></label>
+                    <select class="form-select" value="@(doc.CategoryId?.ToString() ?? "")" @onchange="OnCategory"
+                            disabled="@(doc.Status != StocktakeStatus.Draft)">
+                        <option value="">— انتخاب کنید —</option>
+                        @foreach (var c in categories)
+                        {
+                            <option value="@c.Id">@Indent(c.Depth)@c.Name</option>
+                        }
+                    </select>
+                </div>
+            }
+
+            <div class="col-12 @(doc.Scope == StocktakeScope.ByCategory ? "col-md-4" : "col-md-8")">
+                <label class="form-label">توضیحات</label>
+                <input class="form-control" @bind="doc.Description" disabled="@(!doc.IsEditable)" />
+            </div>
+
+            <div class="col-12">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="uncounted"
+                           @bind="doc.TreatUncountedAsZero" disabled="@(!doc.IsEditable)" />
+                    <label class="form-check-label" for="uncounted">
+                        اقلام شمارش‌نشده هنگام اعمال، <strong>صفر</strong> در نظر گرفته شوند
+                        <span class="fs-8 text-muted d-block">
+                            اگر فعال باشد، هر کالایی که در لیست هست و شمارش نشده، به‌عنوان کسری کامل ثبت می‌شود.
+                            در انبارگردانی جزئی این گزینه را خاموش بگذارید.
+                        </span>
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (Id is not null && doc.Status != StocktakeStatus.Draft)
+{
+    <!-- ============ آمار ============ -->
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-info"><i class="bi bi-list-check"></i></div>
+                <div>
+                    <div class="stat-label">پیشرفت شمارش</div>
+                    <div class="stat-value num">@doc.CountedLines.ToString().FaDigits() / @doc.TotalLines.ToString().FaDigits()</div>
+                    <div class="progress mt-1" style="height:5px">
+                        <div class="progress-bar bg-info" style="width:@(doc.Progress)%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-warning"><i class="bi bi-exclamation-triangle"></i></div>
+                <div>
+                    <div class="stat-label">اقلام مغایر</div>
+                    <div class="stat-value num">@doc.DiffLines.ToString().FaDigits()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-success"><i class="bi bi-arrow-up-circle"></i></div>
+                <div>
+                    <div class="stat-label">ارزش اضافی انبار</div>
+                    <div class="stat-value num">@doc.SurplusValue.Money()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-danger"><i class="bi bi-arrow-down-circle"></i></div>
+                <div>
+                    <div class="stat-label">ارزش کسری انبار</div>
+                    <div class="stat-value num">@doc.ShortageValue.Money()</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (doc.Status == StocktakeStatus.Applied && (doc.SurplusDocNumber is not null || doc.ShortageDocNumber is not null))
+    {
+        <div class="alert alert-success d-flex align-items-center gap-2 mb-3">
+            <i class="bi bi-check2-circle fs-5"></i>
+            <div>
+                موجودی انبار اصلاح شد.
+                @if (doc.SurplusDocNumber is not null)
+                {
+                    <span>رسید اضافی: <a href="/inv/docs/@doc.SurplusDocId" class="fw-500">@doc.SurplusDocNumber</a></span>
+                }
+                @if (doc.ShortageDocNumber is not null)
+                {
+                    <span class="ms-3">حواله کسری: <a href="/inv/docs/@doc.ShortageDocId" class="fw-500">@doc.ShortageDocNumber</a></span>
+                }
+            </div>
+        </div>
+    }
+
+    <!-- ============ لیست شمارش ============ -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title"><i class="bi bi-card-checklist"></i> لیست شمارش</span>
+            <div class="ms-auto d-flex gap-2 align-items-center">
+                <input class="form-control form-control-sm" style="max-width:220px" placeholder="فیلتر کالا…"
+                       @bind="lineFilter" @bind:event="oninput" />
+                <div class="btn-group btn-group-sm">
+                    <button class="btn @(viewMode == "all" ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick='() => viewMode = "all"'>همه</button>
+                    <button class="btn @(viewMode == "diff" ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick='() => viewMode = "diff"'>مغایر</button>
+                    <button class="btn @(viewMode == "todo" ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick='() => viewMode = "todo"'>شمرده‌نشده</button>
+                </div>
+            </div>
+        </div>
+
+        @if (Visible().Count == 0)
+        {
+            <div class="card-body">
+                <div class="empty-state">
+                    <i class="bi bi-inboxes"></i>
+                    <h5>قلمی برای نمایش نیست</h5>
+                    <p>@(doc.Lines.Count == 0 ? "لیست شمارش خالی است." : "با این فیلتر نتیجه‌ای یافت نشد.")</p>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:50px">#</th>
+                            <th>کالا</th>
+                            <th style="width:110px">قفسه / بارکد</th>
+                            <th style="width:100px" class="text-end">موجودی سیستم</th>
+                            <th style="width:130px" class="text-center">شمارش</th>
+                            <th style="width:100px" class="text-end">مغایرت</th>
+                            <th style="width:130px" class="text-end">ارزش مغایرت</th>
+                            <th style="width:70px"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var l in Visible())
+                        {
+                            <tr class="@RowClass(l)">
+                                <td class="num fs-8 text-muted">@l.RowNo.ToString().FaDigits()</td>
+                                <td>
+                                    <div class="fw-500">@l.ProductName</div>
+                                    <div class="fs-8 text-muted num">@l.ProductCode</div>
+                                </td>
+                                <td class="fs-8 text-muted num">
+                                    @if (!string.IsNullOrEmpty(l.ShelfCode)) { <div>@l.ShelfCode</div> }
+                                    @if (!string.IsNullOrEmpty(l.Barcode)) { <div>@l.Barcode</div> }
+                                </td>
+                                <td class="text-end num">@l.SystemQty.Num() <span class="fs-8 text-muted">@l.Unit</span></td>
+                                <td class="text-center">
+                                    @if (doc.Status == StocktakeStatus.Counting)
+                                    {
+                                        <input class="form-control form-control-sm text-center num"
+                                               value="@(l.IsCounted ? l.CountedQty.Num() : "")"
+                                               placeholder="—"
+                                               @onchange="e => SetQty(l, e)" />
+                                    }
+                                    else if (l.IsCounted)
+                                    {
+                                        <span class="num fw-500">@l.CountedQty.Num()</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-secondary fs-8">شمرده نشده</span>
+                                    }
+                                </td>
+                                <td class="text-end num @DiffClass(l)">@(l.IsCounted ? DiffText(l) : "—")</td>
+                                <td class="text-end num @DiffClass(l)">@(l.IsCounted && l.Diff != 0 ? l.DiffValue.Money() : "—")</td>
+                                <td class="text-end">
+                                    @if (doc.Status == StocktakeStatus.Counting && l.IsCounted)
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary" title="پاک کردن شمارش"
+                                                @onclick="() => ClearLine(l)">
+                                            <i class="bi bi-eraser"></i>
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot class="table-light">
+                        <tr>
+                            <th colspan="5" class="text-end">جمع اثر ریالی</th>
+                            <th></th>
+                            <th class="text-end num @(doc.NetValue < 0 ? "text-danger" : "text-success")">@doc.NetValue.Money()</th>
+                            <th></th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        }
+    </div>
+}
+
+<!-- ============ مودال تایید اعمال ============ -->
+<Modal Visible="showApply" Title="اعمال انبارگردانی و اصلاح موجودی" Size="lg" OnClose="() => showApply = false">
+    <ChildContent>
+    <div class="alert alert-warning d-flex gap-2">
+        <i class="bi bi-exclamation-triangle fs-5"></i>
+        <div>
+            با تایید این عملیات، دو سند انبار به‌صورت خودکار صادر و <strong>قطعی</strong> می‌شوند و
+            سند حسابداری آن‌ها نیز ثبت خواهد شد. برای بازگرداندن، باید «برگشت اعمال» بزنید.
+        </div>
+    </div>
+
+    <table class="table table-sm align-middle">
+        <tbody>
+            <tr>
+                <td><i class="bi bi-box-arrow-in-down text-success"></i> رسید اضافی انبارگردانی</td>
+                <td class="text-end num">@doc.SurplusQty.Num() واحد</td>
+                <td class="text-end num text-success">@doc.SurplusValue.Money()</td>
+            </tr>
+            <tr>
+                <td><i class="bi bi-box-arrow-up text-danger"></i> حواله کسری انبارگردانی</td>
+                <td class="text-end num">@doc.ShortageQty.Num() واحد</td>
+                <td class="text-end num text-danger">@doc.ShortageValue.Money()</td>
+            </tr>
+            <tr class="table-light">
+                <th>خالص اثر ریالی</th>
+                <th></th>
+                <th class="text-end num">@doc.NetValue.Money()</th>
+            </tr>
+        </tbody>
+    </table>
+
+    @if (doc.TotalLines - doc.CountedLines > 0)
+    {
+        <div class="alert @(doc.TreatUncountedAsZero ? "alert-danger" : "alert-info") mb-0">
+            <i class="bi bi-info-circle"></i>
+            @((doc.TotalLines - doc.CountedLines).ToString().FaDigits()) قلم شمارش نشده است.
+            @if (doc.TreatUncountedAsZero)
+            {
+                <strong>این اقلام صفر فرض شده و کسری کامل ثبت می‌شوند.</strong>
+            }
+            else
+            {
+                <text>این اقلام <strong>نادیده</strong> گرفته می‌شوند و موجودی‌شان تغییری نمی‌کند.</text>
+            }
+        </div>
+    }
+
+    </ChildContent>
+
+    <Footer>
+        <button class="btn btn-outline-secondary" @onclick="() => showApply = false">انصراف</button>
+        <button class="btn btn-primary" @onclick="Apply" disabled="@saving">
+            <i class="bi bi-check2-circle"></i> تایید و اعمال
+        </button>
+    </Footer>
+</Modal>
+}
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private StkSession doc = new();
+    private List<InvWarehouse> warehouses = new();
+    private List<InvCategory> categories = new();
+
+    private bool loading = true, saving = false, showApply = false;
+    private string? lineFilter;
+    private string viewMode = "all";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true;
+        try
+        {
+            if (warehouses.Count == 0) warehouses = await WarehouseSvc.GetAllAsync(true);
+            if (categories.Count == 0) categories = await CategorySvc.GetFlatAsync(true);
+
+            doc = Id is null ? await SessionSvc.NewAsync() : await SessionSvc.GetAsync(Id.Value);
+            Layout.SetTitle(Id is null ? "دوره انبارگردانی جدید" : doc.Title);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private List<StkLine> Visible()
+    {
+        IEnumerable<StkLine> q = doc.Lines;
+
+        q = viewMode switch
+        {
+            "diff" => q.Where(l => l.HasDiff),
+            "todo" => q.Where(l => !l.IsCounted),
+            _ => q
+        };
+
+        if (!string.IsNullOrWhiteSpace(lineFilter))
+        {
+            var f = lineFilter.Trim();
+            q = q.Where(l => l.ProductName.Contains(f, StringComparison.OrdinalIgnoreCase)
+                             || l.ProductCode.Contains(f, StringComparison.OrdinalIgnoreCase)
+                             || (l.Barcode ?? "").Contains(f)
+                             || (l.ShelfCode ?? "").Contains(f, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return q.ToList();
+    }
+
+    // ---------- تغییر فیلدها ----------
+    private void OnWarehouse(ChangeEventArgs e)
+        => doc.WarehouseId = int.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+
+    private void OnDate(DateTime? d) => doc.Date = d ?? DateTime.Now;
+
+    private void OnScope(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<StocktakeScope>(e.Value?.ToString(), out var s)) doc.Scope = s;
+        if (doc.Scope != StocktakeScope.ByCategory) doc.CategoryId = null;
+    }
+
+    private void OnCategory(ChangeEventArgs e)
+        => doc.CategoryId = int.TryParse(e.Value?.ToString(), out var v) ? v : null;
+
+    private string ScopeHint() => doc.Scope switch
+    {
+        StocktakeScope.InStock => "فقط کالاهایی که در این انبار موجودی غیرصفر دارند.",
+        StocktakeScope.AllProducts => "همه کالاهای فعال، حتی آن‌هایی که موجودی ندارند.",
+        StocktakeScope.ByCategory => "همه کالاهای فعال یک گروه مشخص.",
+        _ => "لیست خالی شروع می‌شود و هر کالایی که اسکن کنید اضافه می‌شود."
+    };
+
+    // ---------- عملیات ----------
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            var saved = await SessionSvc.SaveAsync(doc);
+            Toast.Success("دوره انبارگردانی ذخیره شد.");
+            if (Id is null) Nav.NavigateTo($"/stk/sessions/{saved.Id}");
+            else doc = saved;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Start()
+    {
+        saving = true;
+        try
+        {
+            doc = await SessionSvc.StartAsync(doc.Id);
+            Toast.Success($"موجودی سیستم قفل شد؛ {doc.TotalLines.ToString().FaDigits()} قلم برای شمارش آماده است.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Finish()
+    {
+        saving = true;
+        try
+        {
+            doc = await SessionSvc.FinishAsync(doc.Id);
+            Toast.Success("شمارش پایان یافت؛ مغایرت‌ها را بررسی کنید.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Reopen()
+    {
+        saving = true;
+        try
+        {
+            doc = await SessionSvc.ReopenAsync(doc.Id);
+            Toast.Success("دوره دوباره برای شمارش باز شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Apply()
+    {
+        saving = true;
+        try
+        {
+            doc = await SessionSvc.ApplyAsync(doc.Id);
+            showApply = false;
+            Toast.Success("اسناد اصلاح موجودی صادر و قطعی شدند.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Unapply()
+    {
+        saving = true;
+        try
+        {
+            doc = await SessionSvc.UnapplyAsync(doc.Id);
+            Toast.Success("اسناد اصلاح حذف شدند؛ دوره به مرحله بررسی برگشت.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    // ---------- شمارش دستی ----------
+    private async Task SetQty(StkLine line, ChangeEventArgs e)
+    {
+        var text = e.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(text)) { await ClearLine(line); return; }
+
+        var qty = Fa.ParseDecimal(text);
+
+        try
+        {
+            var res = await SessionSvc.CountAsync(new StkCountCommand
+            {
+                SessionId = doc.Id,
+                ProductId = line.ProductId,
+                Quantity = qty,
+                Accumulate = false
+            });
+
+            if (!res.Success) { Toast.Error(res.Message ?? "ثبت نشد."); return; }
+
+            ApplyResult(res);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task ClearLine(StkLine line)
+    {
+        try
+        {
+            var res = await SessionSvc.ClearLineAsync(doc.Id, line.Id);
+            if (!res.Success) { Toast.Error(res.Message ?? "انجام نشد."); return; }
+            ApplyResult(res);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    /// <summary>نتیجه‌ی سرور را روی سطر و آمار محلی می‌نشاند تا صفحه دوباره بارگذاری نشود.</summary>
+    private void ApplyResult(StkCountResult res)
+    {
+        if (res.Line is not null)
+        {
+            var idx = doc.Lines.FindIndex(x => x.Id == res.Line.Id);
+            if (idx >= 0) doc.Lines[idx] = res.Line;
+            else doc.Lines.Add(res.Line);
+        }
+
+        doc.TotalLines = res.TotalLines;
+        doc.CountedLines = res.CountedLines;
+        doc.DiffLines = res.DiffLines;
+
+        RecalcMoney();
+    }
+
+    private void RecalcMoney()
+    {
+        var counted = doc.Lines.Where(l => l.IsCounted).ToList();
+        doc.SurplusQty = counted.Where(l => l.Diff > 0).Sum(l => l.Diff);
+        doc.ShortageQty = counted.Where(l => l.Diff < 0).Sum(l => -l.Diff);
+        doc.SurplusValue = counted.Where(l => l.Diff > 0).Sum(l => l.DiffValue);
+        doc.ShortageValue = counted.Where(l => l.Diff < 0).Sum(l => -l.DiffValue);
+        doc.NetValue = doc.SurplusValue - doc.ShortageValue;
+    }
+
+    // ---------- کمکی نمایش ----------
+    private static string StatusColor(StocktakeStatus s) => s switch
+    {
+        StocktakeStatus.Draft => "secondary",
+        StocktakeStatus.Counting => "info",
+        StocktakeStatus.Review => "warning",
+        StocktakeStatus.Applied => "success",
+        _ => "danger"
+    };
+
+    private static string RowClass(StkLine l)
+        => !l.IsCounted ? "" : l.Diff > 0 ? "table-success" : l.Diff < 0 ? "table-danger" : "";
+
+    private static string DiffClass(StkLine l)
+        => !l.IsCounted || l.Diff == 0 ? "text-muted" : l.Diff > 0 ? "text-success" : "text-danger";
+
+    private static string DiffText(StkLine l)
+        => l.Diff == 0 ? "۰" : (l.Diff > 0 ? "+" : "") + l.Diff.Num();
+
+    private static string Indent(int level) => string.Concat(Enumerable.Repeat("— ", Math.Max(0, level)));
+}

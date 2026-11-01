@@ -1,0 +1,379 @@
+@namespace Inventory.Client.Pages
+@page "/fa-pay/runs/{Id:int}"
+@inject IFaPayClientService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>جزئیات دوره حقوق</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-receipt"></i> @RunTitle</h1>
+            <div class="lead">فیش‌های پرسنل + پرداخت + ارسال @if (run != null) { <span class="badge @FaPayUi.RunKindBadge(run.Kind)">@FaPayUi.RunKind(run.Kind)</span> }</div>
+        </div>
+        <div class="d-flex gap-2">
+            @if (run != null && faManage)
+            {
+                @if (run.Status == 0)
+                {
+                    <button class="btn btn-success" @onclick="Calc"><i class="bi bi-calculator"></i> @(run.Kind == 1 ? "محاسبه عیدی و سنوات" : "محاسبه مجدد")</button>
+                    <button class="btn btn-dark" @onclick="Finalize"><i class="bi bi-lock"></i> نهایی‌سازی</button>
+                }
+                else
+                {
+                    <button class="btn btn-warning" @onclick="Reopen"><i class="bi bi-unlock"></i> بازگشایی</button>
+                    <button class="btn btn-info" @onclick="SendAll"><i class="bi bi-envelope"></i> ارسال گروهی فیش</button>
+                }
+                <button class="btn btn-outline-primary" @onclick="OpenBank"><i class="bi bi-bank"></i> فایل بانکی</button>
+                @if (run.Kind == 0)
+                {
+                    <button class="btn btn-outline-success" @onclick="OpenInsurance"><i class="bi bi-shield-check"></i> فایل بیمه</button>
+                }
+                <button class="btn btn-outline-secondary" @onclick="PrintAll"><i class="bi bi-printer"></i> چاپ گروهی فیش‌ها</button>
+            }
+            <button class="btn btn-outline-secondary" @onclick='() => Nav.NavigateTo("/fa-pay")'>بازگشت</button>
+        </div>
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">به این بخش دسترسی ندارید.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+@if (run == null)
+{
+    <div class="alert alert-danger">دوره یافت نشد.</div>
+    return;
+}
+
+<div class="row g-3 mb-3">
+    <div class="col-md-3"><div class="card border-0 shadow-sm"><div class="card-body text-center"><div class="small text-muted">وضعیت</div><span class="badge @FaPayUi.RunBadge(run.Status) fs-6">@FaPayUi.RunStatus(run.Status)</span></div></div></div>
+    <div class="col-md-3"><div class="card border-0 shadow-sm"><div class="card-body text-center"><div class="small text-muted">تعداد فیش</div><div class="h5 mb-0">@FaPayUi.Num(run.SlipsCount)</div></div></div></div>
+    <div class="col-md-3"><div class="card border-0 shadow-sm"><div class="card-body text-center"><div class="small text-muted">جمع مزایا (ریال)</div><div class="h5 mb-0 text-success">@FaPayUi.Money(TotalGross)</div></div></div></div>
+    <div class="col-md-3"><div class="card border-0 shadow-sm"><div class="card-body text-center"><div class="small text-muted">جمع خالص (ریال)</div><div class="h5 mb-0 text-primary">@FaPayUi.Money(TotalNet)</div></div></div></div>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>پرسنل</th>
+                        <th>حقوق پایه</th>
+                        <th>جمع مزایا</th>
+                        <th>مالیات</th>
+                        <th>بیمه</th>
+                        <th>خالص پرداختی</th>
+                        <th class="text-center">پرداخت</th>
+                        <th style="width:170px">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var s in slips)
+                    {
+                        <tr>
+                            <td><strong>@s.EmployeeName</strong><div class="small text-muted">@s.EmployeeCode</div></td>
+                            <td>@FaPayUi.Money(s.BaseSalary)</td>
+                            <td>@FaPayUi.Money(s.GrossEarnings)</td>
+                            <td>@FaPayUi.Money(s.TaxAmount)</td>
+                            <td>@FaPayUi.Money(s.InsuranceAmount)</td>
+                            <td><strong class="text-primary">@FaPayUi.Money(s.NetPay)</strong></td>
+                            <td class="text-center">
+                                @if (faManage && run.Status == 1)
+                                {
+                                    <input class="form-check-input" type="checkbox" checked="@s.IsPaid" @onchange="(e) => TogglePaid(s, (bool)(e.Value ?? false))" title="پرداخت شد" />
+                                }
+                                else if (s.IsPaid)
+                                {
+                                    <span class="badge text-bg-success">پرداخت شد</span>
+                                }
+                                else
+                                {
+                                    <span class="badge text-bg-secondary">پرداخت نشده</span>
+                                }
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button class="btn btn-outline-primary" title="مشاهده فیش" @onclick="() => GoSlip(s.Id)"><i class="bi bi-eye"></i></button>
+                                    <button class="btn btn-outline-secondary" title="دانلود PDF" @onclick="() => Pdf(s.Id)"><i class="bi bi-file-earmark-pdf"></i></button>
+                                    @if (faManage)
+                                    {
+                                        <button class="btn btn-outline-info" title="ارسال ایمیل فیش" @onclick="() => Send(s.Id)"><i class="bi bi-envelope"></i></button>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                    @if (slips.Count == 0)
+                    {
+                        <tr><td colspan="8" class="text-center text-muted py-4">فیشی صادر نشده؛ دکمه «محاسبه» را بزنید.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<Modal Visible="showBank" Title="فایل بانکی واریز حقوق" Size="modal-lg" OnClose="() => showBank = false">
+    <ChildContent>
+    @if (bankLoading)
+    {
+        <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+    }
+    else if (bank == null)
+    {
+        <div class="empty-state"><i class="bi bi-bank"></i><h5>اطلاعاتی بارگذاری نشد</h5></div>
+    }
+    else
+    {
+        <div class="alert alert-info small">آماده پرداخت: <b>@bank.ReadyCount</b> نفر از @bank.TotalCount نفر — جمع مبالغ: <b>@bank.TotalAmount.ToString("#,0")</b> ریال</div>
+        <div class="row g-2 align-items-end mb-3">
+            <div class="col-md-4">
+                <label class="form-label">فرمت فایل</label>
+                <select class="form-select" @bind="bankFormat">
+                    <option value="xlsx">اکسل (xlsx)</option>
+                    <option value="csv">متنی (csv)</option>
+                </select>
+            </div>
+            <div class="col-md-8">
+                <button class="btn btn-primary" disabled="@(bank.ReadyCount == 0 || bankBusy)" @onclick="DownloadBank">
+                    @if (bankBusy)
+                    {
+                        <span class="spinner-border spinner-border-sm"></span>
+                    }
+                    <i class="bi bi-download"></i> دانلود فایل بانکی (@bank.ReadyCount نفر)
+                </button>
+            </div>
+        </div>
+        @if (bank.Missing.Count > 0)
+        {
+            <h6 class="fw-bold">فاقد شرایط (@bank.Missing.Count نفر) — در فایل قرار نمی‌گیرند</h6>
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>نام</th><th>کد پرسنلی</th><th>علت</th></tr></thead>
+                    <tbody>
+                        @foreach (var m in bank.Missing)
+                        {
+                            <tr><td>@m.Name</td><td class="num">@m.Code</td><td><span class="badge text-bg-warning">@m.Reason</span></td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="small text-muted mt-2">شبا را از ویرایش پرونده پرسنل (گام ۴ ویزارد) ثبت کنید.</div>
+        }
+    }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showBank = false">بستن</button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showIns" Title="فایل لیست بیمه تأمین اجتماعی" Size="modal-xl" OnClose="() => showIns = false">
+<ChildContent>
+    @if (insLoading)
+    {
+        <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+    }
+    else if (ins == null)
+    {
+        <div class="empty-state"><i class="bi bi-shield-check"></i><h5>اطلاعاتی بارگذاری نشد</h5></div>
+    }
+    else
+    {
+        <div class="alert alert-info small">
+            کد کارگاه: <b class="num">@ins.WorkshopCode</b> —
+            آماده: <b>@FaPayUi.Num(ins.ReadyCount)</b> نفر از @FaPayUi.Num(ins.TotalCount) نفر —
+            جمع دستمزد مشمول: <b>@FaPayUi.Money(ins.TotalInsurable)</b> ریال
+        </div>
+        <div class="row g-2 align-items-end mb-3">
+            <div class="col-md-4">
+                <label class="form-label">فرمت فایل</label>
+                <select class="form-select" @bind="insFormat">
+                    <option value="txt">متنی استاندارد (txt)</option>
+                    <option value="xlsx">اکسل برای کنترل (xlsx)</option>
+                </select>
+            </div>
+            <div class="col-md-8">
+                <button class="btn btn-success" disabled="@(ins.ReadyCount == 0 || insBusy)" @onclick="DownloadInsurance">
+                    @if (insBusy)
+                    {
+                        <span class="spinner-border spinner-border-sm"></span>
+                    }
+                    <i class="bi bi-download"></i> دانلود فایل بیمه (@ins.ReadyCount نفر)
+                </button>
+                <div class="small text-muted mt-1">قبل از بارگذاری در سامانه بیمه، با نسخه اکسل کنترل شود.</div>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>پرسنل</th><th>کد ملی</th><th>شماره بیمه</th><th>کارکرد (روز)</th><th>مشمول (ریال)</th><th>وضعیت</th></tr></thead>
+                <tbody>
+                    @foreach (var r in ins.Rows)
+                    {
+                        <tr class="@(r.Problem == null ? "" : "table-warning")">
+                            <td><strong>@r.EmployeeName</strong><div class="small text-muted">@r.EmployeeCode</div></td>
+                            <td class="num">@r.NationalCode</td>
+                            <td class="num">@r.InsuranceNo</td>
+                            <td class="num">@FaPayUi.Num(r.WorkDays)</td>
+                            <td>@FaPayUi.Money(r.InsurableAmount)</td>
+                            <td>@(r.Problem == null ? "✓" : r.Problem)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="small text-muted mt-2">شماره بیمه را از ویرایش پرونده پرسنل (ویزارد کارگزینی) ثبت کنید.</div>
+    }
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-light" @onclick="() => showIns = false">بستن</button>
+    </div>
+</Footer>
+</Modal>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private bool faRead => Auth.Has("FaPay.Read") || faManage;
+    private bool faManage => Auth.Has("FaPay.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private FaPayRunDto? run;
+    private List<FaPaySlipDto> slips = new();
+
+    private string RunTitle => run == null ? "دوره حقوق" : $"دوره {FaPayUi.RunName(run)}";
+    private double TotalGross => slips.Sum(s => s.GrossEarnings);
+    private double TotalNet => slips.Sum(s => s.NetPay);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            run = await Svc.GetRunAsync(Id);
+            slips = await Svc.RunSlipsAsync(Id);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void GoSlip(int id) => Nav.NavigateTo(FaPayUi.SlipUrl(id));
+
+    private async Task Calc()
+    {
+        try
+        {
+            var n = run?.Kind == 1 ? await Svc.CalculateYearEndAsync(Id) : await Svc.CalculateRunAsync(Id);
+            Toast.Success($"محاسبه انجام شد: {Fa.Digits(n.ToString())} فیش.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task PrintAll()
+    {
+        try { await Svc.DownloadRunSlipsPdfAsync(Id); Toast.Success("فایل چاپ گروهی دانلود شد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private bool showIns, insLoading, insBusy;
+    private FaPayInsuranceFileCheckDto? ins;
+    private string insFormat = "txt";
+
+    private async Task OpenInsurance()
+    {
+        showIns = true;
+        insLoading = true;
+        ins = null;
+        try { ins = await Svc.InsuranceCheckAsync(Id); }
+        catch (Exception ex) { Toast.Error(ex.Message); showIns = false; }
+        finally { insLoading = false; }
+    }
+
+    private async Task DownloadInsurance()
+    {
+        insBusy = true;
+        try { await Svc.DownloadInsuranceFileAsync(Id, insFormat); Toast.Success("فایل بیمه دانلود شد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { insBusy = false; }
+    }
+
+    private async Task Finalize()
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "دوره نهایی شود؟")) return;
+        try { await Svc.FinalizeRunAsync(Id); Toast.Success("دوره نهایی شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Reopen()
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "دوره به پیش‌نویس برگردد؟")) return;
+        try { await Svc.ReopenRunAsync(Id); Toast.Info("دوره بازگشایی شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task SendAll()
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "فیش همه پرسنل ایمیل شود؟")) return;
+        try { var r = await Svc.SendRunEmailsAsync(Id); Toast.Success($"ارسال شد: {Fa.Digits(r.Sent.ToString())} — رد شد: {Fa.Digits(r.Skipped.ToString())}"); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task TogglePaid(FaPaySlipDto s, bool paid)
+    {
+        try { await Svc.SetPaidAsync(s.Id, paid); s.IsPaid = paid; }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private bool showBank, bankLoading, bankBusy;
+    private FaPayBankCheckDto? bank;
+    private string bankFormat = "xlsx";
+
+    private async Task OpenBank()
+    {
+        showBank = true;
+        bankLoading = true;
+        bank = null;
+        try { bank = await Svc.BankCheckAsync(Id); }
+        catch (Exception ex) { Toast.Error(ex.Message); showBank = false; }
+        finally { bankLoading = false; }
+    }
+
+    private async Task DownloadBank()
+    {
+        bankBusy = true;
+        try { await Svc.DownloadBankFileAsync(Id, bankFormat); Toast.Success("فایل بانکی دانلود شد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { bankBusy = false; }
+    }
+
+    private async Task Pdf(int id)
+    {
+        try { await Svc.DownloadSlipPdfAsync(id, false); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Send(int id)
+    {
+        try { await Svc.SendSlipAsync(id); Toast.Success("فیش ایمیل شد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

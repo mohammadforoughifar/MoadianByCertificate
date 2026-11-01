@@ -1,0 +1,899 @@
+@page "/report-works"
+@inject IReportWorkService ReportSvc
+@inject IProjectService ProjectSvc
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject LayoutState Layout
+@inject IJSRuntime JS
+@inject HttpClient Http
+
+<PageTitle>گزارش‌های کار</PageTitle>
+
+<style>
+    .re-code {
+        display: inline-block; background: #fef3c7; color: #92400e; border: 1px solid #fcd34d;
+        border-radius: 7px; padding: 1px 8px; font-weight: 800; letter-spacing: .02em; font-size: .82rem;
+    }
+
+    /* ---------- مرتب‌سازی سرستون‌ها ---------- */
+    th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+    th.sortable:hover { background: #f8fafc; }
+    .sort-ic { font-size: .68rem; margin-right: .15rem; vertical-align: middle; }
+    .sort-ic.muted { color: #cbd5e1; }
+    .sort-ic.active { color: #6366f1; }
+
+    /* ---------- سطر جستجوی سرستون‌ها ---------- */
+    .col-filter-row th { background: #fafafa; padding: .3rem .4rem; border-bottom: 2px solid #eef2f7; }
+    .col-filter-input {
+        width: 100%; border: 1px solid #e5e7eb; border-radius: 7px; padding: .18rem .45rem;
+        font-size: .78rem; background: #fff; outline: none;
+    }
+    .col-filter-input:focus { border-color: #a5b4fc; box-shadow: 0 0 0 2px rgba(99,102,241,.12); }
+    .col-filter-clear { border: 0; background: #fff1f2; color: #e11d48; border-radius: 7px; font-size: .72rem; padding: .18rem .5rem; }
+    .col-filter-clear:hover { background: #ffe4e6; }
+
+    /* ---------- نوار پیشرفت جستجو (نامعین) ---------- */
+    .search-progress {
+        position: relative; height: 4px; overflow: hidden;
+        border-radius: 14px 14px 0 0; background: #fff7ed; border-bottom: 1px solid #fde68a;
+    }
+    .search-progress::after {
+        content: ""; position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 38%;
+        border-radius: 999px; background: linear-gradient(90deg, #f59e0b, #ef4444);
+        animation: searchSlide 1.15s ease-in-out infinite;
+    }
+    /* جهت پویه: راست به چپ (مطابق چیدمان RTL) */
+    @@keyframes searchSlide {
+        from { transform: translateX(320%); opacity: .55; }
+        50%  { opacity: 1; }
+        to   { transform: translateX(-120%); opacity: .55; }
+    }
+    .search-progress-text { font-size: .74rem; opacity: .9; }
+    @@media (prefers-reduced-motion: reduce) {
+        .search-progress::after { animation: none; inset-inline-start: 0; width: 100%; opacity: .55; }
+    }
+
+    /* ---------- سوییچ نمای جدول/کارت ---------- */
+    .view-toggle { display: inline-flex; background: rgba(255,255,255,.22); border-radius: 9px; padding: 2px; }
+    .view-toggle button {
+        border: 0; background: transparent; color: #fff; opacity: .75;
+        border-radius: 7px; padding: .2rem .6rem; font-size: .82rem;
+    }
+    .view-toggle button.on { background: #fff; color: #92400e; opacity: 1; font-weight: 800; }
+
+    /* ---------- نمای کارت گزارش‌ها ---------- */
+    .rw-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: .85rem; padding: 1rem; }
+    .rw-card {
+        border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; padding: .9rem 1rem;
+        box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 6px 18px rgba(15,23,42,.05);
+        display: flex; flex-direction: column; gap: .5rem; transition: box-shadow .15s ease, transform .15s ease;
+    }
+    .rw-card:hover { box-shadow: 0 3px 6px rgba(15,23,42,.06), 0 14px 30px rgba(15,23,42,.1); transform: translateY(-2px); }
+    .rw-top { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+    .rw-date { font-weight: 800; color: #0f172a; }
+    .rw-project { font-weight: 700; font-size: .9rem; color: #334155; }
+    .rw-user { font-size: .8rem; color: #64748b; }
+    .rw-times { display: flex; gap: .9rem; font-size: .78rem; color: #475569; flex-wrap: wrap; }
+    .rw-times b { color: #334155; }
+    .rw-spent { background: #eef2ff; color: #3730a3; border-radius: 999px; font-size: .74rem; font-weight: 800; padding: .2rem .7rem; }
+    .rw-desc { font-size: .8rem; color: #334155; background: #f8fafc; border-radius: 9px; padding: .45rem .6rem; }
+</style>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center flex-wrap gap-2"
+         style="background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;border-radius:14px 14px 0 0;">
+        <span><i class="bi bi-clock-history me-2"></i>گزارش‌های کار
+            <span class="badge bg-light text-dark ms-1" title="تعداد کل گزارش‌های منطبق با فیلترها">@total.FaDigits() رکورد</span>
+            @if (searching)
+            {
+                <span class="search-progress-text ms-1" role="status" title="در حال جستجو…">⏳ در حال جستجو…</span>
+            }
+            @if (HasAnyFilter)
+            {
+                <span class="badge bg-warning text-dark ms-1">فیلتر فعال</span>
+            }
+        </span>
+        <div class="d-flex gap-2 align-items-center">
+            <div class="view-toggle" title="تغییر حالت نمایش لیست">
+                <button class="@(!viewCards ? "on" : "")" title="نمای جدولی" @onclick="() => SetView(false)"><i class="bi bi-table"></i></button>
+                <button class="@(viewCards ? "on" : "")" title="نمای کارت" @onclick="() => SetView(true)"><i class="bi bi-grid-3x2-gap"></i></button>
+            </div>
+            @if (Auth.Has("ReportWorks.Read") && total > 0)
+            {
+                <button class="btn btn-light btn-sm fw-700 shadow-sm" style="border-radius:8px;color:#065f46;"
+                        title="چاپ همهٔ گزارش‌های منطبق با فیلترهای جاری (نه فقط این صفحه)" @onclick="PrintList" disabled="@printing">
+                    @if (printing) { <span class="spinner-border spinner-border-sm"></span> }
+                    else { <i class="bi bi-printer"></i> }
+                    چاپ
+                </button>
+            }
+            @if (Auth.Has("ReportWorks.Export") && total > 0)
+            {
+                <button class="btn btn-light btn-sm fw-700 shadow-sm" style="border-radius:8px;color:#047857;"
+                        title="خروجی اکسل بر اساس فیلترهای جاری (اگر فیلتری نباشد، همهٔ گزارش‌ها)"
+                        @onclick="ExportExcel" disabled="@exporting">
+                    @if (exporting) { <span class="spinner-border spinner-border-sm"></span> }
+                    else { <i class="bi bi-file-earmark-excel"></i> }
+                    خروجی اکسل
+                </button>
+            }
+            @if (Auth.Has("ReportWorks.Create"))
+            {
+                <button class="btn btn-light btn-sm fw-700 shadow-sm" style="border-radius:8px;color:#92400e;"
+                        data-hotkey="f2" title="کلید میانبر: F2" @onclick="OpenNew">
+                    <i class="bi bi-plus-lg"></i> گزارش کار جدید (F2)
+                </button>
+            }
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="row g-2 align-items-center">
+                <div class="col-md-3">
+                    @* جستجوی سمت سرور: با تایپ هر عبارت فقط ۲۰ نتیجهٔ منطبق از سرور می‌آید
+                       (پیش‌تر کل جدول پروژه‌ها یک‌جا در کمبو بارگذاری می‌شد). *@
+                    <SearchSelect Items="projectFilterOpts" Value="filterProject" ValueChanged="OnProjectFilterPicked"
+                                  SearchChanged="OnProjectFilterSearch" RemoteSearch="true"
+                                  Placeholder="همه پروژه‌ها" />
+                </div>
+                <div class="col-md-2"><SearchSelect Items="lookups.Users" @bind-Value="filterUser" @bind-Value:after="OnFilterChanged" Placeholder="همه کاربران" /></div>
+                <div class="col-md-2"><SearchSelect Items="lookups.Operators" @bind-Value="filterOperator" @bind-Value:after="OnFilterChanged" Placeholder="همه اپراتورها" /></div>
+                <div class="col-md-2"><DatePicker @bind-Value="filterFrom" @bind-Value:after="OnFilterChanged" Placeholder="از تاریخ" AllowClear /></div>
+                <div class="col-md-2"><DatePicker @bind-Value="filterTo" @bind-Value:after="OnFilterChanged" Placeholder="تا تاریخ" AllowClear /></div>
+                <div class="col-md-1">
+                    <div class="btn-group w-100" role="group">
+                        <button class="btn btn-light" title="اعمال فیلتر" @onclick="() => Load()"><i class="bi bi-funnel"></i></button>
+                        @if (HasAnyFilter)
+                        {
+                            <button class="btn btn-light" title="پاک کردن متن‌های جستجو و همهٔ فیلترهای بالای صفحه"
+                                    @onclick="ClearAllFilters">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        }
+                    </div>
+                </div>
+                <div class="col-md-2 text-end fs-8 text-muted" title="جمع ساعت خالص همهٔ ردیف‌های فیلترشده">جمع: @Fmt(SumSpent())</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-3">
+    @if (searching)
+    {
+        @* نوار پیشرفت جستجو — تا پایان پاسخ سرور زیر سرصفحهٔ نتایج حرکت می‌کند *@
+        <div class="search-progress" role="progressbar" aria-busy="true" aria-label="در حال جستجو…"></div>
+    }
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (Paged.Count == 0 && !HasAnyFilter)
+        {
+            <div class="empty-state"><i class="bi bi-clock"></i><h5>گزارش کاری یافت نشد</h5></div>
+        }
+        else
+        {
+        @if (!viewCards)
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th class="sortable" @onclick='() => SortBy("date")'>تاریخ @((MarkupString)SortIcon("date"))</th>
+                            <th class="sortable" @onclick='() => SortBy("code")'>کد پروژه @((MarkupString)SortIcon("code"))</th>
+                            <th class="sortable" @onclick='() => SortBy("project")'>پروژه @((MarkupString)SortIcon("project"))</th>
+                            <th class="sortable" @onclick='() => SortBy("user")'>کاربر @((MarkupString)SortIcon("user"))</th>
+                            <th class="sortable" @onclick='() => SortBy("operator")'>اپراتور @((MarkupString)SortIcon("operator"))</th>
+                            <th class="sortable" @onclick='() => SortBy("start")'>شروع @((MarkupString)SortIcon("start"))</th>
+                            <th class="sortable" @onclick='() => SortBy("end")'>پایان @((MarkupString)SortIcon("end"))</th>
+                            <th class="sortable" @onclick='() => SortBy("rest")'>استراحت @((MarkupString)SortIcon("rest"))</th>
+                            <th class="sortable" @onclick='() => SortBy("spent")'>ساعت خالص @((MarkupString)SortIcon("spent"))</th>
+                            <th>شرح کار</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                        <tr class="col-filter-row">
+                            <th><DateFilterInput @bind-Text="fDate" @bind-Text:after="OnFilterChanged" /></th>
+                            <th><input class="col-filter-input" placeholder="🔍 جستجو" @bind="fCode" @bind:event="oninput" @bind:after="OnFilterChanged" /></th>
+                            <th><input class="col-filter-input" placeholder="🔍 جستجو" @bind="fProject" @bind:event="oninput" @bind:after="OnFilterChanged" /></th>
+                            <th><input class="col-filter-input" placeholder="🔍 جستجو" @bind="fUser" @bind:event="oninput" @bind:after="OnFilterChanged" /></th>
+                            <th><input class="col-filter-input" placeholder="🔍 اپراتور" @bind="fOperator" @bind:event="oninput" @bind:after="OnFilterChanged" /></th>
+                            <th><input class="col-filter-input" placeholder="ساعت — مثلا 8" @bind="fStart" @bind:event="oninput" @bind:after="OnFilterChanged" dir="ltr" /></th>
+                            <th><input class="col-filter-input" placeholder="ساعت — مثلا 17" @bind="fEnd" @bind:event="oninput" @bind:after="OnFilterChanged" dir="ltr" /></th>
+                            <th><input class="col-filter-input" placeholder="مثلا 1:00" @bind="fRest" @bind:event="oninput" @bind:after="OnFilterChanged" dir="ltr" /></th>
+                            <th><input class="col-filter-input" placeholder="مثلا 7" @bind="fSpent" @bind:event="oninput" @bind:after="OnFilterChanged" dir="ltr" /></th>
+                            <th><input class="col-filter-input" placeholder="🔍 در شرح کار" @bind="fDesc" @bind:event="oninput" @bind:after="OnFilterChanged" /></th>
+                            <th class="text-end">
+                                @if (HasColFilter)
+                                {
+                                    <button class="col-filter-clear" title="پاک کردن متن‌های جستجوی ستون‌ها" @onclick="ClearColFilters">
+                                        <i class="bi bi-x-lg"></i> پاک کردن
+                                    </button>
+                                }
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in Paged)
+                        {
+                            <tr>
+                                <td class="num">@r.ReportDate.ToFaDate()</td>
+                                <td class="num">
+                                    @if (string.IsNullOrWhiteSpace(r.CodeProject))
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                    else if (r.CodeProject.StartsWith("RE", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <span class="re-code" dir="ltr">@r.CodeProject</span>
+                                    }
+                                    else
+                                    {
+                                        <b class="text-primary">@r.CodeProject.FaDigits()</b>
+                                    }
+                                </td>
+                                <td class="fw-500">@r.ProjectName</td>
+                                <td><i class="bi bi-person text-muted ms-1"></i>@r.UserName</td>
+                                <td>
+                                    @if (string.IsNullOrWhiteSpace(r.OperatorName)) { <span class="text-muted">—</span> }
+                                    else { <i class="bi bi-person-gear text-muted ms-1"></i>@r.OperatorName }
+                                </td>
+                                <td class="num">@r.StartTime.TimeFa()</td>
+                                <td class="num">@r.EndTime.TimeFa()</td>
+                                <td class="num fs-8 text-muted" title="صبحانه + ناهار">@FmtRest(r)</td>
+                                <td class="num fw-700 text-primary">@Fmt(r.SpentTime)</td>
+                                <td class="text-truncate" style="max-width:220px" title="@r.WorkDescription">@r.WorkDescription</td>
+                                <td class="text-end">
+                                    @if (Auth.Has("ReportWorks.Read"))
+                                    {
+                                        <button class="btn btn-sm btn-light me-1" title="چاپ جزئیات گزارش کار" @onclick="() => PrintDetail(r)"><i class="bi bi-printer text-success"></i></button>
+                                    }
+                                    @if (Auth.Has("ReportWorks.Update"))
+                                    {
+                                        <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(r)"><i class="bi bi-pencil text-primary"></i></button>
+                                    }
+                                    @if (Auth.Has("ReportWorks.Delete"))
+                                    {
+                                        <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(r)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                @if (Paged.Count == 0)
+                {
+                    <div class="text-center text-muted fs-8 py-4">
+                        <i class="bi bi-search"></i> با این جستجوی ستون‌ها موردی پیدا نشد.
+                        <button class="btn btn-link btn-sm" @onclick="ClearColFilters">پاک کردن جستجوها</button>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            @* ---------- نمای کارت ---------- *@
+            <div class="rw-cards">
+                @foreach (var r in Paged)
+                {
+                    <div class="rw-card">
+                        <div class="rw-top">
+                            <span class="rw-date"><i class="bi bi-calendar-event ms-1"></i>@r.ReportDate.ToFaDate()</span>
+                            @if (!string.IsNullOrWhiteSpace(r.CodeProject))
+                            {
+                                if (r.CodeProject.StartsWith("RE", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <span class="re-code" dir="ltr">@r.CodeProject</span>
+                                }
+                                else
+                                {
+                                    <b class="text-primary">@r.CodeProject.FaDigits()</b>
+                                }
+                            }
+                            <span class="flex-grow-1"></span>
+                            <span class="rw-spent">@Fmt(r.SpentTime)</span>
+                        </div>
+                        <div class="rw-project" title="@r.ProjectName"><i class="bi bi-folder2-open ms-1 text-muted"></i>@r.ProjectName</div>
+                        <div class="rw-user">
+                            @if (!string.IsNullOrWhiteSpace(r.OperatorName)) { <span class="ms-2"><i class="bi bi-person-gear ms-1"></i>اپراتور: @r.OperatorName</span> }
+                            <span><i class="bi bi-person ms-1"></i>@r.UserName</span>
+                        </div>
+                        <div class="rw-times">
+                            <span>شروع: <b>@r.StartTime.TimeFa()</b></span>
+                            <span>پایان: <b>@r.EndTime.TimeFa()</b></span>
+                            <span title="صبحانه + ناهار">استراحت: <b>@FmtRest(r)</b></span>
+                        </div>
+                        <div class="rw-desc">@r.WorkDescription</div>
+                        <div class="d-flex gap-1 justify-content-end">
+                            @if (Auth.Has("ReportWorks.Read"))
+                            {
+                                <button class="btn btn-sm btn-light" title="چاپ جزئیات گزارش کار" @onclick="() => PrintDetail(r)"><i class="bi bi-printer text-success"></i> چاپ جزئیات</button>
+                            }
+                            @if (Auth.Has("ReportWorks.Update"))
+                            {
+                                <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(r)"><i class="bi bi-pencil text-primary"></i></button>
+                            }
+                            @if (Auth.Has("ReportWorks.Delete"))
+                            {
+                                <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(r)"><i class="bi bi-trash text-danger"></i></button>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        <Pager Page="page" PageCount="PageCount" OnPageChanged="GoToPage" />
+        <div class="text-center text-muted fs-8 pb-3">
+            نمایش @Paged.Count.FaDigits() رکورد از @total.FaDigits() — صفحهٔ @(page.FaDigits()) از @PageCount.FaDigits()
+        </div>
+        }
+    </div>
+</div>
+
+@* ======================= فرم گزارش کار ======================= *@
+<Modal Visible="showModal" Title="@(editing ? "ویرایش گزارش کار" : "گزارش کار جدید")" OnClose="CloseModal">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-md-6">
+            <label class="form-label">پروژه <span class="text-danger">*</span></label>
+            @* فقط پروژه‌های تاییدشدهٔ مدیر — پروژه‌های در انتظار تایید یا ردشده گزارش‌پذیر نیستند *@
+            <SearchSelect Items="formProjectOpts" Value="form.ProjectId" ValueChanged="OnFormProjectPicked"
+                          SearchChanged="OnFormProjectSearch" RemoteSearch="true"
+                          Placeholder="جستجو و انتخاب پروژه…" />
+            <div class="fs-8 text-muted mt-1">
+                <i class="bi bi-info-circle ms-1"></i>
+                فقط پروژه‌های <b>تاییدشدهٔ مدیر</b> در این فهرست هستند؛ پروژه‌های «در انتظار تایید» و «رد شده» گزارش‌پذیر نیستند.
+            </div>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">ثبت‌کننده</label>
+            <div class="form-control bg-light d-flex align-items-center gap-1" style="height:auto;min-height:38px;">
+                <i class="bi bi-person-check-fill text-success"></i>
+                <b>@(editing ? editUserName : Auth.DisplayName)</b>
+                <span class="fs-8 text-muted">(ثبت خودکار با کاربر جاری)</span>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <label class="form-label"><i class="bi bi-person-gear text-muted ms-1"></i>اپراتور <span class="fs-8 text-muted">(کسی که کار را انجام داده — از لیست کاربران)</span></label>
+            <SearchSelect Items="lookups.Operators" Value="form.OperatorId ?? 0" ValueChanged="v => form.OperatorId = v > 0 ? v : null" Placeholder="انتخاب اپراتور… (اختیاری)" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">تاریخ گزارش <span class="text-danger">*</span></label>
+            <DatePicker Value="reportDate" ValueChanged="d => reportDate = d ?? DateTime.Today" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">ساعت شروع</label>
+            <TimeInput @bind-Value="form.StartTime" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">ساعت پایان</label>
+            <TimeInput @bind-Value="form.EndTime" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">مدت صبحانه <span class="fs-8 text-muted">(ساعت : دقیقه)</span></label>
+            <TimeInput @bind-Value="form.BreakfastTime" MaxHour="8" Suffix="مدت استراحت — نه ساعت روز" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">مدت ناهار <span class="fs-8 text-muted">(ساعت : دقیقه)</span></label>
+            <TimeInput @bind-Value="form.LunchTime" MaxHour="8" Suffix="مدت استراحت — نه ساعت روز" />
+        </div>
+        <div class="col-12">
+            <label class="form-label">شرح کار <span class="text-danger">*</span></label>
+            <textarea class="form-control" rows="3" @bind="form.WorkDescription" placeholder="شرح فعالیت انجام‌شده…"></textarea>
+        </div>
+    </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseModal">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            <i class="bi bi-check-lg ms-1"></i> ذخیره (F1)
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    // ردیف‌های «همین صفحه» (صفحه‌بندی، فیلتر و مرتب‌سازی همگی سمت سرور انجام می‌شوند)
+    private List<ReportWorkDto> items = new();
+    private int total;              // تعداد کل ردیف‌های منطبق با فیلترها
+    private int pageCount = 1;
+    private TimeSpan sumSpent;      // جمع ساعت خالص روی کل ردیف‌های فیلترشده
+    private ProjectLookups lookups = new();
+
+    // ---------- کمبوی پروژه با جستجوی سمت سرور ----------
+    // فهرست کامل پروژه‌ها دیگر یک‌جا بارگذاری نمی‌شود؛ هر کمبو فقط نتایج همان عبارت را دارد.
+    private List<LookupItem> projectFilterOpts = new();
+    private List<LookupItem> formProjectOpts = new();
+    private CancellationTokenSource? projectSearchCts;
+    private CancellationTokenSource? formProjectSearchCts;
+
+    /// <summary>نام پروژهٔ انتخاب‌شده در فیلتر (برای چاپ/عنوان، حتی وقتی در ۲۰ نتیجهٔ اول نیست).</summary>
+    private string filterProjectName = "";
+
+    private async Task OnProjectFilterPicked(int id)
+    {
+        filterProject = id;
+        filterProjectName = id <= 0 ? "" : (projectFilterOpts.FirstOrDefault(x => x.Id == id)?.Name ?? filterProjectName);
+        await OnFilterChanged();
+    }
+
+    /// <summary>جستجوی پروژهٔ فیلتر در سرور (ضدلرزش ۳۰۰ms؛ درخواست قبلی لغو می‌شود).</summary>
+    private async Task OnProjectFilterSearch(string q)
+    {
+        projectSearchCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        projectSearchCts = cts;
+
+        var list = await SearchProjectsDebouncedAsync(q, reportable: false, cts);
+        if (list is null) return; // نتیجهٔ این فراخوانی منسوخ شده است
+
+        if (filterProject > 0 && list.All(x => x.Id != filterProject) && !string.IsNullOrWhiteSpace(filterProjectName))
+            list.Insert(0, new LookupItem { Id = filterProject, Name = filterProjectName });
+        projectFilterOpts = list;
+        StateHasChanged();
+    }
+
+    private void OnFormProjectPicked(int id) => form.ProjectId = id;
+
+    private async Task OnFormProjectSearch(string q)
+    {
+        formProjectSearchCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        formProjectSearchCts = cts;
+
+        var list = await SearchProjectsDebouncedAsync(q, reportable: true, cts);
+        if (list is null) return;
+
+        var keepId = form.ProjectId;
+        if (keepId > 0 && list.All(x => x.Id != keepId))
+        {
+            var known = formProjectOpts.FirstOrDefault(x => x.Id == keepId);
+            if (known is not null) list.Insert(0, known);
+        }
+        formProjectOpts = list;
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// جستجوی پروژه در سرور با تأخیر کوتاه (ضدلرزش).
+    /// null یعنی در این فاصله درخواست تازه‌تری آمده و نتیجهٔ این فراخوانی منسوخ است.
+    /// </summary>
+    private async Task<List<LookupItem>?> SearchProjectsDebouncedAsync(string q, bool reportable, CancellationTokenSource cts)
+    {
+        try { await Task.Delay(300, cts.Token); }
+        catch (OperationCanceledException) { return null; }
+        try { return await ProjectSvc.SearchProjectsAsync(q, take: 20, reportable: reportable); }
+        catch (OperationCanceledException) { return null; }
+        catch { return new List<LookupItem>(); }
+    }
+    private bool loading = true;
+    private int filterProject, filterUser, filterOperator;
+    private DateTime? filterFrom, filterTo;
+
+    // ---------- جستجوی سرستون‌ها ----------
+    private string fDate = "", fCode = "", fProject = "", fUser = "";
+    private string fOperator = "";
+    private string fStart = "", fEnd = "", fRest = "", fSpent = "", fDesc = "";
+
+    private bool HasColFilter =>
+        !string.IsNullOrWhiteSpace(fDate) || !string.IsNullOrWhiteSpace(fCode) ||
+        !string.IsNullOrWhiteSpace(fProject) || !string.IsNullOrWhiteSpace(fUser) ||
+        !string.IsNullOrWhiteSpace(fOperator) ||
+        !string.IsNullOrWhiteSpace(fStart) || !string.IsNullOrWhiteSpace(fEnd) ||
+        !string.IsNullOrWhiteSpace(fRest) || !string.IsNullOrWhiteSpace(fSpent) ||
+        !string.IsNullOrWhiteSpace(fDesc);
+
+    private bool HasAnyFilter => HasColFilter || filterProject > 0 || filterUser > 0 || filterOperator > 0
+        || filterFrom.HasValue || filterTo.HasValue;
+
+    private async Task ClearColFilters()
+    {
+        fDate = fCode = fProject = fUser = fOperator = fStart = fEnd = fRest = fSpent = fDesc = "";
+        page = 1;
+        await Load();
+    }
+
+    /// <summary>پاک کردن همهٔ فیلترها — هم کمبوها و تاریخ‌های بالای صفحه، هم جستجوی سرستون‌ها</summary>
+    private async Task ClearAllFilters()
+    {
+        filterProject = filterUser = filterOperator = 0;
+        filterFrom = filterTo = null;
+        fDate = fCode = fProject = fUser = fOperator = fStart = fEnd = fRest = fSpent = fDesc = "";
+        page = 1;
+        await Load();
+    }
+
+    private ReportWorkDto form = new();
+    private bool showModal, saving;
+    private bool editing => form.Id != 0;
+    private bool printing, exporting;
+
+    /// <summary>
+    /// کمبوی پروژه در فرم ثبت/ویرایش: فقط پروژه‌های تاییدشده (ReportableProjects).
+    /// در حالت ویرایش، اگر پروژهٔ فعلیِ گزارش دیگر در آن فهرست نباشد (مثلاً وضعیتش عوض شده)
+    /// همان یک مورد اضافه می‌شود تا کمبو خالی/گمراه‌کننده نشود.
+    /// </summary>
+    private DateTime reportDate = DateTime.Today;
+
+    private int page = 1;
+    private const int PageSize = 20; // هر بار فقط ۲۰ رکورد از دیتابیس خوانده می‌شود
+
+    private int PageCount => Math.Max(1, pageCount);
+
+    /// <summary>ردیف‌های صفحهٔ جاری — سرور همین‌ها را فرستاده است</summary>
+    private List<ReportWorkDto> Paged => items;
+
+    private async Task GoToPage(int p)
+    {
+        if (p == page) return;
+        page = p;
+        await Load();
+    }
+
+    /// <summary>ساخت پارامترهای کوئری از فیلترهای فعلی (مشترک بین لیست، چاپ و اکسل)</summary>
+    private ReportWorkListQuery BuildQuery(int pageSize) => new()
+    {
+        ProjectId = filterProject > 0 ? filterProject : null,
+        UserId = filterUser > 0 ? filterUser : null,
+        OperatorId = filterOperator > 0 ? filterOperator : null,
+        From = filterFrom,
+        To = filterTo,
+        FDate = fDate,
+        FCode = fCode,
+        FProject = fProject,
+        FUser = fUser,
+        FOperator = fOperator,
+        FStart = fStart,
+        FEnd = fEnd,
+        FRest = fRest,
+        FSpent = fSpent,
+        FDesc = fDesc,
+        Sort = sortKey,
+        Desc = !sortAsc,
+        Page = page,
+        PageSize = pageSize
+    };
+
+    /// <summary>تغییر هر فیلتر: صفحهٔ ۱ + بارگذاری دوباره با تأخیر کوتاه (ضدلرزش)</summary>
+    private CancellationTokenSource? filterCts;
+
+    private async Task OnFilterChanged()
+    {
+        page = 1;
+        filterCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        filterCts = cts;
+        try { await Task.Delay(400, cts.Token); }
+        catch (OperationCanceledException) { return; }
+        if (cts.IsCancellationRequested) return;
+        // فقط صفحهٔ جدول تازه می‌شود؛ کادر جستجو در DOM می‌ماند تا فوکوس و ادامهٔ تایپ از دست نرود.
+        await Load();
+    }
+
+    // ---------- مرتب‌سازی (صعودی/نزولی) ----------
+    private string sortKey = "date";
+    private bool sortAsc; // پیش‌فرض: روی تاریخ، نزولی (جدیدترین‌ها اول)
+
+    private async Task SortBy(string key)
+    {
+        if (sortKey == key) sortAsc = !sortAsc;
+        else { sortKey = key; sortAsc = true; }
+        page = 1;
+        await Load(); // مرتب‌سازی روی کل رکوردها در دیتابیس انجام می‌شود
+    }
+
+    private string SortIcon(string key)
+        => key != sortKey
+            ? "<i class=\"bi bi-arrow-down-up sort-ic muted\"></i>"
+            : sortAsc
+                ? "<i class=\"bi bi-caret-up-fill sort-ic active\"></i>"
+                : "<i class=\"bi bi-caret-down-fill sort-ic active\"></i>";
+
+    // ---------- نمای جدول/کارت (با حفظ انتخاب کاربر) ----------
+    private bool viewCards;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                viewCards = (await JS.InvokeAsync<string?>("localStorage.getItem", "reportsViewMode")) == "cards";
+                StateHasChanged();
+            }
+            catch { /* در دسترس نیست */ }
+        }
+    }
+
+    private async Task SetView(bool cards)
+    {
+        viewCards = cards;
+        try { await JS.InvokeVoidAsync("localStorage.setItem", "reportsViewMode", cards ? "cards" : "table"); }
+        catch { /* حافظه در دسترس نیست */ }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("گزارش‌های کار");
+        if (!string.IsNullOrWhiteSpace(Auth.Token))
+            Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Auth.Token);
+        // فقط کاربران/اپراتورها/کارفرماها/انواع فاکتور — فهرست کامل پروژه‌ها دیگر در پاسخ نمی‌آید
+        try { lookups = await ProjectSvc.GetLookupsAsync(withProjects: false); } catch { /* دسترسی نداشت */ }
+        // ۲۰ پروژهٔ آخر برای شروع کمبوها (بقیه با تایپ کاربر از سرور می‌آید)
+        try { projectFilterOpts = await ProjectSvc.SearchProjectsAsync("", take: 20); } catch { }
+        await Load(blocking: true);
+    }
+
+    /// <summary>شمارندهٔ نسخهٔ بارگذاری — پاسخِ درخواست‌های قدیمی‌تر نادیده گرفته می‌شود.</summary>
+    private int loadVersion;
+
+    private CancellationTokenSource? loadCts;
+
+    /// <summary>جستجو/فیلتر در جریان است (نوار کوچک؛ جدول و کادر جستجو از صفحه حذف نمی‌شوند).</summary>
+    private bool searching;
+
+    /// <summary>
+    /// خواندن «فقط یک صفحه» از سرور — فیلترها، مرتب‌سازی، شمارش و جمع ساعت‌ها همه در دیتابیس.
+    /// <para>
+    /// دو نکتهٔ مهم برای جستجوی زندهٔ سرستون‌ها:
+    /// ۱) درخواست قبلی لغو می‌شود و پاسخ‌های قدیمی (با شمارهٔ نسخهٔ کمتر) نادیده گرفته می‌شوند؛
+    ///    وگرنه پاسخ کندِ یک کلید، نتیجهٔ تازهٔ کلید بعدی را بازنویسی می‌کرد و «جستجو کار نمی‌کرد».
+    /// ۲) <paramref name="blocking"/> فقط در بارگذاری اولیه true است تا جدول (و کادر جستجوی
+    ///    درون سرستون) از صفحه حذف نشود؛ حذف‌شدن جدول باعث از دست رفتن فوکوس و تایپ‌نشدن
+    ///    متن در کادر جستجو می‌شد.
+    /// </para>
+    /// </summary>
+    private async Task Load(bool blocking = false)
+    {
+        var version = ++loadVersion;
+
+        // لغو درخواست قبلی (بدون Dispose؛ توکنِ در حال استفاده نباید آزاد شود)
+        loadCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        loadCts = cts;
+
+        if (blocking) loading = true; else searching = true;
+        try
+        {
+            var res = await ReportSvc.GetPagedAsync(BuildQuery(PageSize), cts.Token);
+            if (version != loadVersion) return; // پاسخ قدیمی — نتیجهٔ تازه‌تر در راه است
+
+            items = res.Items;
+            total = res.Total;
+            pageCount = res.PageCount;
+            sumSpent = TimeSpan.FromTicks(res.SumTicks ?? 0);
+            if (page > pageCount) page = pageCount;
+        }
+        catch (OperationCanceledException) { /* درخواست تازه‌تر جایش را گرفت — خطا نیست */ }
+        catch (Exception ex) { if (version == loadVersion) Toast.Error(ex.Message); }
+        finally
+        {
+            if (version == loadVersion) { loading = false; searching = false; }
+        }
+    }
+
+    private string? editUserName;
+
+    private void OpenNew()
+    {
+        if (showModal) return; // وقتی مودال باز است F2 کاری نکند
+        form = new ReportWorkDto
+        {
+            ReportDate = DateTime.Today,
+            StartTime = new TimeOnly(8, 0),
+            EndTime = new TimeOnly(17, 0)
+        };
+        reportDate = DateTime.Today;
+        editUserName = null;
+        showModal = true;
+    }
+
+    private void OpenEdit(ReportWorkDto r)
+    {
+        form = new ReportWorkDto
+        {
+            Id = r.Id,
+            ReportDate = r.ReportDate,
+            ProjectId = r.ProjectId,
+            UserId = r.UserId,
+            OperatorId = r.OperatorId,
+            WorkDescription = r.WorkDescription,
+            StartTime = r.StartTime,
+            EndTime = r.EndTime,
+            BreakfastTime = r.BreakfastTime,
+            LunchTime = r.LunchTime
+        };
+        reportDate = r.ReportDate;
+        editUserName = r.UserName;
+        // پروژهٔ همین گزارش باید در فهرست کمبو باشد، وگرنه نامش خالی نمایش داده می‌شود
+        if (r.ProjectId > 0 && formProjectOpts.All(x => x.Id != r.ProjectId))
+            formProjectOpts = new List<LookupItem>
+            {
+                new() { Id = r.ProjectId, Name = string.IsNullOrWhiteSpace(r.CodeProject) ? (r.ProjectName ?? "—") : $"{r.ProjectName} (کد {r.CodeProject})" }
+            }.Concat(formProjectOpts).ToList();
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private async Task Save()
+    {
+        if (form.ProjectId <= 0) { Toast.Error("پروژه را انتخاب کنید."); return; }
+        if (string.IsNullOrWhiteSpace(form.WorkDescription)) { Toast.Error("شرح کار را وارد کنید."); return; }
+        if (form.EndTime == form.StartTime) { Toast.Error("ساعت شروع و پایان نمی‌توانند یکسان باشند."); return; }
+
+        form.ReportDate = reportDate;
+        saving = true;
+        try
+        {
+            if (editing)
+                await ReportSvc.UpdateAsync(form.Id, form);
+            else
+                await ReportSvc.CreateAsync(form);
+            Toast.Success(editing ? "گزارش کار ویرایش شد." : "گزارش کار ثبت شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(ReportWorkDto r)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", "آیا از حذف این گزارش کار مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await ReportSvc.DeleteAsync(r.Id);
+            Toast.Success("گزارش کار حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ==================== چاپ لیست (طبق فیلتر جاری) ====================
+
+    /// <summary>چاپ «همهٔ» گزارش‌های منطبق با فیلترهای جاری (نه فقط صفحهٔ نمایش‌داده‌شده)</summary>
+    private async Task PrintList()
+    {
+        if (total == 0) { Toast.Error("گزارشی برای چاپ وجود ندارد."); return; }
+        printing = true;
+        try
+        {
+            // PageSize=0 یعنی «همهٔ ردیف‌های منطبق با فیلتر» — چاپ دقیقاً همان چیزی است که فیلتر شده
+            var all = await ReportSvc.GetPagedAsync(BuildQuery(0));
+            var rows = all.Items;
+            if (rows.Count == 0) { Toast.Error("گزارشی برای چاپ وجود ندارد."); return; }
+            var printSum = TimeSpan.FromTicks(all.SumTicks ?? rows.Sum(r => r.SpentTime.Ticks));
+
+            var opt = new PrintTableOptions
+            {
+                Title = "گزارش‌های کار",
+                SubTitle = "سامانه مدیریت پروژه‌ها",
+                Meta = new List<string>
+                {
+                    $"پروژه: {(filterProject > 0 ? (string.IsNullOrWhiteSpace(filterProjectName) ? "—" : filterProjectName) : "همه پروژه‌ها")}",
+                    $"اپراتور: {(filterOperator > 0 ? lookups.Operators.FirstOrDefault(x => x.Id == filterOperator)?.Name ?? "—" : "همه اپراتورها")}",
+                    $"کاربر: {(filterUser > 0 ? lookups.Users.FirstOrDefault(x => x.Id == filterUser)?.Name ?? "—" : "همه کاربران")}",
+                    $"از تاریخ: {(filterFrom?.ToFaDate() ?? "—")}",
+                    $"تا تاریخ: {(filterTo?.ToFaDate() ?? "—")}",
+                    $"جستجوی سرستون‌ها: {(HasColFilter ? "اعمال شده" : "—")}",
+                    $"تعداد گزارش‌ها: {rows.Count.FaDigits()}"
+                },
+                Headers = new List<string> { "ردیف", "تاریخ", "کد پروژه", "پروژه", "کاربر", "اپراتور", "شروع", "پایان", "استراحت", "ساعت خالص", "شرح کار" },
+                Rows = rows.Select((r, i) => new List<string>
+                {
+                    (i + 1).FaDigits(),
+                    r.ReportDate.ToFaDate(),
+                    r.CodeProject ?? "—",
+                    r.ProjectName ?? "",
+                    r.UserName ?? "",
+                    r.OperatorName ?? "—",
+                    r.StartTime.TimeFa(),
+                    r.EndTime.TimeFa(),
+                    FmtRest(r),
+                    r.SpentTime.HoursFa(),
+                    r.WorkDescription ?? ""
+                }).ToList(),
+                FooterTotal = $"جمع ساعت کار خالص: {printSum.HoursFa()} ساعت — تعداد گزارش‌ها: {rows.Count.FaDigits()}",
+                PrintedAt = DateTime.Now.ToFaDateTime().FaDigits(),
+                PrintedBy = Auth.DisplayName
+            };
+            await JS.InvokeVoidAsync("printTableReport", opt);
+        }
+        catch (Exception ex) { Toast.Error($"چاپ ناموفق بود: {ex.Message}"); }
+        finally { printing = false; }
+    }
+
+    // ==================== چاپ تک گزارش (جزئیات) ====================
+
+    private async Task PrintDetail(ReportWorkDto r)
+    {
+        try
+        {
+            var opt = new PrintTableOptions
+            {
+                Title = "برگه جزئیات گزارش کار",
+                SubTitle = $"پروژه: {r.ProjectName} — کد پروژه: {(r.CodeProject ?? "").FaDigits()}",
+                Meta = new List<string>
+                {
+                    $"تاریخ گزارش: {r.ReportDate.ToFaDate()}",
+                    $"ثبت‌کننده: {r.UserName}",
+                    $"اپراتور: {(string.IsNullOrWhiteSpace(r.OperatorName) ? "—" : r.OperatorName)}",
+                    $"ساعت شروع: {r.StartTime.TimeFa()}",
+                    $"ساعت پایان: {r.EndTime.TimeFa()}",
+                    $"استراحت: {FmtRest(r)}",
+                    $"ساعت خالص: {Fmt(r.SpentTime)}"
+                },
+                Headers = new List<string> { "عنوان مشخصه", "مقدار ثبت‌شده" },
+                Rows = new List<List<string>>
+                {
+                    new() { "تاریخ گزارش کار", r.ReportDate.ToFaDate() },
+                    new() { "کد پروژه", r.CodeProject ?? "—" },
+                    new() { "نام پروژه", r.ProjectName ?? "—" },
+                    new() { "ثبت‌کننده / کاربر", r.UserName ?? "—" },
+                    new() { "اپراتور (انجام‌دهندهٔ کار)", string.IsNullOrWhiteSpace(r.OperatorName) ? "—" : r.OperatorName! },
+                    new() { "ساعت شروع", r.StartTime.TimeFa() },
+                    new() { "ساعت پایان", r.EndTime.TimeFa() },
+                    new() { "مدت استراحت (صبحانه/ناهار)", FmtRest(r) },
+                    new() { "ساعت کار خالص", Fmt(r.SpentTime) },
+                    new() { "شرح فعالیت انجام‌شده", r.WorkDescription ?? "—" }
+                },
+                FooterTotal = $"ساعت کار خالص: {Fmt(r.SpentTime)}",
+                PrintedAt = DateTime.Now.ToFaDateTime().FaDigits(),
+                PrintedBy = Auth.DisplayName
+            };
+            await JS.InvokeVoidAsync("printTableReport", opt);
+        }
+        catch (Exception ex) { Toast.Error($"چاپ ناموفق بود: {ex.Message}"); }
+    }
+
+    // ==================== خروجی اکسل (طبق فیلترهای جاری) ====================
+
+    /// <summary>خروجی اکسل گزارش‌های کار — دقیقاً با همان فیلترهای اعمال‌شده در لیست</summary>
+    private async Task ExportExcel()
+    {
+        exporting = true;
+        try
+        {
+            var qs = BuildQuery(0).ToQueryString(); // ۰ = همهٔ ردیف‌های منطبق با فیلتر
+            var resp = await Http.GetAsync($"/api/reportworks/export?{qs}");
+            if (!resp.IsSuccessStatusCode)
+            {
+                var msg = "خروجی اکسل ناموفق بود.";
+                try
+                {
+                    var body = await resp.Content.ReadAsStringAsync();
+                    using var doc = System.Text.Json.JsonDocument.Parse(body);
+                    if (doc.RootElement.TryGetProperty("message", out var m)) msg = m.GetString() ?? msg;
+                }
+                catch { msg += $" (HTTP {(int)resp.StatusCode})"; }
+                Toast.Error(msg);
+                return;
+            }
+            var bytes = await resp.Content.ReadAsByteArrayAsync();
+            await JS.InvokeVoidAsync("downloadBlob", $"report_works_{DateTime.Now:yyyyMMdd_HHmm}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Convert.ToBase64String(bytes));
+            Toast.Success(HasAnyFilter ? "خروجی اکسل بر اساس فیلترهای جاری آماده شد." : "خروجی اکسل همهٔ گزارش‌ها آماده شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { exporting = false; }
+    }
+
+    // ==================== محاسبات نمایشی ====================
+
+    /// <summary>جمع ساعت خالص روی «همهٔ» ردیف‌های فیلترشده (از سرور می‌آید، نه فقط صفحهٔ جاری)</summary>
+    private TimeSpan SumSpent() => sumSpent;
+
+    /// <summary>نمایش بازه زمانی با ارقام فارسی — مثلاً «۸:۳۰ ساعت»</summary>
+    private static string Fmt(TimeSpan t) => $"{t.HoursFa()} ساعت";
+
+    private static string FmtRest(ReportWorkDto r)
+    {
+        var rest = r.BreakfastTime.ToTimeSpan() + r.LunchTime.ToTimeSpan();
+        return rest.HoursFa();
+    }
+}

@@ -1,0 +1,174 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/contract-templates"
+@inject IHrCoreService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>قالب‌های قرارداد</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-layout-text-window-reverse"></i> قالب‌های قرارداد</h1>
+    <div class="lead">قالب‌های آماده قرارداد (موقت، دائم، پروژه‌ای...) برای انتخاب هنگام ثبت قرارداد</div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به ماژول کارگزینی برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body d-flex flex-wrap gap-2 align-items-end">
+        <div class="ms-auto">
+            @if (canCreate)
+            {
+                <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> قالب جدید</button>
+            }
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+}
+else
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>نام قالب</th><th>نوع</th><th>مدت</th><th>عنوان شغلی</th><th>ترتیب</th><th>وضعیت</th><th style="width:90px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var t in items)
+                        {
+                            <tr>
+                                <td><strong>@t.Name</strong></td>
+                                <td>@HrCoreUi.EmpType(t.Type)</td>
+                                <td class="num">@DurText(t)</td>
+                                <td>@(t.JobTitle ?? "—")</td>
+                                <td class="num">@t.SortOrder.Num()</td>
+                                <td>
+                                    @if (t.IsActive)
+                                    {
+                                        <span class="badge text-bg-success">فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-secondary">غیرفعال</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (canUpdate)
+                                    {
+                                        <button class="btn btn-sm btn-light" @onclick="() => OpenEdit(t)"><i class="bi bi-pencil text-warning"></i></button>
+                                    }
+                                    @if (canDelete)
+                                    {
+                                        <button class="btn btn-sm btn-light" @onclick="() => Delete(t.Id)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        @if (items.Count == 0)
+                        {
+                            <tr><td colspan="7" class="text-center text-muted py-4">قالبی ثبت نشده است.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+<Modal Visible="showEdit" Title="قالب قرارداد" Size="modal-lg" OnClose="() => showEdit = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-6"><label class="form-label">نام قالب <span class="text-danger">*</span></label><input class="form-control" @bind="form.Name" /></div>
+            <div class="col-md-3">
+                <label class="form-label">نوع</label>
+                <select class="form-select" @bind="form.Type">
+                    <option value="0">رسمی</option><option value="1">قراردادی</option><option value="2">پیمانی</option>
+                    <option value="3">ساعتی</option><option value="4">مشاوره‌ای</option>
+                    <option value="5">تمام‌وقت</option><option value="6">پاره‌وقت</option>
+                    <option value="7">پروژه‌ای</option><option value="8">آزمایشی</option>
+                </select>
+            </div>
+            <div class="col-md-3"><label class="form-label">مدت (ماه، خالی=دائمی)</label><input class="form-control num" type="number" min="0" @bind="form.DurationMonths" /></div>
+            <div class="col-md-6"><label class="form-label">عنوان شغلی پیش‌فرض</label><input class="form-control" @bind="form.JobTitle" /></div>
+            <div class="col-md-3"><label class="form-label">ترتیب</label><input class="form-control num" type="number" @bind="form.SortOrder" /></div>
+            <div class="col-md-3 d-flex align-items-end">
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="tpact" @bind="form.IsActive" /><label class="form-check-label" for="tpact">فعال</label></div>
+            </div>
+            <div class="col-12"><label class="form-label">شرایط قالب</label><textarea class="form-control" rows="3" @bind="form.Terms"></textarea></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="Save">ذخیره</button>
+    </Footer>
+</Modal>
+
+@code {
+    private bool canRead => Auth.Has("HrCore.Read") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrCore.Create") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrCore.Update") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrCore.Delete") || Auth.IsAdmin;
+
+    private bool loading = true, saving, showEdit;
+    private List<HrContractTemplateDto> items = new();
+    private int? editId;
+    private HrContractTemplateSaveDto form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) return;
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { items = await Svc.GetTemplatesAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenEdit(HrContractTemplateDto? t)
+    {
+        editId = t?.Id;
+        form = t is null
+            ? new HrContractTemplateSaveDto { Type = 1, SortOrder = items.Count + 1 }
+            : new HrContractTemplateSaveDto
+            {
+                Name = t.Name, Type = t.Type, DurationMonths = t.DurationMonths,
+                JobTitle = t.JobTitle, Terms = t.Terms, SortOrder = t.SortOrder, IsActive = t.IsActive
+            };
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            await Svc.SaveTemplateAsync(editId, form);
+            showEdit = false;
+            await Reload();
+            Toast.Success("ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "قالب حذف شود؟")) return;
+        try { await Svc.DeleteTemplateAsync(id); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string DurText(HrContractTemplateDto t)
+        => t.DurationMonths == null ? "دائمی" : $"{t.DurationMonths.Value.Num()} ماه";
+}

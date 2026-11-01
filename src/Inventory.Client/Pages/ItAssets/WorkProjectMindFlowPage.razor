@@ -1,0 +1,340 @@
+@page "/work-projects/mindflow"
+@page "/mindflows"
+@using Inventory.Client.Components.WorkProjects
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>نگار ذهنی</PageTitle>
+
+<div class="mf-page" dir="rtl">
+    @if (!Auth.Has("MindFlow.View") && !Auth.Has("WorkProjects.MindFlow"))
+    {
+        <div class="alert alert-warning">
+            <i class="bi bi-shield-lock"></i>
+            به «نگار ذهنی» دسترسی ندارید. مدیر سامانه می‌تواند از
+            «تنظیمات ← نقش‌ها ← دستور کار، پروژه‌ها و نگار ذهنی» مجوز «نگار ذهنی» (ماژول نگار ذهنی)
+            یا مجوز «بخش نگار ذهنی پروژه» را بدهد.
+        </div>
+    }
+    <div class="mf-page-head">
+        <div>
+            <div class="mf-eyebrow">دستور کار</div>
+            <h1><i class="bi bi-diagram-3"></i> نگار ذهنی</h1>
+            <p>نگاشت پروژه‌ها را ببین یا یک نگاشت مستقل بساز و طراحی کن.</p>
+        </div>
+        <div class="mf-head-actions">
+            @if (Auth.Has("MindFlow.Create"))
+            {
+                <button type="button" class="btn btn-primary btn-sm" @onclick="ToggleStandaloneCreate"><i class="bi bi-plus-lg"></i> ساخت نگاشت مستقل</button>
+            }
+            @if (Auth.CanSee("WorkProjects"))
+            {
+                <a class="btn btn-outline-secondary btn-sm" href="/work-projects"><i class="bi bi-briefcase"></i> فهرست پروژه‌ها</a>
+            }
+        </div>
+    </div>
+
+    <section class="mf-standalone-section">
+        <div class="mf-standalone-heading">
+            <div><strong><i class="bi bi-diagram-3"></i> نگاشت‌های مستقل</strong><span>@_standaloneMaps.Count</span></div>
+            <small>این نگاشت‌ها به پروژهٔ کاری متصل نیستند.</small>
+        </div>
+        @if (_showStandaloneCreate)
+        {
+            <div class="mf-standalone-create">
+                <label for="new-standalone-mindflow" class="form-label mb-1">نام نگاشت مستقل</label>
+                <div class="mf-standalone-create-row">
+                    <input id="new-standalone-mindflow" class="form-control" maxlength="200" placeholder="مثلاً: برنامهٔ یادگیری زبان" @bind="_newStandaloneTitle" @bind:event="oninput" @onkeydown="OnStandaloneTitleKeyDown" />
+                    <button type="button" class="btn btn-primary" @onclick="CreateStandaloneAsync" disabled="@(_creatingStandalone || string.IsNullOrWhiteSpace(_newStandaloneTitle))">
+                        @if (_creatingStandalone) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        ساخت و طراحی
+                    </button>
+                </div>
+                <small>بعداً می‌توانی افراد را با نقش مشاهده‌گر یا ویرایشگر دعوت کنی.</small>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(_standaloneError))
+        {
+            <div class="alert alert-warning py-2 mt-2 mb-0">@_standaloneError</div>
+        }
+        @if (_loadingStandaloneMaps)
+        {
+            <div class="mf-standalone-empty"><span class="spinner-border spinner-border-sm"></span> در حال بارگذاری نگاشت‌های مستقل…</div>
+        }
+        else if (_standaloneMaps.Count == 0)
+        {
+            <div class="mf-standalone-empty">هنوز نگاشت مستقلی ساخته یا با شما به‌اشتراک گذاشته نشده است.</div>
+        }
+        else
+        {
+            <div class="mf-standalone-list">
+                @foreach (var map in _standaloneMaps)
+                {
+                    <article class="mf-standalone-item" @key="map.Id">
+                        <div><strong>@map.Title</strong><small>سازنده: @map.OwnerName · نقش شما: @StandaloneRoleText(map.Role)</small></div>
+                        <div class="mf-standalone-actions">
+                            <a class="btn btn-sm @(map.CanEdit ? "btn-outline-primary" : "btn-outline-secondary")" href="@($"/mindflows/{map.Id}")"><i class="bi @(map.CanEdit ? "bi-pencil-square" : "bi-eye")"></i> @(map.CanEdit ? "طراحی" : "مشاهده")</a>
+                            @if (map.IsOwner)
+                            {
+                                @if (Auth.Has("MindFlow.Delete"))
+                                {
+                                    <button type="button" class="btn btn-sm btn-outline-danger" title="حذف نگاشت" @onclick="() => DeleteStandaloneAsync(map)"><i class="bi bi-trash"></i></button>
+                                }
+                            }
+                        </div>
+                    </article>
+                }
+            </div>
+        }
+    </section>
+
+    <div class="mf-project-picker">
+        <label for="mindflow-project-select">انتخاب نگاشت پروژه</label>
+        <div class="mf-project-combo">
+            <input id="mindflow-project-select" class="form-control" role="combobox" aria-expanded="@_showProjectOptions" aria-controls="mindflow-project-options"
+                   placeholder="جست‌وجو و انتخاب نگاشت پروژه…" value="@_projectInputText"
+                   @oninput="OnProjectSearchInput" @onfocus="ShowProjectOptions" disabled="@_loadingProjects" />
+            @if (_loadingProjects) { <span class="spinner-border spinner-border-sm text-primary mf-project-spinner" aria-label="در حال بارگذاری"></span> }
+            @if (_showProjectOptions && !_loadingProjects)
+            {
+                <div id="mindflow-project-options" class="mf-project-options" role="listbox">
+                    <button type="button" class="mf-project-option clear" @onclick="() => SelectProject(null)">پاک‌کردن انتخاب</button>
+                    @foreach (var item in FilteredProjects)
+                    {
+                        <button type="button" class="mf-project-option" @key="item.ProjectId" @onclick="() => SelectProject(item.ProjectId)">
+                            <strong>@item.Number — @item.Title</strong>
+                            <small>@(item.Status == "Closed" ? "بسته · فقط‌خواندنی" : "باز")</small>
+                        </button>
+                    }
+                    @if (FilteredProjects.Count == 0)
+                    {
+                        <div class="mf-project-option-empty">نگاشتی با این عبارت پیدا نشد.</div>
+                    }
+                </div>
+            }
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-warning py-2 mt-2 mb-0">@_error</div>
+        }
+        @if (!_loadingProjects && _projects.Count == 0 && string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-light border mt-2 mb-0">هنوز به نگاشت هیچ پروژه‌ای دسترسی نداری. از مدیر پروژه بخواه تو را عضو پروژه کند یا به خود نگاشت اضافه کند.</div>
+        }
+    </div>
+
+    @if (_project is not null)
+    {
+        <div class="mf-selected-project">
+            <div>
+                <span class="mf-project-number">@_project.Number</span>
+                <strong>@_project.Title</strong>
+                <span class="badge @(_project.Status == "Closed" ? "text-bg-secondary" : "text-bg-success")">@(_project.Status == "Closed" ? "بسته · فقط‌خواندنی" : "باز")</span>
+                <span class="badge @(_project.CanManage && _project.Status == "Open" ? "text-bg-primary" : "text-bg-light text-dark")">@(_project.CanManage && _project.Status == "Open" ? "دسترسی طراحی" : "فقط‌خواندنی")</span>
+            </div>
+            @if (_project.CanManage && Auth.CanSee("WorkProjects"))
+            {
+                <a class="btn btn-sm btn-outline-secondary" href="@($"/work-projects?open={_project.ProjectId}")"><i class="bi bi-box-arrow-up-right"></i> جزئیات پروژه</a>
+            }
+        </div>
+        <WorkProjectMindFlow ProjectId="@_project.ProjectId" ProjectTitle="@_project.Title" CanEdit="@(_project.CanManage && _project.Status == "Open")" CanManageAccess="@(_project.CanManage && _project.Status == "Open")" SelectedNodeId="@NodeId" SubFlowPath="@SubFlowPath" />
+    }
+    else if (_loadingProjects)
+    {
+        <div class="mf-placeholder"><span class="spinner-border spinner-border-sm"></span> در حال بارگذاری نگاشت‌ها…</div>
+    }
+    else
+    {
+        <div class="mf-placeholder"><i class="bi bi-arrow-up-circle"></i> برای نمایش نقشه، یکی از پروژه‌های در دسترس را انتخاب کن.</div>
+    }
+</div>
+
+<style>
+    .mf-page{padding:1.1rem;max-width:1700px;margin:auto;color:#263245}.mf-page-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-bottom:1rem}.mf-page-head h1{font-size:1.35rem;font-weight:750;margin:.15rem 0}.mf-page-head h1 .bi{color:#596cf3;margin-left:.35rem}.mf-page-head p{margin:0;color:#7b8495;font-size:.85rem}.mf-eyebrow{font-size:.7rem;color:#8d95a4}.mf-project-picker{background:#fff;border:1px solid #e6eaf0;border-radius:12px;padding:1rem;margin-bottom:1rem}.mf-project-picker>label{display:block;font-size:.85rem;font-weight:650;margin-bottom:.4rem}.mf-project-combo{position:relative;max-width:1100px}.mf-project-combo>input{padding-left:2.4rem}.mf-project-spinner{position:absolute;left:.75rem;top:.7rem}.mf-project-options{position:absolute;z-index:30;top:calc(100% + 4px);right:0;left:0;max-height:330px;overflow:auto;background:#fff;border:1px solid #e1e5ee;border-radius:9px;box-shadow:0 10px 28px #26304a18;padding:.3rem}.mf-project-option{display:flex;width:100%;align-items:center;justify-content:space-between;gap:.7rem;padding:.55rem .65rem;border:0;border-radius:6px;background:#fff;text-align:right;color:#30394b}.mf-project-option:hover{background:#f2f4ff}.mf-project-option strong{font-size:.82rem}.mf-project-option small,.mf-project-option-empty{font-size:.72rem;color:#7b8495}.mf-project-option.clear{color:#697386;border-bottom:1px solid #eef0f5;border-radius:0}.mf-project-option-empty{padding:.65rem}.mf-selected-project{display:flex;align-items:center;justify-content:space-between;gap:1rem;background:#f7f8ff;border:1px solid #e7eaff;border-radius:10px;padding:.7rem 1rem;margin-bottom:.75rem}.mf-selected-project>div{display:flex;align-items:center;gap:.65rem;min-width:0}.mf-selected-project strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mf-project-number{font-size:.75rem;color:#697386;background:#fff;border:1px solid #e2e6ed;border-radius:5px;padding:.15rem .45rem;white-space:nowrap}.mf-placeholder{display:flex;justify-content:center;align-items:center;gap:.6rem;min-height:160px;background:#fff;border:1px dashed #d8deea;border-radius:12px;color:#818a9a;font-size:.9rem}.mf-placeholder .bi{font-size:1.2rem;color:#6675e9}
+    @@media(max-width:700px){.mf-page-head{align-items:flex-start;flex-direction:column}.mf-project-combo{max-width:none}.mf-selected-project{align-items:flex-start;flex-direction:column}.mf-selected-project>div{flex-wrap:wrap}.mf-head-actions{width:100%}.mf-standalone-create-row{align-items:stretch;flex-direction:column}.mf-standalone-item{align-items:flex-start;flex-direction:column}.mf-standalone-actions{width:100%;justify-content:flex-end}}
+    .mf-head-actions{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}.mf-standalone-section{background:#fff;border:1px solid #e6eaf0;border-radius:12px;padding:.85rem 1rem;margin-bottom:1rem}.mf-standalone-heading{display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-bottom:.55rem}.mf-standalone-heading>div{display:flex;align-items:center;gap:.5rem}.mf-standalone-heading strong{font-size:.92rem}.mf-standalone-heading strong .bi{color:#596cf3;margin-left:.25rem}.mf-standalone-heading span{background:#edf0ff;color:#596cf3;border-radius:20px;padding:.08rem .45rem;font-size:.75rem}.mf-standalone-heading small,.mf-standalone-create>small{color:#7b8495;font-size:.74rem}.mf-standalone-create{padding:.75rem;margin:.5rem 0;background:#f8f9ff;border:1px solid #e7eaff;border-radius:9px}.mf-standalone-create-row{display:flex;align-items:center;gap:.5rem}.mf-standalone-create-row input{max-width:650px}.mf-standalone-create>small{display:block;margin-top:.4rem}.mf-standalone-empty{display:flex;align-items:center;gap:.5rem;padding:.5rem;color:#818a9a;font-size:.8rem}.mf-standalone-list{display:grid;gap:.45rem}.mf-standalone-item{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.55rem .65rem;border:1px solid #edf0f5;border-radius:8px;background:#fff}.mf-standalone-item>div:first-child{display:flex;flex-direction:column;min-width:0}.mf-standalone-item strong{font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mf-standalone-item small{font-size:.7rem;color:#818a99}.mf-standalone-actions{display:flex;align-items:center;gap:.35rem;flex:none}
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "projectId")]
+    public int? ProjectId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "nodeId")]
+    public Guid? NodeId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "subFlowPath")]
+    public string? SubFlowPath { get; set; }
+
+    private List<WorkProjectMindFlowAccessibleProjectDto> _projects = new();
+    private WorkProjectMindFlowAccessibleProjectDto? _project;
+    private string _query = "", _projectInputText = "", _error = "";
+    private bool _loadingProjects;
+    private bool _projectsLoaded;
+    private int? _lastQueryProjectId = -1;
+    private bool _showProjectOptions;
+    private List<StandaloneMindFlowSummaryDto> _standaloneMaps = new();
+    private string _newStandaloneTitle = "", _standaloneError = "";
+    private bool _loadingStandaloneMaps, _standaloneMapsLoaded, _showStandaloneCreate, _creatingStandalone;
+
+    private List<WorkProjectMindFlowAccessibleProjectDto> FilteredProjects
+    {
+        get
+        {
+            return string.IsNullOrWhiteSpace(_query)
+                ? _projects.ToList()
+                : _projects.Where(p => p.Title.Contains(_query, StringComparison.OrdinalIgnoreCase)
+                    || p.Number.Contains(_query, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_standaloneMapsLoaded) await LoadStandaloneMaps();
+        if (!_projectsLoaded) await LoadProjects();
+        if (!_projectsLoaded)
+        {
+            _project = null;
+            _projectInputText = "";
+            return;
+        }
+
+        if (ProjectId != _lastQueryProjectId || (ProjectId is > 0 && _project is null))
+        {
+            _lastQueryProjectId = ProjectId;
+            if (ProjectId is > 0 && !_projects.Any(p => p.ProjectId == ProjectId.Value))
+            {
+                // A project may have been created, joined, or invited after the picker was first loaded.
+                // Refresh before reporting an access denial so a stale client-side list cannot block a valid link.
+                _projectsLoaded = false;
+                await LoadProjects();
+            }
+            _project = ProjectId is > 0 ? _projects.FirstOrDefault(p => p.ProjectId == ProjectId.Value) : null;
+            _query = ""; _showProjectOptions = false;
+            _projectInputText = _project is null ? "" : $"{_project.Number} — {_project.Title}";
+            if (!_projectsLoaded) { /* Keep the actual load error instead of replacing it with an access warning. */ }
+            else if (ProjectId is > 0 && _project is null) _error = "این نگاشت پس از تازه‌سازی فهرست هم در دسترس نیست؛ عضویت/دعوت نگاشت و شرکت فعال را بررسی کن.";
+            else _error = "";
+        }
+    }
+
+    private void ToggleStandaloneCreate() => _showStandaloneCreate = !_showStandaloneCreate;
+
+    private async Task LoadStandaloneMaps()
+    {
+        _loadingStandaloneMaps = true;
+        _standaloneError = "";
+        try
+        {
+            _standaloneMaps = await Http.GetFromJsonAsync<List<StandaloneMindFlowSummaryDto>>("api/mindflows") ?? new();
+            _standaloneMapsLoaded = true;
+        }
+        catch (HttpRequestException) { _standaloneError = "فهرست نگاشت‌های مستقل بارگذاری نشد؛ اتصال یا شرکت فعال را بررسی کن."; }
+        catch (System.Text.Json.JsonException) { _standaloneError = "پاسخ فهرست نگاشت‌های مستقل معتبر نیست."; }
+        finally { _loadingStandaloneMaps = false; }
+    }
+
+    private async Task CreateStandaloneAsync()
+    {
+        var title = _newStandaloneTitle.Trim();
+        if (title.Length == 0 || _creatingStandalone) return;
+        _creatingStandalone = true;
+        _standaloneError = "";
+        try
+        {
+            var response = await Http.PostAsJsonAsync("api/mindflows", new CreateStandaloneMindFlowDto { Title = title });
+            if (!response.IsSuccessStatusCode)
+            {
+                _standaloneError = await ReadStandaloneError(response);
+                return;
+            }
+            var created = await response.Content.ReadFromJsonAsync<StandaloneMindFlowSummaryDto>();
+            if (created is null) { _standaloneError = "پاسخ ساخت نگاشت معتبر نیست."; return; }
+            _standaloneMaps.Insert(0, created);
+            _newStandaloneTitle = "";
+            _showStandaloneCreate = false;
+            Nav.NavigateTo($"/mindflows/{created.Id}");
+        }
+        catch (HttpRequestException) { _standaloneError = "ساخت نگاشت انجام نشد؛ اتصال سرور را بررسی کن."; }
+        catch (System.Text.Json.JsonException) { _standaloneError = "پاسخ ساخت نگاشت قابل خواندن نیست."; }
+        finally { _creatingStandalone = false; }
+    }
+
+    private async Task DeleteStandaloneAsync(StandaloneMindFlowSummaryDto map)
+    {
+        if (!map.IsOwner || !await JS.InvokeAsync<bool>("confirm", $"نگاشت «{map.Title}» و زیرنگاشت‌هایش حذف شوند؟")) return;
+        try
+        {
+            var response = await Http.DeleteAsync($"api/mindflows/{map.Id}");
+            if (!response.IsSuccessStatusCode) { _standaloneError = await ReadStandaloneError(response); return; }
+            _standaloneMaps.RemoveAll(m => m.Id == map.Id);
+        }
+        catch (HttpRequestException) { _standaloneError = "حذف نگاشت انجام نشد؛ اتصال سرور را بررسی کن."; }
+    }
+
+    private void OnStandaloneTitleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") _ = CreateStandaloneAsync();
+    }
+
+    private static string StandaloneRoleText(string? role) => role switch
+    {
+        "Owner" => "سازنده",
+        "Editor" => "ویرایشگر",
+        _ => "مشاهده‌گر"
+    };
+
+    private static async Task<string> ReadStandaloneError(HttpResponseMessage response)
+    {
+        try
+        {
+            var data = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+            return data?.GetValueOrDefault("message") ?? $"عملیات ناموفق بود ({(int)response.StatusCode}).";
+        }
+        catch { return $"عملیات ناموفق بود ({(int)response.StatusCode})."; }
+    }
+
+    private async Task LoadProjects()
+    {
+        _loadingProjects = true; _error = ""; _projects = new();
+        try
+        {
+            _projects = await Http.GetFromJsonAsync<List<WorkProjectMindFlowAccessibleProjectDto>>("/api/workprojects/mindflow/accessible") ?? new();
+            _projectsLoaded = true;
+        }
+        catch (HttpRequestException) { _error = "نگاشت‌های در دسترس بارگذاری نشدند؛ اتصال سرور یا انتخاب شرکت فعال را بررسی کن."; }
+        catch (System.Text.Json.JsonException) { _error = "پاسخ فهرست نگاشت‌ها معتبر نیست."; }
+        finally { _loadingProjects = false; }
+    }
+
+    private void ShowProjectOptions()
+    {
+        _query = "";
+        _projectInputText = "";
+        _showProjectOptions = true;
+    }
+
+    private void OnProjectSearchInput(ChangeEventArgs e)
+    {
+        _query = e.Value?.ToString() ?? "";
+        _projectInputText = _query;
+        _showProjectOptions = true;
+    }
+
+    private void SelectProject(int? id)
+    {
+        _query = ""; _showProjectOptions = false;
+        if (id is > 0)
+        {
+            var selected = _projects.FirstOrDefault(p => p.ProjectId == id.Value);
+            _projectInputText = selected is null ? "" : $"{selected.Number} — {selected.Title}";
+            Nav.NavigateTo($"/work-projects/mindflow?projectId={id.Value}");
+        }
+        else
+        {
+            _projectInputText = "";
+            Nav.NavigateTo("/work-projects/mindflow");
+        }
+    }
+}

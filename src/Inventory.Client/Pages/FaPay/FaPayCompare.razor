@@ -1,0 +1,147 @@
+@namespace Inventory.Client.Pages
+@page "/fa-pay/compare"
+@inject IFaPayClientService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>مقایسه دوره‌ها</PageTitle>
+
+<div class="page-head mb-4">
+    <div>
+        <h1><i class="bi bi-arrow-left-right"></i> مقایسه دو دوره حقوقی</h1>
+        <div class="lead">خالص پرداختی هر پرسنل در دو دوره، با هایلایت مغایرت‌ها</div>
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">به این بخش دسترسی ندارید.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label small text-muted">دوره اول (مبنا)</label>
+                <select class="form-select" @bind="runA">
+                    @foreach (var r in runs)
+                    {
+                        <option value="@r.Id">@FaPayUi.RunName(r) (@FaPayUi.RunStatus(r.Status))</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small text-muted">دوره دوم</label>
+                <select class="form-select" @bind="runB">
+                    @foreach (var r in runs)
+                    {
+                        <option value="@r.Id">@FaPayUi.RunName(r) (@FaPayUi.RunStatus(r.Status))</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">نمایش</label>
+                <select class="form-select" @bind="onlyChanged">
+                    <option value="false">همه</option>
+                    <option value="true">فقط مغایرت‌ها</option>
+                </select>
+            </div>
+            <div class="col-md-2"><button class="btn btn-primary w-100" disabled="@busy" @onclick="Compare"><i class="bi bi-search"></i> مقایسه</button></div>
+        </div>
+    </div>
+</div>
+
+@if (busy)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+@if (result != null)
+{
+    <div class="row g-3 mb-3">
+        <div class="col-md-4"><div class="card border-0 shadow-sm"><div class="card-body text-center"><div class="small text-muted">جمع خالص @result.LabelA</div><div class="h5 mb-0">@FaPayUi.Money(result.TotalA)</div></div></div></div>
+        <div class="col-md-4"><div class="card border-0 shadow-sm"><div class="card-body text-center"><div class="small text-muted">جمع خالص @result.LabelB</div><div class="h5 mb-0">@FaPayUi.Money(result.TotalB)</div></div></div></div>
+        <div class="col-md-4"><div class="card border-0 shadow-sm"><div class="card-body text-center"><div class="small text-muted">اختلاف جمع</div><div class="h5 mb-0 @(result.TotalB - result.TotalA >= 0 ? "text-success" : "text-danger")">@FaPayUi.Money(result.TotalB - result.TotalA)</div></div></div></div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>پرسنل</th>
+                            <th>@result.LabelA</th>
+                            <th>@result.LabelB</th>
+                            <th>اختلاف</th>
+                            <th>درصد</th>
+                            <th>وضعیت</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in FilteredRows)
+                        {
+                            <tr class="@(r.Flag == "Changed" ? "table-warning" : r.Flag == "Left" ? "table-danger" : r.Flag == "New" ? "table-success" : "")">
+                                <td><strong>@r.EmployeeName</strong><div class="small text-muted">@r.EmployeeCode</div></td>
+                                <td>@(r.NetA == null ? "—" : FaPayUi.Money(r.NetA.Value))</td>
+                                <td>@(r.NetB == null ? "—" : FaPayUi.Money(r.NetB.Value))</td>
+                                <td>
+                                    @if (r.Diff == null)
+                                    {
+                                        <span>—</span>
+                                    }
+                                    else
+                                    {
+                                        <strong class="@(r.Diff >= 0 ? "text-success" : "text-danger")">@FaPayUi.Money(r.Diff.Value)</strong>
+                                    }
+                                </td>
+                                <td class="num">@(r.DiffPercent == null ? "—" : Fa.Digits(r.DiffPercent.Value.ToString("0.#")) + "٪")</td>
+                                <td><span class="badge @FaPayUi.CmpBadge(r.Flag)">@FaPayUi.CmpFlag(r.Flag)</span></td>
+                            </tr>
+                        }
+                        @if (FilteredRows.Count == 0)
+                        {
+                            <tr><td colspan="6" class="text-center text-muted py-4">ردیفی یافت نشد.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool faRead => Auth.Has("FaPay.Read") || Auth.Has("FaPay.Manage") || Auth.IsAdmin;
+    private List<FaPayRunDto> runs = new();
+    private int runA, runB;
+    private bool onlyChanged;
+    private bool busy;
+    private FaPayCompareDto? result;
+
+    private List<FaPayCompareRowDto> FilteredRows =>
+        result == null ? new() : onlyChanged ? result.Rows.Where(r => r.Flag != "Same").ToList() : result.Rows;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) return;
+        try
+        {
+            runs = await Svc.ListRunsAsync();
+            if (runs.Count >= 2) { runA = runs[1].Id; runB = runs[0].Id; }
+            else if (runs.Count == 1) { runA = runs[0].Id; runB = runs[0].Id; }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Compare()
+    {
+        if (runA == runB) { Toast.Error("دو دوره متفاوت انتخاب کنید."); return; }
+        busy = true;
+        result = null;
+        try { result = await Svc.CompareRunsAsync(runA, runB); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+}

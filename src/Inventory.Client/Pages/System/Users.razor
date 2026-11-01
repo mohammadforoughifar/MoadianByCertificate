@@ -1,0 +1,1079 @@
+@namespace Inventory.Client.Pages
+@page "/users"
+@inject HttpClient Http
+@inject IAuthApi AuthApi
+@inject IAuthState Auth
+@inject IReferrerService ReferrerSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>کاربران</PageTitle>
+
+@if (!Auth.IsAdmin && !Auth.IsOperator)
+{
+    <div class="alert alert-warning">دسترسی به این صفحه مخصوص مدیر و اپراتور است.</div>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>مدیریت کاربران</h1>
+            <p class="lead">مدیریت حساب‌های کاربری، سطوح دسترسی و ارتباطات سازمانی</p>
+        </div>
+        <div class="d-flex gap-2 me-auto">
+            <button class="btn btn-primary" @onclick="OpenNew">
+                <i class="bi bi-person-plus"></i> کاربر جدید
+            </button>
+            <button class="btn btn-outline-success" title="تطبیق مخاطبین ربات بله با موبایل کاربران" disabled="@syncing" @onclick="SyncBale">
+                @if (syncing) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                <i class="bi bi-arrow-repeat"></i> همگام‌سازی بله
+            </button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body p-0">
+            @if (loading)
+            {
+                <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+            }
+            else if (items.Count == 0)
+            {
+                <div class="empty-state"><i class="bi bi-people"></i><h5>کاربری یافت نشد</h5></div>
+            }
+            else
+            {
+                <div class="table-responsive grid-desktop">
+                    <table class="table table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th>نام کاربری</th>
+                                <th>نام و نام خانوادگی</th>
+                                <th>سمت‌ها</th>
+                                <th>نقش</th>
+                                <th>معرف مرتبط</th>
+                                <th>تاریخ ایجاد</th>
+                                <th>وضعیت</th>
+                                <th class="text-end">عملیات</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var u in items)
+                            {
+                                <tr>
+                                    <td class="fw-500" dir="ltr" style="text-align:right">
+                                        <span class="d-inline-flex align-items-center gap-2">
+                                        <UserAvatar LoginUserId="u.Id" Size="28" CacheBust="@photoBust" />
+                                        <i class="bi bi-person-circle text-muted ms-1"></i> @u.Username
+                                        </span>
+                                        @if (!string.IsNullOrWhiteSpace(u.BaleChatId))
+                                        {
+                                            <span class="msgr-badge msgr-bale" title="کاربر بله دارد">بله</span>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(u.EitaaChatId))
+                                        {
+                                            <span class="msgr-badge msgr-eitaa" title="کاربر ایتا دارد">ایتا</span>
+                                        }
+                                    </td>
+                                    <td class="fw-500">
+                                        @if (string.IsNullOrWhiteSpace(FullName(u)))
+                                        {
+                                            <span class="text-muted">—</span>
+                                        }
+                                        else
+                                        {
+                                            <span><i class="bi bi-person-vcard text-muted ms-1"></i>@FullName(u)</span>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(u.Mobile))
+                                        {
+                                            <div class="fs-8 text-muted num" dir="ltr">@u.Mobile</div>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (u.Positions is { Count: > 0 })
+                                        {
+                                            @foreach (var pos in u.Positions)
+                                            {
+                                                <span class="badge badge-soft-primary me-1 mb-1"><i class="bi bi-briefcase ms-1"></i>@pos</span>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted">—</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (u.RoleNames is { Count: > 0 })
+                                        {
+                                            @* نمایش همه‌ی نقش‌های RBAC کاربر — نام‌های فارسی نقش‌های منابع انسانی هم در اینجا *@
+                                            @foreach (var rn in u.RoleNames)
+                                            {
+                                                <span class="badge @RoleBadgeClass(rn) me-1 mb-1">@RoleLabel(rn)</span>
+                                            }
+                                        }
+                                        else if (u.Role == "Admin")
+                                        {
+                                            <span class="badge badge-soft-primary">مدیر</span>
+                                        }
+                                        else if (u.Role == "Operator")
+                                        {
+                                            <span class="badge badge-soft-warning">اپراتور</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge badge-soft-success">معرف</span>
+                                        }
+                                    </td>
+                                    <td>@(u.ReferrerName ?? "—")</td>
+                                    <td class="num">@u.CreatedAt.ToFa()</td>
+                                    <td>
+                                        @if (u.IsActive)
+                                        {
+                                            <span class="badge badge-soft-success">فعال</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge badge-soft-muted">غیرفعال</span>
+                                        }
+                                    </td>
+                                    <td class="text-end">
+                                        @if (Auth.IsAdmin || u.Role != "Admin")
+                                        {
+                                            <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(u)"><i class="bi bi-pencil text-primary"></i></button>
+                                            <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(u)"><i class="bi bi-trash text-danger"></i></button>
+                                        }
+                                        else
+                                        {
+                                            <span class="fs-8 text-muted"><i class="bi bi-lock"></i></span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                @* ---------- نمای کارتی (موبایل) ---------- *@
+                <div class="cards-mobile">
+                    @foreach (var u in items)
+                    {
+                        <div class="m-card @(u.Role == "Admin" ? "st-received" : u.Role == "Operator" ? "st-progress" : "st-ready")">
+                            <div class="m-card-head">
+                                <div class="m-card-icon"><i class="bi @(u.Role == "Admin" ? "bi-shield-lock" : u.Role == "Operator" ? "bi-person-workspace" : "bi-person-badge")"></i></div>
+                                <div class="flex-grow-1 min-w-0">
+                                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                                        <UserAvatar LoginUserId="u.Id" Size="32" CacheBust="@photoBust" />
+                                        <span class="fw-700" dir="ltr">@u.Username</span>
+                                        @if (u.RoleNames is { Count: > 0 })
+                                        {
+                                            @foreach (var rn in u.RoleNames)
+                                            {
+                                                <span class="badge @RoleBadgeClass(rn) fs-8">@RoleLabel(rn)</span>
+                                            }
+                                        }
+                                        else if (u.Role == "Admin")
+                                        {
+                                            <span class="badge badge-soft-primary fs-8">مدیر</span>
+                                        }
+                                        else if (u.Role == "Operator")
+                                        {
+                                            <span class="badge badge-soft-warning fs-8">اپراتور</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge badge-soft-success fs-8">معرف</span>
+                                        }
+                                        @if (!u.IsActive)
+                                        {
+                                            <span class="badge badge-soft-muted fs-8">غیرفعال</span>
+                                        }
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(FullName(u)))
+                                    {
+                                        <div class="fs-8 fw-600"><i class="bi bi-person-vcard text-muted ms-1"></i>@FullName(u)</div>
+                                    }
+                                    <div class="fs-8 text-muted">@(u.ReferrerName is null ? "" : $"معرف: {u.ReferrerName} — ")ایجاد: @u.CreatedAt.ToFa()</div>
+                                </div>
+                            </div>
+                            <div class="m-card-actions">
+                                @if (Auth.IsAdmin || u.Role != "Admin")
+                                {
+                                    <button class="btn btn-light text-primary" @onclick="() => OpenEdit(u)"><i class="bi bi-pencil"></i> ویرایش</button>
+                                    <button class="btn btn-light text-danger" @onclick="() => Delete(u)"><i class="bi bi-trash"></i></button>
+                                }
+                                else
+                                {
+                                    <span class="fs-8 text-muted align-self-center me-auto"><i class="bi bi-lock"></i> فقط مدیر</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <Modal Visible="showModal" Title="@(editing ? "ویرایش کاربر" : "کاربر جدید")" OnClose="CloseModal">
+        <ChildContent>
+        @if (!string.IsNullOrWhiteSpace(saveError))
+        {
+            <div class="alert alert-danger py-2 mb-3">
+                <i class="bi bi-exclamation-triangle-fill"></i> @saveError
+            </div>
+        }
+        <div class="photo-pick mb-3">
+            <label class="form-label small fw-800 mb-1"><i class="bi bi-camera"></i> عکس کاربر (اختیاری)</label>
+            <div class="d-flex align-items-center gap-3">
+                <div class="pp-preview">
+                    @if (luPhotoPreview != null) { <img src="@luPhotoPreview" alt="پیش‌نمایش" /> }
+                    else { <i class="bi bi-person-circle"></i> }
+                </div>
+                <div class="d-flex flex-column gap-1">
+                    <InputFile OnChange="OnLoginUserPhotoPicked" Accept="image/*" class="btn btn-sm btn-outline-primary" style="max-width:220px">
+                        <i class="bi bi-cloud-arrow-up-fill"></i> انتخاب عکس (JPG/PNG، حداکثر ۵MB)
+                    </InputFile>
+                    @if (luPhotoPreview != null)
+                    { <button type="button" class="btn btn-sm btn-link text-danger p-0" @onclick="ClearLoginUserPhoto"><i class="bi bi-x-circle"></i> حذف عکس</button> }
+                </div>
+            </div>
+        </div>
+        <div class="border rounded-3 p-3 mb-3 bg-light-subtle">
+            <label class="form-label small fw-800 mb-1"><i class="bi bi-pen"></i> امضای کاربر (اختیاری)</label>
+            <div class="d-flex align-items-center gap-3">
+                <div class="signature-checkerboard border rounded p-2" style="width:180px;height:70px;display:flex;align-items:center;justify-content:center">
+                    @if (luSignaturePreview != null) { <img src="@luSignaturePreview" alt="پیش‌نمایش امضای جدید" style="max-width:165px;max-height:58px;object-fit:contain" /> }
+                    else if (luStoredSignaturePreview != null) { <img src="@luStoredSignaturePreview" alt="امضای ثبت‌شدهٔ کاربر" style="max-width:165px;max-height:58px;object-fit:contain" /> }
+                    else if (signaturePreviewLoading) { <span class="text-muted small">در حال دریافت امضا…</span> }
+                    else if (form.Id > 0 && !string.IsNullOrWhiteSpace(form.SignaturePath)) { <span class="text-muted small">پیش‌نمایش امضا در دسترس نیست</span> }
+                    else { <span class="text-muted small">بدون امضا</span> }
+                </div>
+                <div class="d-flex flex-column gap-1">
+                    <label class="btn btn-sm btn-outline-primary mb-0" style="max-width:220px">
+                        <i class="bi bi-cloud-arrow-up-fill"></i> @(string.IsNullOrWhiteSpace(form.SignaturePath) ? "ثبت امضا" : "تغییر امضا")
+                        <InputFile OnChange="OnUserSignaturePicked" Accept="image/png" class="visually-hidden" />
+                    </label>
+                    <span class="text-muted fs-8">فقط PNG — شفافیت حفظ و اندازه هنگام ذخیره بهینه می‌شود</span>
+                    @if (luSignaturePreview != null) { <button type="button" class="btn btn-sm btn-link text-danger p-0" @onclick="ClearUserSignature">حذف انتخاب جدید</button> }
+                </div>
+            </div>
+        </div>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">نام کاربری <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="form.Username" dir="ltr" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">رمز عبور @(editing ? "(خالی = بدون تغییر)" : "")<span class="text-danger">@(editing ? "" : " *")</span></label>
+                <input type="password" class="form-control" @bind="form.Password" dir="ltr" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">نام <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="form.FirstName" placeholder="مثلاً: علی" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">نام خانوادگی <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="form.LastName" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">شماره موبایل <span class="fs-8 text-muted">(برای پیام بله/ایتا)</span></label>
+                <input class="form-control num" dir="ltr" placeholder="09xxxxxxxxx" @bind="form.Mobile" data-digits="" inputmode="numeric" />
+                <div class="fs-8 text-muted mt-1">
+                    @if (!string.IsNullOrWhiteSpace(form.BaleChatId))
+                    {
+                        <span class="msgr-badge msgr-bale">بله ✓</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(form.EitaaChatId))
+                    {
+                        <span class="msgr-badge msgr-eitaa">ایتا ✓</span>
+                    }
+                    @if (string.IsNullOrWhiteSpace(form.BaleChatId) && string.IsNullOrWhiteSpace(form.EitaaChatId))
+                    {
+                        <span>هنوز به بله/ایتا متصل نشده — بعد از استارت ربات، «همگام‌سازی بله» را بزنید.</span>
+                    }
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">شناسه ایتا <span class="fs-8 text-muted">(عددی — خودکار با «کد اتصال» پر می‌شود)</span></label>
+                <div class="input-group">
+                    <input class="form-control num" dir="ltr" @bind="form.EitaaChatId" />
+                    @if (Auth.IsAdmin && editing)
+                    {
+                        <button class="btn btn-outline-primary" type="button" @onclick="GetEitaaCode" disabled="@codeBusy" title="ساخت کد اتصال برای این کاربر">
+                            @if (codeBusy) { <span class="spinner-border spinner-border-sm"></span> }
+                            <i class="bi bi-key"></i> کد اتصال
+                        </button>
+                    }
+                </div>
+                @if (!string.IsNullOrWhiteSpace(userEitaaCode))
+                {
+                    <div class="alert alert-light border py-2 mt-2 mb-0 fs-8">
+                        کد اتصال این کاربر: <b class="fs-5" dir="ltr" style="letter-spacing:.2em">@userEitaaCode</b>
+                        <div class="text-muted mt-1">
+                            این کد را به کاربر بدهید؛ او در ایتا برنامه‌ی سامانه را باز می‌کند و کد را وارد می‌کند (۱۵ دقیقه اعتبار).
+                        </div>
+                    </div>
+                }
+                <div class="fs-8 text-muted mt-1">شناسه چت ایتا پس از اتصال کاربر، خودکار در همین کادر ثبت می‌شود.</div>
+            </div>
+            @if (Auth.IsAdmin)
+            {
+                <div class="col-12">
+                    <label class="form-label d-block"><i class="bi bi-building text-primary"></i> شرکت‌های مجاز کاربر</label>
+                    <div class="border rounded p-2" style="max-height:150px;overflow:auto">
+                        @if (companyOptions.Count == 0) { <span class="text-muted fs-8">شرکتی برای انتخاب وجود ندارد.</span> }
+                        @foreach (var company in companyOptions)
+                        {
+                            <label class="form-check form-check-inline mb-1">
+                                <input class="form-check-input" type="checkbox" checked="@selectedCompanyIds.Contains(company.Id)" @onchange="e => ToggleCompany(company.Id, (bool)e.Value!)" />
+                                <span class="form-check-label">@company.Name</span>
+                            </label>
+                        }
+                    </div>
+                </div>
+            }
+            <div class="col-md-6">
+                <label class="form-label">
+                    <i class="bi bi-diagram-3 text-primary"></i>
+                    واحد سازمانی (برای شماره نامه)
+                </label>
+                <select class="form-select" @bind="form.OrganizationId">
+                    <option value="">— بدون واحد سازمانی —</option>
+                    @foreach (var o in AvailableOrganizations)
+                    {
+                        <option value="@o.OrganizationId">@o.NameUnit (@o.NameUniq)@(string.IsNullOrWhiteSpace(o.CompanyName) ? "" : $" — {o.CompanyName}")</option>
+                    }
+                </select>
+                <div class="form-text fs-8">
+                    واحدها در «سازمان و کیف پول ← تعریف واحدهای سازمانی» به‌ازای هر شرکت ساخته می‌شوند؛
+                    جزء «واحد» در شمارهٔ نامه از همین‌جا خوانده می‌شود.
+                </div>
+                @if (organizations.Count == 0)
+                {
+                    <div class="alert alert-warning py-2 mt-2 mb-0 fs-8">
+                        واحدی تعریف نشده — اول از صفحهٔ «تعریف واحدهای سازمانی» برای شرکت‌ها واحد بسازید.
+                    </div>
+                }
+            </div>
+            <div class="col-12">
+                <label class="form-label d-block">
+                    <i class="bi bi-briefcase text-primary"></i>
+                    سمت‌های کاربر
+                    <span class="fs-8 text-muted">(هر کاربر می‌تواند چند سمت فعال داشته باشد؛ عنوان سمت‌ها هنگام انتخاب امضاکنندهٔ نامهٔ صادره نمایش داده می‌شود)</span>
+                </label>
+                <div class="border rounded p-2">
+                    @for (var i = 0; i < positionInputs.Count; i++)
+                    {
+                        var idx = i;
+                        <div class="d-flex gap-2 align-items-center mb-1">
+                            <input class="form-control form-control-sm" placeholder="عنوان سمت — مثلاً: مدیر فنی" @bind="positionInputs[idx]" />
+                            <button type="button" class="btn btn-sm btn-light text-danger" title="حذف این سمت" @onclick="() => RemovePosition(idx)">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+                    }
+                    <button type="button" class="btn btn-sm btn-outline-primary mt-1" @onclick="AddPosition">
+                        <i class="bi bi-plus-lg"></i> افزودن سمت
+                    </button>
+                </div>
+            </div>
+            @if (Auth.IsAdmin && editing)
+            {
+                <div class="col-12">
+                    <label class="form-label d-block">افراد مجاز برای دستور کار <span class="fs-8 text-muted">(این کاربر به چه کسانی می‌تواند دستور کار بدهد)</span></label>
+                    <div class="border rounded p-2">
+                        <input class="form-control form-control-sm mb-2" placeholder="جستجو..." @bind="woSearch" @bind:event="oninput" />
+                        <div style="max-height:150px;overflow-y:auto">
+                            @foreach (var u2 in items.Where(x => x.Id != form.Id && (string.IsNullOrWhiteSpace(woSearch)
+                                || x.Username.Contains(woSearch.Trim(), StringComparison.OrdinalIgnoreCase)
+                                || FullName(x).Contains(woSearch.Trim(), StringComparison.OrdinalIgnoreCase))))
+                            {
+                                <div class="form-check form-check-inline mb-1">
+                                    <input class="form-check-input" type="checkbox" id="wot-@u2.Id"
+                                           checked="@woAllowed.Contains(u2.Id)"
+                                           @onchange="e => { if ((bool)e.Value!) woAllowed.Add(u2.Id); else woAllowed.Remove(u2.Id); }" />
+                                    <label class="form-check-label" for="wot-@u2.Id">@(string.IsNullOrWhiteSpace(FullName(u2)) ? u2.Username : $"{FullName(u2)} ({u2.Username})")</label>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+            <div class="col-12">
+                <label class="form-label d-block">نقش‌ها (از بخش «نقش‌ها و دسترسی‌ها») <span class="text-danger">*</span></label>
+                @if (allRoles.Count == 0)
+                {
+                    <div class="alert alert-warning py-2 mb-0 fs-8">
+                        نقشی تعریف نشده — از «تنظیمات ← مدیریت نقش‌ها و دسترسی‌ها» نقش بسازید.
+                    </div>
+                }
+                else
+                {
+                    @* ================== کمبوی چندانتخابی با جستجو ================== *@
+                    <div class="ms-combo">
+                        <div class="ms-combo-control form-control @(roleDropdownOpen ? "focus" : "")" @ref="_roleComboEl" @onclick="ToggleRoleDropdown">
+                            @if (selectedRoleIds.Count == 0)
+                            {
+                                <span class="text-muted">— انتخاب نقش(ها) —</span>
+                            }
+                            else
+                            {
+                                @foreach (var r in allRoles.Where(r => selectedRoleIds.Contains(r.Id)))
+                                {
+                                    <span class="ms-chip">
+                                        @r.Name
+                                        <i class="bi bi-x-circle-fill" @onclick:stopPropagation="true"
+                                           @onclick="() => ToggleRole(r.Id, false)"></i>
+                                    </span>
+                                }
+                            }
+                            <i class="bi bi-chevron-@(roleDropdownOpen ? "up" : "down") ms-caret"></i>
+                        </div>
+                        @if (roleDropdownOpen)
+                        {
+                            <div class="pop-overlay" @onclick="() => roleDropdownOpen = false" @onclick:stopPropagation="true"></div>
+                            <div class="ms-combo-menu shadow" style="@RoleMenuStyle" @onclick:stopPropagation="true">
+                                <div class="p-2 border-bottom">
+                                    <input class="form-control form-control-sm" placeholder="جستجوی نقش..."
+                                           @bind="roleSearch" @bind:event="oninput" @onclick:stopPropagation="true" />
+                                </div>
+                                <div class="ms-combo-items">
+                                    @if (!FilteredRoles.Any())
+                                    {
+                                        <div class="px-3 py-2 text-muted fs-8">نقشی پیدا نشد.</div>
+                                    }
+                                    @foreach (var r in FilteredRoles)
+                                    {
+                                        var isSel = selectedRoleIds.Contains(r.Id);
+                                        <div class="ms-combo-item @(isSel ? "sel" : "")" title="@r.Description"
+                                             @onclick="() => ToggleRole(r.Id, !isSel)">
+                                            <i class="bi @(isSel ? "bi-check-square-fill" : "bi-square")"></i>
+                                            <span>@r.Name</span>
+                                            @if (!string.IsNullOrWhiteSpace(r.Description))
+                                            {
+                                                <small class="text-muted ms-auto">@r.Description</small>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                    <div class="fs-8 text-muted mt-1">
+                        سطح ورود کاربر (مدیر / اپراتور / معرف) به‌صورت خودکار از نقش‌های انتخابی تعیین می‌شود؛
+                        «مدیر کل» فقط با انتخاب نقش دقیقاً <b dir="ltr">Admin</b> داده می‌شود (نام‌هایی مثل «مدیر فروش» سطح اپراتور می‌دهند).
+                    </div>
+                    @if (WillLoseAdminLevel)
+                    {
+                        <div class="alert alert-warning py-2 mt-2 mb-0 fs-8">
+                            <i class="bi bi-exclamation-triangle-fill"></i>
+                            با این انتخاب، سطح این کاربر از «مدیر کل» به «اپراتور» تغییر می‌کند و <b>دسترسی کامل از او گرفته می‌شود</b>.
+                            اگر می‌خواهید مدیر بماند، نقش <b dir="ltr">Admin</b> را هم انتخاب کنید.
+                        </div>
+                    }
+                }
+            </div>
+            @if (IsReferrerSelected)
+            {
+                <div class="col-12">
+                    <label class="form-label">معرف مرتبط <span class="text-danger">*</span></label>
+                    <select class="form-select" @bind="referrerIdStr">
+                        <option value="0">— بدون معرف —</option>
+                        @foreach (var r in referrers)
+                        {
+                            <option value="@r.Id">@r.Name@(string.IsNullOrWhiteSpace(r.CompanyName) ? "" : $" ({r.CompanyName})")</option>
+                        }
+                    </select>
+                </div>
+            }
+            <div class="col-12">
+                <label class="form-label d-block">وضعیت</label>
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="userStatus" id="userActive"
+                           checked="@form.IsActive" @onchange="@(() => form.IsActive = true)" />
+                    <label class="form-check-label" for="userActive">فعال</label>
+                </div>
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="userStatus" id="userInactive"
+                           checked="@(!form.IsActive)" @onchange="@(() => form.IsActive = false)" />
+                    <label class="form-check-label" for="userInactive">غیرفعال</label>
+                </div>
+            </div>
+        </div>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-light" @onclick="CloseModal">انصراف (Esc)</button>
+            <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+                @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                ذخیره (F1)
+            </button>
+        </Footer>
+    </Modal>
+}
+
+@code {
+    private List<UserDto> items = new();
+    private List<CompanyOption> companyOptions = new();
+    private HashSet<int> selectedCompanyIds = new();
+
+    // ---------- واحدهای سازمانی (تعریف‌شده به‌ازای هر شرکت) ----------
+    private List<OrgOption> organizations = new();
+    private sealed class OrgOption
+    {
+        public int OrganizationId { get; set; }
+        public int? CompanyId { get; set; }
+        public string NameUnit { get; set; } = "";
+        public string NameUniq { get; set; } = "";
+        public bool IsActive { get; set; } = true;
+        public bool IsDefault { get; set; }
+        public string CompanyName { get; set; } = "";
+    }
+
+    /// <summary>واحدهای قابل انتخاب: فعال و در محدودهٔ شرکت‌های مجازِ همین کاربر.</summary>
+    private IEnumerable<OrgOption> AvailableOrganizations =>
+        organizations
+            .Where(o => o.IsActive)
+            .Where(o => o.CompanyId is null or 0 || selectedCompanyIds.Count == 0 || selectedCompanyIds.Contains(o.CompanyId.Value))
+            .OrderBy(o => o.NameUnit);
+    private sealed class CompanyOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+    private List<Referrer> referrers = new();
+    private bool loading = true;
+
+    private UserDto form = new();
+
+    // ================== سمت‌های کاربر (چند سمت فعال) ==================
+    private List<string> positionInputs = new();
+
+    private void AddPosition()
+    {
+        positionInputs.Add("");
+        StateHasChanged();
+    }
+
+    private void RemovePosition(int index)
+    {
+        if (index < 0 || index >= positionInputs.Count) return;
+        positionInputs.RemoveAt(index);
+        if (positionInputs.Count == 0) positionInputs.Add("");
+        StateHasChanged();
+    }
+
+    /// <summary>سطرهای سمت را به فهرستِ یکتا و پاک‌شده تبدیل می‌کند.</summary>
+    private List<string> CollectPositions()
+    {
+        return positionInputs
+            .Select(t => (t ?? "").Trim())
+            .Where(t => t.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    // ================== عکس کاربر لاگین ==================
+    private long photoBust;
+    private byte[]? luPhotoBytes;
+    private string? luPhotoPreview;
+    private byte[]? luSignatureBytes;
+    private string? luSignaturePreview;
+    private string? luStoredSignaturePreview;
+    private bool signaturePreviewLoading;
+
+    private async Task LoadStoredSignaturePreviewAsync(int userId)
+    {
+        signaturePreviewLoading = true;
+        try
+        {
+            EnsureAuthHeader();
+            using var response = await Http.GetAsync($"/api/auth/users/signature/{userId}");
+            if (response.IsSuccessStatusCode)
+            {
+                var bytes = await response.Content.ReadAsByteArrayAsync();
+                if (bytes.Length > 0)
+                    luStoredSignaturePreview = "data:image/png;base64," + Convert.ToBase64String(bytes);
+            }
+        }
+        catch
+        {
+            // The saved SignaturePath remains untouched; preview failure must not block editing.
+        }
+        finally
+        {
+            signaturePreviewLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnLoginUserPhotoPicked(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null || file.Size == 0) return;
+        if (file.Size > 5 * 1024 * 1024) { saveError = "حداکثر حجم عکس ۵ مگابایت است."; StateHasChanged(); return; }
+        var buf = new byte[file.Size];
+        await file.OpenReadStream(long.MaxValue).ReadAsync(buf);
+        luPhotoBytes = buf;
+        luPhotoPreview = "data:" + (file.ContentType ?? "image/jpeg") + ";base64," + Convert.ToBase64String(buf);
+        StateHasChanged();
+    }
+
+    private async Task OnUserSignaturePicked(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null || file.Size == 0) return;
+        if (file.Size > 10 * 1024 * 1024) { saveError = "حداکثر حجم امضا ۱۰ مگابایت است."; return; }
+        if (file.ContentType != "image/png" || !Path.GetExtension(file.Name).Equals(".png", StringComparison.OrdinalIgnoreCase))
+        { saveError = "فقط فایل PNG مجاز است."; return; }
+        luSignatureBytes = new byte[file.Size];
+        await using (var signatureStream = file.OpenReadStream(10 * 1024 * 1024))
+            await signatureStream.ReadExactlyAsync(luSignatureBytes);
+        luSignaturePreview = "data:" + file.ContentType + ";base64," + Convert.ToBase64String(luSignatureBytes);
+        StateHasChanged();
+    }
+
+    private void ClearUserSignature() { luSignatureBytes = null; luSignaturePreview = null; StateHasChanged(); }
+
+    private void ClearLoginUserPhoto()
+    {
+        luPhotoBytes = null;
+        luPhotoPreview = null;
+        StateHasChanged();
+    }
+    private string referrerIdStr = "0";
+    private bool showModal, saving, syncing;
+
+    private async Task SyncBale()
+    {
+        syncing = true;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(Auth.Token))
+                Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Auth.Token);
+            var resp = await Http.PostAsync("/api/notifications/sync-bale", null);
+            var res = await resp.Content.ReadFromJsonAsync<SyncRes>();
+            if ((res?.Matched ?? 0) > 0) Toast.Success(res!.Message);
+            else Toast.Error(res?.Message ?? "همگام‌سازی انجام نشد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { syncing = false; }
+    }
+    private class SyncRes { public int Matched { get; set; } public string Message { get; set; } = ""; }
+
+    // ===== کد اتصال ایتا برای این کاربر (مدیر) =====
+    private bool codeBusy;
+    private string? userEitaaCode;
+
+    private async Task GetEitaaCode()
+    {
+        if (form.Id <= 0) { Toast.Error("ابتدا کاربر را ذخیره کنید، سپس کد اتصال بگیرید."); return; }
+        codeBusy = true;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(Auth.Token))
+                Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Auth.Token);
+            var resp = await Http.PostAsync($"/api/notifications/eitaa-link-code/{form.Id}", null);
+            var res = await resp.Content.ReadFromJsonAsync<CodeRes>();
+            if (!string.IsNullOrWhiteSpace(res?.Code))
+            {
+                userEitaaCode = res!.Code;
+                Toast.Success(res.Message);
+            }
+            else Toast.Error(res?.Message ?? "ساخت کد اتصال انجام نشد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { codeBusy = false; }
+    }
+
+    private class CodeRes { public string? Code { get; set; } public string? Message { get; set; } public bool Configured { get; set; } }
+
+    // ================== افراد مجاز دستور کار (بند ۶) ==================
+    private HashSet<int> woAllowed = new();
+    private string woSearch = "";
+
+    private async Task LoadCompanyAccess(int userId)
+    {
+        try
+        {
+            var ids = await Http.GetFromJsonAsync<List<int>>($"/api/company-context/users/{userId}") ?? new();
+            selectedCompanyIds = ids.ToHashSet();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { selectedCompanyIds = new(); }
+    }
+
+    private void ToggleCompany(int id, bool selected)
+    {
+        if (selected) selectedCompanyIds.Add(id); else selectedCompanyIds.Remove(id);
+    }
+
+    private async Task LoadWoAllowed(int userId)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(Auth.Token))
+                Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Auth.Token);
+            var ids = await Http.GetFromJsonAsync<List<int>>($"/api/workorders/allowed/{userId}") ?? new();
+            woAllowed = new HashSet<int>(ids);
+        }
+        catch { woAllowed = new(); }
+    }
+
+    private async Task SaveWoAllowed(int userId)
+    {
+        try
+        {
+            EnsureAuthHeader();
+            await Http.PostAsJsonAsync($"/api/workorders/allowed/{userId}", woAllowed.ToList());
+        }
+        catch { }
+    }
+    private bool editing => form.Id != 0;
+
+    // ================== نقش‌های RBAC (از بخش نقش‌ها و دسترسی‌ها) ==================
+    private List<RoleOpt> allRoles = new();
+    private HashSet<int> selectedRoleIds = new();
+
+    // اپراتور نمی‌تواند نقش مدیر بدهد
+    private IEnumerable<RoleOpt> SelectableRoles =>
+        Auth.IsAdmin ? allRoles : allRoles.Where(r => !IsAdminRole(r.Name));
+
+    private static bool IsAdminRole(string n) =>
+        n.Equals("Admin", StringComparison.OrdinalIgnoreCase) || n.Contains("مدیر") || n.Contains("ادمین");
+
+    /// <summary>سطح «مدیر کل» فقط با نقش دقیقاً Admin داده می‌شود (هم‌راستا با AuthService.DeriveLegacyRole).</summary>
+    private static bool IsAdminRoleExact(string n) => n.Equals("Admin", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>آیا نقش دقیقاً «Admin» انتخاب شده است؟</summary>
+    private bool SelectedIncludesAdminRole =>
+        allRoles.Any(r => selectedRoleIds.Contains(r.Id) && IsAdminRoleExact(r.Name));
+
+    /// <summary>هشدار: کاربری که الان مدیر کل است با این ذخیره به اپراتور تبدیل می‌شود.</summary>
+    private bool WillLoseAdminLevel =>
+        editing && form.Role == "Admin" && selectedRoleIds.Count > 0 && !SelectedIncludesAdminRole;
+
+    private static bool IsReferrerRole(string n) =>
+        n.Equals("Referrer", StringComparison.OrdinalIgnoreCase) || n.Contains("معرف")
+        || n.Equals("SalesVisitor", StringComparison.OrdinalIgnoreCase) || n.Contains("ویزیتور");
+
+    private bool IsReferrerSelected =>
+        allRoles.Any(r => selectedRoleIds.Contains(r.Id) && IsReferrerRole(r.Name));
+
+    private void ToggleRole(int roleId, bool isChecked)
+    {
+        if (isChecked) selectedRoleIds.Add(roleId);
+        else selectedRoleIds.Remove(roleId);
+    }
+
+    // ================== کمبوی چندانتخابی نقش‌ها ==================
+    private bool roleDropdownOpen;
+    private string roleSearch = "";
+
+    // ---------- منوی شناور کمبوی نقش‌ها (fixed + پوشش نامرئی — مصون از کارت‌ویو/مودال) ----------
+    private ElementReference _roleComboEl;
+    private double _roleTop, _roleLeft, _roleWidth;
+    private string RoleMenuStyle => Popover.FixedStyle(_roleTop, _roleLeft, _roleWidth, 300);
+
+    private async Task ToggleRoleDropdown()
+    {
+        if (roleDropdownOpen) { roleDropdownOpen = false; return; }
+        try
+        {
+            var r = await JS.InvokeAsync<UiRect>("uiRect", _roleComboEl);
+            (_roleTop, _roleLeft, _roleWidth) = Popover.Below(r, 0, 300);
+        }
+        catch (JSException) { }
+        roleDropdownOpen = true;
+    }
+
+    private IEnumerable<RoleOpt> FilteredRoles =>
+        string.IsNullOrWhiteSpace(roleSearch)
+            ? SelectableRoles
+            : SelectableRoles.Where(r =>
+                r.Name.Contains(roleSearch.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                (r.Description ?? "").Contains(roleSearch.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    public class RoleOpt
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("کاربران");
+        if (!Auth.IsAdmin && !Auth.IsOperator) { loading = false; return; }
+        EnsureAuthHeader(); // بدون این هدر، فراخوانی‌های مستقیم HttpClient (نقش‌ها، عکس، دستور کار) ۴۰۱ می‌گرفتند
+        await Load();
+    }
+
+    /// <summary>افزودن توکن به هدر HttpClient — این صفحه چند فراخوانی مستقیم (بدون ApiClient) دارد.</summary>
+    private void EnsureAuthHeader()
+    {
+        if (!string.IsNullOrWhiteSpace(Auth.Token))
+            Http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Auth.Token);
+    }
+
+    /// <summary>نام و نام خانوادگی کاربر (اگر خالی بود، رشتهٔ خالی)</summary>
+    private static string FullName(UserDto u) => $"{u.FirstName} {u.LastName}".Trim();
+
+    private async Task Load()
+    {
+        loading = true;
+        EnsureAuthHeader();
+        try
+        {
+            items = await AuthApi.GetUsersAsync();
+            try { companyOptions = await Http.GetFromJsonAsync<List<CompanyOption>>("/api/SystemCompanies") ?? new(); } catch { companyOptions = new(); }
+            try
+            {
+                organizations = await Http.GetFromJsonAsync<List<OrgOption>>("/api/SystemOrganizations") ?? new();
+                var names = companyOptions.ToDictionary(c => c.Id, c => c.Name);
+                foreach (var o in organizations)
+                    o.CompanyName = o.CompanyId is int cid && names.TryGetValue(cid, out var cn) ? cn : "";
+            }
+            catch { organizations = new(); }
+            referrers = await ReferrerSvc.GetAllAsync(activeOnly: true);
+            try { allRoles = (await Http.GetFromJsonAsync<List<RoleOpt>>("/api/roles") ?? new()).Where(r => r.IsActive).ToList(); }
+            catch (Exception rex)
+            {
+                allRoles = new();
+                Toast.Error($"فهرست نقش‌ها خوانده نشد: {rex.Message}");
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenNew()
+    {
+        // سطح قدیمی (Admin/Operator/Referrer) هنگام ذخیره از روی نقش‌های RBAC انتخاب‌شده تعیین می‌شود؛
+        // پس اینجا هرگز «Admin» پیش‌فرض نمی‌گذاریم (اگر فهرست نقش‌ها لود نشده باشد، کاربر بی‌نقش = مدیر کل می‌شد).
+        form = new UserDto
+        {
+            Role = "Operator",
+            IsActive = true,
+            // واحد پیش‌فرضِ شرکت (اگر تعریف شده باشد) از ابتدا انتخاب می‌شود
+            OrganizationId = organizations.FirstOrDefault(o => o.IsActive && o.IsDefault)?.OrganizationId
+        };
+        referrerIdStr = "0";
+        selectedRoleIds = new();
+        selectedCompanyIds = new();
+        positionInputs = new List<string> { "" };
+        roleDropdownOpen = false; roleSearch = "";
+        saveError = "";
+        luPhotoBytes = null; luPhotoPreview = null; luSignatureBytes = null; luSignaturePreview = null;
+        luStoredSignaturePreview = null; signaturePreviewLoading = false;
+        showModal = true;
+    }
+
+    private async Task OpenEdit(UserDto u)
+    {
+        form = new UserDto
+        {
+            Id = u.Id,
+            Username = u.Username,
+            Role = u.Role,
+            FirstName = u.FirstName,
+            LastName = u.LastName,
+            Mobile = u.Mobile,
+            BaleChatId = u.BaleChatId,
+            EitaaChatId = u.EitaaChatId,
+            SignaturePath = u.SignaturePath,
+            RoleIds = u.RoleIds is null ? null : new List<int>(u.RoleIds),
+            ReferrerId = u.ReferrerId,
+            IsActive = u.IsActive,
+            CreatedAt = u.CreatedAt,
+            OrganizationId = u.OrganizationId
+        };
+        referrerIdStr = (u.ReferrerId ?? 0).ToString();
+        selectedRoleIds = new HashSet<int>(u.RoleIds ?? new List<int>());
+        positionInputs = new List<string>();
+        if (u.Positions is { Count: > 0 }) positionInputs.AddRange(u.Positions);
+        positionInputs.Add("");
+        roleDropdownOpen = false; roleSearch = "";
+        saveError = "";
+        woSearch = "";
+        _ = LoadWoAllowed(u.Id);
+        _ = LoadCompanyAccess(u.Id);
+        luPhotoBytes = null; luPhotoPreview = null; luSignatureBytes = null; luSignaturePreview = null;
+        luStoredSignaturePreview = null;
+        showModal = true;
+        StateHasChanged();
+        if (form.Id > 0 && !string.IsNullOrWhiteSpace(form.SignaturePath))
+            await LoadStoredSignaturePreviewAsync(form.Id);
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private string saveError = "";
+
+    private async Task Save()
+    {
+        saveError = "";
+
+        if (string.IsNullOrWhiteSpace(form.Username))
+        { saveError = "نام کاربری را وارد کنید."; return; }
+
+        if (!editing && string.IsNullOrWhiteSpace(form.Password))
+        { saveError = "رمز عبور را وارد کنید."; return; }
+
+        if (string.IsNullOrWhiteSpace(form.FirstName))
+        { saveError = "نام کاربر را وارد کنید."; return; }
+
+        if (string.IsNullOrWhiteSpace(form.LastName))
+        { saveError = "نام خانوادگی کاربر را وارد کنید."; return; }
+
+        // بدون نقش، کاربر «هیچ محدودیت واقعی» ندارد (سرور هم ثبتِ کاربر جدید بدون نقش را رد می‌کند)
+        if (allRoles.Count == 0)
+        { saveError = "فهرست نقش‌ها در دسترس نیست (اتصال به سرور یا تنظیمات نقش‌ها را بررسی کنید) — بدون نقش، کاربر ثبت نمی‌شود."; return; }
+
+        if (selectedRoleIds.Count == 0)
+        { saveError = "حداقل یک نقش برای کاربر انتخاب کنید."; return; }
+
+        form.RoleIds = selectedRoleIds.ToList();
+        // سمت‌های فعالِ کاربر (هر کاربر می‌تواند چند سمت داشته باشد)
+        form.Positions = CollectPositions();
+        form.ReferrerId = int.TryParse(referrerIdStr, out var rid) && rid > 0 ? rid : null;
+        form.Username = form.Username.Trim();
+        form.FirstName = form.FirstName?.Trim();
+        form.LastName = form.LastName?.Trim();
+        form.Mobile = string.IsNullOrWhiteSpace(form.Mobile) ? null : Fa.ToEn(form.Mobile).Trim();
+        saving = true;
+        EnsureAuthHeader();
+        try
+        {
+            var saved = await AuthApi.SaveUserAsync(form);
+            if (Auth.IsAdmin)
+            {
+                var cr = await Http.PutAsJsonAsync($"/api/company-context/users/{saved.Id}", new { companyIds = selectedCompanyIds.ToList() });
+                if (!cr.IsSuccessStatusCode) Toast.Error("کاربر ذخیره شد ولی تخصیص شرکت‌ها ذخیره نشد.");
+            }
+            if (luPhotoBytes != null)
+            {
+                try
+                {
+                    using var pf = new MultipartFormDataContent();
+                    var pc = new ByteArrayContent(luPhotoBytes);
+                    pc.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+                    pf.Add(pc, "file", "photo.jpg");
+                    var pr = await Http.PostAsync($"/api/auth/users/photo/{saved.Id}", pf);
+                    if (!pr.IsSuccessStatusCode)
+                        Toast.Error("کاربر ذخیره شد ولی عکس ذخیره نشد.");
+                }
+                catch { Toast.Error("خطا در آپلود عکس."); }
+            }
+            if (luSignatureBytes != null)
+            {
+                try
+                {
+                    using var sf = new MultipartFormDataContent();
+                    var sc = new ByteArrayContent(luSignatureBytes);
+                    sc.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+                    sf.Add(sc, "file", "signature.png");
+                    var sr = await Http.PostAsync($"/api/auth/users/signature/{saved.Id}", sf);
+                    if (!sr.IsSuccessStatusCode) Toast.Error("کاربر ذخیره شد ولی امضا ذخیره نشد.");
+                    else form.SignaturePath = $"/api/auth/users/signature/{saved.Id}";
+                }
+                catch { Toast.Error("خطا در آپلود امضای کاربر."); }
+            }
+            luPhotoBytes = null; luPhotoPreview = null; luSignatureBytes = null; luSignaturePreview = null;
+            photoBust++;
+            if (Auth.IsAdmin && editing) await SaveWoAllowed(saved.Id);
+            Toast.Success(editing ? "کاربر ویرایش شد." : "کاربر ثبت شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex) { saveError = ex.Message; Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(UserDto u)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف کاربر «{u.Username}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await AuthApi.DeleteUserAsync(u.Id);
+            Toast.Success("کاربر حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ================== برچسب و رنگ فارسی نقش‌های RBAC ==================
+    private static string RoleLabel(string name) => name switch
+    {
+        "Admin"       => "مدیر کل",
+        "Operator"    => "اپراتور",
+        "Accountant"  => "حسابدار",
+        "Referrer"    => "معرف",
+        "HrManager"   => "مدیر منابع انسانی",
+        "Employee"    => "کارمند",
+        _             => name
+    };
+
+    private static string RoleBadgeClass(string name) => name switch
+    {
+        "Admin"      => "badge-soft-danger",
+        "Operator"   => "badge-soft-warning",
+        "Accountant" => "badge-soft-info",
+        "Referrer"   => "badge-soft-success",
+        "HrManager"  => "badge-soft-primary",
+        "Employee"   => "badge-soft-muted",
+        _            => "badge-soft-primary"
+    };
+}
+
+<style>
+    /* ===== کمبوی چندانتخابی نقش‌ها ===== */
+    .ms-combo { position: relative; }
+    .ms-combo-control {
+        display: flex; flex-wrap: wrap; align-items: center; gap: .35rem;
+        min-height: 42px; cursor: pointer; padding-left: 2rem;
+    }
+    .ms-combo-control.focus { border-color: var(--bs-primary, #2563eb); box-shadow: 0 0 0 .2rem rgba(37,99,235,.15); }
+    .ms-caret { position: absolute; left: .75rem; top: 50%; transform: translateY(-50%); color: #94a3b8; pointer-events: none; }
+    .ms-chip {
+        display: inline-flex; align-items: center; gap: .35rem;
+        background: #eef4ff; color: #2563eb; border: 1px solid #dbe7ff;
+        border-radius: 999px; padding: .15rem .6rem; font-size: .8rem; font-weight: 600;
+    }
+    .ms-chip i { cursor: pointer; font-size: .8rem; opacity: .7; }
+    .ms-chip i:hover { opacity: 1; color: #dc3545; }
+    .ms-combo-menu {
+        position: absolute; top: calc(100% + 4px); right: 0; left: 0; z-index: 1060;
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;
+    }
+    .ms-combo-items { max-height: 220px; overflow-y: auto; }
+    .ms-combo-item {
+        display: flex; align-items: center; gap: .5rem;
+        padding: .5rem .85rem; cursor: pointer; font-size: .9rem;
+    }
+    .ms-combo-item:hover { background: #f1f5f9; }
+    .ms-combo-item.sel { background: #eef4ff; }
+    .ms-combo-item.sel i { color: var(--bs-primary, #2563eb); }
+    .ms-combo-item small { font-size: .72rem; }
+</style>
+
+<style>
+    .signature-checkerboard {
+        background-color: #f8fafc;
+        background-image: linear-gradient(45deg, #e2e8f0 25%, transparent 25%),
+            linear-gradient(-45deg, #e2e8f0 25%, transparent 25%),
+            linear-gradient(45deg, transparent 75%, #e2e8f0 75%),
+            linear-gradient(-45deg, transparent 75%, #e2e8f0 75%);
+        background-size: 12px 12px;
+        background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+    }
+    /* ===== نشان‌های بله و ایتا ===== */
+    .msgr-badge {
+        display: inline-flex; align-items: center; gap: .2rem;
+        font-size: .64rem; font-weight: 800; border-radius: 999px;
+        padding: .1rem .5rem; margin-right: .25rem; vertical-align: 2px;
+    }
+    .msgr-bale { background: #e8f7ef; color: #12a150; border: 1px solid #b7e4c7; }
+    .msgr-bale::before { content: "🕊"; font-size: .7rem; }
+    .msgr-eitaa { background: #fff3e6; color: #ef7c1a; border: 1px solid #ffd9b0; }
+    .msgr-eitaa::before { content: "🦅"; font-size: .7rem; }
+</style>

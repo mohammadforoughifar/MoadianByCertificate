@@ -1,0 +1,243 @@
+@namespace Inventory.Client.Pages.BonHr
+@page "/bon-hr/payroll"
+@inject BonHrApi Api
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject LayoutState Layout
+
+<PageTitle>حقوق و دستمزد بن‌سازه</PageTitle>
+<BonHrGuard Section="Payroll">
+<BonHrShell Title="حقوق و دستمزد بن‌سازه" Sub="فیش حقوقی ماهانه" />
+
+
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div><p class="text-muted small mb-0">حقوق و دستمزد</p><h2>فیش حقوقی @BonFa.MonthLabel(_month)</h2></div>
+        <div class="d-flex gap-2 flex-wrap">
+            <select class="form-select" @bind="_month" @bind:after="LoadMonthAsync">
+                @foreach (var month in _months)
+                {
+                    <option value="@month">@BonFa.MonthLabel(month)</option>
+                }
+            </select>
+            <select class="form-select" @bind="_code" @bind:after="RenderAsync">
+                @foreach (var employee in _employees)
+                {
+                    <option value="@employee.Code">@employee.FullName — @BonFa.N(employee.Code)</option>
+                }
+            </select>
+            <button class="btn btn-primary" type="button" @onclick="PrintAsync">چاپ A5 فیش</button>
+            <button class="btn btn-light" type="button" @onclick="ExportAsync">خروجی Excel</button>
+        </div>
+    </div>
+
+    <article id="payslip" class="card card-body mt-3 payslip">
+        @if (_row == null || _employee == null)
+        {
+            <p class="text-muted text-center py-4">برای این ماه ردیف حقوقی محاسبه نشده است. ابتدا در صفحهٔ حضور و غیاب «صحه‌گذاری داده‌ها» را اجرا کنید.</p>
+        }
+        else
+        {
+            <div class="payslip-head">
+                <div>
+                    <b>شرکت آورین بن سازه راد</b>
+                    <span>فیش حقوق و دستمزد — @BonFa.MonthLabel(_month)</span>
+                </div>
+                <strong>RADIS-HR</strong>
+            </div>
+
+            <div class="payslip-person">
+                <span>نام: <b>@_row.Name</b></span>
+                <span>کد پرسنلی: <b>@BonFa.N(_row.Code)</b></span>
+                <span>کد دستگاه: <b>@BonFa.N(_row.DeviceCode)</b></span>
+                <span>واحد: <b>@_employee.Unit</b></span>
+            </div>
+
+            @if (Blocked)
+            {
+                <div class="payroll-warning">
+                    این فرد در فایل دستگاه تطبیق نشده است؛ فیش تا زمان تأیید کد دستگاه، غیرقابل پرداخت است.
+                </div>
+            }
+
+            <div class="work-summary">
+                <span>حضور <b>@BonFa.N(_row.Presence)</b></span>
+                <span>مرخصی ساعتی <b>@BonFa.N(_row.Leave)</b></span>
+                <span>ماموریت <b>@BonFa.N(_row.Mission)</b></span>
+                <span>کسرکار <b>@BonFa.N(_row.Shortfall)</b></span>
+                <span>اضافه‌کار مجاز <b>@BonFa.N(_row.Ot)</b></span>
+            </div>
+
+            <div class="payslip-columns">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th>شرح پرداخت</th><th>مبلغ (ریال)</th></tr></thead>
+                    <tbody>
+                        <tr><td>حقوق پایه پرداختی</td><td>@BonFa.N(_row.Base)</td></tr>
+                        <tr><td>پایه سنوات</td><td>@BonFa.N(_row.Seniority)</td></tr>
+                        <tr><td>حق مسکن</td><td>@BonFa.N(_row.Housing)</td></tr>
+                        <tr><td>بن خواربار / اقلام مصرفی</td><td>@BonFa.N(_row.Food)</td></tr>
+                        <tr><td>حق تأهل</td><td>@BonFa.N(_row.Marriage)</td></tr>
+                        <tr><td>حق اولاد (@BonFa.N(_employee.Children) فرزند)</td><td>@BonFa.N(_row.Children)</td></tr>
+                        <tr><td>حق جذب</td><td>@BonFa.N(_row.Attraction)</td></tr>
+                        <tr><td>حق سرپرستی</td><td>@BonFa.N(_row.Supervisor)</td></tr>
+                        <tr><td>کارانه</td><td>@BonFa.N(Performance)</td></tr>
+                        <tr><td>بهره‌وری</td><td>@BonFa.N(Productivity)</td></tr>
+                        <tr><td>سایر پرداختی‌ها</td><td>@BonFa.N(OtherPayments)</td></tr>
+                        <tr><td>مزایای توافقی</td><td>@BonFa.N(_row.Agreed)</td></tr>
+                        <tr><td>نوبت‌کاری / شب‌کاری</td><td>@BonFa.N(_row.ShiftPay + _row.NightPay)</td></tr>
+                        <tr><td>جمعه‌کاری / مأموریت</td><td>@BonFa.N(_row.FridayPay + _row.MissionPay)</td></tr>
+                        <tr><td>اضافه‌کار مجاز</td><td>@BonFa.N(Overtime)</td></tr>
+                        <tr><td>سهم کارخانه از بیمه تکمیلی (غیرنقدی)</td><td>@BonFa.N(_employee.SupplementaryEmployerShare)</td></tr>
+                    </tbody>
+                </table>
+
+                <table class="table table-hover align-middle">
+                    <thead><tr><th>شرح کسورات</th><th>مبلغ (ریال)</th></tr></thead>
+                    <tbody>
+                        <tr><td>کسرکار</td><td>@BonFa.N(ShortfallPay)</td></tr>
+                        <tr><td>بیمه سهم کارگر (@BonFa.Percent(_rules?.WorkerInsuranceRate ?? 7m))</td><td>@BonFa.N(Insurance)</td></tr>
+                        <tr><td>مالیات حقوق</td><td>@BonFa.N(Tax)</td></tr>
+                        <tr><td>سهم پرسنل از بیمه تکمیلی</td><td>@BonFa.N(_employee.SupplementaryEmployeeShare)</td></tr>
+                        <tr><td>قسط مساعده این ماه</td><td>@BonFa.N(AdvanceInstallmentAmount)</td></tr>
+                        <tr><td>سایر کسورات</td><td>۰</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="payslip-advance-summary">
+                <span>اصل مساعده ثبت‌شده: <b>@BonFa.N(AdvanceTotal)</b> ریال</span>
+                <span>قسط کسرشده این ماه: <b>@BonFa.N(AdvanceInstallmentAmount)</b> ریال</span>
+                <span>مانده مساعده: <b>@BonFa.N(AdvanceBalance)</b> ریال</span>
+            </div>
+
+            <div class="payslip-total">
+                <span>جمع ناخالص: <b>@BonFa.N(AdjustedGross)</b></span>
+                <span>جمع کسورات: <b>@BonFa.N(TotalDeductions)</b></span>
+                <span>خالص پرداختی: <strong>@BonFa.N(AdjustedNet) ریال</strong></span>
+            </div>
+
+            <div class="payslip-signatures">
+                <span>امضای مدیر اداری</span>
+                <span>امضای مدیر مالی</span>
+            </div>
+        }
+    </article>
+
+
+</BonHrGuard>
+@code {
+    private List<Employee> _employees = new();
+    private List<string> _months = new();
+    private List<PayrollRow> _rows = new();
+    private List<Advance> _advances = new();
+    private AccountingMonthDto? _accounting;
+    private StatutoryRules? _rules;
+
+    private Employee? _employee;
+    private PayrollRow? _row;
+    private AccountingAdjustment? _adjustment;
+
+    private string _month = "";
+    private string _code = "";
+
+    private bool Blocked => _row != null && !_row.Status.Contains("قطعی") && !string.IsNullOrEmpty(_row.Status);
+
+    private decimal Overtime => _adjustment?.Overtime ?? _row?.OtPay ?? 0m;
+    private decimal ShortfallPay => _adjustment?.Shortfall ?? _row?.ShortfallPay ?? 0m;
+    private decimal Insurance => _adjustment?.Insurance ?? _row?.Insurance ?? 0m;
+    private decimal Tax => _adjustment?.Tax ?? _row?.Tax ?? 0m;
+    private decimal Performance => _adjustment?.Performance ?? _row?.Performance ?? 0m;
+    private decimal Productivity => _adjustment?.Productivity ?? 0m;
+    private decimal OtherPayments => _adjustment?.OtherPayments ?? 0m;
+
+    private IEnumerable<Advance> EmployeeAdvances => _advances.Where(a => a.EmployeeCode == _code);
+    private decimal AdvanceTotal => EmployeeAdvances.Sum(a => a.Amount);
+    private decimal AdvanceBalance => EmployeeAdvances.Sum(a => a.Amount - a.Deducted);
+    private decimal AdvanceInstallmentAmount => EmployeeAdvances
+        .SelectMany(a => a.Installments)
+        .Where(i => i.Month == _month)
+        .Sum(i => i.Amount);
+
+    private decimal Supplementary => _employee?.SupplementaryEmployeeShare ?? 0m;
+
+    private decimal AdjustedNet => _adjustment?.FinalNet
+        ?? Math.Max(0m, (_row?.Net ?? 0m) - AdvanceInstallmentAmount - Supplementary);
+
+    private decimal TotalDeductions => ShortfallPay + Insurance + Tax + Supplementary + AdvanceInstallmentAmount;
+    private decimal AdjustedGross => AdjustedNet + TotalDeductions;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _employees = await Api.ListAsync<Employee>("api/employees");
+        _months = await Api.ListAsync<string>("api/payroll/months");
+        if (_months.Count == 0)
+        {
+            var today = PersianCalendarUtil.Today();
+            _months.Add($"{today.Jy}/{today.Jm:00}");
+        }
+        _month = _months.Count > 0 ? _months[^1] : "";
+        _code = _employees.FirstOrDefault()?.Code ?? "";
+        _advances = await Api.ListAsync<Advance>("api/workflows/advances");
+        await LoadMonthAsync();
+    }
+
+    private async Task LoadMonthAsync()
+    {
+        _rows = await Api.ListAsync<PayrollRow>($"api/payroll/month/{_month}");
+        _accounting = await Api.GetAsync<AccountingMonthDto>($"api/workflows/accounting/{_month}");
+
+        var year = int.TryParse(_month.Split('/').FirstOrDefault(), out var y) ? y : PersianCalendarUtil.Today().Jy;
+        _rules = await Api.GetAsync<StatutoryRules>($"api/statutory-rules/{year}");
+        await RenderAsync();
+    }
+
+    private Task RenderAsync()
+    {
+        _row = _rows.FirstOrDefault(r => r.Code == _code);
+        _employee = _employees.FirstOrDefault(e => e.Code == _code);
+        _adjustment = _accounting?.Rows.FirstOrDefault(r => r.Row.Code == _code)?.Adjustment;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private async Task PrintAsync() => await JS.InvokeVoidAsync("ltxPrint");
+
+    private async Task ExportAsync()
+    {
+        var headers = new[]
+        {
+            "کد","نام","حقوق پایه","پایه سنوات","حق مسکن","بن خواربار","حق تأهل","حق اولاد","حق جذب","حق سرپرستی",
+            "کارانه نهایی","بهره‌وری","سایر پرداختی‌ها","مزایای توافقی","نوبت‌کاری","شب‌کاری","جمعه‌کاری","مأموریت",
+            "اضافه‌کار نهایی","جمع ناخالص","کسرکار نهایی","بیمه سهم کارگر نهایی","بیمه سهم کارفرما",
+            "درآمد مشمول مالیات","مالیات نهایی","اعضای بیمه تکمیلی","سهم پرسنل بیمه تکمیلی","سهم کارخانه بیمه تکمیلی",
+            "کسر مساعده","خالص پرداختی نهایی"
+        };
+
+        var lines = new List<string> { string.Join(',', headers) };
+        foreach (var row in _rows)
+        {
+            var employee = _employees.FirstOrDefault(e => e.Code == row.Code);
+            var adjustment = _accounting?.Rows.FirstOrDefault(r => r.Row.Code == row.Code)?.Adjustment;
+            var advance = _advances.Where(a => a.EmployeeCode == row.Code)
+                .SelectMany(a => a.Installments).Where(i => i.Month == _month).Sum(i => i.Amount);
+            var supplementary = employee?.SupplementaryEmployeeShare ?? 0m;
+            var finalNet = adjustment?.FinalNet ?? Math.Max(0m, row.Net - supplementary - advance);
+
+            lines.Add(string.Join(',',
+                row.Code, row.Name, row.Base, row.Seniority, row.Housing, row.Food, row.Marriage, row.Children,
+                row.Attraction, row.Supervisor,
+                adjustment?.Performance ?? row.Performance, adjustment?.Productivity ?? 0m, adjustment?.OtherPayments ?? 0m,
+                row.Agreed, row.ShiftPay, row.NightPay, row.FridayPay, row.MissionPay,
+                adjustment?.Overtime ?? row.OtPay, row.Gross,
+                adjustment?.Shortfall ?? row.ShortfallPay, adjustment?.Insurance ?? row.Insurance,
+                row.EmployerInsurance, row.TaxableIncome, adjustment?.Tax ?? row.Tax,
+                employee?.SupplementaryFamilyCount ?? 0, supplementary,
+                employee?.SupplementaryEmployerShare ?? 0m, advance, finalNet));
+        }
+
+        var bytes = System.Text.Encoding.UTF8.GetPreamble()
+            .Concat(System.Text.Encoding.UTF8.GetBytes(string.Join('\n', lines))).ToArray();
+        await JS.InvokeVoidAsync("saveAsFile", $"RADIS-HR-Payroll-{_month.Replace('/', '-')}.csv", Convert.ToBase64String(bytes));
+    }
+}

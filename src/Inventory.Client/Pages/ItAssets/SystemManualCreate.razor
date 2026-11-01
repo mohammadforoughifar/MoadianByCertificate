@@ -1,0 +1,284 @@
+@namespace Inventory.Client.Pages
+@page "/system-id/manual"
+@inject HttpClient Http
+@inject NavigationManager Nav
+
+<PageTitle>ثبت دستی سیستم</PageTitle>
+
+<div class="page-head mb-4 d-flex flex-wrap align-items-center justify-content-between gap-3">
+    <div>
+        <h1><i class="bi bi-pc-display-horizontal"></i> ثبت دستی سیستم</h1>
+        <div class="lead">ثبت شناسنامهٔ سیستم‌هایی که هنوز توسط ایجنت شناسایی نشده‌اند.</div>
+    </div>
+    <a href="/system-info" class="btn btn-outline-secondary rounded-pill px-4 fw-700">
+        <i class="bi bi-arrow-right"></i> بازگشت به لیست سیستم‌ها
+    </a>
+</div>
+
+@if (loading)
+{
+    <div class="card shadow-sm"><div class="card-body text-center py-5 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>در حال دریافت اطلاعات پایه…</div></div>
+}
+else if (companies.Count == 0)
+{
+    <div class="alert alert-warning rounded-3">
+        <i class="bi bi-building-exclamation fs-5 me-1"></i>
+        ابتدا باید حداقل یک <a href="/system-company" class="alert-link">شرکت فعال</a> تعریف کنید؛ سپس ثبت دستی سیستم را انجام دهید.
+    </div>
+}
+else
+{
+    <form class="manual-form" @onsubmit="Save" @onsubmit:preventDefault="true">
+        @if (!string.IsNullOrWhiteSpace(error))
+        {
+            <div class="alert alert-danger rounded-3 d-flex align-items-center gap-2"><i class="bi bi-exclamation-triangle-fill"></i><span>@error</span></div>
+        }
+
+        <div class="alert alert-info rounded-3 mb-4">
+            <i class="bi bi-info-circle-fill me-1"></i>
+            این رکورد با وضعیت <b>تأییدشده</b> ثبت می‌شود. در صورت اجرای ایجنت روی همین دستگاه، کد سیستم واردشده در این فرم باید با شناسهٔ ایجنت یکسان باشد تا تغییرات در همان شناسنامه ثبت شوند.
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-header form-section-head"><i class="bi bi-diagram-3-fill"></i> محل استقرار و مسئول سیستم</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">شرکت <span class="text-danger">*</span></label>
+                        <select class="form-select" value="@form.CompanyId" @onchange="CompanyChanged">
+                            <option value="0">— انتخاب شرکت —</option>
+                            @foreach (var company in companies.Where(x => x.IsActive).OrderBy(x => x.Name))
+                            {
+                                <option value="@company.Id">@company.Name@(string.IsNullOrWhiteSpace(company.Code) ? "" : $" ({company.Code})")</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">واحد / دپارتمان</label>
+                        <select class="form-select" @bind="form.DepartmentId" disabled="@(form.CompanyId <= 0)">
+                            <option value="">— بدون واحد —</option>
+                            @foreach (var department in AvailableDepartments)
+                            {
+                                <option value="@department.Id">@department.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">کاربر تحویل‌گیرنده</label>
+                        <select class="form-select" @bind="form.UserId" disabled="@(form.CompanyId <= 0)">
+                            <option value="">— فعلاً تخصیص داده نشود —</option>
+                            @foreach (var user in AvailableUsers)
+                            {
+                                <option value="@user.Id">@user.FirstName @user.LastName (@user.StaffNumber)</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-header form-section-head"><i class="bi bi-upc-scan"></i> شناسه و مشخصات اصلی</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">نام یا کد سیستم <span class="text-danger">*</span></label>
+                        <input class="form-control" @bind="form.AgentId" maxlength="150" placeholder="مثلاً PC-ACC-01 یا شماره اموال" autofocus />
+                        <div class="form-text">شناسه باید یکتا باشد.</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">مدل دستگاه / کیس</label>
+                        <input class="form-control" @bind="form.ComputerModel" maxlength="200" placeholder="مثلاً Dell OptiPlex 7090" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">پردازنده (CPU)</label>
+                        <input class="form-control" @bind="form.Cpu" maxlength="300" placeholder="مثلاً Intel Core i5-10500" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">حجم RAM (گیگابایت)</label>
+                        <input class="form-control" type="number" min="0" max="4096" @bind="form.TotalRamGb" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">نوع / توضیح RAM</label>
+                        <input class="form-control" @bind="form.Ram" maxlength="200" placeholder="مثلاً DDR4" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">مادربرد</label>
+                        <input class="form-control" @bind="form.Motherboard" maxlength="300" placeholder="مدل مادربرد" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">سیستم‌عامل</label>
+                        <input class="form-control" @bind="form.OsName" maxlength="200" placeholder="مثلاً Windows 11 Pro" />
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-header form-section-head"><i class="bi bi-hdd-stack-fill"></i> تجهیزات و شبکه</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">هارد / فضای ذخیره‌سازی</label>
+                        <input class="form-control" @bind="form.HardDisk" maxlength="300" placeholder="مثلاً 512GB NVMe SSD" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">کارت گرافیک</label>
+                        <input class="form-control" @bind="form.Graphics" maxlength="300" placeholder="در صورت وجود" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">مانیتور</label>
+                        <input class="form-control" @bind="form.Monitor" maxlength="300" placeholder="مدل مانیتور" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">IP</label>
+                        <input class="form-control text-start" dir="ltr" @bind="form.Ip" maxlength="50" placeholder="192.168.1.10" />
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex flex-wrap justify-content-end gap-2 mb-5">
+            <a href="/system-info" class="btn btn-light rounded-pill px-4">انصراف</a>
+            <button type="submit" class="btn btn-primary rounded-pill px-4 fw-800" disabled="@saving">
+                @if (saving)
+                {
+                    <span class="spinner-border spinner-border-sm me-1"></span><text>در حال ثبت…</text>
+                }
+                else
+                {
+                    <i class="bi bi-check2-circle"></i><text> ثبت سیستم</text>
+                }
+            </button>
+        </div>
+    </form>
+}
+
+<style>
+.manual-form{max-width:1100px;}
+.form-section-head{font-weight:800;background:linear-gradient(135deg,#eef4ff,#f5f0ff);color:#313b62;border-bottom:1px solid #dfe7fb;}
+.form-section-head .bi{color:#6d4dff;margin-left:.35rem;}
+.manual-form .card{border:1px solid #e3e7f2;border-radius:15px;overflow:hidden;}
+.manual-form .card-body{padding:1.35rem;}
+.manual-form .form-label{font-weight:750;color:#35405f;margin-bottom:.4rem;}
+.manual-form .form-control,.manual-form .form-select{border-color:#d7deec;border-radius:9px;min-height:40px;}
+.manual-form .form-control:focus,.manual-form .form-select:focus{border-color:#7c5cff;box-shadow:0 0 0 .2rem rgba(124,92,255,.14);}
+</style>
+
+@code {
+    private bool loading = true;
+    private bool saving;
+    private string error = "";
+    private ManualSystemForm form = new();
+    private List<CompanyItem> companies = new();
+    private List<DepartmentItem> departments = new();
+    private List<SystemUserItem> users = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            companies = await Http.GetFromJsonAsync<List<CompanyItem>>("/api/SystemCompanies") ?? new();
+            departments = await Http.GetFromJsonAsync<List<DepartmentItem>>("/api/SystemDepartments") ?? new();
+            users = await Http.GetFromJsonAsync<List<SystemUserItem>>("/api/SystemUsers") ?? new();
+        }
+        catch
+        {
+            error = "دریافت شرکت‌ها، واحدها یا کاربران با خطا روبه‌رو شد. صفحه را دوباره بارگذاری کنید.";
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private IEnumerable<DepartmentItem> AvailableDepartments => departments
+        .Where(d => d.IsActive && d.CompanyId == form.CompanyId)
+        .OrderBy(d => d.Name);
+
+    private IEnumerable<SystemUserItem> AvailableUsers => users
+        .Where(u => u.IsActive && u.CompanyId == form.CompanyId)
+        .OrderBy(u => u.FirstName).ThenBy(u => u.LastName);
+
+    private void CompanyChanged(ChangeEventArgs args)
+    {
+        form.CompanyId = int.TryParse(args.Value?.ToString(), out var id) ? id : 0;
+        form.DepartmentId = null;
+        form.UserId = null;
+    }
+
+    private async Task Save()
+    {
+        error = "";
+        if (form.CompanyId <= 0)
+        {
+            error = "شرکت را انتخاب کنید.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(form.AgentId))
+        {
+            error = "نام یا کد سیستم را وارد کنید.";
+            return;
+        }
+
+        saving = true;
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/SystemInfo/manual", form);
+            if (response.IsSuccessStatusCode)
+            {
+                var created = await response.Content.ReadFromJsonAsync<ManualCreateResult>();
+                if (created?.Id > 0)
+                {
+                    Nav.NavigateTo($"/system-id/{created.Id}");
+                    return;
+                }
+                Nav.NavigateTo("/system-info");
+                return;
+            }
+
+            error = await ResponseMessage(response) ?? "ثبت سیستم ناموفق بود.";
+        }
+        catch
+        {
+            error = "ارتباط با سرور برقرار نشد. دوباره تلاش کنید.";
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private static async Task<string?> ResponseMessage(HttpResponseMessage response)
+    {
+        try
+        {
+            using var json = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            return json.RootElement.TryGetProperty("message", out var message) ? message.GetString() : null;
+        }
+        catch { return null; }
+    }
+
+    private class ManualSystemForm
+    {
+        public string AgentId { get; set; } = "";
+        public int CompanyId { get; set; }
+        public int? DepartmentId { get; set; }
+        public int? UserId { get; set; }
+        public string? ComputerModel { get; set; }
+        public string? Motherboard { get; set; }
+        public string? Cpu { get; set; }
+        public int TotalRamGb { get; set; }
+        public string? Ram { get; set; }
+        public string? HardDisk { get; set; }
+        public string? Graphics { get; set; }
+        public string? Monitor { get; set; }
+        public string? OsName { get; set; }
+        public string? Ip { get; set; }
+    }
+
+    private class ManualCreateResult { public int Id { get; set; } }
+    private class CompanyItem { public int Id { get; set; } public string Name { get; set; } = ""; public string? Code { get; set; } public bool IsActive { get; set; } = true; }
+    private class DepartmentItem { public int Id { get; set; } public string Name { get; set; } = ""; public int? CompanyId { get; set; } public bool IsActive { get; set; } = true; }
+    private class SystemUserItem { public int Id { get; set; } public string FirstName { get; set; } = ""; public string LastName { get; set; } = ""; public string StaffNumber { get; set; } = ""; public int? CompanyId { get; set; } public bool IsActive { get; set; } = true; }
+}

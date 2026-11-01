@@ -1,0 +1,262 @@
+@namespace Inventory.Client.Pages
+@page "/hr-main/calendar"
+@inject IHrMainService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>تقویم و تعطیلات</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1><i class="bi bi-calendar3"></i> تقویم و تعطیلات</h1>
+    </div>
+    @if (canCreate)
+    {
+        <div class="ms-auto d-flex gap-2">
+            <button class="btn btn-primary" @onclick="() => showEdit = true"><i class="bi bi-plus-lg"></i> ثبت تعطیلی</button>
+        </div>
+    }
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به این بخش برای شما فعال نیست.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+    return;
+}
+
+<div class="row g-3">
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white fw-bold"><i class="bi bi-translate"></i> زبان و تقویم</div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">زبان پیش‌فرض</label>
+                    <select class="form-select" @bind="locale.Language" disabled="@(!canUpdate)">
+                        <option value="fa">فارسی</option>
+                        <option value="en">انگلیسی</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">تقویم پیش‌فرض</label>
+                    <select class="form-select" @bind="locale.Calendar" disabled="@(!canUpdate)">
+                        <option value="jalali">شمسی (جلالی)</option>
+                        <option value="gregorian">میلادی</option>
+                    </select>
+                </div>
+                <div class="alert alert-light border small mb-0">
+                    امروز: <b>@PersianDate.ToShortFa(DateTime.Today)</b>
+                    <span class="text-muted">(@PersianDate.DayName(DateTime.Today))</span>
+                </div>
+            </div>
+            @if (canUpdate)
+            {
+                <div class="card-footer bg-white border-0 d-flex justify-content-end">
+                    <button class="btn btn-primary" disabled="@saving" @onclick="SaveLocale">
+                        @if (saving)
+                        {
+                            <span class="spinner-border spinner-border-sm"></span>
+                        }
+                        <i class="bi bi-check-lg"></i> ذخیره تنظیمات
+                    </button>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="col-lg-8">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <span class="fw-bold"><i class="bi bi-calendar2-x"></i> تعطیلات سال @Fa.Digits(year)</span>
+                    <div class="d-flex gap-2 align-items-center">
+                        <select class="form-select form-select-sm" style="width:auto" @bind="year" @bind:after="ReloadHolidays">
+                            @for (var y = thisYear - 2; y <= thisYear + 3; y++)
+                            {
+                                <option value="@y">@Fa.Digits(y)</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                @if (holLoading)
+                {
+                    <div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div></div>
+                }
+                else if (holidays.Count == 0)
+                {
+                    <div class="empty-state"><i class="bi bi-inbox"></i><h5>برای این سال تعطیلی ثبت نشده است</h5></div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr><th>تاریخ</th><th>روز هفته</th><th>عنوان</th><th>نوع</th><th>ثبت‌کننده</th><th style="width:60px"></th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var h in holidays)
+                                {
+                                    <tr>
+                                        <td class="fw-bold num">@PersianDate.ToShortFa(h.Date)</td>
+                                        <td>@PersianDate.DayName(h.Date)</td>
+                                        <td>@h.Name</td>
+                                        <td><span class="badge @HrMainUi.HolidayBadge(h.IsOfficial)">@HrMainUi.HolidayKind(h.IsOfficial)</span></td>
+                                        <td class="small text-muted">@(h.CreatedByName ?? "—")</td>
+                                        <td>
+                                            @if (canDelete)
+                                            {
+                                                <button class="btn btn-sm btn-light" title="حذف" @onclick="() => AskDelete(h)"><i class="bi bi-trash text-danger"></i></button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="small text-muted p-2 border-top num">مجموع: @holidays.Count.Num() روز (@holidays.Count(h => h.IsOfficial).Num() رسمی، @holidays.Count(h => !h.IsOfficial).Num() شرکتی)</div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="ثبت روز تعطیل" OnClose="() => showEdit = false">
+    <ChildContent>
+        <div class="mb-2">
+            <label class="form-label">تاریخ <span class="text-danger">*</span></label>
+            <DatePicker @bind-Value="holDate" />
+        </div>
+        <div class="mb-2">
+            <label class="form-label">عنوان تعطیلی <span class="text-danger">*</span></label>
+            <input class="form-control" @bind="holName" placeholder="مثلاً عید نوروز، تعطیلی شرکت…" />
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="holoff" @bind="holOfficial" />
+            <label class="form-check-label" for="holoff">تعطیل رسمی کشور (در غیر این صورت: تعطیلی شرکتی)</label>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@holSaving" @onclick="SaveHoliday">
+            @if (holSaving)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            ثبت
+        </button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showDelete" Title="حذف تعطیلی" OnClose="() => showDelete = false">
+    <ChildContent>
+        <p>تعطیلی «<b>@delItem?.Name</b>» در تاریخ <b class="num">@(delItem is null ? "" : PersianDate.ToShortFa(delItem.Date))</b> حذف شود؟</p>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showDelete = false">انصراف</button>
+        <button class="btn btn-danger" disabled="@holSaving" @onclick="DoDelete">
+            @if (holSaving)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            حذف
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private bool canRead => Auth.Has("HrMain.Read") || Auth.Has("HrMain.Calendar") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrMain.Create") || Auth.Has("HrMain.Calendar") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrMain.Update") || Auth.Has("HrMain.Calendar") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrMain.Delete") || Auth.Has("HrMain.Calendar") || Auth.IsAdmin;
+
+    private bool loading = true, saving, holLoading, holSaving;
+    private HrMainLocaleDto locale = new();
+    private List<HrMainHolidayDto> holidays = new();
+    private int thisYear = PersianDate.FromGregorian(DateTime.Today).Year;
+    private int year;
+
+    private bool showEdit, showDelete;
+    private DateTime? holDate = DateTime.Today;
+    private string? holName;
+    private bool holOfficial = true;
+    private HrMainHolidayDto? delItem;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) { loading = false; return; }
+        year = thisYear;
+        try { locale = await Svc.GetLocaleAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+        await ReloadHolidays();
+    }
+
+    private async Task SaveLocale()
+    {
+        saving = true;
+        try
+        {
+            locale = await Svc.SaveLocaleAsync(locale);
+            Toast.Success("تنظیمات زبان و تقویم ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task ReloadHolidays()
+    {
+        holLoading = true;
+        try { holidays = await Svc.ListHolidaysAsync(year); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { holLoading = false; }
+    }
+
+    private async Task SaveHoliday()
+    {
+        holSaving = true;
+        try
+        {
+            await Svc.SaveHolidayAsync(new HrMainHolidaySaveDto
+            {
+                Date = holDate ?? DateTime.Today,
+                Name = holName ?? "",
+                IsOfficial = holOfficial
+            });
+            showEdit = false;
+            holDate = DateTime.Today;
+            holName = "";
+            Toast.Success("تعطیلی ثبت شد.");
+            await ReloadHolidays();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { holSaving = false; }
+    }
+
+    private void AskDelete(HrMainHolidayDto h)
+    {
+        delItem = h;
+        showDelete = true;
+    }
+
+    private async Task DoDelete()
+    {
+        if (delItem is null) return;
+        holSaving = true;
+        try
+        {
+            await Svc.DeleteHolidayAsync(delItem.Id);
+            showDelete = false;
+            Toast.Success("حذف شد.");
+            await ReloadHolidays();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { holSaving = false; }
+    }
+}

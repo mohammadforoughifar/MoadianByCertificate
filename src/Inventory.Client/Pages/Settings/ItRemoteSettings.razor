@@ -1,0 +1,264 @@
+@namespace Inventory.Client.Pages
+@page "/settings/it-remote"
+@using System.Net.Http.Headers
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject LayoutState Layout
+
+<PageTitle>تنظیمات اتصال به واحد IT مرکزی</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>اتصال به واحد IT مرکزی</h1>
+        <p class="lead">ارسال درخواست خدمات IT از این شرکت به سرور مرکزی</p>
+    </div>
+    <button class="btn btn-secondary me-auto" @onclick="GoToRequests">
+        <i class="bi bi-arrow-right"></i> بازگشت به درخواست‌ها
+    </button>
+</div>
+
+<div class="alert alert-light border d-flex gap-2 fs-8">
+        <i class="bi bi-info-circle text-primary"></i>
+        <div>
+            این نرم‌افزار روی سرورِ خودِ شرکت نصب است و کاربرانش در سرور مرکزی «کاربر» تعریف نشده‌اند؛
+            به همین دلیل ارتباط با یک <b>کلید API مخصوص شرکت</b> برقرار می‌شود و هویت هر کاربر با یک
+            <b>کلید پایدار شخصی</b> که خود نرم‌افزار برایش می‌سازد منتقل می‌گردد.
+            <br />
+            کلید API را از مدیر واحد IT مرکزی بگیرید؛ فقط یک‌بار هنگام صدور نمایش داده می‌شود.
+        </div>
+    </div>
+
+    @if (loading)
+    {
+        <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    }
+    else
+    {
+        <div class="row g-3">
+            <div class="col-12 col-lg-7">
+                <div class="card">
+                    <div class="card-header"><i class="bi bi-gear"></i> مشخصات اتصال</div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">آدرس سرور مرکزی</label>
+                            <input class="form-control num" dir="ltr" @bind="form.ServerUrl" placeholder="http://192.168.1.10:5000" />
+                            <div class="form-text">
+                                آدرسی که این نرم‌افزار با آن درخواست‌ها را می‌فرستد (بدون اسلش انتهایی).
+                                @if (conn?.IsSaved != true && !string.IsNullOrWhiteSpace(conn?.DefaultServerUrl))
+                                {
+                                    <span class="text-success">
+                                        — به‌صورت خودکار از تنظیمات سرور پر شده؛ فقط اگر خواستید تغییرش دهید ویرایش کنید.
+                                    </span>
+                                }
+                            </div>
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-12 col-md-6">
+                                <label class="form-label">کد شرکت</label>
+                                <input class="form-control num" dir="ltr" @bind="form.CompanyCode" placeholder="ACME" />
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <label class="form-label">نام شرکت (فقط نمایشی)</label>
+                                <input class="form-control" @bind="form.CompanyName" />
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <label class="form-label">کلید API شرکت</label>
+                            <input class="form-control num" dir="ltr" type="password" @bind="form.ApiKey"
+                                   placeholder="@(conn?.HasKey == true ? $"کلید ذخیره‌شده: {conn.KeyHint}…" : "کلید را از مدیر واحد IT بگیرید و اینجا وارد کنید")" />
+                            @if (conn?.HasKey == true)
+                            {
+                                <div class="form-text d-flex align-items-center gap-2">
+                                    <span>کلید ذخیره شده است. برای تغییر، کلید جدید را وارد کنید.</span>
+                                    <button type="button" class="btn btn-sm btn-link text-danger p-0" @onclick="() => form.ClearKey = true">
+                                        حذف کلید
+                                    </button>
+                                </div>
+                            }
+                        </div>
+                        <div class="form-check form-switch mt-3">
+                            <input class="form-check-input" type="checkbox" id="en" @bind="form.Enabled" />
+                            <label class="form-check-label" for="en">ارسال درخواست به سرور مرکزی فعال باشد</label>
+                        </div>
+                    </div>
+                    <div class="card-footer d-flex gap-2">
+                        <button class="btn btn-primary" disabled="@busy" @onclick="Save">
+                            @if (busy) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                            <i class="bi bi-check2"></i> ذخیره
+                        </button>
+                        <button class="btn btn-outline-primary" disabled="@busy" @onclick="Test">
+                            <i class="bi bi-wifi"></i> تست اتصال
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12 col-lg-5">
+                <div class="card mb-3">
+                    <div class="card-header"><i class="bi bi-person-key"></i> کلید شخصی شما</div>
+                    <div class="card-body">
+                        <p class="fs-8 text-muted">
+                            این کلید به شما تعلق دارد و در «درخواست‌های من» شناسایی‌تان می‌کند.
+                            آن را با کسی به اشتراک نگذارید.
+                        </p>
+                        @if (string.IsNullOrWhiteSpace(myKey))
+                        {
+                            <div class="text-muted fs-8">در حال خواندن…</div>
+                        }
+                        else
+                        {
+                            <div class="input-group input-group-sm">
+                                <input class="form-control num" dir="ltr" readonly value="@myKey" />
+                                <button class="btn btn-outline-secondary" @onclick="CopyKey">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><i class="bi bi-info-circle"></i> وضعیت فعلی</div>
+                    <div class="card-body fs-8">
+                        <table class="table table-sm mb-0">
+                            <tbody>
+                                <tr>
+                                    <td>آدرس سرور</td>
+                                    <td class="num" dir="ltr">
+                                        @(string.IsNullOrWhiteSpace(conn?.ServerUrl) ? "—" : conn.ServerUrl)
+                                        @if (conn?.IsSaved != true && !string.IsNullOrWhiteSpace(conn?.ServerUrl))
+                                        {
+                                            <span class="text-warning">(پیشنهادی)</span>
+                                        }
+                                    </td>
+                                </tr>
+                                <tr><td>شرکت</td><td>@(string.IsNullOrWhiteSpace(conn?.CompanyName) ? conn?.CompanyCode : conn?.CompanyName)</td></tr>
+                                <tr><td>کلید API</td><td>@(conn?.HasKey == true ? "ثبت شده ✔" : "ثبت نشده ✖")</td></tr>
+                                <tr><td>ارسال</td><td>@(conn?.Enabled == true ? "فعال" : "غیرفعال")</td></tr>
+                            </tbody>
+                        </table>
+                        @if (lastTest != null)
+                        {
+                            <div class="alert @(lastTestOk ? "alert-success" : "alert-danger") py-2 mt-2 mb-0">
+                                @lastTest
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+
+@code {
+    private void GoToRequests() => Nav.NavigateTo("/it-requests");
+
+    private bool loading = true, busy;
+    private string? myKey;
+    private string? lastTest;
+    private bool lastTestOk;
+    private ConnInfo? conn;
+    private ConnForm form = new();
+
+    public class ConnInfo
+    {
+        public string? ServerUrl { get; set; }
+        public string? CompanyCode { get; set; }
+        public string? CompanyName { get; set; }
+        public bool HasKey { get; set; }
+        public string? KeyHint { get; set; }
+        public bool Enabled { get; set; } = true;
+        /// <summary>آدرس ذخیره‌شده است یا فقط پیشنهاد پیش‌فرضِ سرور مرکزی</summary>
+        public bool IsSaved { get; set; }
+        public string? DefaultServerUrl { get; set; }
+    }
+
+    public class ConnForm
+    {
+        public string? ServerUrl { get; set; }
+        public string? CompanyCode { get; set; }
+        public string? CompanyName { get; set; }
+        public string? ApiKey { get; set; }
+        public bool Enabled { get; set; } = true;
+        public bool ClearKey { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("اتصال به واحد IT مرکزی");
+        if (!string.IsNullOrWhiteSpace(Auth.Token))
+            Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Auth.Token);
+
+        try { conn = await Http.GetFromJsonAsync<ConnInfo>("/api/itremote/connection"); }
+        catch { conn = null; }
+        if (conn != null)
+        {
+            form.ServerUrl = conn.ServerUrl;   // اگر ذخیره نشده، آدرس مرکزیِ پیش‌فرض همین‌جا پر می‌شود
+            form.CompanyCode = conn.CompanyCode;
+            form.CompanyName = conn.CompanyName;
+            form.Enabled = conn.Enabled;
+        }
+        try { myKey = (await Http.GetFromJsonAsync<KeyRes>("/api/itremote/my-key"))?.Key; }
+        catch { myKey = null; }
+        loading = false;
+    }
+
+    public class KeyRes { public string? Key { get; set; } }
+
+    private async Task Save()
+    {
+        busy = true;
+        try
+        {
+            var resp = await Http.PutAsJsonAsync("/api/itremote/connection", form);
+            var body = await resp.Content.ReadAsStringAsync();
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success("تنظیمات اتصال ذخیره شد.");
+                form.ApiKey = null; form.ClearKey = false;
+                conn = await Http.GetFromJsonAsync<ConnInfo>("/api/itremote/connection");
+                if (conn != null) form.ServerUrl = conn.ServerUrl;
+            }
+            else Toast.Error(body);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task Test()
+    {
+        busy = true; lastTest = null;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(form.ApiKey) || form.ClearKey
+                || string.IsNullOrWhiteSpace(form.ServerUrl))
+            {
+                // تنظیمات ذخیره‌نشده را اول نگه می‌داریم تا تست با همان مقادیر باشد
+                await Save();
+            }
+            var resp = await Http.PostAsync("/api/itremote/connection/test", null);
+            var body = await resp.Content.ReadAsStringAsync();
+            using var doc = System.Text.Json.JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+            lastTestOk = doc.RootElement.TryGetProperty("ok", out var o) && o.ValueKind == System.Text.Json.JsonValueKind.True;
+            lastTest = doc.RootElement.TryGetProperty("error", out var e) && e.GetString() is { Length: > 0 } err
+                ? err
+                : doc.RootElement.TryGetProperty("body", out var b) ? b.GetString() : body;
+            if (lastTestOk) Toast.Success("ارتباط با سرور مرکزی برقرار است.");
+        }
+        catch (Exception ex) { lastTestOk = false; lastTest = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task CopyKey()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", myKey ?? "");
+            Toast.Success("کلید کپی شد.");
+        }
+        catch { Toast.Error("کپی ناموفق بود."); }
+    }
+}

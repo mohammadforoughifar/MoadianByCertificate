@@ -1,0 +1,350 @@
+@page "/fa-hr/personnel"
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+@* پرسنل «منابع انسانی فروغ آریا» — جدول اختصاصی FaHrPersonnel (جدا از پرونده‌های پرسنلی منابع انسانی اصلی).
+   فقط پرسنلِ پیوندخورده به کاربرانِ فعالِ دارای دسترسی به این ماژول نمایش داده می‌شوند. *@
+
+<PageTitle>پرسنل — منابع انسانی فروغ آریا</PageTitle>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی ندارید.</div>
+    return;
+}
+
+<div class="card shadow-sm mb-3" dir="rtl">
+    <div class="card-header d-flex align-items-center gap-2 flex-wrap">
+        <i class="bi bi-person-lines-fill"></i>
+        <strong>پرسنل</strong>
+        <span class="text-muted small">فقط پرسنلِ پیوندخورده به کاربرانِ فعالِ دارای دسترسی به «منابع انسانی فروغ آریا»</span>
+        <div class="ms-auto d-flex gap-2 align-items-center">
+            <input class="form-control form-control-sm" style="width:200px" placeholder="جستجو: نام، کد، کد ملی…" @bind="search" @bind:event="oninput" @onkeyup="OnSearchKey" />
+            <select class="form-select form-select-sm" style="width:140px" @bind="statusFilter" @bind:after="Load">
+                <option value="">همهٔ وضعیت‌ها</option>
+                @for (var i = 0; i < StatusNames.Length; i++)
+                {
+                    <option value="@i">@StatusNames[i]</option>
+                }
+            </select>
+            @if (canManage)
+            {
+                <button class="btn btn-sm btn-success" @onclick="() => Open(null)"><i class="bi bi-plus-lg"></i> پرسنل جدید</button>
+            }
+        </div>
+    </div>
+    <div class="card-body">
+        @if (showForm)
+        {
+            <div class="card border-primary mb-3">
+                <div class="card-header bg-white"><strong>@(editId == null ? "ثبت پرسنل جدید" : "ویرایش پرسنل")</strong></div>
+                <div class="card-body">
+                    <div class="row g-2">
+                        <div class="col-md-3">
+                            <label class="form-label small">کاربر سیستم <span class="text-danger">*</span></label>
+                            <select class="form-select form-select-sm" @bind="form.UserId">
+                                <option value="0">— انتخاب کاربر —</option>
+                                @foreach (var u in users.Where(u => u.PersonnelId == null || u.PersonnelId == editId))
+                                {
+                                    <option value="@u.Id">@u.FullName (@u.Username)</option>
+                                }
+                            </select>
+                            <div class="form-text">فقط کاربرانِ فعالِ دارای دسترسی به این ماژول</div>
+                        </div>
+                        <div class="col-md-2"><label class="form-label small">کد پرسنلی</label><input class="form-control form-control-sm num" @bind="form.Code" placeholder="خودکار" maxlength="20" /></div>
+                        <div class="col-md-2"><label class="form-label small">نام <span class="text-danger">*</span></label><input class="form-control form-control-sm" @bind="form.FirstName" maxlength="80" /></div>
+                        <div class="col-md-3"><label class="form-label small">نام خانوادگی <span class="text-danger">*</span></label><input class="form-control form-control-sm" @bind="form.LastName" maxlength="80" /></div>
+                        <div class="col-md-2"><label class="form-label small">کد ملی <span class="text-danger">*</span></label><input class="form-control form-control-sm num" dir="ltr" @bind="form.NationalCode" maxlength="10" /></div>
+
+                        <div class="col-md-2"><label class="form-label small">تاریخ تولد</label><DatePicker @bind-Value="form.BirthDate" CssClass="form-control-sm" AllowClear="true" /></div>
+                        <div class="col-md-2"><label class="form-label small">تاریخ استخدام</label><DatePicker @bind-Value="hireDate" CssClass="form-control-sm" /></div>
+                        <div class="col-md-2">
+                            <label class="form-label small">جنسیت</label>
+                            <select class="form-select form-select-sm" @bind="form.Gender"><option value="0">مرد</option><option value="1">زن</option></select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">وضعیت تأهل</label>
+                            <select class="form-select form-select-sm" @bind="form.MaritalStatus"><option value="0">مجرد</option><option value="1">متأهل</option></select>
+                        </div>
+                        <div class="col-md-2"><label class="form-label small">موبایل</label><input class="form-control form-control-sm num" dir="ltr" @bind="form.Mobile" maxlength="20" /></div>
+                        <div class="col-md-2"><label class="form-label small">ایمیل</label><input class="form-control form-control-sm" dir="ltr" @bind="form.Email" maxlength="150" /></div>
+
+                        <div class="col-md-3"><label class="form-label small">واحد سازمانی</label><input class="form-control form-control-sm" @bind="form.UnitTitle" maxlength="150" /></div>
+                        <div class="col-md-3"><label class="form-label small">سمت</label><input class="form-control form-control-sm" @bind="form.PostTitle" maxlength="150" /></div>
+                        <div class="col-md-3">
+                            <label class="form-label small">مدیر مستقیم</label>
+                            <select class="form-select form-select-sm" @bind="managerId">
+                                <option value="0">— ندارد —</option>
+                                @foreach (var m in allForCombo.Where(m => m.Id != editId))
+                                {
+                                    <option value="@m.Id">@m.FullName (@m.Code)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small">نوع استخدام</label>
+                            <select class="form-select form-select-sm" @bind="form.EmploymentType">
+                                @for (var i = 0; i < EmpTypeNames.Length; i++)
+                                {
+                                    <option value="@i">@EmpTypeNames[i]</option>
+                                }
+                            </select>
+                        </div>
+
+                        <div class="col-md-2">
+                            <label class="form-label small">وضعیت</label>
+                            <select class="form-select form-select-sm" @bind="form.Status">
+                                @for (var i = 0; i < StatusNames.Length; i++)
+                                {
+                                    <option value="@i">@StatusNames[i]</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-2"><label class="form-label small">حقوق پایه (ریال)</label><input type="number" class="form-control form-control-sm num" @bind="form.BaseSalary" /></div>
+                        <div class="col-md-3"><label class="form-label small">شبا</label><input class="form-control form-control-sm num" dir="ltr" @bind="form.Sheba" maxlength="29" placeholder="IR..." /></div>
+                        <div class="col-md-2"><label class="form-label small">بانک</label><input class="form-control form-control-sm" @bind="form.BankName" maxlength="60" /></div>
+                        <div class="col-md-2"><label class="form-label small">شماره بیمه</label><input class="form-control form-control-sm num" dir="ltr" @bind="form.InsuranceNo" maxlength="12" /></div>
+                        <div class="col-md-1 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" id="faPersActive" @bind="form.IsActive" /><label class="form-check-label small" for="faPersActive">فعال</label></div></div>
+                        <div class="col-12"><label class="form-label small">نشانی</label><input class="form-control form-control-sm" @bind="form.Address" maxlength="300" /></div>
+                    </div>
+                    <div class="d-flex justify-content-end gap-2 mt-3">
+                        <button class="btn btn-sm btn-secondary" @onclick="() => showForm = false">انصراف</button>
+                        <button class="btn btn-sm btn-success" @onclick="Save" disabled="@busy"><i class="bi bi-check-lg"></i> ذخیره</button>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (loading)
+        {
+            <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (rows.Count == 0)
+        {
+            <div class="text-muted text-center py-4">پرسنلی یافت نشد.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-striped table-sm align-middle">
+                    <thead>
+                        <tr><th>کد</th><th>نام</th><th>کد ملی</th><th>واحد / سمت</th><th>مدیر مستقیم</th><th>کاربر</th><th>استخدام</th><th>وضعیت</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in rows)
+                        {
+                            <tr>
+                                <td class="num">@p.Code</td>
+                                <td>@p.FullName</td>
+                                <td class="num">@p.NationalCode</td>
+                                <td>@p.UnitTitle @if (!string.IsNullOrWhiteSpace(p.PostTitle)) { <div class="small text-muted">@p.PostTitle</div> }</td>
+                                <td>@p.ManagerName</td>
+                                <td dir="ltr" class="text-end small">@p.Username</td>
+                                <td class="num">@PersianDate.ToShort(p.HireDate)</td>
+                                <td><span class="badge @StatusCls(p.Status)">@StatusName(p.Status)</span></td>
+                                <td class="text-end text-nowrap">
+                                    @if (canManage)
+                                    {
+                                        <button class="btn btn-sm btn-outline-primary" title="ویرایش" @onclick="() => Open(p)"><i class="bi bi-pencil"></i></button>
+                                        <button class="btn btn-sm btn-outline-danger" title="حذف" @onclick="() => Delete(p)"><i class="bi bi-trash"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="small text-muted">@rows.Count نفر</div>
+        }
+    </div>
+</div>
+
+@if (canManage && pending.Count > 0)
+{
+    <div class="card shadow-sm mb-3 border-warning" dir="rtl">
+        <div class="card-header d-flex align-items-center gap-2 bg-warning-subtle">
+            <i class="bi bi-link-45deg"></i>
+            <strong>پرسنل در انتظار پیوند (@pending.Count)</strong>
+            <span class="text-muted small">این پرسنل به کاربرِ فعالِ دارای دسترسی پیوند ندارند و در هیچ بخشی از ماژول (فهرست‌ها، کمبوها، حقوق) دیده نمی‌شوند تا به یک کاربر مجاز پیوند داده شوند.</span>
+            <button class="btn btn-sm btn-outline-secondary ms-auto" @onclick="() => showPending = !showPending">@(showPending ? "بستن" : "نمایش")</button>
+        </div>
+        @if (showPending)
+        {
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead><tr><th>کد</th><th>نام</th><th>کد ملی</th><th>کاربر فعلی</th><th>علت</th><th style="width:260px">پیوند به کاربر مجاز</th></tr></thead>
+                        <tbody>
+                            @foreach (var p in pending)
+                            {
+                                <tr>
+                                    <td class="num">@p.Code</td>
+                                    <td>@p.FullName</td>
+                                    <td class="num">@p.NationalCode</td>
+                                    <td dir="ltr" class="text-end small">@p.Username</td>
+                                    <td><span class="badge bg-secondary">@p.Reason</span></td>
+                                    <td>
+                                        <div class="input-group input-group-sm">
+                                            <select class="form-select" @onchange="e => pendingPick[p.Id] = int.TryParse(e.Value?.ToString(), out var v) ? v : 0">
+                                                <option value="0">— انتخاب کاربر —</option>
+                                                @foreach (var u in users.Where(u => u.PersonnelId == null))
+                                                {
+                                                    <option value="@u.Id">@u.FullName (@u.Username)</option>
+                                                }
+                                            </select>
+                                            <button class="btn btn-primary" disabled="@busy" @onclick="() => LinkPending(p)">پیوند</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private static readonly string[] Perms = { "LeaveRequests.Approve", "HrPay.Read", "HrPay.Manage", "Attendance.ViewAll" };
+    private bool canRead => Auth.IsAdmin || Perms.Any(Auth.Has);
+    private bool canManage => Auth.IsAdmin || Auth.Has("LeaveRequests.Approve") || Auth.Has("HrPay.Manage");
+
+    private static readonly string[] StatusNames = { "فعال", "مرخصی", "تعلیق", "پایان همکاری", "بازنشسته" };
+    private static readonly string[] EmpTypeNames = { "رسمی", "قراردادی", "پیمانی", "ساعتی", "مشاوره‌ای", "تمام‌وقت", "پاره‌وقت" };
+    private static string StatusName(int s) => s >= 0 && s < StatusNames.Length ? StatusNames[s] : "—";
+    private static string StatusCls(int s) => s switch { 0 => "bg-success", 1 => "bg-info text-dark", 2 => "bg-warning text-dark", _ => "bg-secondary" };
+
+    private bool loading = true, busy, showForm;
+    private string search = "";
+    private string statusFilter = "";
+    private List<FaHrPersonnelDto> rows = new();
+    private List<FaHrPersonnelDto> allForCombo = new();
+    private List<FaHrUserOptionDto> users = new();
+
+    private List<FaHrPendingPersonnelDto> pending = new();
+    private readonly Dictionary<int, int> pendingPick = new();
+    private bool showPending;
+
+    private int? editId;
+    private FaHrPersonnelSaveDto form = new();
+    private DateTime? hireDate;
+    private int managerId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) return;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var url = $"/api/fa-hr/personnel?search={Uri.EscapeDataString(search ?? "")}" + (string.IsNullOrEmpty(statusFilter) ? "" : $"&status={statusFilter}");
+            rows = await Http.GetFromJsonAsync<List<FaHrPersonnelDto>>(url) ?? new();
+            if (canManage)
+            {
+                pending = await Http.GetFromJsonAsync<List<FaHrPendingPersonnelDto>>("/api/fa-hr/personnel/pending") ?? new();
+                if (pending.Count > 0 && users.Count == 0)
+                    users = await Http.GetFromJsonAsync<List<FaHrUserOptionDto>>("/api/fa-hr/users") ?? new();
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" || string.IsNullOrEmpty(search)) await Load();
+    }
+
+    private async Task Open(FaHrPersonnelDto? p)
+    {
+        try
+        {
+            users = await Http.GetFromJsonAsync<List<FaHrUserOptionDto>>("/api/fa-hr/users") ?? new();
+            allForCombo = await Http.GetFromJsonAsync<List<FaHrPersonnelDto>>("/api/fa-hr/personnel?status=0") ?? new();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); return; }
+        editId = p?.Id;
+        form = p == null
+            ? new FaHrPersonnelSaveDto { IsActive = true, EmploymentType = 1 }
+            : new FaHrPersonnelSaveDto
+            {
+                Code = p.Code, FirstName = p.FirstName, LastName = p.LastName, NationalCode = p.NationalCode,
+                BirthDate = p.BirthDate, Gender = p.Gender, MaritalStatus = p.MaritalStatus, Mobile = p.Mobile,
+                Email = p.Email, Address = p.Address, HireDate = p.HireDate, UnitTitle = p.UnitTitle,
+                PostTitle = p.PostTitle, ManagerId = p.ManagerId, EmploymentType = p.EmploymentType,
+                Status = p.Status, BaseSalary = p.BaseSalary, IsActive = p.IsActive, Sheba = p.Sheba,
+                BankName = p.BankName, InsuranceNo = p.InsuranceNo, UserId = p.UserId,
+            };
+        hireDate = p?.HireDate ?? DateTime.Today;
+        managerId = p?.ManagerId ?? 0;
+        showForm = true;
+    }
+
+    private async Task Save()
+    {
+        if (form.UserId <= 0) { Toast.Error("کاربر سیستم را انتخاب کنید."); return; }
+        form.HireDate = hireDate ?? DateTime.Today;
+        form.ManagerId = managerId > 0 ? managerId : null;
+        busy = true;
+        try
+        {
+            var r = editId == null
+                ? await Http.PostAsJsonAsync("/api/fa-hr/personnel", form)
+                : await Http.PutAsJsonAsync($"/api/fa-hr/personnel/{editId}", form);
+            if (!r.IsSuccessStatusCode) { Toast.Error(await Err(r) ?? "خطا"); return; }
+            Toast.Success("ذخیره شد.");
+            showForm = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task LinkPending(FaHrPendingPersonnelDto p)
+    {
+        if (!pendingPick.TryGetValue(p.Id, out var uid) || uid <= 0) { Toast.Error("کاربر را انتخاب کنید."); return; }
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync($"/api/fa-hr/personnel/{p.Id}/link", new FaHrLinkDto { UserId = uid });
+            if (!r.IsSuccessStatusCode) { Toast.Error(await Err(r) ?? "خطا"); return; }
+            Toast.Success("پیوند برقرار شد.");
+            pendingPick.Remove(p.Id);
+            users = await Http.GetFromJsonAsync<List<FaHrUserOptionDto>>("/api/fa-hr/users") ?? new();
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task Delete(FaHrPersonnelDto p)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"پرسنل «{p.FullName}» حذف شود؟")) return;
+        try
+        {
+            var r = await Http.DeleteAsync($"/api/fa-hr/personnel/{p.Id}");
+            if (!r.IsSuccessStatusCode) { Toast.Error(await Err(r) ?? "خطا"); return; }
+            Toast.Success("حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static async Task<string?> Err(HttpResponseMessage r)
+    {
+        try
+        {
+            var d = await r.Content.ReadFromJsonAsync<Dictionary<string, object>>();
+            if (d != null && d.TryGetValue("message", out var m)) return m?.ToString();
+        }
+        catch { }
+        return $"خطا: {(int)r.StatusCode}";
+    }
+}

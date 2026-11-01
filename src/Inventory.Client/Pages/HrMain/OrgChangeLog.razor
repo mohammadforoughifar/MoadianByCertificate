@@ -1,0 +1,263 @@
+@namespace Inventory.Client.Pages
+@page "/hr-main/org/change-log"
+@inject IHrMainService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>تاریخچه و مقایسه ساختار سازمانی</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-clock-history"></i> تاریخچه و مقایسه ساختار سازمانی</h1>
+    <div class="lead">چه کسی، کِی، چه چیزی را در گره‌ها و پست‌های سازمانی جابه‌جا کرده است</div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به این بخش برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="mtabs mb-3">
+    <button class="mtab @(tab == 0 ? "active" : "")" @onclick="() => tab = 0"><i class="bi bi-list-ul"></i> تاریخچه تغییرات</button>
+    <button class="mtab @(tab == 1 ? "active" : "")" @onclick="() => tab = 1"><i class="bi bi-arrow-left-right"></i> مقایسه دو تاریخ</button>
+</div>
+
+@if (tab == 0)
+{
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-2">
+                    <label class="form-label small text-muted">نوع موجودیت</label>
+                    <select class="form-select" @bind="fEntity" @bind:after="ReloadFirst">
+                        <option value="">همه</option>
+                        <option value="OrgNode">گره سازمانی</option>
+                        <option value="Position">پست سازمانی</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">جستجو (نام / فیلد / کاربر)</label>
+                    <input class="form-control" @bind="q" @bind:event="oninput" @onkeyup="OnSearchKey" placeholder="تایپ کنید و Enter بزنید…" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted">از تاریخ</label>
+                    <DatePicker @bind-Value="fFrom" AllowClear="true" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted">تا تاریخ</label>
+                    <DatePicker @bind-Value="fTo" AllowClear="true" />
+                </div>
+                <div class="col-md-1">
+                    <button class="btn btn-primary w-100" @onclick="ReloadFirst"><i class="bi bi-search"></i></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (loading)
+    {
+        <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+    }
+    else if (items.Count == 0)
+    {
+        <div class="card border-0 shadow-sm"><div class="card-body">
+            <div class="empty-state"><i class="bi bi-inboxes"></i><h5>هیچ تغییری یافت نشد</h5></div>
+        </div></div>
+    }
+    else
+    {
+        <div class="card border-0 shadow-sm">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="table-light"><tr><th>زمان</th><th>کاربر</th><th>نوع</th><th>مورد</th><th>عملیات</th><th>فیلد تغییریافته</th><th>از</th><th>به</th></tr></thead>
+                        <tbody>
+                            @foreach (var l in items)
+                            {
+                                <tr>
+                                    <td class="num small">@l.At.ToFaDate()<div class="text-muted">@l.At.ToString("HH:mm")</div></td>
+                                    <td>@(string.IsNullOrWhiteSpace(l.ByUsername) ? "—" : l.ByUsername)</td>
+                                    <td><span class="badge text-bg-info">@EntityName(l.Entity)</span></td>
+                                    <td>@l.EntityName</td>
+                                    <td><span class="badge @ActionBadge(l.Action)">@ActionName(l.Action)</span></td>
+                                    <td class="small">@(l.FieldName ?? "—")</td>
+                                    <td class="small text-muted">@(l.OldValue ?? "—")</td>
+                                    <td class="small fw-bold">@(l.NewValue ?? "—")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer bg-white d-flex justify-content-between align-items-center">
+                <span class="small text-muted num">@total.Num() رکورد</span>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-light" disabled="@(skip == 0)" @onclick="Prev">قبلی</button>
+                    <button class="btn btn-sm btn-light" disabled="@(skip + take >= total)" @onclick="Next">بعدی</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+else
+{
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">از تاریخ</label>
+                    <DatePicker @bind-Value="cmpFrom" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">تا تاریخ</label>
+                    <DatePicker @bind-Value="cmpTo" />
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-primary w-100" disabled="@comparing" @onclick="RunCompare">
+                        @if (comparing)
+                        {
+                            <span class="spinner-border spinner-border-sm"></span>
+                        }
+                        <i class="bi bi-arrow-left-right"></i> مقایسه
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (compareResult != null)
+    {
+        <div class="row g-3 mb-3">
+            <div class="col-md-3 col-6">
+                <div class="card border-0 shadow-sm text-center p-3">
+                    <div class="fs-4 fw-bold text-success num">@compareResult.NodesCreated.Num()</div>
+                    <div class="small text-muted">گره سازمانی جدید</div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card border-0 shadow-sm text-center p-3">
+                    <div class="fs-4 fw-bold text-primary num">@compareResult.NodesUpdated.Num()</div>
+                    <div class="small text-muted">تغییر در گره سازمانی</div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card border-0 shadow-sm text-center p-3">
+                    <div class="fs-4 fw-bold text-success num">@compareResult.PositionsCreated.Num()</div>
+                    <div class="small text-muted">پست سازمانی جدید</div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card border-0 shadow-sm text-center p-3">
+                    <div class="fs-4 fw-bold text-danger num">@(compareResult.NodesDeleted + compareResult.PositionsDeleted).Num()</div>
+                    <div class="small text-muted">حذف‌شده (گره/پست)</div>
+                </div>
+            </div>
+        </div>
+
+        @if (compareResult.Items.Count == 0)
+        {
+            <div class="alert alert-light border">در بازه‌ی انتخابی هیچ تغییری در ساختار سازمانی ثبت نشده است.</div>
+        }
+        else
+        {
+            <div class="card border-0 shadow-sm">
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0 align-middle">
+                            <thead class="table-light"><tr><th>زمان</th><th>کاربر</th><th>نوع</th><th>مورد</th><th>عملیات</th><th>فیلد</th><th>از</th><th>به</th></tr></thead>
+                            <tbody>
+                                @foreach (var l in compareResult.Items)
+                                {
+                                    <tr>
+                                        <td class="num small">@l.At.ToFaDate()</td>
+                                        <td>@(string.IsNullOrWhiteSpace(l.ByUsername) ? "—" : l.ByUsername)</td>
+                                        <td><span class="badge text-bg-info">@EntityName(l.Entity)</span></td>
+                                        <td>@l.EntityName</td>
+                                        <td><span class="badge @ActionBadge(l.Action)">@ActionName(l.Action)</span></td>
+                                        <td class="small">@(l.FieldName ?? "—")</td>
+                                        <td class="small text-muted">@(l.OldValue ?? "—")</td>
+                                        <td class="small fw-bold">@(l.NewValue ?? "—")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+}
+
+@code {
+    private bool canRead => Auth.Has("HrMain.Read") || Auth.Has("HrMain.Org") || Auth.IsAdmin;
+
+    private int tab;
+    private bool loading = true;
+    private List<HrMainChangeLogDto> items = new();
+    private int total, skip, take = 25;
+    private string? fEntity, q;
+    private DateTime? fFrom, fTo;
+
+    private bool comparing;
+    private DateTime? cmpFrom = DateTime.Today.AddMonths(-1);
+    private DateTime? cmpTo = DateTime.Today;
+    private HrMainCompareResultDto? compareResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task ReloadFirst() { skip = 0; await Reload(); }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            var r = await Svc.SearchChangeLogAsync(fEntity, q, fFrom, fTo, skip, take);
+            items = r.Items; total = r.Total;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnSearchKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await ReloadFirst();
+    }
+
+    private async Task Prev() { skip = Math.Max(0, skip - take); await Reload(); }
+    private async Task Next() { skip += take; await Reload(); }
+
+    private async Task RunCompare()
+    {
+        comparing = true;
+        try { compareResult = await Svc.CompareStructureAsync(cmpFrom ?? DateTime.Today.AddMonths(-1), cmpTo ?? DateTime.Today); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { comparing = false; }
+    }
+
+    private static string EntityName(string e) => e switch
+    {
+        "OrgNode" => "گره سازمانی",
+        "Position" => "پست سازمانی",
+        _ => e
+    };
+
+    private static string ActionName(string a) => a switch
+    {
+        "Create" => "ایجاد",
+        "Update" => "ویرایش",
+        "Delete" => "حذف",
+        _ => a
+    };
+
+    private static string ActionBadge(string a) => a switch
+    {
+        "Create" => "text-bg-success",
+        "Delete" => "text-bg-danger",
+        _ => "text-bg-primary"
+    };
+}

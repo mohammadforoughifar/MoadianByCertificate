@@ -1,0 +1,178 @@
+@namespace Inventory.Client.Pages
+@page "/fa-lms/exam/{examId:int}"
+@inject IFaLmsService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@implements IDisposable
+
+<PageTitle>شرکت در آزمون</PageTitle>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning mt-3">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span><div>در حال آماده‌سازی آزمون…</div></div>
+    return;
+}
+@if (loadError != null)
+{
+    <div class="alert alert-danger mt-3">@loadError <a href="fa-lms/my">بازگشت</a></div>
+    return;
+}
+@if (play == null) { return; }
+
+@if (result != null)
+{
+    <div class="card border-0 shadow-sm mt-4 text-center py-5">
+        @if (result.Score == null)
+        {
+            <div class="fs-1 text-warning"><i class="bi bi-hourglass-split"></i></div>
+            <h3 class="text-warning mt-2">در انتظار تصحیح</h3>
+            <div class="text-muted">پاسخ‌نامه شما ثبت شد؛ پس از تصحیح سؤال‌های تشریحی، نتیجه اعلام می‌شود.</div>
+        }
+        else if (result.Passed == true)
+        {
+            <div class="fs-1 text-success"><i class="bi bi-check-circle-fill"></i></div>
+            <h3 class="text-success mt-2">قبول شدید!</h3>
+        }
+        else
+        {
+            <div class="fs-1 text-danger"><i class="bi bi-x-circle-fill"></i></div>
+            <h3 class="text-danger mt-2">مردود</h3>
+        }
+        @if (result.Score != null)
+        {
+            <div class="fs-4 num mt-2">نمره: <b>@FaLmsUi.Num(result.Score)</b> از ۱۰۰</div>
+        }
+        <div><a class="btn btn-primary mt-3" href="fa-lms/my">بازگشت به دوره‌های من</a></div>
+    </div>
+    return;
+}
+
+<div class="page-head mb-3 sticky-top bg-white py-2 border-bottom">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1 class="fs-4 mb-0"><i class="bi bi-patch-question"></i> @play.Title</h1>
+            <div class="small text-muted"><span class="num">@FaLmsUi.Num(play.Questions.Count)</span> سؤال | پاسخ‌داده‌شده: <span class="num">@FaLmsUi.Num(Answered)</span> | تلاش <span class="num">@FaLmsUi.Num(play.AttemptNo)</span> از <span class="num">@FaLmsUi.Num(play.MaxAttempts)</span></div>
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+            @if (play.DurationMinutes != null)
+            {
+                <span class="badge @(Remaining.TotalSeconds < 300 ? "text-bg-danger" : "text-bg-dark") fs-6 num"><i class="bi bi-stopwatch"></i> @FmtRemaining()</span>
+            }
+            <button class="btn btn-success" disabled="@submitting" @onclick="Submit">@(submitting ? "در حال ثبت…" : "ثبت پاسخ‌نامه")</button>
+        </div>
+    </div>
+</div>
+
+<div class="alert alert-warning small"><i class="bi bi-exclamation-triangle"></i> @if (play.MaxAttempts > 1){<span>این تلاش <b class="num">@FaLmsUi.Num(play.AttemptNo)</b> از <b class="num">@FaLmsUi.Num(play.MaxAttempts)</b> است. </span>}else{<span>آزمون تک‌تلاشه است؛ پس از ثبت پاسخ‌نامه امکان شرکت مجدد وجود ندارد. </span>}سؤال‌های بی‌پاسخ غلط محسوب می‌شوند.</div>
+
+@for (var i = 0; i < play.Questions.Count; i++)
+{
+    var q = play.Questions[i];
+    var n = i + 1;
+    <div class="card border-0 shadow-sm mb-2">
+        <div class="card-body">
+            <div class="fw-bold mb-2"><span class="badge text-bg-secondary num ms-1">@FaLmsUi.Num(n)</span> @q.Text @if (q.Type == 1){<span class="badge text-bg-warning me-1">تشریحی</span>} <span class="badge text-bg-info num">@FaLmsUi.Num(q.Score) نمره</span></div>
+            @if (q.Type == 0)
+            {
+            <div class="row g-1">
+                @for (var o = 0; o < 4; o++)
+                {
+                    var opt = o;
+                    <div class="col-md-6">
+                        <label class="d-flex gap-2 align-items-start border rounded p-2 w-100 @(Sel(q.Id) == opt ? "border-primary bg-light" : "")" style="cursor:pointer">
+                            <input type="radio" class="form-check-input mt-1" name="@QName(q.Id)" checked="@(Sel(q.Id) == opt)" @onchange="() => SetSel(q.Id, opt)" />
+                            <span>@OptText(q, opt)</span>
+                        </label>
+                    </div>
+                }
+            </div>
+            }
+            else
+            {
+                <textarea class="form-control" rows="3" placeholder="پاسخ تشریحی…" @bind="texts[q.Id]"></textarea>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int examId { get; set; }
+    private bool faRead => Auth.Has("FaLms.Read") || Auth.IsAdmin;
+    private bool loading = true, submitting, autoDone;
+    private string? loadError;
+    private FaLmsExamPlayDto? play;
+    private FaLmsAttemptDto? result;
+    private Dictionary<int, int> sels = new();
+    private Dictionary<int, string> texts = new();
+    private System.Threading.Timer? timer;
+
+    private static string QName(int qid) => "q" + qid;
+    private int Sel(int qid) => sels.TryGetValue(qid, out var v) ? v : -1;
+    private void SetSel(int qid, int opt) => sels[qid] = opt;
+    private int Answered => sels.Values.Count(v => v >= 0) + texts.Values.Count(v => !string.IsNullOrWhiteSpace(v));
+    private TimeSpan Remaining => play?.DurationMinutes == null
+        ? TimeSpan.MaxValue
+        : play.StartedAt.AddMinutes(play.DurationMinutes.Value) - DateTime.Now;
+    private string FmtRemaining()
+    {
+        var r = Remaining;
+        if (r < TimeSpan.Zero) r = TimeSpan.Zero;
+        return Inventory.Shared.Fa.Digits(((int)r.TotalMinutes).ToString("00") + ":" + r.Seconds.ToString("00"));
+    }
+
+    private static string OptText(FaLmsPlayQuestionDto q, int o) => o switch
+    {
+        0 => q.OptA ?? "—", 1 => q.OptB ?? "—", 2 => q.OptC ?? "—", _ => q.OptD ?? "—"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        try
+        {
+            play = await Svc.StartExamAsync(examId);
+            texts = play.Questions.Where(q => q.Type == 1).ToDictionary(q => q.Id, q => "");
+            if (play.DurationMinutes != null)
+                timer = new System.Threading.Timer(OnTick, null, 1000, 1000);
+        }
+        catch (Exception ex) { loadError = ex.Message; }
+        finally { loading = false; }
+    }
+
+    private void OnTick(object? _)
+    {
+        InvokeAsync(async () =>
+        {
+            if (play == null || result != null) return;
+            if (Remaining <= TimeSpan.Zero && !autoDone)
+            {
+                autoDone = true;
+                Toast.Info("مهلت آزمون به پایان رسید؛ پاسخ‌نامه ثبت شد.");
+                await Submit();
+            }
+            else StateHasChanged();
+        });
+    }
+
+    private async Task Submit()
+    {
+        if (play == null || submitting || result != null) return;
+        submitting = true;
+        try
+        {
+            var answers = play.Questions.Where(q => q.Type == 0).Select(q => new FaLmsAnswerDto { QuestionId = q.Id, Selected = Sel(q.Id) }).ToList();
+            var txts = play.Questions.Where(q => q.Type == 1).Select(q => new FaLmsTextDto { QuestionId = q.Id, Text = texts.TryGetValue(q.Id, out var v) ? v : null }).ToList();
+            result = await Svc.SubmitExamAsync(examId, play.AttemptId, answers, txts);
+            timer?.Dispose();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { submitting = false; }
+    }
+
+    public void Dispose() => timer?.Dispose();
+}

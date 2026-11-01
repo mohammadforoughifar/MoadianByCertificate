@@ -1,0 +1,137 @@
+@page "/fa-hr/org"
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+
+@* چارت سازمانی «منابع انسانی فروغ آریا» — بر اساس «مدیر مستقیمِ» پرسنل همین ماژول (جدول FaHrPersonnel).
+   به ساختار سازمانی منابع انسانی اصلی (HrOrgUnits) هیچ وابستگی‌ای ندارد. *@
+
+<PageTitle>چارت سازمانی — منابع انسانی فروغ آریا</PageTitle>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی ندارید.</div>
+    return;
+}
+
+<div class="card shadow-sm mb-3" dir="rtl">
+    <div class="card-header d-flex align-items-center gap-2 flex-wrap">
+        <i class="bi bi-diagram-3"></i>
+        <strong>چارت سازمانی</strong>
+        <span class="text-muted small">بر اساس مدیر مستقیم — فقط پرسنلِ پیوندخورده به کاربرانِ فعالِ دارای دسترسی</span>
+        <div class="ms-auto d-flex gap-3 align-items-center">
+            <div class="form-check form-switch m-0">
+                <input class="form-check-input" type="checkbox" id="faOrgInactive" @bind="includeInactive" @bind:after="Load" />
+                <label class="form-check-label small" for="faOrgInactive">نمایش پایان همکاری/بازنشسته</label>
+            </div>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="ExpandAll">باز کردن همه</button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => collapsed = AllIds().ToHashSet()">بستن همه</button>
+        </div>
+    </div>
+    <div class="card-body">
+        @if (loading)
+        {
+            <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (roots.Count == 0)
+        {
+            <div class="text-muted text-center py-4">پرسنلی برای نمایش وجود ندارد. از صفحهٔ «پرسنل» پرسنل و مدیر مستقیم را ثبت کنید.</div>
+        }
+        else
+        {
+            <ul class="fa-org list-unstyled mb-0">
+                @foreach (var n in roots)
+                {
+                    @RenderNode(n)
+                }
+            </ul>
+        }
+    </div>
+</div>
+
+<style>
+    .fa-org ul { list-style: none; padding-right: 1.6rem; border-right: 2px dashed #d0d7de; margin-right: .6rem; }
+    .fa-org li { margin: .35rem 0; }
+    .fa-org .node { display: inline-flex; align-items: center; gap: .5rem; padding: .35rem .7rem; border: 1px solid #dee2e6; border-radius: .5rem; background: #fff; }
+    .fa-org .node .toggle { cursor: pointer; width: 1.1rem; text-align: center; color: #6c757d; }
+    .fa-org .node.off { opacity: .6; }
+</style>
+
+@code {
+    private static readonly string[] Perms = { "LeaveRequests.Approve", "HrPay.Read", "HrPay.Manage", "Attendance.ViewAll" };
+    private bool canRead => Auth.IsAdmin || Perms.Any(Auth.Has);
+
+    private bool loading = true, includeInactive;
+    private List<FaHrOrgNodeDto> roots = new();
+    private HashSet<int> collapsed = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) return;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try { roots = await Http.GetFromJsonAsync<List<FaHrOrgNodeDto>>($"/api/fa-hr/org?includeInactive={includeInactive}") ?? new(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void ExpandAll() => collapsed.Clear();
+
+    private IEnumerable<int> AllIds()
+    {
+        var stack = new Stack<FaHrOrgNodeDto>(roots);
+        while (stack.Count > 0)
+        {
+            var n = stack.Pop();
+            if (n.Children.Count > 0) yield return n.Id;
+            foreach (var c in n.Children) stack.Push(c);
+        }
+    }
+
+    private void Toggle(int id)
+    {
+        if (!collapsed.Remove(id)) collapsed.Add(id);
+    }
+
+    private RenderFragment RenderNode(FaHrOrgNodeDto n) => __builder =>
+    {
+        var open = !collapsed.Contains(n.Id);
+        <li>
+            <span class="node @(n.Status >= 3 ? "off" : "")">
+                @if (n.Children.Count > 0)
+                {
+                    <span class="toggle" @onclick="() => Toggle(n.Id)"><i class="bi @(open ? "bi-dash-square" : "bi-plus-square")"></i></span>
+                }
+                else
+                {
+                    <span class="toggle"><i class="bi bi-person"></i></span>
+                }
+                <span>
+                    <strong>@n.FullName</strong>
+                    <span class="text-muted small num">(@n.Code)</span>
+                    @if (!string.IsNullOrWhiteSpace(n.PostTitle) || !string.IsNullOrWhiteSpace(n.UnitTitle))
+                    {
+                        <div class="small text-muted">@n.PostTitle@(string.IsNullOrWhiteSpace(n.PostTitle) || string.IsNullOrWhiteSpace(n.UnitTitle) ? "" : " — ")@n.UnitTitle</div>
+                    }
+                </span>
+                @if (n.Children.Count > 0)
+                {
+                    <span class="badge bg-light text-dark border num">@n.Children.Count</span>
+                }
+            </span>
+            @if (open && n.Children.Count > 0)
+            {
+                <ul>
+                    @foreach (var c in n.Children)
+                    {
+                        @RenderNode(c)
+                    }
+                </ul>
+            }
+        </li>
+    };
+}

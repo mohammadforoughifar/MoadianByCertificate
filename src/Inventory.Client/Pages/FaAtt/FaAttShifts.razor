@@ -1,0 +1,319 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/shifts"
+@inject IFaAttService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>شیفت‌های کاری</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-clock-history"></i> شیفت‌های کاری</h1>
+            <div class="lead">تعریف شیفت ثابت، چرخشی، شب‌کاری و شناور + تخصیص به پرسنل</div>
+        </div>
+        @if (faCreate)
+        {
+            <button class="btn btn-success" @onclick="() => OpenShift(null)"><i class="bi bi-plus-lg"></i> شیفت جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (shifts.Count == 0)
+        {
+            <div class="text-center text-muted py-5">شیفتی ثبت نشده است.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr><th>کد</th><th>نام شیفت</th><th>نوع</th><th>بازه</th><th>ارفاق تأخیر/تعجیل</th><th>نوبت‌کاری ٪</th><th>وضعیت</th><th style="width:90px"></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var s in shifts)
+                        {
+                            <tr class="@(!s.IsActive ? "opacity-50" : "")">
+                                <td class="num fw-bold">@s.Code</td>
+                                <td>
+                                    @if (!string.IsNullOrWhiteSpace(s.Color))
+                                    {
+                                        <span class="d-inline-block rounded-circle ms-1" style="width:12px;height:12px;background:@s.Color"></span>
+                                    }
+                                    <b>@s.Name</b>
+                                    @if (s.IsOvernight)
+                                    {
+                                        <span class="badge text-bg-dark ms-1">گذر از نیمه‌شب</span>
+                                    }
+                                </td>
+                                <td><span class="badge rounded-pill text-bg-light border">@FaAttUi.ShiftType(s.Type)</span></td>
+                                <td class="num" dir="ltr">@FmtTime(s.StartTime) — @FmtTime(s.EndTime)</td>
+                                <td class="num">@Fa.Digits(s.LateToleranceMin) / @Fa.Digits(s.EarlyToleranceMin) دقیقه</td>
+                                <td class="num">@(s.AllowancePercent > 0 ? Fa.Digits(s.AllowancePercent.ToString("0.#")) + "٪" : "—")</td>
+                                <td>@(s.IsActive ? "فعال" : "غیرفعال")</td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        @if (faUpdate)
+                                        {
+                                            <button class="btn btn-light" title="ویرایش" @onclick="() => OpenShift(s)"><i class="bi bi-pencil text-warning"></i></button>
+                                        }
+                                        @if (faDelete)
+                                        {
+                                            <button class="btn btn-light" title="حذف" @onclick="() => DeleteShift(s.Id)"><i class="bi bi-trash text-danger"></i></button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-person-check text-primary ms-1"></i> تخصیص شیفت به پرسنل (@assigns.Count.Num())</span>
+        @if (faCreate)
+        {
+            <button class="btn btn-sm btn-success" @onclick="() => OpenAssign(null)"><i class="bi bi-plus-lg"></i> تخصیص جدید</button>
+        }
+    </div>
+    <div class="card-body p-0">
+        @if (assigns.Count == 0)
+        {
+            <div class="text-muted text-center py-3 small">تخصیصی ثبت نشده است. چرخش شیفت با تخصیص‌های دوره‌ای متوالی ساخته می‌شود.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm mb-0 align-middle">
+                    <thead class="table-light"><tr><th>پرسنل</th><th>شیفت</th><th>از تاریخ</th><th>تا تاریخ</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var a in assigns)
+                        {
+                            <tr>
+                                <td><b>@a.EmployeeName</b></td>
+                                <td>@a.ShiftName</td>
+                                <td class="num">@a.FromDate.ToFa()</td>
+                                <td class="num">@(a.ToDate?.ToFa() ?? "باز")</td>
+                                <td class="text-end">
+                                    @if (faUpdate)
+                                    {
+                                        <button class="btn btn-sm btn-light py-0" @onclick="() => OpenAssign(a)"><i class="bi bi-pencil"></i></button>
+                                    }
+                                    @if (faDelete)
+                                    {
+                                        <button class="btn btn-sm btn-light py-0" @onclick="() => DeleteAssign(a.Id)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showShift" Title="شیفت کاری" Size="modal-lg" OnClose="() => showShift = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-3"><label class="form-label">کد <span class="text-danger">*</span></label><input class="form-control num" @bind="sform.Code" /></div>
+            <div class="col-md-5"><label class="form-label">نام شیفت <span class="text-danger">*</span></label><input class="form-control" @bind="sform.Name" /></div>
+            <div class="col-md-4">
+                <label class="form-label">نوع شیفت</label>
+                <select class="form-select" @bind="sform.Type">
+                    <option value="0">ثابت</option><option value="1">چرخشی</option>
+                    <option value="2">شب‌کاری</option><option value="3">شناور</option>
+                </select>
+            </div>
+            <div class="col-md-3"><label class="form-label">شروع</label><input type="time" class="form-control" @bind="sStart" /></div>
+            <div class="col-md-3"><label class="form-label">پایان</label><input type="time" class="form-control" @bind="sEnd" /></div>
+            <div class="col-md-3"><label class="form-label">ارفاق تأخیر (دقیقه)</label><input class="form-control num" type="number" min="0" @bind="sform.LateToleranceMin" /></div>
+            <div class="col-md-3"><label class="form-label">ارفاق تعجیل (دقیقه)</label><input class="form-control num" type="number" min="0" @bind="sform.EarlyToleranceMin" /></div>
+            <div class="col-md-3"><label class="form-label">ارفاق اضافه‌کاری (دقیقه)</label><input class="form-control num" type="number" min="0" @bind="sform.OvertimeGraceMin" /></div>
+            <div class="col-md-3"><label class="form-label">موظف روزانه (دقیقه)</label><input class="form-control num" type="number" min="0" @bind="sform.RequiredMinutes" /></div>
+            <div class="col-md-3"><label class="form-label">روزهای استراحت</label><input class="form-control num" dir="ltr" @bind="sform.OffDays" placeholder="5" /></div>
+            <div class="col-md-3"><label class="form-label">رنگ</label><input type="color" class="form-control form-control-color w-100" @bind="sform.Color" /></div>
+            <div class="col-md-3"><label class="form-label">فوق‌العاده نوبت‌کاری (٪ حقوق پایه)</label><input class="form-control num" type="number" min="0" step="any" @bind="sform.AllowancePercent" /></div>
+            <div class="col-md-6 d-flex align-items-end gap-3">
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="sact" @bind="sform.IsActive" /><label class="form-check-label" for="sact">فعال</label></div>
+            </div>
+            <div class="col-12"><div class="alert alert-light border py-2 small mb-0"><i class="bi bi-info-circle"></i> روزهای استراحت با اعداد DayOfWeek و کاما: شنبه 6، جمعه 5. در شب‌کاری پایان کوچک‌تر از شروع است (گذر از نیمه‌شب). شیفت شناور تأخیر/تعجیل ندارد.</div></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showShift = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="SaveShift">ذخیره</button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showAssign" Title="تخصیص شیفت" OnClose="() => showAssign = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label">پرسنل</label>
+                <select class="form-select" @bind="aform.EmployeeId">
+                    @foreach (var e in emps)
+                    {
+                        <option value="@e.Id">@e.FullName (@e.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">شیفت</label>
+                <select class="form-select" @bind="aform.ShiftId">
+                    @foreach (var s in shifts.Where(x => x.IsActive))
+                    {
+                        <option value="@s.Id">@s.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-6"><label class="form-label">از تاریخ</label><DatePicker @bind-Value="aFrom" /></div>
+            <div class="col-md-6"><label class="form-label">تا تاریخ (خالی=باز)</label><DatePicker @bind-Value="aTo" AllowClear="true" /></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showAssign = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="SaveAssign">ذخیره</button>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faRead => Auth.Has("FaAtt.Read") || Auth.IsAdmin;
+    private bool faCreate => Auth.Has("FaAtt.Create") || Auth.IsAdmin;
+    private bool faUpdate => Auth.Has("FaAtt.Update") || Auth.IsAdmin;
+    private bool faDelete => Auth.Has("FaAtt.Delete") || Auth.IsAdmin;
+
+    private bool loading = true, saving;
+    private List<FaAttShiftDto> shifts = new();
+    private List<FaAttShiftAssignDto> assigns = new();
+    private List<HrEmployeeDto> emps = new();
+
+    private bool showShift, showAssign;
+    private int? sEditId, aEditId;
+    private FaAttShiftSaveDto sform = new();
+    private TimeOnly sStart = new(8, 0), sEnd = new(16, 0);
+    private FaAttShiftAssignSaveDto aform = new();
+    private DateTime? aFrom = DateTime.Today, aTo;
+
+    private static string FmtTime(TimeSpan t) => t.ToString(@"hh\:mm");
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) return;
+        try { emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 200)).Items; } catch { }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            shifts = await Svc.GetShiftsAsync();
+            assigns = await Svc.GetAssignsAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenShift(FaAttShiftDto? s)
+    {
+        sEditId = s?.Id;
+        sform = s is null
+            ? new FaAttShiftSaveDto { Color = "#2563eb" }
+            : new FaAttShiftSaveDto
+            {
+                Code = s.Code, Name = s.Name, Type = s.Type,
+                StartTime = s.StartTime, EndTime = s.EndTime,
+                LateToleranceMin = s.LateToleranceMin, EarlyToleranceMin = s.EarlyToleranceMin,
+                OvertimeGraceMin = s.OvertimeGraceMin, RequiredMinutes = s.RequiredMinutes,
+                OffDays = s.OffDays, Color = string.IsNullOrWhiteSpace(s.Color) ? "#2563eb" : s.Color,
+                IsActive = s.IsActive, SortOrder = s.SortOrder, AllowancePercent = s.AllowancePercent
+            };
+        sStart = TimeOnly.FromTimeSpan(sform.StartTime);
+        sEnd = TimeOnly.FromTimeSpan(sform.EndTime);
+        showShift = true;
+    }
+
+    private async Task SaveShift()
+    {
+        saving = true;
+        try
+        {
+            sform.StartTime = sStart.ToTimeSpan();
+            sform.EndTime = sEnd.ToTimeSpan();
+            await Svc.SaveShiftAsync(sEditId, sform);
+            showShift = false;
+            await Reload();
+            Toast.Success("شیفت ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task DeleteShift(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "شیفت حذف شود؟")) return;
+        try { await Svc.DeleteShiftAsync(id); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenAssign(FaAttShiftAssignDto? a)
+    {
+        aEditId = a?.Id;
+        aform = a is null
+            ? new FaAttShiftAssignSaveDto
+            {
+                EmployeeId = emps.FirstOrDefault()?.Id ?? 0,
+                ShiftId = shifts.FirstOrDefault(x => x.IsActive)?.Id ?? 0,
+                FromDate = DateTime.Today
+            }
+            : new FaAttShiftAssignSaveDto
+            {
+                EmployeeId = a.EmployeeId, ShiftId = a.ShiftId, FromDate = a.FromDate, ToDate = a.ToDate
+            };
+        aFrom = aform.FromDate; aTo = aform.ToDate;
+        showAssign = true;
+    }
+
+    private async Task SaveAssign()
+    {
+        saving = true;
+        try
+        {
+            aform.FromDate = aFrom ?? DateTime.Today;
+            aform.ToDate = aTo;
+            await Svc.SaveAssignAsync(aEditId, aform);
+            showAssign = false;
+            await Reload();
+            Toast.Success("تخصیص ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task DeleteAssign(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "تخصیص حذف شود؟")) return;
+        try { await Svc.DeleteAssignAsync(id); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

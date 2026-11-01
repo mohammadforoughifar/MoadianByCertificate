@@ -1,0 +1,341 @@
+@namespace Inventory.Client.Pages
+@page "/sales/requests"
+@inject ISalesVisitApi Api
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+@inject IAuthState Auth
+
+<PageTitle>همهٔ درخواست‌های سفارش</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>همهٔ درخواست‌های سفارش</h1>
+        <p class="lead">یک نمای کامل از تمام درخواست‌ها — پیش‌نویس، ارسال‌شده، تأییدشده، برگشتی، رد‌شده، فروش‌شده و لغوشده</p>
+    </div>
+    <button class="btn btn-light ms-auto" @onclick="LoadAsync"><i class="bi bi-arrow-clockwise"></i> بازخوانی</button>
+</div>
+
+@* ================== آمار همهٔ وضعیت‌ها ================== *@
+<div class="row g-2 mb-3">
+    @foreach (var c in ChipList)
+    {
+        <div class="col-6 col-md-3 col-xl-2">
+            <button type="button"
+                    class="vis-kpi w-100 text-start border-0 @(statusFilter == c.Status ? "vis-kpi-active" : "")"
+                    data-status-chip="@c.Key"
+                    @onclick="() => PickStatus(c.Status)">
+                <b>@Fa.Digits(c.Count)</b>
+                <span>@c.Text</span>
+            </button>
+        </div>
+    }
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-3">
+                <select class="form-select" @bind="statusFilter" @bind:after="LoadAsync">
+                    <option value="">همهٔ وضعیت‌ها</option>
+                    @foreach (var s in AllStatuses)
+                    {
+                        <option value="@((int)s)">@VisUi.StatusText(s)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <DatePicker Value="from" ValueChanged="d => SetFrom(d)" />
+            </div>
+            <div class="col-md-2">
+                <DatePicker Value="to" ValueChanged="d => SetTo(d)" />
+            </div>
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="شماره، مشتری، ویزیتور، یادداشت…"
+                           @bind="search" @bind:event="oninput" @bind:after="SearchChanged" />
+                </div>
+            </div>
+            <div class="col-auto ms-auto text-muted fs-8">@Fa.Digits(items.Count) درخواست</div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-inbox"></i><h5>درخواستی با این فیلتر یافت نشد</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0" data-all-requests>
+                    <thead>
+                        <tr>
+                            <th style="width:2.2rem"></th>
+                            <th>شماره</th>
+                            <th>تاریخ</th>
+                            <th>ویزیتور</th>
+                            <th>مشتری</th>
+                            <th>تحویل</th>
+                            <th class="text-start">مبلغ خالص</th>
+                            <th>وضعیت</th>
+                            <th>تصمیم / دلیل</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var o in items)
+                        {
+                            var open = expanded.Contains(o.Id);
+                            <tr class="vis-row" @onclick="() => Toggle(o.Id)" style="cursor:pointer">
+                                <td class="text-muted"><i class="bi @(open ? "bi-chevron-down" : "bi-chevron-left")"></i></td>
+                                <td class="fw-600">@o.Number</td>
+                                <td class="fs-8">@o.Date.ToFa()</td>
+                                <td class="fs-8">@o.ReferrerName</td>
+                                <td>
+                                    @o.PartyName
+                                    <div class="fs-9 text-muted">@Fa.Digits(o.LineCount) سطر — @VisUi.PaymentText(o.PaymentMethod)</div>
+                                </td>
+                                <td class="fs-8">
+                                    @if (o.FinalDeliveryDate is not null)
+                                    {
+                                        <span class="@(o.FinalDateChanged ? "text-warning fw-600" : "")"
+                                              title="@(o.FinalDateChanged ? $"تاریخ ویزیتور: {o.DeliveryDate?.ToFa()}" : "همان تاریخ ویزیتور")">
+                                            @o.FinalDeliveryDate.Value.ToFa()
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">@(o.DeliveryDate?.ToFa() ?? "—")</span>
+                                    }
+                                </td>
+                                <td class="text-start">@Fa.Money(o.TotalNet)</td>
+                                <td>
+                                    <span class="@VisUi.BadgeCss(o.Status)">@VisUi.StatusText(o.Status)</span>
+                                    @if (o.ReturnCount > 0)
+                                    {
+                                        <span class="vis-badge vis-orange" title="تعداد برگشت">↩ @Fa.Digits(o.ReturnCount)</span>
+                                    }
+                                    @if (o.DiscountOverLimit)
+                                    {
+                                        <span class="vis-badge vis-danger">تخفیف بالای سقف</span>
+                                    }
+                                </td>
+                                <td class="fs-8" style="max-width:16rem">
+                                    @if (!string.IsNullOrWhiteSpace(o.DecisionNote))
+                                    {
+                                        <span class="text-danger" data-decision-note>@o.DecisionNote</span>
+                                        <div class="fs-9 text-muted">@o.DecidedBy — @(o.DecidedAt is null ? "" : o.DecidedAt.Value.ToFa())</div>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td class="text-end" @onclick:stopPropagation="true">
+                                    <button class="btn btn-sm btn-outline-secondary" @onclick="@(() => Nav.NavigateTo($"/sales/visits/{o.Id}"))">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                            @if (open)
+                            {
+                                <tr class="vis-detail-row">
+                                    <td></td>
+                                    <td colspan="9">
+                                        <div class="row g-3">
+                                            <div class="col-12 col-lg-7">
+                                                <table class="table table-sm mb-0">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>کالا</th>
+                                                            <th class="text-start">مقدار</th>
+                                                            <th class="text-start">قیمت</th>
+                                                            <th class="text-start">تخفیف</th>
+                                                            <th class="text-start">جمع</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var l in o.Lines)
+                                                        {
+                                                            <tr>
+                                                                <td class="fs-8">@l.ProductName</td>
+                                                                <td class="text-start fs-8">@Fa.Number(l.Quantity)</td>
+                                                                <td class="text-start fs-8">@Fa.Money(l.UnitPrice)</td>
+                                                                <td class="text-start fs-8">@l.DiscountText</td>
+                                                                <td class="text-start fs-8">@Fa.Money(l.LineTotal)</td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            <div class="col-12 col-lg-5">
+                                                <div class="vis-sum">
+                                                    <div class="d-flex justify-content-between fs-8"><span>جمع کل</span><span>@Fa.Money(o.TotalGross)</span></div>
+                                                    <div class="d-flex justify-content-between fs-8"><span>تخفیف</span><span class="text-danger">@Fa.Money(o.TotalDiscount)</span></div>
+                                                    <div class="d-flex justify-content-between fw-700 mt-1"><span>قابل پرداخت</span><span>@Fa.Money(o.TotalNet)</span></div>
+                                                    <div class="fs-9 text-muted mt-1">انبار: @o.WarehouseName — ثبت‌کننده: @o.CreatedByName</div>
+                                                    <div class="fs-9 text-muted">تاریخ درخواستی ویزیتور: @(o.DeliveryDate?.ToFa() ?? "—")</div>
+                                                    @if (!string.IsNullOrWhiteSpace(o.Note))
+                                                    {
+                                                        <div class="fs-9 text-muted mt-1">یادداشت ویزیتور: @o.Note</div>
+                                                    }
+                                                    @if (o.Status == VisOrderStatus.Invoiced && !string.IsNullOrWhiteSpace(o.SaleNumber))
+                                                    {
+                                                        <div class="fs-9 text-success mt-1">فروش ثبت‌شده: @o.SaleNumber</div>
+                                                    }
+                                                </div>
+
+                                                @* ---------- گردش کامل ---------- *@
+                                                <div class="mt-2">
+                                                    <b class="fs-8"><i class="bi bi-clock-history"></i> گردش سفارش</b>
+                                                    @if (histories.TryGetValue(o.Id, out var hist) && hist.Count > 0)
+                                                    {
+                                                        <ul class="vis-hist mt-1">
+                                                            @foreach (var h in hist)
+                                                            {
+                                                                <li>
+                                                                    <span class="fs-9 text-muted">@h.At.ToFa()</span>
+                                                                    — <b class="fs-9">@h.UserName</b>
+                                                                    <span class="fs-9">: @(h.FromStatus is null ? "—" : VisUi.StatusText(h.FromStatus.Value)) ← @VisUi.StatusText(h.ToStatus)</span>
+                                                                    @if (!string.IsNullOrWhiteSpace(h.Comment))
+                                                                    {
+                                                                        <div class="fs-9 text-danger">@h.Comment</div>
+                                                                    }
+                                                                </li>
+                                                            }
+                                                        </ul>
+                                                    }
+                                                    else
+                                                    {
+                                                        <div class="fs-9 text-muted">در حال بارگذاری…</div>
+                                                    }
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+    .vis-kpi { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 14px; padding: .55rem .75rem; }
+    .vis-kpi b { display: block; font-size: 1.1rem; }
+    .vis-kpi span { font-size: .7rem; color: #64748b; }
+    .vis-kpi-active { outline: 2px solid #3b82f6; background: #eff6ff; }
+    .vis-sum { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: .6rem .75rem; }
+    .vis-badge { display: inline-block; font-size: .68rem; border-radius: 99px; padding: .1rem .5rem; border: 1px solid transparent; }
+    .vis-secondary { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+    .vis-warning { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+    .vis-primary { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
+    .vis-orange { background: #ffedd5; color: #9a3412; border-color: #fed7aa; }
+    .vis-danger { background: #ffe4e6; color: #9f1239; border-color: #fecdd3; }
+    .vis-success { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
+    .vis-dark { background: #e2e8f0; color: #0f172a; border-color: #cbd5e1; }
+    .vis-detail-row > td { background: #fbfdff; }
+    .vis-hist { list-style: none; padding: 0; margin: 0; max-height: 190px; overflow: auto; }
+    .vis-hist li { border-bottom: 1px dashed #e2e8f0; padding: .2rem 0; }
+    .fs-8 { font-size: .78rem; }
+    .fs-9 { font-size: .7rem; }
+</style>
+
+@code {
+    private bool loading = true;
+    private List<VisOrderDto> items = new();
+    private List<VisOrderDto> all = new();
+    private VisOrderStatus? statusFilter;
+    private DateTime? from;
+    private DateTime? to;
+    private string? search;
+    private System.Threading.CancellationTokenSource? _debounce;
+    private readonly HashSet<int> expanded = new();
+    private readonly Dictionary<int, List<VisOrderHistoryDto>> histories = new();
+
+    private static readonly VisOrderStatus[] AllStatuses = Enum.GetValues<VisOrderStatus>();
+
+    private sealed record Chip(string Key, string Text, VisOrderStatus? Status, int Count);
+
+    /// <summary>شمارندهٔ هر وضعیت — همهٔ وضعیت‌ها در یک نگاه (شامل رد‌شده و برگشتی).</summary>
+    private IEnumerable<Chip> ChipList => new[]
+    {
+        new Chip("all", "همه", null, all.Count),
+        new Chip("0", "پیش‌نویس", VisOrderStatus.Draft, Count(VisOrderStatus.Draft)),
+        new Chip("1", "در انتظار تأیید", VisOrderStatus.Submitted, Count(VisOrderStatus.Submitted)),
+        new Chip("2", "تأییدشده", VisOrderStatus.Approved, Count(VisOrderStatus.Approved)),
+        new Chip("3", "برگشتی", VisOrderStatus.Returned, Count(VisOrderStatus.Returned)),
+        new Chip("4", "رد‌شده", VisOrderStatus.Rejected, Count(VisOrderStatus.Rejected)),
+        new Chip("5", "فروش‌شده", VisOrderStatus.Invoiced, Count(VisOrderStatus.Invoiced)),
+        new Chip("7", "لغوشده", VisOrderStatus.Canceled, Count(VisOrderStatus.Canceled)),
+    };
+
+    private int Count(VisOrderStatus s) => all.Count(o => o.Status == s);
+
+    private void PickStatus(VisOrderStatus? s) => statusFilter = s;
+
+    private void SetFrom(DateTime? d) { from = d; }
+
+    private void SetTo(DateTime? d) { to = d; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("همهٔ درخواست‌های سفارش");
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            // نمای کامل مدیر: بدون فیلتر وضعیت، همهٔ درخواست‌های شرکت خوانده می‌شود
+            all = await Api.ListAsync(null, search, from, to);
+            items = statusFilter is null ? all : all.Where(o => o.Status == statusFilter).ToList();
+            expanded.Clear();
+            histories.Clear();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task SearchChanged()
+    {
+        _debounce?.Cancel();
+        _debounce = new System.Threading.CancellationTokenSource();
+        var token = _debounce.Token;
+        try
+        {
+            await Task.Delay(350, token);
+            if (!token.IsCancellationRequested) await LoadAsync();
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    /// <summary>باز/بسته کردن جزئیات یک درخواست + خواندن گردش آن.</summary>
+    private async Task Toggle(int id)
+    {
+        if (!expanded.Remove(id)) expanded.Add(id);
+
+        if (expanded.Contains(id) && !histories.ContainsKey(id))
+        {
+            try
+            {
+                var full = await Api.GetAsync(id);
+                histories[id] = full?.History ?? new List<VisOrderHistoryDto>();
+            }
+            catch (Exception ex) { Toast.Error(ex.Message); histories[id] = new(); }
+        }
+    }
+}

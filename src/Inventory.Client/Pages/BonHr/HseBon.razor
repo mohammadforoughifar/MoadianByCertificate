@@ -1,0 +1,915 @@
+@namespace Inventory.Client.Pages.BonHr
+@page "/bon-hr/hse"
+@inject BonHrApi Api
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject LayoutState Layout
+
+<PageTitle>ایمنی و حوادث</PageTitle>
+<BonHrGuard Section="Hse">
+<BonHrShell Title="ایمنی و حوادث" Sub="HSE بن‌سازه" />
+
+@using System.Text
+
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div><p class="text-muted small mb-0">HSE</p><h2>ایمنی، تجهیزات حفاظت فردی و حوادث</h2></div>
+        <span class="badge badge-soft-primary">@(string.IsNullOrWhiteSpace(Auth.DisplayName) ? Auth.Role : Auth.DisplayName)</span>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-4 col-lg"><div class="kpi kpi-blue"><div class="kpi-num">@BonFa.N(_reports.TotalIncidents)</div><div class="kpi-lbl">حوادث</div></div></div>
+        <div class="col-6 col-md-4 col-lg"><div class="kpi kpi-orange"><div class="kpi-num">@BonFa.N(_reports.LostDays)</div><div class="kpi-lbl">روز از دست رفته</div></div></div>
+        <div class="col-6 col-md-4 col-lg"><div class="kpi kpi-red"><div class="kpi-num">@BonFa.N(_reports.OpenActions)</div><div class="kpi-lbl">اقدام باز</div></div></div>
+        <div class="col-6 col-md-4 col-lg"><div class="kpi kpi-teal"><div class="kpi-num">@BonFa.N(_reports.PpePendingApproval)</div><div class="kpi-lbl">PPE در انتظار</div></div></div>
+        <div class="col-6 col-md-4 col-lg"><div class="kpi kpi-purple"><div class="kpi-num">@BonFa.N(_reports.ExtinguishersExpired)</div><div class="kpi-lbl">کپسول منقضی</div></div></div>
+    </div>
+
+    <ul class="nav nav-pills flex-wrap gap-1 mb-3">
+        @foreach (var tab in Tabs)
+        {
+            var key = tab.Key;
+            <li class="nav-item">
+                <button type="button" class="nav-link @(_tab == key ? "active" : "")" @onclick="() => _tab = key">@tab.Value</button>
+            </li>
+        }
+    </ul>
+
+    @* ───────── حوادث ───────── *@
+    @if (_tab == "incidents")
+    {
+        <div class="hse-tab-panel">
+            <div class="d-flex justify-content-end mb-3">
+                <button class="btn btn-primary" type="button" @onclick="() => _showIncident = true"><i class="bi bi-plus-lg"></i> حادثه جدید</button>
+            </div>
+            <Modal Size="modal-xl" Visible="_showIncident" Title="ثبت حادثه" OnClose="() => _showIncident = false">
+            <ChildContent>
+            <form id="bon-inc-form" @onsubmit="SaveIncidentAsync" @onsubmit:preventDefault="true">
+                <label class="form-label">تاریخ <BonHrDate @bind-Value="_incident.Date" /></label>
+                <label class="form-label">ساعت <input class="form-control" type="time" required value="@_incident.Time" @onchange="e => _incident.Time = Text(e)" /></label>
+                <label class="form-label">واحد
+                    <select class="form-select" required @bind="_incident.Unit">
+                        <option value="">انتخاب کنید</option>
+                        @foreach (var unit in _units) { <option value="@unit">@unit</option> }
+                    </select>
+                </label>
+                <label class="form-label">شیفت <select class="form-select" @bind="_incident.Shift">@foreach (var s in _definitions.Shifts) { <option value="@s">@s</option> }</select></label>
+                <label class="form-label">نوع حادثه <select class="form-select" @bind="_incident.Type">@foreach (var t in _definitions.IncidentTypes) { <option value="@t">@t</option> }</select></label>
+                <label class="form-label">شدت <select class="form-select" @bind="_incident.Severity">@foreach (var s in _definitions.Severities) { <option value="@s">@s</option> }</select></label>
+                <label class="form-label">پرسنل درگیر
+                    <select class="form-select" @bind="_incident.EmployeeCode">
+                        <option value="">—</option>
+                        @foreach (var e in _employees) { <option value="@e.Code">@e.First @e.Last (@BonFa.N(e.Code))</option> }
+                    </select>
+                </label>
+                <label class="form-label">محل <input class="form-control" required @bind="_incident.Location" /></label>
+                <label class="wide">شرح رویداد <textarea class="form-control" required @bind="_incident.Description"></textarea></label>
+            </form>
+            </ChildContent>
+            <Footer>
+                <button class="btn btn-light" type="button" @onclick="() => _showIncident = false">انصراف</button>
+                <button class="btn btn-primary" type="submit" form="bon-inc-form">ثبت و ارسال برای HSE</button>
+            </Footer>
+            </Modal>
+
+            <div class="card card-body mt-3 table-wrap">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th>شماره</th><th>تاریخ</th><th>واحد/شیفت</th><th>نوع</th><th>وضعیت</th><th>روز ازدست‌رفته</th><th>عملیات</th></tr></thead>
+                    <tbody>
+                        @foreach (var incident in _incidents)
+                        {
+                            var item = incident;
+                            <tr>
+                                <td>@BonFa.N(item.CaseNo)</td>
+                                <td>@BonFa.N(item.Date) — @BonFa.N(item.Time)</td>
+                                <td>@item.Unit / @item.Shift</td>
+                                <td>@item.Type<br /><small class="text-muted">@item.Severity</small></td>
+                                <td><span class="badge badge-soft-primary">@item.Status</span></td>
+                                <td>@BonFa.N(item.LostDays)</td>
+                                <td class="row-actions">
+                                    <button class="btn btn-light" type="button" @onclick="() => OpenIncident(item)">پرونده</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (_incPg.Total > 0)
+            {
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2">
+                    <span class="text-muted small">ردیف @BonFa.N(_incPg.From) تا @BonFa.N(_incPg.To) از @BonFa.N(_incPg.Total)</span>
+                    <Pager Page="@_incPg.Page" PageCount="@_incPg.Count" OnPageChanged="p => GoIncidentPage(p)" />
+                </div>
+            }
+            @if (_incidents.Count == 0) { <p class="text-muted text-center py-4">حادثه‌ای ثبت نشده است.</p> }
+        </div>
+    }
+
+    @* ───────── تحویل PPE ───────── *@
+    @if (_tab == "ppe")
+    {
+        <div class="hse-tab-panel">
+            @if (_notifications.Any(n => !n.Seen))
+            {
+                <article class="card card-body mt-3">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                        <div><p class="text-muted small mb-0">اعلان‌های HSE</p><h3>تحویل تجهیزات پیش از پایان دوره مصرف</h3></div>
+                        <span class="badge badge-soft-primary">@BonFa.N(_notifications.Count(n => !n.Seen)) مورد</span>
+                    </div>
+                    <div class="notification-list">
+                        @foreach (var notification in _notifications.Where(n => !n.Seen))
+                        {
+                            var item = notification;
+                            <div class="notification-row">
+                                <div><strong>@item.Message</strong><small>@item.Details</small></div>
+                                <button class="btn btn-light" type="button" @onclick="() => MarkSeenAsync(item)">خوانده شد</button>
+                            </div>
+                        }
+                    </div>
+                </article>
+            }
+
+            <div class="d-flex justify-content-end mb-3">
+                <button class="btn btn-primary" type="button" @onclick="() => _showPpe = true"><i class="bi bi-plus-lg"></i> تحویل PPE</button>
+            </div>
+            <Modal Size="modal-xl" Visible="_showPpe" Title="تحویل تجهیزات حفاظت فردی" OnClose="() => _showPpe = false">
+            <ChildContent>
+            <form id="bon-ppe-form" @onsubmit="SavePpeAsync" @onsubmit:preventDefault="true">
+                <label class="form-label">انتخاب پرسنل
+                    <select class="form-select" required value="@_ppe.EmployeeCode" @onchange="OnPpeEmployeeChanged">
+                        <option value="">— انتخاب پرسنل —</option>
+                        @foreach (var e in _employees) { <option value="@e.Code">@e.First @e.Last (@BonFa.N(e.Code))</option> }
+                    </select>
+                </label>
+
+                @if (SelectedPpeEmployee != null)
+                {
+                    <div class="warehouse-employee-card wide">
+                        <div><span>واحد</span><strong>@SelectedPpeEmployee.Unit</strong></div>
+                        <div><span>ایستگاه کاری</span><strong>@(string.IsNullOrEmpty(SelectedPpeEmployee.WorkStation) ? "—" : SelectedPpeEmployee.WorkStation)</strong></div>
+                        <div><span>سطح مسئولیت</span><strong>@SelectedPpeEmployee.ResponsibilityLevel</strong></div>
+                        <div><span>آخرین تحویل</span><strong>@BonFa.N(LastDeliveryOf(SelectedPpeEmployee.Code))</strong></div>
+                    </div>
+                }
+
+                <label class="form-label">تجهیز مجاز برای ایستگاه
+                    <select class="form-select" required value="@_ppe.EquipmentType" @onchange="OnEquipmentChanged">
+                        <option value="">— انتخاب تجهیز —</option>
+                        @foreach (var type in AllowedEquipment) { <option value="@type">@type</option> }
+                    </select>
+                    <small class="text-muted">@EligibilityHint</small>
+                </label>
+
+                <label class="form-label">تعداد <input class="form-control" type="number" min="1" required @bind="_ppe.Quantity" /></label>
+                <label class="form-label">برند/مدل <input class="form-control" @bind="_ppe.BrandModel" /></label>
+                <label class="form-label">سایز <input class="form-control" @bind="_ppe.Size" /></label>
+                <label class="form-label">سریال <input class="form-control" @bind="_ppe.Serial" /></label>
+                <label class="form-label">تاریخ تحویل <BonHrDate Value="_ppe.DeliveryDate" ValueChanged="OnPpeDate" /></label>
+                <label class="form-label">دوره مجاز تعویض (روز) <input class="form-control" type="number" min="1" required @bind="_ppe.ReplacementIntervalDays" /></label>
+                <label class="form-label">وضعیت <select class="form-select" @bind="_ppe.Condition">@foreach (var c in _definitions.Conditions) { <option value="@c">@c</option> }</select></label>
+
+                @if (_ppe.EarlyReplacement)
+                {
+                    <div class="early-replacement-fields wide">
+                        <strong>دلیل تحویل پیش از موعد</strong>
+                        <label class="form-label">انتخاب دلیل
+                            <select class="form-select" @bind="_ppe.EarlyReplacementReason">
+                                <option value="">انتخاب کنید</option>
+                                @foreach (var reason in _definitions.EarlyReplacementReasons) { <option value="@reason">@reason</option> }
+                            </select>
+                        </label>
+                        <label class="form-label">توضیحات تکمیلی <textarea class="form-control" placeholder="شرح دقیق علت تحویل زودهنگام" @bind="_ppe.Notes"></textarea></label>
+                        <p class="small mt-2">پس از ثبت، نتیجه برای کارشناس HSE ارسال می‌شود.</p>
+                    </div>
+                }
+
+                <p class="form-message wide">@_ppeMessage</p>
+            </form>
+            </ChildContent>
+            <Footer>
+                <button class="btn btn-light" type="button" @onclick="() => _showPpe = false">انصراف</button>
+                <button class="btn btn-primary" type="submit" form="bon-ppe-form">ثبت تحویل</button>
+            </Footer>
+            </Modal>
+
+            <div class="card card-body mt-3 table-wrap">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th>پرسنل</th><th>تجهیز/تعداد</th><th>تاریخ</th><th>تأیید HSE</th><th>تأیید مدیر تولید و آموزش</th><th>عملیات</th></tr></thead>
+                    <tbody>
+                        @foreach (var delivery in _deliveries)
+                        {
+                            var item = delivery;
+                            <tr>
+                                <td>@NameOf(item.EmployeeCode)<br /><small class="text-muted">@BonFa.N(item.EmployeeCode)</small></td>
+                                <td>@item.EquipmentType — @BonFa.N(item.Quantity) عدد @if (item.EarlyReplacement) { <span class="badge badge-soft-primary">زودهنگام</span> }</td>
+                                <td>@BonFa.N(item.DeliveryDate)</td>
+                                <td><span class="badge badge-soft-primary">@item.HseApproval</span></td>
+                                <td><span class="badge badge-soft-primary">@item.ProductionApproval</span></td>
+                                <td class="row-actions">
+                                    @if (CanApprove)
+                                    {
+                                        <button class="btn btn-primary" type="button" @onclick="() => ApproveAsync(item, true)">تأیید</button>
+                                        <button class="btn btn-outline-danger" type="button" @onclick="() => ApproveAsync(item, false)">رد</button>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (_ppePg.Total > 0)
+            {
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2">
+                    <span class="text-muted small">ردیف @BonFa.N(_ppePg.From) تا @BonFa.N(_ppePg.To) از @BonFa.N(_ppePg.Total)</span>
+                    <Pager Page="@_ppePg.Page" PageCount="@_ppePg.Count" OnPageChanged="p => GoPpePage(p)" />
+                </div>
+            }
+            @if (_deliveries.Count == 0) { <p class="text-muted text-center py-4">تحویلی ثبت نشده است.</p> }
+        </div>
+    }
+
+    @* ───────── فهرست تجهیزات ───────── *@
+    @if (_tab == "equipment")
+    {
+        <div class="hse-tab-panel">
+            <div class="d-flex justify-content-end mb-3">
+                <button class="btn btn-primary" type="button" @onclick="() => _showEquip = true"><i class="bi bi-plus-lg"></i> تجهیز جدید</button>
+            </div>
+            <Modal Size="modal-lg" Visible="_showEquip" Title="افزودن تجهیز PPE" OnClose="() => _showEquip = false">
+            <ChildContent>
+            <form id="bon-eq-form" @onsubmit="AddPpeTypeAsync" @onsubmit:preventDefault="true">
+                <label class="wide">نام تجهیز <input class="form-control" maxlength="100" required placeholder="مثلاً شیلد محافظ صورت" @bind="_newPpeType" /></label>
+                <p class="form-message wide" role="status">@_definitionMessage</p>
+            </form>
+            </ChildContent>
+            <Footer>
+                <button class="btn btn-light" type="button" @onclick="() => _showEquip = false">انصراف</button>
+                <button class="btn btn-primary" type="submit" form="bon-eq-form">افزودن</button>
+            </Footer>
+            </Modal>
+
+            <article class="card card-body mt-3">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                    <div><p class="text-muted small mb-0">فهرست قابل انتخاب</p><h3>تجهیزات حفاظت فردی تعریف‌شده</h3></div>
+                    <span class="badge badge-soft-primary">@BonFa.N(_definitions.PpeTypes.Count) تجهیز</span>
+                </div>
+                <div class="ppe-type-catalog">
+                    @foreach (var type in _definitions.PpeTypes)
+                    {
+                        var title = type;
+                        <span class="chip">
+                            @title
+                            <button class="chip-remove" type="button" @onclick="() => DeleteDefinitionAsync(PpeTypesGroup, title)">×</button>
+                        </span>
+                    }
+                </div>
+            </article>
+        </div>
+    }
+
+    @* ───────── کپسول‌های اطفا ───────── *@
+    @if (_tab == "extinguishers")
+    {
+        <div class="hse-tab-panel">
+            <div class="d-flex justify-content-end mb-3">
+                <button class="btn btn-primary" type="button" @onclick="() => _showExt = true"><i class="bi bi-plus-lg"></i> کپسول جدید</button>
+            </div>
+            <Modal Size="modal-lg" Visible="_showExt" Title="ثبت کپسول اطفا" OnClose="() => _showExt = false">
+            <ChildContent>
+            <form id="bon-ext-form" @onsubmit="SaveExtinguisherAsync" @onsubmit:preventDefault="true">
+                <label class="form-label">نوع کپسول <select class="form-select" @bind="_extinguisher.Type">@foreach (var t in _definitions.ExtinguisherTypes) { <option value="@t">@t</option> }</select></label>
+                <label class="form-label">کد/شماره <input class="form-control" required @bind="_extinguisher.AssetCode" /></label>
+                <label class="form-label">محل نصب <input class="form-control" required @bind="_extinguisher.Location" /></label>
+                <label class="form-label">تاریخ انقضا <BonHrDate @bind-Value="_extinguisher.ExpiryDate" /></label>
+            </form>
+            </ChildContent>
+            <Footer>
+                <button class="btn btn-light" type="button" @onclick="() => _showExt = false">انصراف</button>
+                <button class="btn btn-primary" type="submit" form="bon-ext-form">ثبت کپسول</button>
+            </Footer>
+            </Modal>
+
+            <div class="card card-body mt-3 table-wrap">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th>کد</th><th>نوع</th><th>محل نصب</th><th>انقضا</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+                    <tbody>
+                        @foreach (var extinguisher in _extinguishers)
+                        {
+                            var item = extinguisher;
+                            var expired = string.CompareOrdinal(item.ExpiryDate, PersianCalendarUtil.TodayKey()) < 0;
+                            <tr>
+                                <td>@BonFa.N(item.AssetCode)</td>
+                                <td>@item.Type</td>
+                                <td>@item.Location</td>
+                                <td>@BonFa.N(item.ExpiryDate)</td>
+                                <td><span class="badge badge-soft-primary">@(expired ? "منقضی" : "معتبر")</span></td>
+                                <td class="row-actions"><button class="btn btn-outline-danger" type="button" @onclick="() => DeleteExtinguisherAsync(item)">حذف</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (_extPg.Total > 0)
+            {
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2">
+                    <span class="text-muted small">ردیف @BonFa.N(_extPg.From) تا @BonFa.N(_extPg.To) از @BonFa.N(_extPg.Total)</span>
+                    <Pager Page="@_extPg.Page" PageCount="@_extPg.Count" OnPageChanged="p => GoExtPage(p)" />
+                </div>
+            }
+            @if (_extinguishers.Count == 0) { <p class="text-muted text-center py-4">کپسولی ثبت نشده است.</p> }
+        </div>
+    }
+
+    @* ───────── گزارش‌ها ───────── *@
+    @if (_tab == "reports")
+    {
+        <div class="hse-tab-panel">
+            <div class="card card-body mt-3">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                    <h3>گزارش‌های HSE</h3>
+                    <div class="d-flex gap-2 flex-wrap">
+                        <label class="form-label">سال <input class="form-control" type="number" min="1300" max="1600" value="@_reportYear" @onchange="OnReportYearChanged" /></label>
+                        <button class="btn btn-light" type="button" @onclick="ExportReportsAsync">خروجی Excel</button>
+                    </div>
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div><span>مجموع حوادث</span><strong>@BonFa.N(_reports.TotalIncidents)</strong></div>
+                    <div><span>روزهای از دست رفته</span><strong>@BonFa.N(_reports.LostDays)</strong></div>
+                    <div><span>تحویل PPE</span><strong>@BonFa.N(_reports.PpeDeliveries)</strong></div>
+                    <div><span>تعویض زودهنگام</span><strong>@BonFa.N(_reports.EarlyReplacements)</strong></div>
+                    <div><span>کپسول‌ها</span><strong>@BonFa.N(_reports.ExtinguishersTotal)</strong></div>
+                </div>
+
+                <div class="charts-grid">
+                    <BonHrBar Title="حوادث بر حسب ماه" Points="@_reports.ByMonth.Select(m => new ChartPoint { Label = BonFa.MonthLabel(m.Month), ShortLabel = BonFa.MonthLabel(m.Month), Value = m.Count }).ToList()" />
+                    <BonHrBar Title="توزیع شدت حوادث" Points="@_reports.BySeverity.Select(s => new ChartPoint { Label = s.Severity, Value = s.Count }).ToList()" />
+                </div>
+
+                <div class="grid2">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead><tr><th>نوع حادثه</th><th>تعداد</th></tr></thead>
+                            <tbody>
+                                @foreach (var row in _reports.ByType) { <tr><td>@row.Type</td><td>@BonFa.N(row.Count)</td></tr> }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead><tr><th>واحد</th><th>تعداد</th></tr></thead>
+                            <tbody>
+                                @foreach (var row in _reports.ByUnit) { <tr><td>@row.Unit</td><td>@BonFa.N(row.Count)</td></tr> }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* ───────── تعاریف ───────── *@
+    @if (_tab == "settings")
+    {
+        <div class="hse-tab-panel">
+            <form class="card card-body mt-3 hse-form" @onsubmit="AddGroupDefinitionAsync" @onsubmit:preventDefault="true">
+                <h3>تعریف نوع جدید</h3>
+                <label class="form-label">گروه
+                    <select class="form-select" @bind="_definitionGroup">
+                        <option value="incidentTypes">نوع رویداد</option>
+                        <option value="extinguisherTypes">نوع کپسول</option>
+                    </select>
+                </label>
+                <label class="form-label">عنوان <input class="form-control" required @bind="_definitionTitle" /></label>
+                <button class="btn btn-primary" type="submit">افزودن</button>
+            </form>
+
+            <form class="card card-body mt-3 hse-form" @onsubmit="SaveAuthorizationsAsync" @onsubmit:preventDefault="true">
+                <h3>تعیین لوازم مجاز هر ایستگاه کاری توسط HSE</h3>
+                <label class="form-label">ایستگاه کاری
+                    <select class="form-select" required value="@_authStationKey" @onchange="OnAuthStationChanged">
+                        <option value="">— انتخاب ایستگاه —</option>
+                        @foreach (var station in _stationKeys)
+                        {
+                            <option value="@station">@station.Replace("::", " ← ")</option>
+                        }
+                    </select>
+                </label>
+                <div class="ppe-authorization-options wide">
+                    @foreach (var type in _definitions.PpeTypes)
+                    {
+                        var title = type;
+                        <label class="checkbox-chip">
+                            <input class="form-control" type="checkbox" checked="@_authSelection.Contains(title)"
+                                   @onchange="e => ToggleAuth(title, e)" />
+                            @title
+                        </label>
+                    }
+                </div>
+                <button class="btn btn-primary" type="submit">ذخیره فهرست مجاز ایستگاه</button>
+                <p class="form-message wide" role="status">@_authMessage</p>
+            </form>
+
+            <div class="card card-body mt-3">
+                <h3>تعاریف پایه</h3>
+                <div class="grid2">
+                    <div>
+                        <p class="text-muted small mb-0">انواع رویداد</p>
+                        <div class="chip-row">
+                            @foreach (var type in _definitions.IncidentTypes)
+                            {
+                                var title = type;
+                                <span class="chip">@title <button class="chip-remove" type="button" @onclick="() => DeleteDefinitionAsync(IncidentTypesGroup, title)">×</button></span>
+                            }
+                        </div>
+                    </div>
+                    <div>
+                        <p class="text-muted small mb-0">انواع کپسول</p>
+                        <div class="chip-row">
+                            @foreach (var type in _definitions.ExtinguisherTypes)
+                            {
+                                var title = type;
+                                <span class="chip">@title <button class="chip-remove" type="button" @onclick="() => DeleteDefinitionAsync(ExtinguisherTypesGroup, title)">×</button></span>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* ───────── پروندهٔ حادثه ───────── *@
+    <Modal Size="modal-xl" Visible="_openIncident != null" Title="@(_openIncident == null ? "پرونده" : $"پرونده {BonFa.N(_openIncident.CaseNo)}")" OnClose="() => _openIncident = null">
+        <ChildContent>
+            @if (_openIncident != null)
+            {
+                <div class="dialog-profile">
+                    <div><span>تاریخ</span><strong>@BonFa.N(_openIncident.Date) — @BonFa.N(_openIncident.Time)</strong></div>
+                    <div><span>واحد / شیفت</span><strong>@_openIncident.Unit / @_openIncident.Shift</strong></div>
+                    <div><span>نوع / شدت</span><strong>@_openIncident.Type / @_openIncident.Severity</strong></div>
+                    <div><span>پرسنل</span><strong>@NameOf(_openIncident.EmployeeCode)</strong></div>
+                    <div><span>محل</span><strong>@_openIncident.Location</strong></div>
+                    <div><span>وضعیت</span><strong>@_openIncident.Status</strong></div>
+                </div>
+                <p class="text-muted">@_openIncident.Description</p>
+
+                <h4>ارزیابی کارشناس HSE</h4>
+                <div class="row g-3">
+                    <label class="form-label">علت ریشه‌ای <input class="form-control" @bind="_openIncident.RootCause" /></label>
+                    <label class="form-label">روزهای از دست رفته <input class="form-control" type="number" min="0" @bind="_openIncident.LostDays" /></label>
+                    <label class="form-label">نیاز به مرخصی استعلاجی <input class="form-control" type="checkbox" @bind="_openIncident.LeaveRequired" /></label>
+                    <label class="form-label">نوع مرخصی <input class="form-control" @bind="_openIncident.LeaveType" /></label>
+                    <label class="wide-field">یادداشت پزشکی <textarea class="form-control" @bind="_openIncident.MedicalNotes"></textarea></label>
+                    <label class="form-label">وضعیت پرونده
+                        <select class="form-select" @bind="_openIncident.Status">
+                            <option value="ثبت اولیه">ثبت اولیه</option>
+                            <option value="در حال بررسی">در حال بررسی</option>
+                            <option value="اقدامات اصلاحی">اقدامات اصلاحی</option>
+                            <option value="خاتمه‌یافته">خاتمه‌یافته</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="form-actions"><button class="btn btn-primary" type="button" @onclick="UpdateIncidentAsync">ذخیره ارزیابی</button></div>
+
+                <h4>اقدامات اصلاحی</h4>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead><tr><th>عنوان</th><th>مسئول</th><th>مهلت</th><th>وضعیت</th></tr></thead>
+                        <tbody>
+                            @foreach (var action in _openIncident.CorrectiveActions)
+                            {
+                                <tr><td>@action.Title</td><td>@action.Owner</td><td>@BonFa.N(action.DueDate)</td><td>@action.Status</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="row g-3">
+                    <label class="form-label">عنوان اقدام <input class="form-control" @bind="_action.Title" /></label>
+                    <label class="form-label">مسئول اجرا <input class="form-control" @bind="_action.Owner" /></label>
+                    <label class="form-label">مهلت <BonHrDate @bind-Value="_action.DueDate" /></label>
+                    <label class="form-label">وضعیت
+                        <select class="form-select" @bind="_action.Status">
+                            <option value="باز">باز</option>
+                            <option value="در حال اجرا">در حال اجرا</option>
+                            <option value="بسته">بسته</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="form-actions"><button class="btn btn-light" type="button" @onclick="AddActionAsync">افزودن اقدام اصلاحی</button></div>
+
+                <h4>مدارک پزشکی بایگانی‌شده (غیرقابل حذف)</h4>
+                <ul class="document-list">
+                    @foreach (var document in _openIncident.MedicalDocuments)
+                    {
+                        <li>@document.Name <small class="text-muted">@BonFa.N((decimal)document.Size) بایت — @document.ArchivedBy</small></li>
+                    }
+                </ul>
+                <label class="wide-field">بایگانی مدرک جدید <InputFile OnChange="UploadDocumentAsync" /></label>
+            }
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-light" type="button" @onclick="() => _openIncident = null">بستن</button>
+        </Footer>
+    </Modal>
+
+
+</BonHrGuard>
+@code {
+    private static readonly Dictionary<string, string> Tabs = new()
+    {
+        ["incidents"] = "حوادث و اقدامات",
+        ["ppe"] = "تحویل PPE",
+        ["equipment"] = "فهرست تجهیزات PPE",
+        ["extinguishers"] = "کپسول‌های اطفا",
+        ["reports"] = "گزارش‌ها",
+        ["settings"] = "تعاریف"
+    };
+
+    private const string PpeTypesGroup = "ppeTypes";
+    private const string IncidentTypesGroup = "incidentTypes";
+    private const string ExtinguisherTypesGroup = "extinguisherTypes";
+
+    private string _tab = "incidents";
+
+    private HseDefinitionsDto _definitions = new();
+    private HseReportsDto _reports = new();
+    private List<Incident> _incidents = new();
+    private List<PpeDelivery> _deliveries = new();
+    private List<Extinguisher> _extinguishers = new();
+
+    // هر سه فهرست بالا بی‌نهایت رشد می‌کنند (حادثه، تحویل تجهیز، کپسول) و
+    // اندپوینت‌هایشان در سرور Paging.ResultAsync دارند، پس صفحه‌بندی در SQL
+    // اعمال می‌شود. هر فهرست شمارهٔ صفحهٔ مستقل خودش را دارد.
+    private readonly BonPagerState _incPg = new();
+    private readonly BonPagerState _ppePg = new();
+    private readonly BonPagerState _extPg = new();
+
+    /// <summary>
+    /// تحویل‌های **همان پرسنلی که در فرم PPE انتخاب شده**. پیش از این، «آخرین تحویل»
+    /// و «تشخیص تعویض زودهنگام» از روی کل _deliveries جست‌وجو می‌کردند؛ حالا که آن
+    /// فهرست صفحه‌بندی شده، جست‌وجو در صفحهٔ جاری نتیجهٔ اشتباه می‌داد. این فهرست
+    /// جدا و با فیلتر code= از سرور خوانده می‌شود (برای یک نفر کوچک است) و صفحه‌بندی
+    /// فهرست اصلی را بی‌اثر می‌کند.
+    /// </summary>
+    private List<PpeDelivery> _myDeliveries = new();
+    private List<HseNotification> _notifications = new();
+    private List<PpeAuthorization> _authorizations = new();
+    private List<Employee> _employees = new();
+    private List<string> _units = new();
+    private List<string> _stationKeys = new();
+
+    private Incident _incident = new();
+    private PpeDelivery _ppe = new() { Quantity = 1, ReplacementIntervalDays = 180, Condition = "نو" };
+    private Extinguisher _extinguisher = new();
+    private CorrectiveAction _action = new();
+    private Incident? _openIncident;
+
+    private string _newPpeType = "";
+    private string _definitionGroup = "incidentTypes";
+    private string _definitionTitle = "";
+    private string _definitionMessage = "";
+    private string _authStationKey = "";
+    private HashSet<string> _authSelection = new();
+    private string _authMessage = "";
+    private string _ppeMessage = "";
+    private bool _showIncident, _showPpe, _showEquip, _showExt;
+    private int _reportYear = PersianCalendarUtil.Today().Jy;
+
+    private bool CanApprove => Auth.IsAdmin || Auth.Has("RadisHr.Access") || Auth.Has("RadisHr.Hse");
+
+    private Employee? SelectedPpeEmployee =>
+        _employees.FirstOrDefault(e => e.Code == _ppe.EmployeeCode);
+
+    private List<string> AllowedEquipment
+    {
+        get
+        {
+            var employee = SelectedPpeEmployee;
+            if (employee == null) return _definitions.PpeTypes;
+
+            var key = $"{employee.Unit}::{employee.WorkStation}";
+            var allowed = _authorizations.Where(a => a.StationKey == key).Select(a => a.EquipmentType).ToList();
+            return allowed.Count > 0 ? allowed : _definitions.PpeTypes;
+        }
+    }
+
+    private string EligibilityHint
+    {
+        get
+        {
+            var employee = SelectedPpeEmployee;
+            if (employee == null) return "ابتدا پرسنل را انتخاب کنید.";
+
+            var key = $"{employee.Unit}::{employee.WorkStation}";
+            var allowed = _authorizations.Count(a => a.StationKey == key);
+            return allowed > 0
+                ? $"برای ایستگاه «{employee.WorkStation}» تعداد {BonFa.N(allowed)} تجهیز مجاز تعریف شده است."
+                : "برای این ایستگاه کاری ماتریس مجاز تعریف نشده؛ همهٔ تجهیزات قابل انتخاب‌اند.";
+        }
+    }
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private static string Text(ChangeEventArgs args) => args.Value?.ToString() ?? "";
+
+    private async Task ReloadAsync()
+    {
+        _definitions = await Api.GetAsync<HseDefinitionsDto>("api/hse/definitions") ?? new HseDefinitionsDto();
+        await LoadIncidentsAsync();
+        await LoadDeliveriesAsync();
+        await LoadExtinguishersAsync();
+        _notifications = await Api.ListAsync<HseNotification>("api/hse/notifications");
+        _authorizations = await Api.ListAsync<PpeAuthorization>("api/hse/ppe-authorizations");
+        _reports = await Api.GetAsync<HseReportsDto>($"api/hse/reports?year={_reportYear}") ?? new HseReportsDto();
+        _employees = await Api.ListAsync<Employee>("api/employees");
+
+        var departments = await Api.ListAsync<Department>("api/organization/departments");
+        _units = departments.Select(d => d.Name).ToList();
+        _stationKeys = departments
+            .SelectMany(d => d.Stations.Select(s => $"{d.Name}::{s.Name}"))
+            .OrderBy(k => k).ToList();
+
+        if (string.IsNullOrEmpty(_incident.Type)) _incident.Type = _definitions.IncidentTypes.FirstOrDefault() ?? "";
+        if (string.IsNullOrEmpty(_extinguisher.Type)) _extinguisher.Type = _definitions.ExtinguisherTypes.FirstOrDefault() ?? "";
+    }
+
+    private async Task LoadIncidentsAsync()
+        => _incidents = _incPg.Take(await Api.ListPagedAsync<Incident>(
+            "api/hse/incidents", _incPg.Page, _incPg.Size));
+
+    private async Task LoadDeliveriesAsync()
+        => _deliveries = _ppePg.Take(await Api.ListPagedAsync<PpeDelivery>(
+            "api/hse/ppe", _ppePg.Page, _ppePg.Size));
+
+    private async Task LoadExtinguishersAsync()
+        => _extinguishers = _extPg.Take(await Api.ListPagedAsync<Extinguisher>(
+            "api/hse/extinguishers", _extPg.Page, _extPg.Size));
+
+    private void GoIncidentPage(int p) { _incPg.Go(p); _ = LoadIncidentsAsync(); }
+    private void GoPpePage(int p)      { _ppePg.Go(p); _ = LoadDeliveriesAsync(); }
+    private void GoExtPage(int p)      { _extPg.Go(p); _ = LoadExtinguishersAsync(); }
+
+    private string NameOf(string code)
+    {
+        var employee = _employees.FirstOrDefault(e => e.Code == code);
+        return employee == null ? "—" : $"{employee.First} {employee.Last}";
+    }
+
+    private string LastDeliveryOf(string code) =>
+        _myDeliveries.Where(d => d.EmployeeCode == code)
+            .OrderByDescending(d => d.DeliveryDate).FirstOrDefault()?.DeliveryDate ?? "—";
+
+    // ───────── حوادث ─────────
+    private async Task SaveIncidentAsync()
+    {
+        var ok = await Api.SendAsync(HttpMethod.Post, "api/hse/incidents", _incident);
+        if (!ok) return;
+
+        _showIncident = false;
+        _incident = new Incident { Type = _definitions.IncidentTypes.FirstOrDefault() ?? "" };
+        await ReloadAsync();
+    }
+
+    private void OpenIncident(Incident incident)
+    {
+        _openIncident = incident;
+        _action = new CorrectiveAction();
+    }
+
+    private async Task UpdateIncidentAsync()
+    {
+        if (_openIncident == null) return;
+        var ok = await Api.SendAsync(HttpMethod.Put, $"api/hse/incidents/{_openIncident.Id}", _openIncident);
+        if (ok) { _openIncident = null; await ReloadAsync(); }
+    }
+
+    private async Task AddActionAsync()
+    {
+        if (_openIncident == null || string.IsNullOrWhiteSpace(_action.Title)) return;
+        var ok = await Api.SendAsync(HttpMethod.Post, $"api/hse/incidents/{_openIncident.Id}/actions", _action);
+        if (!ok) return;
+
+        var id = _openIncident.Id;
+        await ReloadAsync();
+        // صفحهٔ جاری هنگام ReloadAsync حفظ می‌شود، پس ردیف معمولاً در همین صفحه است؛
+        // اگر نبود، مودال را با همان دادهٔ قبلی باز نگه می‌داریم تا بی‌دلیل بسته نشود.
+        _openIncident = _incidents.FirstOrDefault(i => i.Id == id) ?? _openIncident;
+        _action = new CorrectiveAction();
+    }
+
+    private async Task UploadDocumentAsync(InputFileChangeEventArgs args)
+    {
+        if (_openIncident == null) return;
+
+        var file = args.File;
+        using var content = new MultipartFormDataContent();
+        var stream = file.OpenReadStream(long.MaxValue);
+        content.Add(new StreamContent(stream), "file", file.Name);
+
+        var stored = await Api.PostFormAsync<StoredFile>("api/files", content);
+        if (stored == null) return;
+
+        var ok = await Api.SendAsync(HttpMethod.Post, $"api/hse/incidents/{_openIncident.Id}/documents", new MedicalDocument
+        {
+            Name = file.Name,
+            ContentType = file.ContentType,
+            Size = file.Size,
+            StoredFileId = stored.Uid
+        });
+
+        if (!ok) return;
+        var id = _openIncident.Id;
+        await ReloadAsync();
+        // صفحهٔ جاری هنگام ReloadAsync حفظ می‌شود، پس ردیف معمولاً در همین صفحه است؛
+        // اگر نبود، مودال را با همان دادهٔ قبلی باز نگه می‌داریم تا بی‌دلیل بسته نشود.
+        _openIncident = _incidents.FirstOrDefault(i => i.Id == id) ?? _openIncident;
+    }
+
+    // ───────── PPE ─────────
+    private async Task OnPpeEmployeeChanged(ChangeEventArgs args)
+    {
+        _ppe.EmployeeCode = Text(args);
+        _ppe.EquipmentType = "";
+        await LoadMyDeliveriesAsync();
+        RecomputeEarlyReplacement();
+    }
+
+    /// <summary>
+    /// خواندن تحویل‌های یک پرسنل با فیلتر سمت سرور. صفحه‌بندی نمی‌خواهد چون
+    /// برای یک نفر محدود است؛ اگر code خالی باشد فهرست خالی می‌شود.
+    /// </summary>
+    private async Task LoadMyDeliveriesAsync()
+        => _myDeliveries = string.IsNullOrEmpty(_ppe.EmployeeCode)
+            ? new List<PpeDelivery>()
+            : await Api.ListAsync<PpeDelivery>($"api/hse/ppe?code={Uri.EscapeDataString(_ppe.EmployeeCode)}");
+
+    private void OnEquipmentChanged(ChangeEventArgs args)
+    {
+        _ppe.EquipmentType = Text(args);
+        RecomputeEarlyReplacement();
+    }
+
+    private Task OnPpeDate(string? value)
+    {
+        _ppe.DeliveryDate = value ?? "";
+        RecomputeEarlyReplacement();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>تشخیص تحویل زودهنگام: فاصلهٔ تحویل قبلی کمتر از دورهٔ مجاز باشد</summary>
+    private void RecomputeEarlyReplacement()
+    {
+        var previous = _myDeliveries
+            .Where(d => d.EquipmentType == _ppe.EquipmentType)
+            .OrderByDescending(d => d.DeliveryDate).FirstOrDefault();
+
+        if (previous == null || string.IsNullOrEmpty(_ppe.DeliveryDate))
+        {
+            _ppe.EarlyReplacement = false;
+            return;
+        }
+
+        var from = PersianCalendarUtil.JalaliDayNumber(previous.DeliveryDate);
+        var to = PersianCalendarUtil.JalaliDayNumber(_ppe.DeliveryDate);
+        _ppe.EarlyReplacement = from.HasValue && to.HasValue &&
+            (to.Value - from.Value) < previous.ReplacementIntervalDays;
+    }
+
+    private async Task SavePpeAsync()
+    {
+        if (_ppe.EarlyReplacement && string.IsNullOrWhiteSpace(_ppe.EarlyReplacementReason))
+        {
+            _ppeMessage = "برای تحویل زودهنگام، انتخاب دلیل الزامی است.";
+            return;
+        }
+
+        var ok = await Api.SendAsync(HttpMethod.Post, "api/hse/ppe", _ppe);
+        if (!ok) return;
+
+        _ppeMessage = "تحویل ثبت شد و در انتظار تأیید HSE و مدیر تولید است.";
+        _showPpe = false;
+        _ppe = new PpeDelivery { Quantity = 1, ReplacementIntervalDays = 180, Condition = "نو" };
+        await ReloadAsync();
+    }
+
+    private async Task ApproveAsync(PpeDelivery delivery, bool approve)
+    {
+        var ok = await Api.SendAsync(HttpMethod.Post, $"api/hse/ppe/{delivery.Id}/approve?approve={approve.ToString().ToLowerInvariant()}");
+        if (ok) await ReloadAsync();
+    }
+
+    private async Task MarkSeenAsync(HseNotification notification)
+    {
+        var ok = await Api.SendAsync(HttpMethod.Post, $"api/hse/notifications/{notification.Id}/seen");
+        if (ok) _notifications = await Api.ListAsync<HseNotification>("api/hse/notifications");
+    }
+
+    // ───────── تعاریف ─────────
+    private async Task AddDefinitionAsync(string group, string title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) { _definitionMessage = "عنوان را وارد کنید."; return; }
+
+        var ok = await Api.SendAsync(HttpMethod.Post, "api/hse/definitions",
+            new HseDefinition { Group = group, Title = title.Trim() });
+        if (!ok) return;
+
+        _definitionMessage = "تعریف جدید افزوده شد.";
+        _newPpeType = "";
+        _definitionTitle = "";
+        await ReloadAsync();
+    }
+
+    private async Task AddPpeTypeAsync() => await AddDefinitionAsync(PpeTypesGroup, _newPpeType);
+
+    private async Task AddGroupDefinitionAsync() => await AddDefinitionAsync(_definitionGroup, _definitionTitle);
+
+    private async Task DeleteDefinitionAsync(string group, string title)
+    {
+        var all = await Api.ListAsync<HseDefinition>("api/hse/definitions/all");
+        var match = all.FirstOrDefault(d => d.Group == group && d.Title == title);
+        if (match == null) { Toast.Error("شناسهٔ تعریف یافت نشد."); return; }
+
+        var ok = await Api.SendAsync(HttpMethod.Delete, $"api/hse/definitions/{match.Id}");
+        if (ok) await ReloadAsync();
+    }
+
+    private void OnAuthStationChanged(ChangeEventArgs args)
+    {
+        _authStationKey = Text(args);
+        _authSelection = _authorizations.Where(a => a.StationKey == _authStationKey)
+            .Select(a => a.EquipmentType).ToHashSet();
+    }
+
+    private void ToggleAuth(string type, ChangeEventArgs args)
+    {
+        if (args.Value is bool checkedValue && checkedValue) _authSelection.Add(type);
+        else _authSelection.Remove(type);
+    }
+
+    private async Task SaveAuthorizationsAsync()
+    {
+        if (string.IsNullOrEmpty(_authStationKey)) { _authMessage = "ابتدا ایستگاه کاری را انتخاب کنید."; return; }
+
+        var ok = await Api.SendAsync(HttpMethod.Put,
+            $"api/hse/ppe-authorizations?stationKey={Uri.EscapeDataString(_authStationKey)}",
+            _authSelection.ToList());
+
+        _authMessage = ok ? "فهرست مجاز ایستگاه ذخیره شد." : "ذخیره انجام نشد.";
+        if (ok) _authorizations = await Api.ListAsync<PpeAuthorization>("api/hse/ppe-authorizations");
+    }
+
+    // ───────── کپسول ─────────
+    private async Task SaveExtinguisherAsync()
+    {
+        var ok = await Api.SendAsync(HttpMethod.Post, "api/hse/extinguishers", _extinguisher);
+        if (!ok) return;
+
+        _showExt = false;
+        _extinguisher = new Extinguisher { Type = _definitions.ExtinguisherTypes.FirstOrDefault() ?? "" };
+        await ReloadAsync();
+    }
+
+    private async Task DeleteExtinguisherAsync(Extinguisher extinguisher)
+    {
+        var ok = await Api.SendAsync(HttpMethod.Delete, $"api/hse/extinguishers/{extinguisher.Id}");
+        if (ok) await ReloadAsync();
+    }
+
+    // ───────── گزارش ─────────
+    private async Task OnReportYearChanged(ChangeEventArgs args)
+    {
+        if (int.TryParse(BonFa.ToLatin(Text(args)), out var year)) _reportYear = year;
+        _reports = await Api.GetAsync<HseReportsDto>($"api/hse/reports?year={_reportYear}") ?? new HseReportsDto();
+    }
+
+    private async Task ExportReportsAsync()
+    {
+        var csv = new StringBuilder();
+        csv.AppendLine($"گزارش HSE سال {_reportYear}");
+        csv.AppendLine($"مجموع حوادث,{_reports.TotalIncidents}");
+        csv.AppendLine($"روزهای از دست رفته,{_reports.LostDays}");
+        csv.AppendLine($"اقدامات اصلاحی باز,{_reports.OpenActions}");
+        csv.AppendLine($"تحویل PPE,{_reports.PpeDeliveries}");
+        csv.AppendLine($"تعویض زودهنگام,{_reports.EarlyReplacements}");
+        csv.AppendLine($"کپسول‌ها,{_reports.ExtinguishersTotal}");
+        csv.AppendLine($"کپسول‌های منقضی,{_reports.ExtinguishersExpired}");
+        csv.AppendLine();
+
+        csv.AppendLine("شماره پرونده,تاریخ,واحد,شیفت,نوع,شدت,پرسنل,محل,وضعیت,روز از دست رفته,علت ریشه‌ای");
+        // خروجی گزارش باید کامل باشد نه فقط صفحهٔ جاری — پس یک خواندن بدون
+        // skip/take انجام می‌دهیم؛ در آن حالت سرور آرایهٔ کامل را برمی‌گرداند.
+        var allIncidents = await Api.ListAsync<Incident>("api/hse/incidents");
+        foreach (var incident in allIncidents)
+            csv.AppendLine($"{incident.CaseNo},{incident.Date},{incident.Unit},{incident.Shift},{incident.Type},{incident.Severity},{NameOf(incident.EmployeeCode)},{incident.Location},{incident.Status},{incident.LostDays},{incident.RootCause}");
+
+        var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(csv.ToString())).ToArray();
+        await JS.InvokeVoidAsync("saveAsFile", $"hse-report-{_reportYear}.csv", Convert.ToBase64String(bytes));
+        Toast.Success("خروجی گزارش HSE آماده شد.");
+    }
+}

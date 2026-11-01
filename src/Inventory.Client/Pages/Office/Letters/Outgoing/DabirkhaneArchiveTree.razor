@@ -1,0 +1,235 @@
+@using Inventory.Shared.Dtos
+@inject IOutgoingLetterService OutgoingSvc
+@inject IToastService Toast
+
+@* ============================================================
+   درخت بایگانی دبیرخانه — نمایش پوشه‌ها و نامه‌های صادرهٔ بایگانی‌شده
+   • پوشه‌ها قابل گسترش، افزودن زیرپوشه، تغییر نام و حذف (در صورت خالی بودن)
+   • نامه‌ها قابل نمایش، انتقال به پوشه دیگر و خروج از بایگانی
+   ============================================================ *@
+
+<div class="scard">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px">
+        <b style="font-size:14px"><i class="bi bi-archive" style="color:#7c3aed"></i> بایگانی دبیرخانه</b>
+        <span style="font-size:12px;color:#64748b">@CountLetters(Tree).FaDigits() نامه در @CountFolders(Tree).FaDigits() پوشه</span>
+        <button class="lbtn ghost" style="margin-inline-start:auto" @onclick="StartCreateRoot">
+            <i class="bi bi-folder-plus"></i> پوشه جدید
+        </button>
+    </div>
+
+    @if (creatingRoot)
+    {
+        <div style="display:flex;gap:6px;margin-bottom:10px">
+            <input class="tin" placeholder="نام پوشه جدید…" @bind="newFolderName" @bind:event="oninput" @onkeydown="RootKeyDown" />
+            <button class="lbtn ghost" @onclick="() => creatingRoot = false">انصراف</button>
+            <button class="lbtn pri" @onclick="CreateRoot"><i class="bi bi-check-lg"></i> ساخت</button>
+        </div>
+    }
+
+    @if (Tree.Count == 0)
+    {
+        <div class="empty" style="padding:32px 0">
+            <i class="bi bi-archive"></i>
+            هنوز نامه‌ای بایگانی نشده است — از تب‌های دیگر با دکمهٔ «بایگانی» نامه را به اینجا اضافه کنید
+        </div>
+    }
+    else
+    {
+        <div class="gtree" style="padding-inline-start:0">
+            <ul>
+                @foreach (var n in Tree) { @Node(n) }
+            </ul>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public List<BayeganiNodeDto> Tree { get; set; } = new();
+    [Parameter] public EventCallback<int> OnOpen { get; set; }
+    [Parameter] public EventCallback<int> OnUnarchive { get; set; }
+    [Parameter] public EventCallback<int> OnMove { get; set; }
+    [Parameter] public EventCallback OnRefresh { get; set; }
+
+    private readonly HashSet<int> open = new();
+    private bool creatingRoot;
+    private string newFolderName = "";
+    private int? renamingId;
+    private string renameValue = "";
+    private int? addingSubId;
+    private string subName = "";
+
+    private bool treeInitialized;
+
+    protected override void OnParametersSet()
+    {
+        // فقط بار اول: پوشه‌ها باز باشند تا کاربر سریع‌تر به نامه‌ها برسد
+        // (بعد از آن وضعیت باز/بسته به انتخاب کاربر بستگی دارد)
+        if (treeInitialized || Tree.Count == 0) return;
+        treeInitialized = true;
+        foreach (var n in Tree.Where(x => x.IsFolder)) MarkOpen(n);
+    }
+
+    private void MarkOpen(BayeganiNodeDto n)
+    {
+        open.Add(n.BayeganiId);
+        foreach (var c in n.Children.Where(x => x.IsFolder)) MarkOpen(c);
+    }
+
+    private static int CountLetters(List<BayeganiNodeDto> list) =>
+        list.Sum(n => (n.IsFolder ? 0 : 1) + CountLetters(n.Children));
+
+    private static int CountFolders(List<BayeganiNodeDto> list) =>
+        list.Sum(n => (n.IsFolder ? 1 : 0) + CountFolders(n.Children));
+
+    // ==================== پوشه‌ها ====================
+
+    private void StartCreateRoot() { creatingRoot = true; newFolderName = ""; }
+
+    private async Task RootKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await CreateRoot();
+        else if (e.Key == "Escape") creatingRoot = false;
+    }
+
+    private async Task CreateRoot()
+    {
+        if (string.IsNullOrWhiteSpace(newFolderName)) { Toast.Error("نام پوشه را وارد کنید."); return; }
+        try
+        {
+            await OutgoingSvc.AddDabirkhaneMainCategoryAsync(new SaveBayeganiFolderDto { Title = newFolderName.Trim() });
+            creatingRoot = false;
+            await OnRefresh.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void StartSub(int folderId) { addingSubId = folderId; subName = ""; }
+
+    private async Task CreateSub(int parentId)
+    {
+        if (string.IsNullOrWhiteSpace(subName)) { Toast.Error("نام زیرپوشه را وارد کنید."); return; }
+        try
+        {
+            await OutgoingSvc.AddDabirkhaneSubCategoryAsync(new SaveBayeganiFolderDto
+            {
+                Title = subName.Trim(),
+                ParentId = parentId
+            });
+            addingSubId = null;
+            await OnRefresh.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void StartRename(BayeganiNodeDto n) { renamingId = n.BayeganiId; renameValue = n.Title; }
+
+    private async Task SaveRename(int id)
+    {
+        if (string.IsNullOrWhiteSpace(renameValue)) { Toast.Error("عنوان را وارد کنید."); return; }
+        try
+        {
+            await OutgoingSvc.EditDabirkhaneFolderAsync(id, new SaveBayeganiFolderDto { Title = renameValue.Trim() });
+            renamingId = null;
+            await OnRefresh.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteFolder(BayeganiNodeDto n)
+    {
+        try
+        {
+            await OutgoingSvc.DeleteDabirkhaneBayeganiAsync(n.BayeganiId);
+            Toast.Success("پوشه حذف شد.");
+            await OnRefresh.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ==================== نامه‌ها ====================
+
+    private async Task Unarchive(BayeganiNodeDto n) => await OnUnarchive.InvokeAsync(n.LetterId ?? 0);
+    private async Task Move(BayeganiNodeDto n) => await OnMove.InvokeAsync(n.BayeganiId);
+    private async Task OpenLetter(BayeganiNodeDto n) => await OnOpen.InvokeAsync(n.LetterId ?? 0);
+
+    private RenderFragment Node(BayeganiNodeDto n) => @<li>
+        @if (n.IsFolder)
+        {
+            var isOpen = open.Contains(n.BayeganiId);
+            var kids = n.Children;
+            <div class="tnode">
+                <span class="mini" @onclick="() => Toggle(n.BayeganiId)" style="cursor:pointer">
+                    <i class="bi @(isOpen ? "bi-folder2-open" : "bi-folder-fill")"></i>
+                </span>
+                @if (renamingId == n.BayeganiId)
+                {
+                    <input class="tin" style="padding:2px 6px;font-size:12.5px" @bind="renameValue" @bind:event="oninput"
+                           @onkeydown="@((Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) => { if (e.Key == "Enter") { _ = SaveRename(n.BayeganiId); } else if (e.Key == "Escape") renamingId = null; })" />
+                    <button class="lbtn ghost" style="padding:2px 8px" @onclick="() => SaveRename(n.BayeganiId)">ذخیره</button>
+                    <button class="lbtn ghost" style="padding:2px 8px" @onclick="() => renamingId = null">انصراف</button>
+                }
+                else
+                {
+                    <div style="cursor:pointer" @onclick="() => Toggle(n.BayeganiId)">
+                        <b>@n.Title</b>
+                        <small> — @CountLetters(n.Children).FaDigits() نامه</small>
+                    </div>
+                    <span class="tst" style="display:flex;gap:4px;border:none;background:none">
+                        <button class="lbtn ghost" style="padding:1px 6px;font-size:11px" title="زیرپوشه جدید"
+                                @onclick="() => StartSub(n.BayeganiId)"><i class="bi bi-folder-plus"></i></button>
+                        <button class="lbtn ghost" style="padding:1px 6px;font-size:11px" title="تغییر نام"
+                                @onclick="() => StartRename(n)"><i class="bi bi-pencil"></i></button>
+                        <button class="lbtn ghost" style="padding:1px 6px;font-size:11px" title="حذف پوشه"
+                                @onclick="() => DeleteFolder(n)"><i class="bi bi-trash"></i></button>
+                    </span>
+                }
+            </div>
+
+            @if (addingSubId == n.BayeganiId)
+            {
+                <div style="display:flex;gap:6px;margin:4px 0 8px 24px">
+                    <input class="tin" style="padding:3px 8px;font-size:12.5px" placeholder="نام زیرپوشه…"
+                           @bind="subName" @bind:event="oninput"
+                           @onkeydown="@((Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) => { if (e.Key == "Enter") { _ = CreateSub(n.BayeganiId); } else if (e.Key == "Escape") addingSubId = null; })" />
+                    <button class="lbtn pri" style="padding:2px 10px;font-size:12px" @onclick="() => CreateSub(n.BayeganiId)">ساخت</button>
+                    <button class="lbtn ghost" style="padding:2px 10px;font-size:12px" @onclick="() => addingSubId = null">انصراف</button>
+                </div>
+            }
+
+            @if (isOpen && kids.Count > 0)
+            {
+                <ul>
+                    @foreach (var c in kids) { @Node(c) }
+                </ul>
+            }
+        }
+        else
+        {
+            <div class="tnode">
+                <span class="mini"><i class="bi bi-envelope-paper"></i></span>
+                <div style="cursor:pointer" @onclick="() => OpenLetter(n)">
+                    <b>@n.Title</b>
+                    <small>
+                        — <span class="num">@(n.SadereNumber ?? n.LetterNumber ?? "")</span>
+                        @if (!string.IsNullOrWhiteSpace(n.ReceiverOrganization)) { <span> · به: @n.ReceiverOrganization</span> }
+                        @if (n.Date is { } d) { <span> · @d.ToFaDateTime()</span> }
+                        @if (!string.IsNullOrWhiteSpace(n.SendMethod)) { <span> · @n.SendMethod</span> }
+                    </small>
+                </div>
+                <span class="tst" style="display:flex;gap:4px;border:none;background:none">
+                    <button class="lbtn ghost" style="padding:1px 6px;font-size:11px" title="نمایش نامه"
+                            @onclick="() => OpenLetter(n)"><i class="bi bi-eye"></i></button>
+                    <button class="lbtn ghost" style="padding:1px 6px;font-size:11px" title="انتقال به پوشه دیگر"
+                            @onclick="() => Move(n)"><i class="bi bi-arrow-left-right"></i></button>
+                    <button class="lbtn ghost" style="padding:1px 6px;font-size:11px" title="خروج از بایگانی"
+                            @onclick="() => Unarchive(n)"><i class="bi bi-box-arrow-up"></i></button>
+                </span>
+            </div>
+        }
+    </li>;
+
+    private void Toggle(int id)
+    {
+        if (!open.Add(id)) open.Remove(id);
+    }
+}

@@ -1,0 +1,150 @@
+@* ================== گفتگو با سند ==================
+   پرسش آزاد از متن استخراج‌شدهٔ مدرک؛ با مدل زبانی لوکال،
+   و اگر مدل در دسترس نبود، با بازیابی نزدیک‌ترین بخش‌های متن. *@
+@inject IDocArchiveService Svc
+@inject IToastService Toast
+
+<Modal Visible="Visible" Title="🤖 گفتگو با سند" Size="modal-lg" OnClose="OnClose">
+    <ChildContent>
+        <div class="dc-chat" dir="rtl">
+            @if (!string.IsNullOrWhiteSpace(docTitle))
+            {
+                <div class="dc-doc-title"><i class="bi bi-file-earmark-text ms-1"></i> @docTitle</div>
+            }
+
+            <div class="dc-messages" @ref="scrollBox">
+                @if (messages.Count == 0)
+                {
+                    <div class="dc-empty text-center text-muted py-4">
+                        <div class="dc-empty-icon">🤖</div>
+                        <div class="mb-2 fs-8">دربارهٔ این سند هر چه می‌خواهی بپرس — خلاصه، مبلغ‌ها، تاریخ‌ها، نام‌ها…</div>
+                    </div>
+                }
+                @foreach (var m in messages)
+                {
+                    <div class="dc-msg @(m.Role == "user" ? "dc-user" : "dc-ai")">
+                        <div class="dc-bubble">
+                            @if (m.Role == "assistant")
+                            {
+                                <div class="dc-ai-head"><span>🤖</span> دستیار سند</div>
+                            }
+                            <div class="dc-text">@m.Text</div>
+                            @if (m.Mode == "retrieval")
+                            {
+                                <div class="dc-mode"><i class="bi bi-text-paragraph ms-1"></i> پاسخ از متن سند (مدل زبانی متصل نیست)</div>
+                            }
+                            else if (m.Mode == "ai")
+                            {
+                                <div class="dc-mode dc-mode-ai"><i class="bi bi-cpu ms-1"></i> پاسخ با هوش مصنوعی</div>
+                            }
+                            @if (m.Sources.Count > 0)
+                            {
+                                <div class="dc-src"><i class="bi bi-paperclip ms-1"></i> منبع: @string.Join("، ", m.Sources)</div>
+                            }
+                        </div>
+                    </div>
+                }
+                @if (busy)
+                {
+                    <div class="dc-msg dc-ai">
+                        <div class="dc-bubble"><span class="spinner-border spinner-border-sm ms-2"></span> در حال خواندن سند…</div>
+                    </div>
+                }
+            </div>
+
+            @if (messages.Count == 0)
+            {
+                <div class="dc-chips">
+                    <button type="button" class="btn btn-sm btn-outline-primary rounded-pill" disabled="@busy" @onclick='() => Ask("خلاصهٔ این سند را بگو")'>خلاصهٔ سند</button>
+                    <button type="button" class="btn btn-sm btn-outline-primary rounded-pill" disabled="@busy" @onclick='() => Ask("مبلغ‌ها و ارقام مهم سند چیست؟")'>مبلغ‌ها و ارقام</button>
+                    <button type="button" class="btn btn-sm btn-outline-primary rounded-pill" disabled="@busy" @onclick='() => Ask("تاریخ‌ها و مهلت‌های سند کدامند؟")'>تاریخ‌ها و مهلت‌ها</button>
+                    <button type="button" class="btn btn-sm btn-outline-primary rounded-pill" disabled="@busy" @onclick='() => Ask("نام‌ها و طرف‌های این سند کیستند؟")'>نام‌ها و طرفین</button>
+                </div>
+            }
+
+            <div class="dc-input">
+                <input class="form-control" placeholder="پرسش خود را بنویسید…" @bind="question"
+                       @bind:event="oninput" @onkeydown="OnKey" disabled="@busy" />
+                <button type="button" class="btn btn-primary dc-send" disabled="@(busy || string.IsNullOrWhiteSpace(question))" @onclick="() => Ask(question)">
+                    @if (busy) { <span class="spinner-border spinner-border-sm"></span> } else { <i class="bi bi-send"></i> }
+                </button>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <div class="dc-foot">
+            @if (messages.Count > 0)
+            {
+                <button type="button" class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="ClearChat"><i class="bi bi-arrow-counterclockwise ms-1"></i> گفتگوی نو</button>
+            }
+            <button type="button" class="btn btn-light" @onclick="OnClose">بستن</button>
+        </div>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public int DocumentId { get; set; }
+    [Parameter] public string DocumentTitle { get; set; } = "";
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string docTitle = "";
+    private string question = "";
+    private bool busy;
+    private bool lastVisible;
+    private ElementReference scrollBox;
+    private readonly List<ChatMsg> messages = new();
+
+    private class ChatMsg
+    {
+        public string Role { get; set; } = "user";
+        public string Text { get; set; } = "";
+        public string Mode { get; set; } = "";
+        public List<string> Sources { get; set; } = new();
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (Visible && !lastVisible)
+        {
+            docTitle = DocumentTitle;
+            messages.Clear();
+            question = "";
+        }
+        lastVisible = Visible;
+    }
+
+    private async Task OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !busy && !string.IsNullOrWhiteSpace(question))
+            await Ask(question);
+    }
+
+    private void ClearChat() => messages.Clear();
+
+    private async Task Ask(string q)
+    {
+        if (string.IsNullOrWhiteSpace(q) || busy) return;
+        q = q.Trim();
+        question = "";
+        // تاریخچهٔ پیش از این پرسش (خودِ پرسش جداگانه در Question می‌رود)
+        var history = messages.Select(m => new DocChatTurn { Role = m.Role, Text = m.Text }).ToList();
+        messages.Add(new ChatMsg { Role = "user", Text = q });
+        busy = true;
+        StateHasChanged();
+        try
+        {
+            var req = new DocChatRequest { Question = q, History = history };
+            var res = await Svc.ChatWithDocumentAsync(DocumentId, req);
+            messages.Add(new ChatMsg { Role = "assistant", Text = res.Answer, Mode = res.Mode, Sources = res.Sources });
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

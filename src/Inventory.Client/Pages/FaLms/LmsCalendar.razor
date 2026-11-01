@@ -1,0 +1,82 @@
+@namespace Inventory.Client.Pages
+@page "/fa-lms/calendar"
+@inject IFaLmsService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>تقویم آموزشی سالانه</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-calendar3"></i> تقویم آموزشی سالانه</h1>
+            <div class="lead">شروع دوره‌ها، جلسات و آزمون‌ها به تفکیک ماه</div>
+        </div>
+        <div class="d-flex gap-2 align-items-end">
+            <div><label class="form-label small text-muted mb-1">سال</label><input type="number" class="form-control" style="width:110px" @bind="year" /></div>
+            <button class="btn btn-primary" @onclick="Reload"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+    return;
+}
+@if (items.Count == 0)
+{
+    <div class="alert alert-info">در سال @FaLmsUi.Num(year) رویداد آموزشی ثبت نشده است.</div>
+    return;
+}
+
+@foreach (var g in Groups)
+{
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white fw-bold"><i class="bi bi-calendar2-month"></i> @FaLmsUi.MonthName(g.Key) <span class="badge text-bg-secondary num">@FaLmsUi.Num(g.Count())</span></div>
+        <div class="card-body p-0">
+            <ul class="list-group list-group-flush">
+                @foreach (var it in g.OrderBy(x => x.Date))
+                {
+                    <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <span><span class="badge @FaLmsUi.CalBadge(it.Kind) ms-2">@FaLmsUi.CalKind(it.Kind)</span><b>@it.Title</b><span class="text-muted small"> — @it.CourseTitle</span></span>
+                        <span class="d-flex gap-2 align-items-center">
+                            <span class="num text-muted">@it.Date.ToFa()</span>
+                            <a class="btn btn-sm btn-outline-primary" href="@CourseUrl(it.CourseId)"><i class="bi bi-eye"></i></a>
+                        </span>
+                    </li>
+                }
+            </ul>
+        </div>
+    </div>
+}
+
+@code {
+    private static string CourseUrl(int id) => "fa-lms/courses/" + id;
+    private bool faRead => Auth.Has("FaLms.Read") || Auth.IsAdmin;
+    private bool loading = true;
+    private int year = FaLmsUi.CurrentYear;
+    private List<FaLmsCalendarItemDto> items = new();
+    private static readonly System.Globalization.PersianCalendar Pc = new();
+    private static int JMonth(DateTime d) { try { return Pc.GetMonth(d); } catch { return d.Month; } }
+    private IEnumerable<IGrouping<int, FaLmsCalendarItemDto>> Groups => items.GroupBy(x => JMonth(x.Date)).OrderBy(g => g.Key);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { items = await Svc.GetCalendarAsync(year); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+}

@@ -1,0 +1,217 @@
+@namespace Inventory.Client.Pages
+@page "/fa-pay/adjustments"
+@inject IFaPayClientService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>ثبت‌های ماهانه حقوق</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-pencil-square"></i> ثبت‌های ماهانه (کارانه، مأموریت، مساعده…)</h1>
+            <div class="lead">اقلام متغیر هر ماه که در محاسبه دوره لحاظ می‌شوند</div>
+        </div>
+        @if (faManage)
+        {
+            <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> ثبت جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد حقوق و دستمزد است.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-2"><label class="form-label small text-muted">سال</label><input class="form-control" type="number" @bind="fYear" /></div>
+            <div class="col-md-3">
+                <label class="form-label small text-muted">ماه</label>
+                <select class="form-select" @bind="fMonth">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        <option value="@m">@FaPayUi.MonthName(m)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small text-muted">پرسنل</label>
+                <select class="form-select" @bind="fEmp">
+                    <option value="">همه</option>
+                    @foreach (var e in emps)
+                    {
+                        <option value="@e.Id">@e.FirstName @e.LastName</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3"><button class="btn btn-primary w-100" @onclick="Reload"><i class="bi bi-search"></i> جستجو</button></div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>پرسنل</th>
+                        <th>دوره</th>
+                        <th>قلم</th>
+                        <th>نوع</th>
+                        <th>مبلغ (ریال)</th>
+                        <th>یادداشت</th>
+                        <th style="width:120px">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var a in rows)
+                    {
+                        <tr>
+                            <td><strong>@a.EmployeeName</strong></td>
+                            <td>@FaPayUi.YearMonth(a.Year, a.Month)</td>
+                            <td>@a.ItemTypeName</td>
+                            <td><span class="badge @FaPayUi.KindBadge(a.Kind)">@FaPayUi.Kind(a.Kind)</span></td>
+                            <td>@FaPayUi.Money(a.Amount)</td>
+                            <td class="small text-muted">@a.Note</td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button class="btn btn-outline-primary" title="ویرایش" @onclick="() => OpenEdit(a)"><i class="bi bi-pen"></i></button>
+                                    <button class="btn btn-outline-danger" title="حذف" @onclick="() => Del(a)"><i class="bi bi-trash"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0)
+                    {
+                        <tr><td colspan="7" class="text-center text-muted py-4">ثبتی یافت نشد.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="@EditTitle" Size="modal-lg" OnClose="() => showEdit = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-md-6">
+            <label class="form-label">پرسنل</label>
+            <select class="form-select" @bind="form.EmployeeId">
+                @foreach (var e in emps)
+                {
+                    <option value="@e.Id">@e.FirstName @e.LastName</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">قلم حقوقی</label>
+            <select class="form-select" @bind="form.ItemTypeId">
+                @foreach (var t in types)
+                {
+                    <option value="@t.Id">@t.Name (@FaPayUi.Kind(t.Kind))</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-4"><label class="form-label">سال</label><input class="form-control" type="number" @bind="form.Year" /></div>
+        <div class="col-md-4">
+            <label class="form-label">ماه</label>
+            <select class="form-select" @bind="form.Month">
+                @for (int m = 1; m <= 12; m++)
+                {
+                    <option value="@m">@FaPayUi.MonthName(m)</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-4"><label class="form-label">مبلغ (ریال)</label><input class="form-control" type="number" step="any" @bind="form.Amount" /></div>
+        <div class="col-12"><label class="form-label">یادداشت</label><input class="form-control" @bind="form.Note" /></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" @onclick="Save"><i class="bi bi-check-lg"></i> ذخیره</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faManage => Auth.Has("FaPay.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaPayAdjustmentDto> rows = new();
+    private List<HrEmployeeDto> emps = new();
+    private List<FaPayItemTypeDto> types = new();
+
+    private int fYear = FaPayUi.CurrentYear;
+    private int fMonth = FaPayUi.CurrentMonth;
+    private string? fEmp;
+
+    private bool showEdit;
+    private int? editId;
+    private FaPayAdjustmentSaveDto form = new();
+    private string EditTitle => editId == null ? "ثبت ماهانه جدید" : "ویرایش ثبت ماهانه";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        try
+        {
+            emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items;
+            types = (await Svc.ListItemTypesAsync()).Where(t => t.IsActive).ToList();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            int? empId = int.TryParse(fEmp, out var v) ? v : null;
+            rows = await Svc.ListAdjustmentsAsync(fYear, fMonth, empId);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void OpenEdit(FaPayAdjustmentDto? a)
+    {
+        editId = a?.Id;
+        form = a == null
+            ? new FaPayAdjustmentSaveDto { Year = fYear, Month = fMonth, EmployeeId = emps.FirstOrDefault()?.Id ?? 0, ItemTypeId = types.FirstOrDefault()?.Id ?? 0 }
+            : new FaPayAdjustmentSaveDto { EmployeeId = a.EmployeeId, Year = a.Year, Month = a.Month, ItemTypeId = a.ItemTypeId, Amount = a.Amount, Note = a.Note };
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        try
+        {
+            await Svc.SaveAdjustmentAsync(editId, form);
+            showEdit = false;
+            Toast.Success("ذخیره شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Del(FaPayAdjustmentDto a)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"ثبت «{a.ItemTypeName}» برای {a.EmployeeName} حذف شود؟")) return;
+        try { await Svc.DeleteAdjustmentAsync(a.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

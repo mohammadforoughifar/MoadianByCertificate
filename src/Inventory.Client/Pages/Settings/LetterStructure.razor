@@ -1,0 +1,255 @@
+@page "/settings/letter-structure"
+@inject ILetterStructureService StrSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IAuthState Auth
+
+<PageTitle>ساختار شماره نامه</PageTitle>
+
+@if (!Auth.Has("LetterStructures.Read"))
+{
+    <div class="alert alert-danger">شما به این بخش دسترسی ندارید.</div>
+    return;
+}
+
+<div class="page-head">
+    <div>
+        <h1>ساختار شماره نامه</h1>
+        <p class="lead">تعیین ترتیب اجزای شماره اندیکاتور برای هر یک از سه نوع نامه — <b>واحد</b> | <b>شماره نامه</b> | <b>سال</b></p>
+    </div>
+    <div class="d-flex align-items-center gap-2 ms-auto">
+        <span class="badge text-bg-danger">دسترسی: مدیر سیستم</span>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else
+{
+    <div class="alert alert-info fs-8">
+        <i class="bi bi-info-circle"></i>
+        جزء <b>«واحد»</b> از <b>نام اختصاصی سازمان (NameUniq)</b> در جدول Organization خوانده می‌شود —
+        سازمانِ سمتِ صادرکننده‌ی نامه؛ تا وقتی چارت سازمانی فعال نشده،
+        <b>سازمان پیش‌فرض «@DefaultOrgName»</b> ملاک است. تغییر ساختار فقط روی نامه‌های <b>بعدی</b> اثر می‌گذارد.
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header">
+            <i class="bi bi-pencil-square text-primary"></i>
+            <span class="card-title">فرمت سه‌گانه‌ی نامه‌ها</span>
+            <span class="ms-auto fs-8 text-muted">هر ساختار باید حداقل «شماره + یک جزء دیگر» داشته باشد</span>
+        </div>
+        <div class="card-body p-0">
+            @for (var i = 0; i < items.Count; i++)
+            {
+                var item = items[i];
+                var idx = i;
+                <div class="border-bottom @(i == 0 ? "" : "")" style="padding:1rem 1.1rem">
+                    <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                        <span class="fs-5">@Icon(item.TypeForm)</span>
+                        <div>
+                            <div class="fw-700">@item.Title</div>
+                            <div class="fs-8 text-muted">TypeForm = @item.TypeForm</div>
+                        </div>
+                        @if (dirty.Contains(item.TypeForm))
+                        {
+                            <span class="badge text-bg-warning ms-auto">تغییر ذخیره‌نشده</span>
+                        }
+                    </div>
+
+                    @* نوار اجزای انتخاب‌شده (به ترتیب) *@
+                    <div class="d-flex align-items-center gap-2 flex-wrap rounded-3 p-2 mb-2"
+                         style="background:var(--bs-light);border:1.5px dashed #c7d2fe">
+                        @if (item.Parts.Count == 0)
+                        {
+                            <span class="text-muted fs-8">هنوز جزئی انتخاب نشده — از اجزای سمت چپ اضافه کنید.</span>
+                        }
+                        @for (var j = 0; j < item.Parts.Count; j++)
+                        {
+                            var jj = j;
+                            <span class="d-inline-flex align-items-center gap-1 rounded-2 border px-2 py-1 fw-semibold"
+                                  style="background:#fff;border-color:#c7d2fe!important;color:#3730a3">
+                                <span>@PartIcon(item.Parts[jj]) @item.Parts[jj]</span>
+                                <span class="d-inline-flex flex-column ms-1" style="border-inline-start:1px solid #e0e7ff;line-height:1">
+                                    <button type="button" class="btn btn-link p-0 text-primary fs-8" style="line-height:1"
+                                            title="جابه‌جایی به راست" disabled="@(jj == 0)" @onclick="() => Move(idx, jj, -1)">
+                                        <i class="bi bi-caret-up-fill"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-link p-0 text-primary fs-8" style="line-height:1"
+                                            title="جابه‌جایی به چپ" disabled="@(jj == item.Parts.Count - 1)" @onclick="() => Move(idx, jj, 1)">
+                                        <i class="bi bi-caret-down-fill"></i>
+                                    </button>
+                                </span>
+                                <button type="button" class="btn btn-outline-danger btn-sm p-0 px-1 fs-8"
+                                        title="حذف جزء" @onclick="() => RemovePart(idx, jj)">
+                                    <i class="bi bi-x-lg"></i>
+                                </button>
+                            </span>
+                            @if (jj < item.Parts.Count - 1)
+                            {
+                                <span class="text-secondary fw-700">/</span>
+                            }
+                        }
+                    </div>
+
+                    @* اجزای باقی‌مانده برای افزودن *@
+                    <div class="d-flex align-items-center gap-2 flex-wrap fs-8 mb-1">
+                        <span class="text-muted">➕ افزودن جزء:</span>
+                        @foreach (var p in AllParts.Where(p => !item.Parts.Contains(p)))
+                        {
+                            var part = p;
+                            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => AddPart(idx, part)">
+                                @PartIcon(part) @part
+                            </button>
+                        }
+                        @if (item.Parts.Count == AllParts.Length)
+                        {
+                            <span class="text-muted">همهٔ اجزا استفاده شده‌اند.</span>
+                        }
+                    </div>
+
+                    @* نمونه شماره *@
+                    <div class="d-flex align-items-center gap-2 flex-wrap rounded-2 p-2 mt-1" style="background:#f8fafc">
+                        <span class="fs-8 text-muted">نمونهٔ شمارهٔ تولیدی:</span>
+                        <span class="badge text-bg-dark fs-6 num" dir="ltr">@SampleNumber(item.Parts)</span>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-end align-items-center gap-2">
+        <button class="btn btn-outline-secondary" @onclick="ResetAll">
+            <i class="bi bi-arrow-counterclockwise"></i> بازنشانی همه به پیش‌فرض
+        </button>
+        <button class="btn btn-primary" disabled="@(saving || !dirty.Any())" @onclick="SaveAll">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            <i class="bi bi-check2"></i> ذخیره ساختار شماره نامه
+        </button>
+    </div>
+}
+
+@code {
+    private List<LetterStructureItemDto> items = new();
+    private HashSet<int> dirty = new();
+    private bool loading = true, saving;
+    private string DefaultOrgName = "—";
+
+    private static readonly string[] AllParts = { "واحد", "شماره", "سال" };
+
+    // پیش‌فرض‌ها (در صورت «بازنشانی») — باید با سید DbInitializer هماهنگ باشد
+    private static readonly Dictionary<int, string[]> Defaults = new()
+    {
+        [1] = new[] { "واحد", "شماره", "سال" },
+        [2] = new[] { "سال", "شماره" },
+        [3] = new[] { "سال", "شماره" }
+    };
+
+    private static string Icon(int typeForm) => typeForm switch
+    {
+        1 => "📥",
+        2 => "📤",
+        _ => "🗂️"
+    };
+
+    private static string PartIcon(string part) => part switch
+    {
+        "واحد" => "🏢",
+        "شماره" => "🔢",
+        _ => "📅"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("ساختار شماره نامه");
+        try
+        {
+            var page = await StrSvc.GetPageAsync();
+            items = page.Items;
+            var def = page.Organizations.FirstOrDefault(o => o.OrganizationId == page.DefaultOrganizationId)
+                      ?? page.Organizations.FirstOrDefault();
+            DefaultOrgName = def == null ? "— (تعریف نشده)" : $"{def.NameUnit} ({def.NameUniq})";
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void MarkDirty(int typeForm) => dirty.Add(typeForm);
+
+    private void Move(int idx, int from, int dir)
+    {
+        var parts = items[idx].Parts;
+        var to = from + dir;
+        if (to < 0 || to >= parts.Count) return;
+        (parts[from], parts[to]) = (parts[to], parts[from]);
+        MarkDirty(items[idx].TypeForm);
+    }
+
+    private void RemovePart(int idx, int pos)
+    {
+        var item = items[idx];
+        var next = item.Parts.Where((_, x) => x != pos).ToList();
+        // قانون: حداقل «شماره + یک جزء دیگر»
+        if (next.Count < 2 || !next.Contains("شماره"))
+        {
+            Toast.Error($"در «{item.Title}» باید حداقل «شماره + یک جزء دیگر» بماند.");
+            return;
+        }
+        item.Parts = next;
+        MarkDirty(item.TypeForm);
+    }
+
+    private void AddPart(int idx, string part)
+    {
+        var item = items[idx];
+        if (item.Parts.Contains(part)) return;
+        item.Parts.Add(part);
+        MarkDirty(item.TypeForm);
+    }
+
+    private void ResetAll()
+    {
+        foreach (var item in items)
+        {
+            if (Defaults.TryGetValue(item.TypeForm, out var defs))
+                item.Parts = defs.ToList();
+            dirty.Remove(item.TypeForm);
+        }
+    }
+
+    private async Task SaveAll()
+    {
+        saving = true;
+        try
+        {
+            var forms = dirty.ToList();
+            foreach (var typeForm in forms)
+            {
+                var item = items.First(x => x.TypeForm == typeForm);
+                await StrSvc.UpdateAsync(typeForm, item.Parts);
+                dirty.Remove(typeForm);
+            }
+            Toast.Success("ساختار شماره نامه ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    /// <summary>نمونه‌ی شماره صرفاً برای پیش‌نمایش — شماره ۲۵ در سال ۱۴۰۴ و واحدِ پیش‌فرض</summary>
+    private string SampleNumber(List<string> parts)
+    {
+        if (parts.Count == 0) return "— بدون ساختار —";
+        var unit = DefaultOrgName.Contains("(") && !DefaultOrgName.StartsWith("—")
+            ? DefaultOrgName.Split('(', ')')[1]
+            : "ORG";
+        var chunks = parts.Select(p => p switch
+        {
+            "واحد" => unit,
+            "شماره" => "25",
+            _ => "1404"
+        });
+        return string.Join("/", chunks);
+    }
+}

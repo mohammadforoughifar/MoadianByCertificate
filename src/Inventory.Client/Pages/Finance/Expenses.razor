@@ -1,0 +1,495 @@
+@namespace Inventory.Client.Pages
+@page "/expenses"
+@inject IExpenseService ExpenseSvc
+@inject ITrsAccountService AccountSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>هزینه‌ها</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>هزینه‌ها</h1>
+        <p class="lead">ثبت اسناد هزینه با نوع، مبلغ و نحوه پرداخت</p>
+    </div>
+    <button class="btn btn-light ms-auto" @onclick="OpenCats">
+        <i class="bi bi-tags"></i> انواع هزینه
+    </button>
+    <button class="btn btn-primary" @onclick="OpenNew">
+        <i class="bi bi-plus-lg"></i> هزینه جدید
+    </button>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="جستجو: شماره سند، دریافت‌کننده، توضیحات…"
+                           value="@search" @oninput="OnSearchInput" />
+                </div>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" @onchange="OnCatFilter">
+                    <option value="0">— همه انواع هزینه —</option>
+                    @foreach (var c in categories)
+                    {
+                        <option value="@c.Id">@c.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2"><DatePicker @bind-Value="from" Placeholder="از تاریخ" /></div>
+            <div class="col-md-2"><DatePicker @bind-Value="to" Placeholder="تا تاریخ" /></div>
+            <div class="col-md-1">
+                <button class="btn btn-light w-100" title="اعمال فیلتر" @onclick="ApplyFilter"><i class="bi bi-funnel"></i></button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-cash-coin"></i><h5>سند هزینه‌ای یافت نشد</h5></div>
+        }
+        else
+        {
+            @* ---------- نمای جدولی (دسکتاپ) ---------- *@
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>سند</th>
+                            <th>تاریخ</th>
+                            <th>نوع هزینه</th>
+                            <th>دریافت‌کننده</th>
+                            <th>نحوه پرداخت</th>
+                            <th class="text-start">مبلغ (ریال)</th>
+                            <th>توضیحات</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var e in items)
+                        {
+                            <tr>
+                                <td class="doc-number fw-700 text-primary">@e.Number</td>
+                                <td class="num fs-8">@e.Date.ToFa()</td>
+                                <td><span class="badge badge-soft-warning">@e.CategoryName</span></td>
+                                <td>@(e.Payee ?? "—")</td>
+                                <td>@PayTypeBadge(e.PayType)@(string.IsNullOrWhiteSpace(e.TrsAccountName) ? "" : $" ({e.TrsAccountName})")</td>
+                                <td class="text-start num fw-700 text-danger">@e.Amount.Money()</td>
+                                <td class="text-muted fs-8">@(string.IsNullOrWhiteSpace(e.Description) ? "—" : e.Description)</td>
+                                <td class="text-end text-nowrap">
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(e)"><i class="bi bi-pencil text-primary"></i></button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(e)"><i class="bi bi-trash text-danger"></i></button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var e in items)
+                {
+                    <div class="m-card st-cancelled">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi bi-cash-coin"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <span class="doc-number fw-800 text-primary">@e.Number</span>
+                                    <span class="badge badge-soft-warning fs-8">@e.CategoryName</span>
+                                </div>
+                                <div class="fs-8 text-muted">@e.Date.ToFa()@(string.IsNullOrWhiteSpace(e.Payee) ? "" : $" — {e.Payee}")</div>
+                                @if (!string.IsNullOrWhiteSpace(e.Description))
+                                {
+                                    <div class="fs-8 text-muted text-truncate">@e.Description</div>
+                                }
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">مبلغ</div>
+                                <div class="num fw-800 text-danger">@e.Amount.Money()</div>
+                                <div class="mt-1">@PayTypeBadge(e.PayType)@(string.IsNullOrWhiteSpace(e.TrsAccountName) ? "" : $" — {e.TrsAccountName}")</div>
+                            </div>
+                        </div>
+                        <div class="m-card-actions">
+                            <button class="btn btn-light text-primary" @onclick="() => OpenEdit(e)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            <button class="btn btn-light text-danger" @onclick="() => Delete(e)"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center px-3 py-2 border-top flex-wrap gap-2">
+                <div class="fs-8 text-muted">جمع صفحه: <b class="num text-danger">@items.Sum(x => x.Amount).Money()</b> ریال</div>
+                <Pager Page="page" PageCount="pageCount" OnPageChanged="GoToPage" />
+            </div>
+        }
+    </div>
+</div>
+
+@* ---------------- فرم سند هزینه ---------------- *@
+<Modal Visible="showForm" Title="@(form.Id == 0 ? "هزینه جدید" : $"ویرایش سند {form.Number}")" OnClose="() => showForm = false">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">نوع هزینه <span class="text-danger">*</span></label>
+                <div class="input-group">
+                    <select class="form-select" @bind="catIdStr">
+                        <option value="0">— انتخاب کنید —</option>
+                        @foreach (var c in categories.Where(x => x.IsActive || x.Id == form.CategoryId))
+                        {
+                            <option value="@c.Id">@c.Name</option>
+                        }
+                    </select>
+                    <button type="button" class="btn btn-outline-primary" title="افزودن نوع هزینه جدید" aria-label="افزودن نوع هزینه جدید" @onclick="OpenCats">
+                        <i class="bi bi-plus-lg"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">مبلغ (ریال) <span class="text-danger">*</span></label>
+                <input class="form-control num" value="@fAmount"
+                       @oninput="@(e => fAmount = Fa.FormatTyping(e.Value?.ToString()))" inputmode="numeric" dir="ltr" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">تاریخ سند <span class="text-danger">*</span></label>
+                <DatePicker @bind-Value="expDate" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label d-block">نحوه پرداخت</label>
+                <div class="d-flex flex-wrap gap-3 pt-1">
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="expPay" id="epCash"
+                               checked="@(form.PayType == CashType.Cash)" @onchange="@(() => form.PayType = CashType.Cash)" />
+                        <label class="form-check-label" for="epCash">وجه نقد</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="expPay" id="epPos"
+                               checked="@(form.PayType == CashType.CardReader)" @onchange="@(() => form.PayType = CashType.CardReader)" />
+                        <label class="form-check-label" for="epPos">کارت‌خوان</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="expPay" id="epC2C"
+                               checked="@(form.PayType == CashType.CardTransfer)" @onchange="@(() => form.PayType = CashType.CardTransfer)" />
+                        <label class="form-check-label" for="epC2C">کارت به کارت</label>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">صندوق / بانک پرداخت</label>
+                <div class="input-group">
+                    <select class="form-select" value="@(form.TrsAccountId ?? 0)" @onchange="OnBankChanged">
+                        <option value="0">— انتخاب @(form.PayType == CashType.Cash ? "صندوق" : "بانک") —</option>
+                        @foreach (var a in AccountsForPayType())
+                        {
+                            <option value="@a.Id">@a.DisplayName</option>
+                        }
+                    </select>
+                    <button type="button" class="btn btn-outline-primary" title="تعریف بانک/حساب جدید"
+                            @onclick="() => OpenQuickBank(form.PayType == CashType.Cash ? TreasuryAccountKind.Cash : (form.PayType == CashType.CardReader ? TreasuryAccountKind.Pos : TreasuryAccountKind.Bank))">
+                        <i class="bi bi-plus-lg ms-1"></i> تعریف بانک
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">دریافت‌کننده / طرف هزینه</label>
+                <input class="form-control" @bind="form.Payee" placeholder="مثلاً موجر، اداره برق…" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">توضیحات</label>
+                <input class="form-control" @bind="form.Description" />
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showForm = false">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" @onclick="Save" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            ذخیره (F1)
+        </button>
+    </Footer>
+</Modal>
+
+<QuickBankModal @bind-Visible="showQuickBank"
+                DefaultKind="quickBankKind"
+                OnAccountCreated="OnQuickBankCreated" />
+
+@* ---------------- مدیریت انواع هزینه ---------------- *@
+<Modal Visible="showCats" Title="انواع هزینه" Size="modal-lg" OnClose="() => showCats = false">
+    <ChildContent>
+        <div class="row g-2 mb-3">
+            <div class="col-md-8"><input class="form-control" placeholder="نام نوع هزینه *" @bind="catForm.Name" /></div>
+            <div class="col-md-4">
+                <button class="btn btn-primary w-100" @onclick="SaveCat" disabled="@saving">
+                    @(catForm.Id == 0 ? "افزودن" : "ویرایش")
+                </button>
+            </div>
+        </div>
+        <div class="table-responsive grid-desktop">
+            <table class="table table-hover align-middle">
+                <thead><tr><th>نام</th><th class="text-start">تعداد سند</th><th class="text-start">جمع مبلغ (ریال)</th><th>وضعیت</th><th class="text-end">عملیات</th></tr></thead>
+                <tbody>
+                    @foreach (var c in categories)
+                    {
+                        <tr>
+                            <td class="fw-500"><i class="bi bi-tag text-muted ms-1"></i> @c.Name</td>
+                            <td class="text-start num">@c.ExpenseCount.Num()</td>
+                            <td class="text-start num">@c.TotalAmount.Money()</td>
+                            <td>
+                                @if (c.IsActive)
+                                {
+                                    <span class="badge badge-soft-success">فعال</span>
+                                }
+                                else
+                                {
+                                    <span class="badge badge-soft-muted">غیرفعال</span>
+                                }
+                            </td>
+                            <td class="text-end text-nowrap">
+                                <button class="btn btn-sm btn-light" @onclick="() => EditCat(c)"><i class="bi bi-pencil text-primary"></i></button>
+                                <button class="btn btn-sm btn-light" title="فعال/غیرفعال" @onclick="() => ToggleCat(c)"><i class="bi bi-power @(c.IsActive ? "text-warning" : "text-success")"></i></button>
+                                <button class="btn btn-sm btn-light" @onclick="() => DeleteCat(c)"><i class="bi bi-trash text-danger"></i></button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="cards-mobile">
+            @foreach (var c in categories)
+            {
+                <div class="m-card @(c.IsActive ? "st-ready" : "st-delivered")">
+                    <div class="m-card-head">
+                        <div class="m-card-icon"><i class="bi bi-tag"></i></div>
+                        <div class="flex-grow-1 min-w-0">
+                            <div class="fw-700 text-truncate">@c.Name</div>
+                            <div class="fs-8 text-muted num">@c.ExpenseCount.Num() سند — @c.TotalAmount.Money() ریال</div>
+                        </div>
+                    </div>
+                    <div class="m-card-actions">
+                        <button class="btn btn-light text-primary" @onclick="() => EditCat(c)"><i class="bi bi-pencil"></i> ویرایش</button>
+                        <button class="btn btn-light" @onclick="() => ToggleCat(c)"><i class="bi bi-power"></i></button>
+                        <button class="btn btn-light text-danger" @onclick="() => DeleteCat(c)"><i class="bi bi-trash"></i></button>
+                    </div>
+                </div>
+            }
+        </div>
+    </ChildContent>
+</Modal>
+
+@code {
+    private List<ExpenseDto> items = new();
+    private List<ExpenseCategoryDto> categories = new();
+    private bool loading = true, saving, showForm, showCats;
+
+    private string search = "";
+    private int catFilter;
+    private DateTime? from, to;
+    private int page = 1, pageCount = 1, total;
+    private const int PageSize = 15;
+    private System.Timers.Timer? searchTimer;
+
+    private ExpenseDto form = new();
+    private ExpenseCategoryDto catForm = new();
+    private string catIdStr = "0", fAmount = "";
+    private DateTime? expDate;
+
+    // ---------- بانک / صندوق نحوهٔ پرداخت ----------
+    private List<TrsAccount> bankAccounts = new();
+    private bool showQuickBank;
+    private TreasuryAccountKind quickBankKind = TreasuryAccountKind.Cash;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("هزینه‌ها");
+        await LoadCats();
+        try { bankAccounts = await AccountSvc.GetAllAsync(true); } catch { }
+        await Load();
+    }
+
+    private List<TrsAccount> AccountsForPayType() => form.PayType switch
+    {
+        CashType.Cash => bankAccounts.Where(a => a.Kind is TreasuryAccountKind.Cash or TreasuryAccountKind.PettyCash).ToList(),
+        CashType.CardReader => bankAccounts.Where(a => a.Kind is TreasuryAccountKind.Pos or TreasuryAccountKind.Bank).ToList(),
+        _ => bankAccounts.Where(a => a.Kind is TreasuryAccountKind.Bank or TreasuryAccountKind.Pos).ToList(),
+    };
+
+    private void OnBankChanged(ChangeEventArgs e)
+    {
+        var id = int.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+        form.TrsAccountId = id == 0 ? null : id;
+        form.TrsAccountName = bankAccounts.FirstOrDefault(a => a.Id == id)?.DisplayName;
+    }
+
+    private void OpenQuickBank(TreasuryAccountKind kind)
+    {
+        quickBankKind = kind;
+        showQuickBank = true;
+    }
+
+    private async Task OnQuickBankCreated(TrsAccount acc)
+    {
+        try { bankAccounts = await AccountSvc.GetAllAsync(true); } catch { }
+        form.TrsAccountId = acc.Id;
+        form.TrsAccountName = acc.DisplayName;
+    }
+
+    private async Task LoadCats()
+    {
+        try { categories = await ExpenseSvc.GetCategoriesAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var res = await ExpenseSvc.GetExpensesAsync(search, catFilter, from, to, page, PageSize);
+            items = res.Items;
+            total = res.TotalCount;
+            pageCount = Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OnSearchInput(ChangeEventArgs e)
+    {
+        search = e.Value?.ToString() ?? "";
+        searchTimer?.Stop();
+        searchTimer = new System.Timers.Timer(400) { AutoReset = false };
+        searchTimer.Elapsed += async (_, _) => { page = 1; await InvokeAsync(async () => { await Load(); StateHasChanged(); }); };
+        searchTimer.Start();
+    }
+
+    private async Task OnCatFilter(ChangeEventArgs e)
+    {
+        catFilter = int.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+        page = 1;
+        await Load();
+    }
+
+    private async Task ApplyFilter() { page = 1; await Load(); }
+    private async Task GoToPage(int p) { page = p; await Load(); }
+
+    private RenderFragment PayTypeBadge(CashType t) => t switch
+    {
+        CashType.CardReader => @<span class="badge badge-pay-cheque fs-8"><i class="bi bi-credit-card"></i> کارت‌خوان</span>,
+        CashType.CardTransfer => @<span class="badge badge-pay-inst fs-8"><i class="bi bi-arrow-left-right"></i> کارت به کارت</span>,
+        _ => @<span class="badge badge-pay-cash fs-8"><i class="bi bi-cash"></i> نقد</span>
+    };
+
+    private void OpenNew()
+    {
+        form = new ExpenseDto { Date = DateTime.Now, PayType = CashType.Cash };
+        catIdStr = "0"; fAmount = ""; expDate = DateTime.Now;
+        showForm = true;
+    }
+
+    private void OpenEdit(ExpenseDto e)
+    {
+        form = new ExpenseDto
+        {
+            Id = e.Id, Number = e.Number, CategoryId = e.CategoryId, Amount = e.Amount,
+            Date = e.Date, PayType = e.PayType, TrsAccountId = e.TrsAccountId, TrsAccountName = e.TrsAccountName,
+            Payee = e.Payee, Description = e.Description
+        };
+        catIdStr = e.CategoryId.ToString();
+        fAmount = Fa.FormatTyping(e.Amount.ToString("0"));
+        expDate = e.Date;
+        showForm = true;
+    }
+
+    private async Task Save()
+    {
+        form.CategoryId = int.TryParse(catIdStr, out var cid) ? cid : 0;
+        form.Amount = Fa.ParseDecimal(fAmount);
+        form.Date = expDate ?? DateTime.Now;
+
+        if (form.CategoryId <= 0) { Toast.Error("نوع هزینه را انتخاب کنید."); return; }
+        if (form.Amount <= 0) { Toast.Error("مبلغ هزینه را وارد کنید."); return; }
+
+        saving = true;
+        try
+        {
+            await ExpenseSvc.SaveExpenseAsync(form);
+            Toast.Success(form.Id == 0 ? "سند هزینه ثبت شد." : "سند هزینه ویرایش شد.");
+            showForm = false;
+            await LoadCats();
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(ExpenseDto e)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف سند «{e.Number}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await ExpenseSvc.DeleteExpenseAsync(e.Id);
+            Toast.Success("سند هزینه حذف شد.");
+            await LoadCats();
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------------- انواع هزینه ----------------
+
+    private void OpenCats() { catForm = new ExpenseCategoryDto(); showCats = true; }
+    private void EditCat(ExpenseCategoryDto c) => catForm = new ExpenseCategoryDto { Id = c.Id, Name = c.Name, IsActive = c.IsActive };
+
+    private async Task SaveCat()
+    {
+        if (string.IsNullOrWhiteSpace(catForm.Name)) { Toast.Error("نام نوع هزینه را وارد کنید."); return; }
+        saving = true;
+        var savedName = catForm.Name.Trim();
+        try
+        {
+            await ExpenseSvc.SaveCategoryAsync(catForm);
+            Toast.Success("نوع هزینه ذخیره شد.");
+            catForm = new ExpenseCategoryDto();
+            await LoadCats();
+            // اگر از داخل فرم هزینه نوع تازه‌ای ساخته شد، همان را در فرم انتخاب کن.
+            var savedCategory = categories.FirstOrDefault(x => x.Name == savedName && x.IsActive);
+            if (savedCategory is not null) catIdStr = savedCategory.Id.ToString();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task ToggleCat(ExpenseCategoryDto c)
+    {
+        try
+        {
+            await ExpenseSvc.SaveCategoryAsync(new ExpenseCategoryDto { Id = c.Id, Name = c.Name, IsActive = !c.IsActive });
+            await LoadCats();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteCat(ExpenseCategoryDto c)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"حذف نوع هزینه «{c.Name}»؟");
+        if (!ok) return;
+        try
+        {
+            await ExpenseSvc.DeleteCategoryAsync(c.Id);
+            await LoadCats();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}
