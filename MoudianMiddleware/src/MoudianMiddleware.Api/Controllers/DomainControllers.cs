@@ -13,6 +13,7 @@ using MoudianMiddleware.Contracts.ViewModels.Customers;
 using MoudianMiddleware.Contracts.ViewModels.Invoices;
 using MoudianMiddleware.Contracts.ViewModels.Moadian;
 using MoudianMiddleware.Contracts.ViewModels.Products;
+using MoudianMiddleware.CoreLayer.Infrastructure.Moadian;
 using MoudianMiddleware.CoreLayer.Interfaces.Services;
 using MoudianMiddleware.DataLayer.Abstractions;
 using MoudianMiddleware.DataLayer.Context;
