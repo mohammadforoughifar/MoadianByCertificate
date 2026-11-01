@@ -1,0 +1,862 @@
+@page "/it-vault"
+@using System.Security.Cryptography
+@inject IApiClient Api
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>گاوصندوق رمزهای تجهیزات</PageTitle>
+
+@* =====================================================================
+   گاوصندوق رمزها — مدیریت سخت‌افزار
+   سرور، سوییچ منیجبل، میکروتیک، فایروال و سامانه‌ها به تفکیک شرکت.
+   رمزها روی سرور با AES-256-GCM رمزنگاری می‌شوند و در لیست هرگز ارسال نمی‌شوند؛
+   نمایش/کپی رمز = مجوز «نمایش رمز» + تأیید دوبارهٔ رمز ورود (۱۰ دقیقه) + ثبت در لاگ.
+   ===================================================================== *@
+
+<div class="card shadow-sm mb-4 vault-card">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center flex-wrap gap-2 vault-head">
+        <span><i class="bi bi-shield-lock-fill me-2"></i>گاوصندوق رمزهای تجهیزات
+            <span class="badge bg-light text-dark ms-1">@filtered.Count.Num()</span>
+        </span>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            @if (canReveal)
+            {
+                @if (IsUnlocked)
+                {
+                    <span class="badge rounded-pill bg-success-subtle text-success-emphasis border border-success-subtle px-3 py-2" title="پس از این زمان برای نمایش رمز باید دوباره رمز ورود را وارد کنید">
+                        <i class="bi bi-unlock-fill"></i> باز تا @UnlockExpires!.Value.ToString("HH:mm")
+                    </span>
+                    <button class="btn btn-light btn-sm fw-700" @onclick="Lock" title="قفل دوبارهٔ گاوصندوق"><i class="bi bi-lock-fill"></i> قفل</button>
+                }
+                else
+                {
+                    <button class="btn btn-warning btn-sm fw-700" @onclick="() => OpenUnlock(null)"><i class="bi bi-key-fill"></i> باز کردن گاوصندوق</button>
+                }
+            }
+            @if (canViewLog && companyId > 0)
+            {
+                <button class="btn btn-light btn-sm fw-700" @onclick="() => OpenLogs(null)"><i class="bi bi-journal-text"></i> لاگ دسترسی‌ها</button>
+            }
+            @if (canCreate && companyId > 0)
+            {
+                <button class="btn btn-light btn-sm fw-700 shadow-sm" style="color:#334155" @onclick="OpenCreate"><i class="bi bi-plus-lg"></i> افزودن</button>
+            }
+        </div>
+    </div>
+
+    <div class="card-body">
+        @if (!canView)
+        {
+            <div class="alert alert-warning mb-0">شما مجوز مشاهدهٔ گاوصندوق رمزها را ندارید.</div>
+        }
+        else if (companies.Count == 0 && !loadingCompanies)
+        {
+            <div class="alert alert-info mb-0">
+                هیچ شرکتی برای شما تعریف نشده است. از «سازمان و کیف پول ← شرکت‌ها و شعب» شرکت تعریف کنید
+                و در «کاربران» دسترسی شرکت را به کاربر بدهید.
+            </div>
+        }
+        else
+        {
+            @* ---------- انتخاب شرکت ---------- *@
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                <label class="small fw-800 text-secondary"><i class="bi bi-building"></i> شرکت:</label>
+                <select class="form-select form-select-sm" style="max-width:280px" value="@companyId" @onchange="OnCompanyChanged">
+                    @foreach (var c in companies)
+                    {
+                        <option value="@c.Id">@c.Name (@c.Count.Num())</option>
+                    }
+                </select>
+                <input type="text" class="form-control form-control-sm" style="max-width:280px"
+                       placeholder="جستجو: عنوان / آی‌پی / نام کاربری / محل..." @bind="searchText" @bind:event="oninput" />
+                <div class="form-check form-switch ms-1">
+                    <input class="form-check-input" type="checkbox" id="vaultInactive" @bind="showInactive" />
+                    <label class="form-check-label small" for="vaultInactive">نمایش غیرفعال‌ها</label>
+                </div>
+            </div>
+
+            @* ---------- تب نوع تجهیز ---------- *@
+            <div class="vault-tabs mb-3">
+                <button class="vault-tab @(category == "All" ? "active" : "")" @onclick='() => category = "All"'>
+                    <i class="bi bi-grid-3x3-gap-fill"></i> همه <span class="cnt">@CountOf("All").Num()</span>
+                </button>
+                @foreach (var cat in Categories)
+                {
+                    var key = cat.Key;
+                    <button class="vault-tab @(category == key ? "active" : "")" @onclick="() => category = key">
+                        <i class="bi @cat.Icon"></i> @cat.Title <span class="cnt">@CountOf(key).Num()</span>
+                    </button>
+                }
+            </div>
+
+            @if (loading)
+            {
+                <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+            }
+            else if (filtered.Count == 0)
+            {
+                <div class="alert alert-info py-2 mb-0">موردی ثبت نشده است@(canCreate ? " — «افزودن» را بزنید." : ".")</div>
+            }
+            else
+            {
+                @* ---------- جدول دسکتاپ ---------- *@
+                <div class="table-responsive d-none d-md-block">
+                    <table class="table table-hover align-middle mb-0 vault-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th>#</th><th>نوع</th><th>عنوان</th><th>آی‌پی / آدرس</th><th>اتصال</th>
+                                <th>نام کاربری</th><th>رمز عبور</th><th>محل</th><th>تغییر رمز</th><th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{ var i = 1; }
+                            @foreach (var r in filtered)
+                            {
+                                var meta = Cat(r.Category);
+                                <tr class="@(r.IsActive ? "" : "opacity-50")">
+                                    <td class="text-secondary fw-600">@((i++).Num())</td>
+                                    <td><span class="badge vault-badge" style="background:@meta.Color"><i class="bi @meta.Icon"></i> @meta.Title</span></td>
+                                    <td class="fw-700">
+                                        @r.Title
+                                        @if (!r.IsActive) { <span class="badge bg-secondary ms-1">غیرفعال</span> }
+                                        @if (!string.IsNullOrWhiteSpace(r.Notes)) { <i class="bi bi-info-circle text-secondary ms-1" title="@r.Notes"></i> }
+                                    </td>
+                                    <td dir="ltr" class="text-start">
+                                        @if (!string.IsNullOrWhiteSpace(r.Host))
+                                        {
+                                            <code>@r.Host@(r.Port.HasValue ? ":" + r.Port : "")</code>
+                                            <button class="btn btn-link btn-sm p-0 ms-1" title="کپی آدرس" @onclick='() => CopyPlain(HostText(r), "آدرس")'><i class="bi bi-copy"></i></button>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(r.Url))
+                                        {
+                                            <div><a href="@SafeUrl(r.Url)" target="_blank" rel="noopener noreferrer" class="small">@r.Url</a></div>
+                                        }
+                                        @if (string.IsNullOrWhiteSpace(r.Host) && string.IsNullOrWhiteSpace(r.Url)) { <span>—</span> }
+                                    </td>
+                                    <td>@(string.IsNullOrWhiteSpace(r.AccessMethod) ? "—" : r.AccessMethod)</td>
+                                    <td dir="ltr" class="text-start">
+                                        @if (!string.IsNullOrWhiteSpace(r.Username))
+                                        {
+                                            <code>@r.Username</code>
+                                            <button class="btn btn-link btn-sm p-0 ms-1" title="کپی نام کاربری" @onclick='() => CopyPlain(r.Username!, "نام کاربری")'><i class="bi bi-copy"></i></button>
+                                        }
+                                        else { <span>—</span> }
+                                    </td>
+                                    <td dir="ltr" class="text-start">@PasswordCell(r)</td>
+                                    <td>@(string.IsNullOrWhiteSpace(r.Location) ? "—" : r.Location)</td>
+                                    <td class="small text-secondary">@(r.PasswordChangedAt.HasValue ? r.PasswordChangedAt.Value.ToFaDateTime() : "—")</td>
+                                    <td>
+                                        <div class="d-flex gap-1 justify-content-center">
+                                            @if (canUpdate)
+                                            {
+                                                <button class="btn btn-sm btn-outline-primary ops-btn" title="ویرایش" @onclick="() => OpenEdit(r)"><i class="bi bi-pencil-fill"></i></button>
+                                            }
+                                            @if (canViewLog)
+                                            {
+                                                <button class="btn btn-sm btn-outline-secondary ops-btn" title="لاگ دسترسی" @onclick="() => OpenLogs(r)"><i class="bi bi-clock-history"></i></button>
+                                            }
+                                            @if (canDelete)
+                                            {
+                                                <button class="btn btn-sm btn-outline-danger ops-btn" title="حذف" @onclick="() => Delete(r)"><i class="bi bi-trash-fill"></i></button>
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                @* ---------- کارت‌ویو موبایل ---------- *@
+                <div class="d-md-none">
+                    @foreach (var r in filtered)
+                    {
+                        var meta = Cat(r.Category);
+                        <div class="m-card @(r.IsActive ? "" : "opacity-50")">
+                            <div class="m-title"><span class="badge vault-badge me-1" style="background:@meta.Color"><i class="bi @meta.Icon"></i></span>@r.Title</div>
+                            <div class="m-row"><span class="m-label">آدرس</span><span class="m-val" dir="ltr">@(string.IsNullOrWhiteSpace(r.Host) ? (r.Url ?? "—") : HostText(r))</span></div>
+                            <div class="m-row"><span class="m-label">اتصال</span><span class="m-val">@(r.AccessMethod ?? "—")</span></div>
+                            <div class="m-row"><span class="m-label">نام کاربری</span>
+                                <span class="m-val" dir="ltr">@(r.Username ?? "—")
+                                    @if (!string.IsNullOrWhiteSpace(r.Username))
+                                    { <button class="btn btn-link btn-sm p-0 ms-1" @onclick='() => CopyPlain(r.Username!, "نام کاربری")'><i class="bi bi-copy"></i></button> }
+                                </span>
+                            </div>
+                            <div class="m-row"><span class="m-label">رمز</span><span class="m-val" dir="ltr">@PasswordCell(r)</span></div>
+                            <div class="m-row"><span class="m-label">محل</span><span class="m-val">@(r.Location ?? "—")</span></div>
+                            <div class="m-actions">
+                                @if (canUpdate) { <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenEdit(r)"><i class="bi bi-pencil-fill"></i> ویرایش</button> }
+                                @if (canViewLog) { <button class="btn btn-sm btn-outline-secondary" @onclick="() => OpenLogs(r)"><i class="bi bi-clock-history"></i> لاگ</button> }
+                                @if (canDelete) { <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(r)"><i class="bi bi-trash-fill"></i> حذف</button> }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@* ============================== فرم افزودن / ویرایش ============================== *@
+@if (showForm)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-shield-lock me-1"></i>@(editId > 0 ? "ویرایش" : "افزودن به گاوصندوق")</h5>
+                    <button type="button" class="btn-close" @onclick="() => showForm = false"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrWhiteSpace(formError))
+                    { <div class="alert alert-danger py-2">@formError</div> }
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label small fw-800">شرکت <span class="text-danger">*</span></label>
+                            <select class="form-select form-select-sm" @bind="form.CompanyId">
+                                @foreach (var c in companies) { <option value="@c.Id">@c.Name</option> }
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-800">نوع تجهیز <span class="text-danger">*</span></label>
+                            <select class="form-select form-select-sm" @bind="form.Category">
+                                @foreach (var cat in Categories) { <option value="@cat.Key">@cat.Title</option> }
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-800">عنوان <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-sm" maxlength="200" @bind="form.Title" placeholder="@Cat(form.Category).TitleHint" />
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label small fw-800">آی‌پی / نام میزبان</label>
+                            <input class="form-control form-control-sm" dir="ltr" maxlength="200" @bind="form.Host" placeholder="192.168.30.1" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small fw-800">پورت</label>
+                            <input type="number" min="1" max="65535" class="form-control form-control-sm" dir="ltr" @bind="form.Port" placeholder="@Cat(form.Category).PortHint" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-800">روش اتصال</label>
+                            <input class="form-control form-control-sm" dir="ltr" maxlength="30" list="vaultAccessMethods" @bind="form.AccessMethod" placeholder="SSH / Web / Winbox ..." />
+                            <datalist id="vaultAccessMethods">
+                                @foreach (var m in AccessMethods) { <option value="@m"></option> }
+                            </datalist>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-800">آدرس ورود (سامانه / پنل وب)</label>
+                            <input class="form-control form-control-sm" dir="ltr" maxlength="500" @bind="form.Url" placeholder="https://192.168.30.1:8443" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-800">نام کاربری</label>
+                            <input class="form-control form-control-sm" dir="ltr" maxlength="200" autocomplete="off" @bind="form.Username" placeholder="admin" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-800">رمز عبور</label>
+                            <div class="input-group input-group-sm">
+                                <input type="@(showFormPassword ? "text" : "password")" class="form-control" dir="ltr" maxlength="1000"
+                                       autocomplete="new-password" @bind="form.Password" disabled="@form.ClearPassword"
+                                       placeholder="@(editId > 0 && editHasPassword ? "برای حفظ رمز فعلی خالی بگذارید" : "")" />
+                                <button class="btn btn-outline-secondary" type="button" title="نمایش/پنهان" @onclick="() => showFormPassword = !showFormPassword"><i class="bi @(showFormPassword ? "bi-eye-slash" : "bi-eye")"></i></button>
+                                <button class="btn btn-outline-secondary" type="button" title="ساخت رمز قوی تصادفی" @onclick="GeneratePassword"><i class="bi bi-magic"></i></button>
+                            </div>
+                            @if (!string.IsNullOrEmpty(form.Password))
+                            {
+                                var st = Strength(form.Password);
+                                <div class="small mt-1" style="color:@st.Color"><i class="bi bi-shield-check"></i> قدرت رمز: @st.Label</div>
+                            }
+                            @if (editId > 0 && editHasPassword)
+                            {
+                                <div class="form-check mt-1">
+                                    <input class="form-check-input" type="checkbox" id="vaultClearPass" @bind="form.ClearPassword" />
+                                    <label class="form-check-label small text-danger" for="vaultClearPass">حذف رمز ذخیره‌شده</label>
+                                </div>
+                            }
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-800"><i class="bi bi-lock-fill text-warning"></i> اطلاعات محرمانهٔ تکمیلی <span class="text-secondary fw-normal">(رمزنگاری می‌شود — مثل enable secret، SNMP community، کلید Wi-Fi، کد بازیابی)</span></label>
+                            <textarea class="form-control form-control-sm" dir="auto" rows="2" maxlength="4000" autocomplete="off"
+                                      @bind="form.ExtraSecret" disabled="@form.ClearExtraSecret"
+                                      placeholder="@(editId > 0 && editHasExtra ? "مقدار فعلی ذخیره شده است — برای حفظ، خالی بگذارید" : "")"></textarea>
+                            @if (editId > 0 && editHasExtra)
+                            {
+                                <div class="form-check mt-1">
+                                    <input class="form-check-input" type="checkbox" id="vaultClearExtra" @bind="form.ClearExtraSecret" />
+                                    <label class="form-check-label small text-danger" for="vaultClearExtra">حذف اطلاعات محرمانهٔ ذخیره‌شده</label>
+                                </div>
+                            }
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-800">محل استقرار</label>
+                            <input class="form-control form-control-sm" maxlength="250" @bind="form.Location" placeholder="مثلاً: رک اتاق سرور" />
+                        </div>
+                        <div class="col-md-6 d-flex align-items-end">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="vaultActive" @bind="form.IsActive" />
+                                <label class="form-check-label" for="vaultActive">فعال</label>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-800">توضیحات <span class="text-secondary fw-normal">(رمزنگاری نمی‌شود — رمز را اینجا ننویسید)</span></label>
+                            <textarea class="form-control form-control-sm" rows="2" maxlength="2000" @bind="form.Notes"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary rounded-pill px-4" @onclick="() => showForm = false">انصراف</button>
+                    <button class="btn btn-primary rounded-pill px-4 fw-800" disabled="@busy" @onclick="Save">
+                        @if (busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        @(editId > 0 ? "ذخیره تغییرات" : "افزودن")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ============================== باز کردن گاوصندوق ============================== *@
+@if (showUnlock)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.55)">
+        <div class="modal-dialog modal-dialog-centered" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-key-fill text-warning me-1"></i>باز کردن گاوصندوق</h5>
+                    <button type="button" class="btn-close" @onclick="CancelUnlock"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-secondary mb-2">
+                        برای نمایش یا کپی رمزها، رمز ورود خودتان به نرم‌افزار را وارد کنید.
+                        گاوصندوق تا ۱۰ دقیقه باز می‌ماند و هر نمایش/کپی در لاگ ثبت می‌شود.
+                    </p>
+                    @if (!string.IsNullOrWhiteSpace(unlockError))
+                    { <div class="alert alert-danger py-2">@unlockError</div> }
+                    <input type="password" class="form-control" dir="ltr" autocomplete="current-password" placeholder="رمز ورود شما"
+                           @bind="unlockPassword" @bind:event="oninput" @onkeydown="UnlockKeyDown" />
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary rounded-pill px-4" @onclick="CancelUnlock">انصراف</button>
+                    <button class="btn btn-warning rounded-pill px-4 fw-800" disabled="@(busy || string.IsNullOrEmpty(unlockPassword))" @onclick="DoUnlock">
+                        @if (busy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        باز کردن
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ============================== لاگ دسترسی ============================== *@
+@if (showLogs)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-journal-text me-1"></i>لاگ دسترسی @(logsTitle is null ? "— همهٔ موارد شرکت" : "— " + logsTitle)</h5>
+                    <button type="button" class="btn-close" @onclick="() => showLogs = false"></button>
+                </div>
+                <div class="modal-body">
+                    @if (logsLoading)
+                    { <div class="text-center py-4"><div class="spinner-border text-primary"></div></div> }
+                    else if (logs.Count == 0)
+                    { <div class="alert alert-info py-2 mb-0">لاگی ثبت نشده است.</div> }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-sm table-striped align-middle mb-0">
+                                <thead class="table-light"><tr><th>زمان</th><th>کاربر</th><th>عملیات</th><th>مورد</th><th>توضیح</th><th>آی‌پی</th></tr></thead>
+                                <tbody>
+                                    @foreach (var l in logs)
+                                    {
+                                        var a = ActionMeta(l.Action);
+                                        <tr>
+                                            <td class="small text-nowrap">@l.At.ToFaDateTime()</td>
+                                            <td>@(l.UserName ?? "—")</td>
+                                            <td><span class="badge @a.Css">@a.Label</span></td>
+                                            <td>@(l.Title ?? "—")</td>
+                                            <td class="small">@(l.Details ?? "")</td>
+                                            <td class="small" dir="ltr">@(l.ClientIp ?? "")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+.vault-head { background: linear-gradient(135deg, #0f172a, #334155); color: #fff; border-radius: 14px 14px 0 0; }
+.vault-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.vault-tab { border: 1px solid #e2e8f0; background: #fff; border-radius: 999px; padding: 4px 12px; font-size: .85rem; color: #334155; }
+.vault-tab .cnt { background: #f1f5f9; border-radius: 999px; padding: 0 7px; margin-inline-start: 4px; font-size: .75rem; }
+.vault-tab.active { background: #0f172a; color: #fff; border-color: #0f172a; }
+.vault-tab.active .cnt { background: rgba(255,255,255,.2); }
+.vault-badge { color: #fff; font-weight: 600; }
+.vault-table code { color: #0f172a; background: #f1f5f9; padding: 1px 6px; border-radius: 6px; }
+.vault-pass { font-family: Consolas, monospace; letter-spacing: 1px; }
+.ops-btn { width: 34px; height: 30px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border-radius: 8px; }
+</style>
+
+@code {
+    // ------------------------------------------------------------ مدل‌ها
+    private sealed record CatMeta(string Key, string Title, string Icon, string Color, string TitleHint, string PortHint);
+
+    private static readonly CatMeta[] Categories =
+    {
+        new("Server",   "سرور",          "bi-hdd-rack-fill",     "#2563eb", "مثلاً: سرور فایل / DC01",          "22 / 3389"),
+        new("Switch",   "سوییچ منیجبل",  "bi-diagram-3-fill",    "#0891b2", "مثلاً: سوییچ کور طبقه ۲",          "22 / 80"),
+        new("Mikrotik", "میکروتیک",      "bi-router-fill",       "#7c3aed", "مثلاً: روتر اصلی میکروتیک",        "8291"),
+        new("Firewall", "فایروال",       "bi-bricks",            "#dc2626", "مثلاً: فورتی‌گیت / سوفوس",          "443"),
+        new("System",   "سامانه",        "bi-window-stack",      "#059669", "مثلاً: سامانهٔ مودیان / پنل پیامک", "443"),
+        new("Other",    "سایر",          "bi-box-fill",          "#64748b", "مثلاً: NAS / پرینتر شبکه",         ""),
+    };
+    private static readonly string[] AccessMethods = { "SSH", "Telnet", "Web", "HTTPS", "Winbox", "RDP", "VNC", "Console", "API", "FTP", "SFTP" };
+
+    private static CatMeta Cat(string? key) => Categories.FirstOrDefault(c => c.Key == key) ?? Categories[^1];
+
+    public sealed class CompanyItem { public int Id { get; set; } public string Name { get; set; } = ""; public int Count { get; set; } }
+
+    public sealed class Row
+    {
+        public int Id { get; set; }
+        public int CompanyId { get; set; }
+        public string Category { get; set; } = "Server";
+        public string Title { get; set; } = "";
+        public string? Host { get; set; }
+        public int? Port { get; set; }
+        public string? AccessMethod { get; set; }
+        public string? Url { get; set; }
+        public string? Username { get; set; }
+        public bool HasPassword { get; set; }
+        public bool HasExtraSecret { get; set; }
+        public string? Location { get; set; }
+        public string? Notes { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime? PasswordChangedAt { get; set; }
+        public DateTime? UpdatedAt { get; set; }
+        public string? UpdatedByName { get; set; }
+    }
+
+    public sealed class FormModel
+    {
+        public int CompanyId { get; set; }
+        public string Category { get; set; } = "Server";
+        public string Title { get; set; } = "";
+        public string? Host { get; set; }
+        public int? Port { get; set; }
+        public string? AccessMethod { get; set; }
+        public string? Url { get; set; }
+        public string? Username { get; set; }
+        public string? Password { get; set; }
+        public bool ClearPassword { get; set; }
+        public string? ExtraSecret { get; set; }
+        public bool ClearExtraSecret { get; set; }
+        public string? Location { get; set; }
+        public string? Notes { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    public sealed class UnlockResult { public string Token { get; set; } = ""; public DateTime ExpiresAt { get; set; } }
+    public sealed class RevealResult { public string? Password { get; set; } public string? ExtraSecret { get; set; } }
+    public sealed class LogRow
+    {
+        public int Id { get; set; }
+        public int CredentialId { get; set; }
+        public string? UserName { get; set; }
+        public string Action { get; set; } = "";
+        public string? ClientIp { get; set; }
+        public string? Details { get; set; }
+        public DateTime At { get; set; }
+        public string? Title { get; set; }
+    }
+
+    // ------------------------------------------------------------ وضعیت
+    private bool canView, canCreate, canUpdate, canDelete, canReveal, canViewLog;
+    private List<CompanyItem> companies = new();
+    private List<Row> rows = new();
+    private int companyId;
+    private string category = "All";
+    private string searchText = "";
+    private bool showInactive = true;
+    private bool loading, loadingCompanies = true, busy;
+
+    // توکن باز بودن گاوصندوق فقط در حافظهٔ مرورگر (نه localStorage) و حداکثر ۱۰ دقیقه
+    private static string? unlockToken;
+    private static DateTime? UnlockExpires;
+    private static int unlockUserId;
+    private bool IsUnlocked => unlockToken != null && UnlockExpires > DateTime.Now && unlockUserId == Auth.UserId;
+
+    // رمزهای نمایش داده‌شده: پس از ۳۰ ثانیه خودکار پنهان می‌شوند
+    private readonly Dictionary<int, RevealResult> revealed = new();
+    private readonly Dictionary<int, CancellationTokenSource> hideTimers = new();
+
+    private bool showForm, showFormPassword, editHasPassword, editHasExtra;
+    private int editId;
+    private string formError = "";
+    private FormModel form = new();
+
+    private bool showUnlock;
+    private string unlockPassword = "", unlockError = "";
+    private Func<Task>? afterUnlock;
+
+    private bool showLogs, logsLoading;
+    private string? logsTitle;
+    private List<LogRow> logs = new();
+
+    private List<Row> filtered => rows
+        .Where(r => showInactive || r.IsActive)
+        .Where(r => category == "All" || r.Category == category)
+        .Where(r => string.IsNullOrWhiteSpace(searchText) || Match(r, searchText.Trim()))
+        .ToList();
+
+    private static bool Match(Row r, string q) =>
+        r.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
+        || (r.Host ?? "").Contains(q, StringComparison.OrdinalIgnoreCase)
+        || (r.Username ?? "").Contains(q, StringComparison.OrdinalIgnoreCase)
+        || (r.Url ?? "").Contains(q, StringComparison.OrdinalIgnoreCase)
+        || (r.Location ?? "").Contains(q, StringComparison.OrdinalIgnoreCase)
+        || (r.AccessMethod ?? "").Contains(q, StringComparison.OrdinalIgnoreCase)
+        || (r.Notes ?? "").Contains(q, StringComparison.OrdinalIgnoreCase);
+
+    private int CountOf(string key) => rows.Count(r => (showInactive || r.IsActive) && (key == "All" || r.Category == key));
+
+    // ------------------------------------------------------------ بارگذاری
+    protected override async Task OnInitializedAsync()
+    {
+        canView = Auth.Has("ItVault.View");
+        canCreate = Auth.Has("ItVault.Create");
+        canUpdate = Auth.Has("ItVault.Update");
+        canDelete = Auth.Has("ItVault.Delete");
+        canReveal = Auth.Has("ItVault.Reveal");
+        canViewLog = Auth.Has("ItVault.ViewLog");
+        if (!canView) { loadingCompanies = false; return; }
+
+        try
+        {
+            companies = await Api.GetAsync<List<CompanyItem>>("api/it-vault/companies") ?? new();
+            companyId = companies.FirstOrDefault()?.Id ?? 0;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loadingCompanies = false; }
+
+        if (companyId > 0) await LoadRows();
+    }
+
+    private async Task LoadRows()
+    {
+        loading = true;
+        ClearRevealed();
+        try
+        {
+            rows = await Api.GetAsync<List<Row>>($"api/it-vault?companyId={companyId}") ?? new();
+            var c = companies.FirstOrDefault(x => x.Id == companyId);
+            if (c != null) c.Count = rows.Count;
+        }
+        catch (Exception ex) { rows = new(); Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnCompanyChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id) && id != companyId)
+        {
+            companyId = id;
+            category = "All";
+            await LoadRows();
+        }
+    }
+
+    // ------------------------------------------------------------ نمایش رمز
+    private RenderFragment PasswordCell(Row r) => __builder =>
+    {
+        if (!r.HasPassword && !r.HasExtraSecret)
+        {
+            <span class="text-secondary">—</span>
+            return;
+        }
+        if (revealed.TryGetValue(r.Id, out var rv))
+        {
+            <span class="vault-pass text-danger fw-700">@(rv.Password ?? "")</span>
+            if (!string.IsNullOrEmpty(rv.ExtraSecret))
+            {
+                <div class="small text-warning-emphasis" style="white-space:pre-wrap" dir="auto"><i class="bi bi-lock-fill"></i> @rv.ExtraSecret</div>
+            }
+            <button class="btn btn-link btn-sm p-0 ms-1" title="پنهان کردن" @onclick="() => Hide(r.Id)"><i class="bi bi-eye-slash"></i></button>
+        }
+        else
+        {
+            <span class="vault-pass text-secondary">@(r.HasPassword ? "••••••••" : "")</span>
+            if (r.HasExtraSecret) { <i class="bi bi-lock-fill text-warning ms-1" title="اطلاعات محرمانهٔ تکمیلی دارد"></i> }
+            if (canReveal)
+            {
+                <button class="btn btn-link btn-sm p-0 ms-1" title="نمایش (۳۰ ثانیه)" @onclick="() => Reveal(r)"><i class="bi bi-eye"></i></button>
+            }
+        }
+        if (canReveal && r.HasPassword)
+        {
+            <button class="btn btn-link btn-sm p-0 ms-1" title="کپی رمز" @onclick="() => CopyPassword(r)"><i class="bi bi-clipboard-check"></i></button>
+        }
+    };
+
+    private async Task<RevealResult?> FetchSecret(Row r, string purpose)
+    {
+        try
+        {
+            return await Api.PostAsync<RevealResult>($"api/it-vault/{r.Id}/reveal", new { purpose, token = unlockToken });
+        }
+        catch (ApiException ex) when (ex.Message.Contains("HTTP 423"))
+        {
+            Lock();
+            return null;
+        }
+    }
+
+    private async Task Reveal(Row r)
+    {
+        if (!IsUnlocked) { OpenUnlock(() => Reveal(r)); return; }
+        try
+        {
+            var res = await FetchSecret(r, "reveal");
+            if (res is null) { OpenUnlock(() => Reveal(r)); return; }
+            revealed[r.Id] = res;
+            ScheduleHide(r.Id);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task CopyPassword(Row r)
+    {
+        if (!IsUnlocked) { OpenUnlock(() => CopyPassword(r)); return; }
+        try
+        {
+            var res = await FetchSecret(r, "copy");
+            if (res is null) { OpenUnlock(() => CopyPassword(r)); return; }
+            if (string.IsNullOrEmpty(res.Password)) { Toast.Info("رمزی برای این مورد ذخیره نشده است."); return; }
+            var ok = await JS.InvokeAsync<bool>("invCopyText", res.Password);
+            if (ok) Toast.Success("رمز کپی شد (ثبت در لاگ).");
+            else Toast.Error("کپی خودکار ممکن نشد؛ از دکمهٔ نمایش استفاده کنید.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void ScheduleHide(int id)
+    {
+        if (hideTimers.Remove(id, out var old)) { old.Cancel(); old.Dispose(); }
+        var cts = new CancellationTokenSource();
+        hideTimers[id] = cts;
+        _ = Task.Delay(TimeSpan.FromSeconds(30), cts.Token).ContinueWith(t =>
+        {
+            if (t.IsCanceled) return;
+            InvokeAsync(() => { Hide(id); StateHasChanged(); });
+        });
+    }
+
+    private void Hide(int id)
+    {
+        revealed.Remove(id);
+        if (hideTimers.Remove(id, out var cts)) { cts.Cancel(); cts.Dispose(); }
+    }
+
+    private void ClearRevealed()
+    {
+        foreach (var id in revealed.Keys.ToList()) Hide(id);
+    }
+
+    private async Task CopyPlain(string text, string label)
+    {
+        try
+        {
+            var ok = await JS.InvokeAsync<bool>("invCopyText", text);
+            if (ok) Toast.Success($"{label} کپی شد.");
+        }
+        catch { }
+    }
+
+    private static string HostText(Row r) => r.Host + (r.Port.HasValue ? ":" + r.Port : "");
+
+    /// <summary>فقط لینک‌های http/https قابل کلیک باشند (جلوگیری از javascript: و ...).</summary>
+    private static string SafeUrl(string url)
+    {
+        var u = url.Trim();
+        if (u.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || u.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return u;
+        if (u.Contains(':') && !u.Contains('.')) return "#";
+        return "http://" + u;
+    }
+
+    // ------------------------------------------------------------ باز/قفل گاوصندوق
+    private void OpenUnlock(Func<Task>? then)
+    {
+        afterUnlock = then;
+        unlockPassword = "";
+        unlockError = "";
+        showUnlock = true;
+    }
+
+    private void CancelUnlock() { showUnlock = false; afterUnlock = null; unlockPassword = ""; }
+
+    private async Task UnlockKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrEmpty(unlockPassword) && !busy) await DoUnlock();
+    }
+
+    private async Task DoUnlock()
+    {
+        busy = true; unlockError = "";
+        try
+        {
+            var res = await Api.PostAsync<UnlockResult>("api/it-vault/unlock", new { password = unlockPassword });
+            unlockToken = res.Token;
+            UnlockExpires = res.ExpiresAt;
+            unlockUserId = Auth.UserId;
+            unlockPassword = "";
+            showUnlock = false;
+            Toast.Success("گاوصندوق برای ۱۰ دقیقه باز شد.");
+            var next = afterUnlock;
+            afterUnlock = null;
+            if (next != null) await next();
+        }
+        catch (Exception ex) { unlockError = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private void Lock()
+    {
+        unlockToken = null;
+        UnlockExpires = null;
+        unlockUserId = 0;
+        ClearRevealed();
+    }
+
+    // ------------------------------------------------------------ افزودن / ویرایش / حذف
+    private void OpenCreate()
+    {
+        editId = 0; editHasPassword = false; editHasExtra = false; formError = ""; showFormPassword = false;
+        form = new FormModel { CompanyId = companyId, Category = category == "All" ? "Server" : category };
+        showForm = true;
+    }
+
+    private void OpenEdit(Row r)
+    {
+        editId = r.Id; editHasPassword = r.HasPassword; editHasExtra = r.HasExtraSecret; formError = ""; showFormPassword = false;
+        form = new FormModel
+        {
+            CompanyId = r.CompanyId, Category = r.Category, Title = r.Title, Host = r.Host, Port = r.Port,
+            AccessMethod = r.AccessMethod, Url = r.Url, Username = r.Username, Location = r.Location,
+            Notes = r.Notes, IsActive = r.IsActive
+        };
+        showForm = true;
+    }
+
+    private async Task Save()
+    {
+        formError = "";
+        if (string.IsNullOrWhiteSpace(form.Title)) { formError = "عنوان را وارد کنید."; return; }
+        if (form.CompanyId <= 0) { formError = "شرکت را انتخاب کنید."; return; }
+        if (form.Port is < 1 or > 65535) { formError = "پورت باید بین ۱ تا ۶۵۵۳۵ باشد."; return; }
+
+        busy = true;
+        try
+        {
+            if (editId > 0) await Api.PutAsync<object>($"api/it-vault/{editId}", form);
+            else await Api.PostAsync<object>("api/it-vault", form);
+            showForm = false;
+            form = new FormModel(); // رمز از حافظهٔ فرم پاک شود
+            Toast.Success("ذخیره شد — رمز روی سرور رمزنگاری شد.");
+            await LoadRows();
+        }
+        catch (Exception ex) { formError = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task Delete(Row r)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"«{r.Title}» از گاوصندوق حذف شود؟ این کار قابل بازگشت نیست.")) return;
+        try
+        {
+            await Api.DeleteAsync($"api/it-vault/{r.Id}");
+            Toast.Success("حذف شد.");
+            await LoadRows();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ------------------------------------------------------------ ساخت رمز قوی
+    private void GeneratePassword()
+    {
+        const string lower = "abcdefghijkmnopqrstuvwxyz", upper = "ABCDEFGHJKLMNPQRSTUVWXYZ", digits = "23456789", symbols = "!@#$%^&*-_=+?";
+        const string all = lower + upper + digits + symbols;
+        var chars = new List<char>
+        {
+            lower[RandomNumberGenerator.GetInt32(lower.Length)],
+            upper[RandomNumberGenerator.GetInt32(upper.Length)],
+            digits[RandomNumberGenerator.GetInt32(digits.Length)],
+            symbols[RandomNumberGenerator.GetInt32(symbols.Length)],
+        };
+        while (chars.Count < 16) chars.Add(all[RandomNumberGenerator.GetInt32(all.Length)]);
+        for (var i = chars.Count - 1; i > 0; i--)
+        {
+            var j = RandomNumberGenerator.GetInt32(i + 1);
+            (chars[i], chars[j]) = (chars[j], chars[i]);
+        }
+        form.Password = new string(chars.ToArray());
+        form.ClearPassword = false;
+        showFormPassword = true;
+    }
+
+    private static (string Label, string Color) Strength(string p)
+    {
+        var score = 0;
+        if (p.Length >= 8) score++;
+        if (p.Length >= 12) score++;
+        if (p.Any(char.IsLower) && p.Any(char.IsUpper)) score++;
+        if (p.Any(char.IsDigit)) score++;
+        if (p.Any(c => !char.IsLetterOrDigit(c))) score++;
+        return score switch
+        {
+            <= 2 => ("ضعیف", "#dc2626"),
+            3 => ("متوسط", "#d97706"),
+            4 => ("خوب", "#2563eb"),
+            _ => ("قوی", "#059669")
+        };
+    }
+
+    // ------------------------------------------------------------ لاگ
+    private async Task OpenLogs(Row? r)
+    {
+        logsTitle = r?.Title;
+        logs = new();
+        showLogs = true;
+        logsLoading = true;
+        try
+        {
+            var url = $"api/it-vault/logs?companyId={companyId}" + (r != null ? $"&credentialId={r.Id}" : "");
+            logs = await Api.GetAsync<List<LogRow>>(url) ?? new();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { logsLoading = false; }
+    }
+
+    private static (string Label, string Css) ActionMeta(string action) => action switch
+    {
+        "Reveal" => ("نمایش رمز", "bg-warning text-dark"),
+        "Copy" => ("کپی رمز", "bg-warning text-dark"),
+        "Create" => ("ایجاد", "bg-success"),
+        "Update" => ("ویرایش", "bg-primary"),
+        "Delete" => ("حذف", "bg-danger"),
+        "UnlockFailed" => ("رمز ورود اشتباه", "bg-danger"),
+        _ => (action, "bg-secondary")
+    };
+
+    public void Dispose()
+    {
+        foreach (var cts in hideTimers.Values) { cts.Cancel(); cts.Dispose(); }
+        hideTimers.Clear();
+        revealed.Clear();
+    }
+}

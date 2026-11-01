@@ -1,0 +1,609 @@
+@page "/moadian/profile"
+@inject IMoadianClientService Mdn
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>سامانه مودیان — پرونده و گواهی امضا</PageTitle>
+
+<MoadianSubNav />
+
+<div class="page-head">
+    <div>
+        <h1>پرونده مالیاتی و گواهی امضای الکترونیکی</h1>
+        <p class="lead">پیکربندی شناسه یکتای حافظه، کلید خصوصی و گواهی امضای X.509، توکن PKCS#11 و تشخیص فنی ارتباط</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-outline-success" disabled="@busy" @onclick="RunDiagnosticsAsync">
+            @if (busyAction == "diag")
+            {
+                <span class="spinner-border spinner-border-sm me-1"></span>
+            }
+            else
+            {
+                <i class="bi bi-shield-check me-1"></i>
+            }
+            تست کامل اتصال به سامانه مودیان
+        </button>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else if (profile is not null)
+{
+    <div class="row g-3">
+        <!-- ستون راست: مشخصات مودی و تنظیمات حافظه مالیاتی -->
+        <div class="col-12 col-xl-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-building-gear me-1"></i>مشخصات مودی و حافظه مالیاتی (شرکت فعال: @profile.CompanyName)</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-8">
+                            <label class="form-label">نام تجاری / عنوان مودی <span class="text-danger">*</span></label>
+                            <input class="form-control" @bind="form.TradeName" placeholder="نام رسمی شرکت یا واحد صنفی" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">نوع مودی</label>
+                            <select class="form-select" @bind="form.TaxpayerType">
+                                <option value="@MdnTaxpayerType.Legal">حقوقی</option>
+                                <option value="@MdnTaxpayerType.Natural">حقیقی</option>
+                                <option value="@MdnTaxpayerType.CivicPartnership">مشارکت مدنی</option>
+                                <option value="@MdnTaxpayerType.ForeignNational">اتباع غیر ایرانی</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label">شماره اقتصادی مودی (tins) <span class="text-danger">*</span></label>
+                            <input class="form-control font-monospace" dir="ltr" @bind="form.EconomicCode" placeholder="14003778990" />
+                            <div class="form-text">در نظام جدید معمولاً همان شناسه ملی ۱۱ رقمی (حقوقی) یا کد اقتصادی ۱۴ رقمی است.</div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label">شناسه یکتای حافظه مالیاتی (۶ کاراکتر) <span class="text-danger">*</span></label>
+                            <input class="form-control font-monospace text-uppercase" dir="ltr" maxlength="6" @bind="form.MemoryId" placeholder="A11226" />
+                            <div class="form-text">شناسه ۶ کاراکتری دریافتی از کارپوشه my.tax.gov.ir (بخش عضویت ← ابزارهای پرداخت/حافظه).</div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label">شناسه / کد ملی</label>
+                            <input class="form-control font-monospace" dir="ltr" @bind="form.NationalId" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">کد پستی ۱۰ رقمی</label>
+                            <input class="form-control font-monospace" dir="ltr" maxlength="10" @bind="form.PostalCode" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">کد شعبه (۴ رقم)</label>
+                            <input class="form-control font-monospace" dir="ltr" maxlength="10" @bind="form.BranchCode" placeholder="0000" />
+                        </div>
+
+                        <div class="col-12">
+                            <label class="form-label">نشانی اقامتگاه قانونی</label>
+                            <input class="form-control" @bind="form.Address" />
+                        </div>
+
+                        <hr class="my-1" />
+
+                        <div class="col-md-4">
+                            <label class="form-label">محیط سامانه مودیان</label>
+                            <select class="form-select" @bind="form.Environment">
+                                <option value="@MdnEnvironment.Production">عملیاتی (tp.tax.gov.ir)</option>
+                                <option value="@MdnEnvironment.Sandbox">آزمایشی (rc.tax.gov.ir)</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label">سریال داخلی بعدی</label>
+                            <input type="number" min="1" class="form-control num" @bind="form.NextSerial" />
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label">نرخ پیش‌فرض ارزش افزوده (٪)</label>
+                            <input type="number" step="0.1" min="0" max="100" class="form-control num" @bind="form.DefaultVatRate" />
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label">آدرس درگاه عملیاتی (Production)</label>
+                            <input class="form-control font-monospace small" dir="ltr" @bind="form.ProductionBaseUrl" />
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label">آدرس درگاه آزمایشی (Sandbox / RC)</label>
+                            <input class="form-control font-monospace small" dir="ltr" @bind="form.SandboxBaseUrl" />
+                        </div>
+                    </div>
+
+                    @if (Auth.Has("Moadian.Certificate"))
+                    {
+                        <div class="mt-3 text-end">
+                            <button class="btn btn-primary" disabled="@busy" @onclick="SaveProfileAsync">
+                                <i class="bi bi-check-lg me-1"></i>ذخیره مشخصات پرونده مالیاتی
+                            </button>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- ستون چپ: گاوصندوق گواهی امضای الکترونیکی -->
+        <div class="col-12 col-xl-6">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-patch-check-fill text-primary me-1"></i>گاوصندوق گواهی امضای الکترونیکی (X.509 / PKCS#8 / PKCS#11)</h6>
+                    @if (profile.HasPrivateKey && profile.HasCertificate)
+                    {
+                        <span class="badge bg-success">امضای نرم‌افزاری فعال</span>
+                    }
+                    else if (profile.SignatureMode == MdnSignatureMode.Pkcs11Token && profile.HasPkcs11Pin)
+                    {
+                        <span class="badge bg-info text-dark">توکن سخت‌افزاری فعال</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-secondary">بارگذاری نشده</span>
+                    }
+                </div>
+
+                <div class="card-body">
+                    <!-- کارت نمایش وضعیت گواهی فعلی در صورت وجود -->
+                    @if (!string.IsNullOrWhiteSpace(profile.CertificateSubject))
+                    {
+                        <div class="alert @(profile.IsCertificateExpired ? "alert-danger" : "alert-success") py-2 px-3 mb-3">
+                            <div class="d-flex justify-content-between align-items-start gap-2">
+                                <div>
+                                    <div class="fw-bold mb-1">
+                                        <i class="bi bi-award me-1"></i>گواهی امضای ذخیره شده در گاوصندوق AES-256-GCM
+                                    </div>
+                                    <div class="small"><strong>صاحب گواهی (Subject):</strong> <span dir="ltr">@profile.CertificateSubject</span></div>
+                                    <div class="small"><strong>مرکز صادرکننده (Issuer):</strong> <span dir="ltr">@profile.CertificateIssuer</span></div>
+                                    <div class="small font-monospace"><strong>اثر انگشت SHA-1:</strong> @profile.CertificateThumbprint</div>
+                                    <div class="small mt-1">
+                                        <strong>اعتبار:</strong> از @profile.CertificateNotBefore?.ToFaDate() تا @profile.CertificateNotAfter?.ToFaDate()
+                                        @if (profile.CertificateDaysRemaining.HasValue)
+                                        {
+                                            <span class="badge bg-dark ms-1">
+                                                @(profile.IsCertificateExpired ? "منقضی شده" : $"{profile.CertificateDaysRemaining.Value.FaDigits()} روز مانده")
+                                            </span>
+                                        }
+                                    </div>
+                                </div>
+                                @if (Auth.Has("Moadian.Certificate"))
+                                {
+                                    <button class="btn btn-sm btn-outline-danger" disabled="@busy" @onclick="ClearCertificateAsync" title="پاک‌سازی کلید از گاوصندوق">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    @if (Auth.Has("Moadian.Certificate"))
+                    {
+                        <!-- تب‌های روش بارگذاری گواهی -->
+                        <ul class="nav nav-tabs mb-3">
+                            <li class="nav-item">
+                                <button type="button" class="nav-link @(certTab == "pem" ? "active" : "")" @onclick='() => certTab = "pem"'>
+                                    کلید خصوصی + گواهی (.pem / .crt)
+                                </button>
+                            </li>
+                            <li class="nav-item">
+                                <button type="button" class="nav-link @(certTab == "pfx" ? "active" : "")" @onclick='() => certTab = "pfx"'>
+                                    فایل تجمیعی (.pfx / .p12)
+                                </button>
+                            </li>
+                            <li class="nav-item">
+                                <button type="button" class="nav-link @(certTab == "pkcs11" ? "active" : "")" @onclick='() => certTab = "pkcs11"'>
+                                    توکن سخت‌افزاری (PKCS#11)
+                                </button>
+                            </li>
+                        </ul>
+
+                        @if (certTab == "pem")
+                        {
+                            <div class="mb-3">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <label class="form-label mb-0">۱. کلید خصوصی مودی (Private Key PEM — PKCS#8 یا RSA)</label>
+                                    <label class="btn btn-sm btn-outline-secondary mb-0">
+                                        <i class="bi bi-upload me-1"></i>انتخاب فایل .pem / .key
+                                        <InputFile OnChange="OnPrivateKeyFileSelected" accept=".pem,.key,.txt" class="d-none" />
+                                    </label>
+                                </div>
+                                <textarea class="form-control font-monospace small" dir="ltr" rows="3"
+                                          @bind="certReq.PrivateKeyPem"
+                                          placeholder="-----BEGIN PRIVATE KEY----- ..."></textarea>
+                            </div>
+
+                            <div class="mb-3">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <label class="form-label mb-0">۲. گواهی امضای الکترونیکی مودی (X.509 Certificate — .crt / .cer / .pem)</label>
+                                    <label class="btn btn-sm btn-outline-secondary mb-0">
+                                        <i class="bi bi-upload me-1"></i>انتخاب فایل .crt / .cer
+                                        <InputFile OnChange="OnCertFileSelected" accept=".crt,.cer,.pem,.txt" class="d-none" />
+                                    </label>
+                                </div>
+                                <textarea class="form-control font-monospace small" dir="ltr" rows="3"
+                                          @bind="certReq.CertificateContent"
+                                          placeholder="-----BEGIN CERTIFICATE----- ..."></textarea>
+                            </div>
+
+                            <div class="alert alert-light border small py-2 mb-3">
+                                <i class="bi bi-lock-fill text-success me-1"></i>
+                                تطابق ریاضی زوج‌کلید RSA و گواهی X.509 پیش از ذخیره کنترل شده و کلید خصوصی با الگوریتم <strong>AES-256-GCM + HKDF</strong> رمزنگاری می‌گردد (هرگز در لاگ یا پاسخ API بازگردانده نمی‌شود).
+                            </div>
+
+                            <div class="text-end">
+                                <button class="btn btn-success" disabled="@busy" @onclick="UploadPemCertAsync">
+                                    <i class="bi bi-shield-lock me-1"></i>بررسی تطابق و رمزنگاری در گاوصندوق
+                                </button>
+                            </div>
+                        }
+                        else if (certTab == "pfx")
+                        {
+                            <div class="mb-3">
+                                <label class="form-label">فایل گواهی امضای دیجیتال (.pfx یا .p12)</label>
+                                <InputFile OnChange="OnPfxFileSelected" accept=".pfx,.p12" class="form-control" />
+                                @if (!string.IsNullOrWhiteSpace(selectedPfxFileName))
+                                {
+                                    <div class="small text-success mt-1"><i class="bi bi-check2 me-1"></i>فایل انتخاب‌شده: @selectedPfxFileName</div>
+                                }
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">رمز عبور فایل PFX (در صورت وجود)</label>
+                                <input type="password" class="form-control" dir="ltr" @bind="certReq.PfxPassword" placeholder="رمز عبور فایل PFX" />
+                            </div>
+
+                            <div class="text-end">
+                                <button class="btn btn-success" disabled="@(busy || string.IsNullOrWhiteSpace(certReq.PfxBase64))" @onclick="UploadPfxCertAsync">
+                                    <i class="bi bi-shield-lock me-1"></i>استخراج گواهی امضا و ذخیره امن
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="mb-3">
+                                <label class="form-label">مسیر کتابخانه درایور توکن روی سرور (.dll / .so)</label>
+                                <input class="form-control font-monospace" dir="ltr" @bind="certReq.Pkcs11LibraryPath" placeholder="C:\Windows\System32\eps2003csp11.dll" />
+                            </div>
+                            <div class="row g-2 mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">نام مستعار گواهی (Certificate Alias / CN)</label>
+                                    <input class="form-control" dir="ltr" @bind="certReq.Pkcs11CertificateAlias" placeholder="نام صاحب گواهی روی توکن" />
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">پین توکن سخت‌افزاری (PIN)</label>
+                                    <input type="password" class="form-control" dir="ltr" @bind="certReq.Pkcs11Pin" placeholder="رمز پین توکن" />
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                <button class="btn btn-info text-white" disabled="@busy" @onclick="SavePkcs11ConfigAsync">
+                                    <i class="bi bi-usb-drive me-1"></i>ثبت تنظیمات امضای سخت‌افزاری PKCS#11
+                                </button>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- بخش ابزارهای تشخیصی آنلاین SDK 2.0.29 -->
+    <div class="row g-3 mt-1">
+        <!-- نتیجه گام‌به‌گام تست اتصال -->
+        @if (diagResult is not null)
+        {
+            <div class="col-12">
+                <div class="card border-start border-4 @(diagResult.Success ? "border-success" : "border-danger")">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">گزارش گام‌به‌گام عیب‌یابی اتصال با SDK 2.0.29</h6>
+                        <span class="badge @(diagResult.Success ? "bg-success" : "bg-danger")">@diagResult.Summary</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>گام</th>
+                                    <th>وضعیت</th>
+                                    <th>جزئیات بازگشتی از سرور مالیاتی</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var s in diagResult.Steps)
+                                {
+                                    <tr>
+                                        <td class="fw-semibold">@s.Title</td>
+                                        <td>
+                                            <span class="badge @(s.Passed ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger")">
+                                                @(s.Passed ? "موفق" : "ناموفق")
+                                            </span>
+                                        </td>
+                                        <td class="small">@s.Detail</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- استعلام آنلاین کد اقتصادی -->
+        <div class="col-12 col-lg-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-search me-1"></i>استعلام آنلاین شماره اقتصادی از سازمان امور مالیاتی</h6>
+                </div>
+                <div class="card-body">
+                    <div class="input-group mb-2">
+                        <input class="form-control font-monospace" dir="ltr" @bind="lookupEconomicCode" placeholder="کد اقتصادی یا شناسه ملی ۱۱/۱۴ رقمی..." />
+                        <button class="btn btn-outline-primary" disabled="@busy" @onclick="LookupTaxpayerAsync">
+                            استعلام آنلاین
+                        </button>
+                    </div>
+                    @if (lookupResult is not null)
+                    {
+                        var found = !string.IsNullOrWhiteSpace(lookupResult.NameTrade) || !string.IsNullOrWhiteSpace(lookupResult.TaxpayerStatus);
+                        <div class="alert @(found ? "alert-success" : "alert-warning") py-2 mb-0 small">
+                            @if (found)
+                            {
+                                <div><strong>نام تجاری:</strong> @lookupResult.NameTrade</div>
+                                <div><strong>وضعیت پرونده:</strong> @lookupResult.TaxpayerStatus | <strong>نوع مودی:</strong> @lookupResult.TaxpayerType</div>
+                                <div><strong>کد پستی:</strong> @lookupResult.PostalCode | <strong>نشانی:</strong> @lookupResult.Address</div>
+                            }
+                            else
+                            {
+                                <div>اطلاعاتی برای این شماره اقتصادی در درگاه یافت نشد.</div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- بررسی سقف اعتبار ماده ۶ -->
+        <div class="col-12 col-lg-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-calculator me-1"></i>استعلام وضعیت حد مجاز ماده ۶ (GetArticle6Status)</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-5">
+                            <label class="form-label small mb-1">کد اقتصادی خریدار / مودی</label>
+                            <input class="form-control form-control-sm font-monospace" dir="ltr" @bind="art6Req.EconomicCode" placeholder="10100302746" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small mb-1">مبلغ ارزش افزوده (ریال)</label>
+                            <input type="number" class="form-control form-control-sm num" @bind="art6Req.VatValue" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small mb-1">دوره (سال+فصل)</label>
+                            <input type="number" class="form-control form-control-sm num" @bind="art6Req.Period" placeholder="14053" />
+                        </div>
+                    </div>
+                    <div class="mt-2 d-flex justify-content-between align-items-center">
+                        <span class="small text-muted">نمونه دوره: <code>14053</code> یعنی پاییز ۱۴۰۵</span>
+                        <button class="btn btn-sm btn-outline-primary" disabled="@busy" @onclick="CheckArticle6Async">بررسی سقف ماده ۶</button>
+                    </div>
+                    @if (art6Result is not null)
+                    {
+                        <div class="alert @(art6Result.Article6RemainStatus ? "alert-success" : "alert-danger") py-2 mt-2 mb-0 small">
+                            @art6Result.Message
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private MdnProfileDto? profile;
+    private MdnSaveProfileRequest form = new();
+    private MdnUploadCertificateRequest certReq = new();
+    private string certTab = "pem";
+    private string? selectedPfxFileName;
+
+    private MdnConnectionDiagnosticsDto? diagResult;
+    private string lookupEconomicCode = "";
+    private MdnTaxpayerLookupDto? lookupResult;
+    private MdnArticle6CheckRequest art6Req = new() { Period = 14053, VatValue = 10_000_000 };
+    private MdnArticle6CheckResultDto? art6Result;
+
+    private bool loading = true;
+    private bool busy;
+    private string busyAction = "";
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            profile = await Mdn.GetProfileAsync();
+            BindForm(profile);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void BindForm(MdnProfileDto p)
+    {
+        form = new MdnSaveProfileRequest
+        {
+            TradeName = p.TradeName,
+            TaxpayerType = p.TaxpayerType,
+            EconomicCode = p.EconomicCode,
+            NationalId = p.NationalId,
+            PostalCode = p.PostalCode,
+            BranchCode = p.BranchCode,
+            Address = p.Address,
+            MemoryId = p.MemoryId,
+            Environment = p.Environment,
+            ProductionBaseUrl = p.ProductionBaseUrl,
+            SandboxBaseUrl = p.SandboxBaseUrl,
+            SignatureMode = p.SignatureMode,
+            NextSerial = p.NextSerial,
+            DefaultVatRate = p.DefaultVatRate,
+            IsActive = p.IsActive
+        };
+        certReq.Pkcs11LibraryPath = p.Pkcs11LibraryPath;
+        certReq.Pkcs11CertificateAlias = p.Pkcs11CertificateAlias;
+        if (p.SignatureMode == MdnSignatureMode.Pkcs11Token) certTab = "pkcs11";
+    }
+
+    private async Task SaveProfileAsync()
+    {
+        busy = true;
+        try
+        {
+            profile = await Mdn.SaveProfileAsync(form);
+            BindForm(profile);
+            Toast.Success("مشخصات پرونده مالیاتی ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task OnPrivateKeyFileSelected(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var reader = new StreamReader(e.File.OpenReadStream(2 * 1024 * 1024));
+            certReq.PrivateKeyPem = await reader.ReadToEndAsync();
+            Toast.Info($"فایل کلید خصوصی «{e.File.Name}» خوانده شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OnCertFileSelected(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            await using var ms = new MemoryStream();
+            await e.File.OpenReadStream(2 * 1024 * 1024).CopyToAsync(ms);
+            var bytes = ms.ToArray();
+            var text = System.Text.Encoding.UTF8.GetString(bytes);
+            // پشتیبانی هم از گواهی متنی PEM و هم گواهی باینری DER (.cer / .crt)
+            certReq.CertificateContent = text.Contains("BEGIN CERTIFICATE", StringComparison.OrdinalIgnoreCase)
+                ? text
+                : Convert.ToBase64String(bytes);
+            Toast.Info($"فایل گواهی امضا «{e.File.Name}» بارگذاری شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OnPfxFileSelected(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            await using var ms = new MemoryStream();
+            await e.File.OpenReadStream(5 * 1024 * 1024).CopyToAsync(ms);
+            certReq.PfxBase64 = Convert.ToBase64String(ms.ToArray());
+            selectedPfxFileName = e.File.Name;
+            Toast.Info($"فایل «{e.File.Name}» آماده استخراج گواهی است.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task UploadPemCertAsync()
+    {
+        busy = true;
+        try
+        {
+            certReq.SignatureMode = MdnSignatureMode.Pkcs8Certificate;
+            certReq.PfxBase64 = null;
+            profile = await Mdn.UploadCertificateAsync(certReq);
+            certReq.PrivateKeyPem = null;
+            certReq.CertificateContent = null;
+            Toast.Success("گواهی امضای الکترونیکی X.509 و کلید خصوصی با موفقیت تأیید و رمزنگاری شدند.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task UploadPfxCertAsync()
+    {
+        busy = true;
+        try
+        {
+            certReq.SignatureMode = MdnSignatureMode.Pkcs8Certificate;
+            profile = await Mdn.UploadCertificateAsync(certReq);
+            certReq.PfxBase64 = null;
+            certReq.PfxPassword = null;
+            selectedPfxFileName = null;
+            Toast.Success("گواهی امضا و کلید خصوصی از فایل PFX استخراج و رمزنگاری شدند.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SavePkcs11ConfigAsync()
+    {
+        busy = true;
+        try
+        {
+            certReq.SignatureMode = MdnSignatureMode.Pkcs11Token;
+            profile = await Mdn.UploadCertificateAsync(certReq);
+            certReq.Pkcs11Pin = null;
+            Toast.Success("تنظیمات توکن سخت‌افزاری PKCS#11 ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task ClearCertificateAsync()
+    {
+        busy = true;
+        try
+        {
+            profile = await Mdn.ClearCertificateAsync();
+            Toast.Warning("کلید خصوصی و گواهی امضا از گاوصندوق حذف شدند.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task RunDiagnosticsAsync()
+    {
+        busy = true;
+        busyAction = "diag";
+        try
+        {
+            diagResult = await Mdn.TestConnectionAsync();
+            profile = await Mdn.GetProfileAsync();
+            if (diagResult.Success) Toast.Success(diagResult.Summary);
+            else Toast.Warning(diagResult.Summary);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; busyAction = ""; }
+    }
+
+    private async Task LookupTaxpayerAsync()
+    {
+        if (string.IsNullOrWhiteSpace(lookupEconomicCode)) return;
+        busy = true;
+        try
+        {
+            lookupResult = await Mdn.LookupTaxpayerAsync(lookupEconomicCode);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task CheckArticle6Async()
+    {
+        busy = true;
+        try
+        {
+            art6Result = await Mdn.CheckArticle6Async(art6Req);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+}

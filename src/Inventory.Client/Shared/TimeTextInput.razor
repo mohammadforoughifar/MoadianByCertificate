@@ -1,0 +1,44 @@
+@* ورودی ساعت ۲۴ساعته برای فیلدهایی که مقدار را به صورت رشتهٔ «HH:mm» نگه می‌دارند.
+   جایگزین <input type="time"> که بسته به زبان مرورگر/سیستم‌عامل AM/PM نشان می‌دهد. *@
+<TimeInput Value="Current" ValueChanged="OnChanged" MinuteStep="MinuteStep" Disabled="Disabled" CssClass="@CssClass" Suffix="@Suffix" />
+
+@code {
+    /// <summary>مقدار به صورت «HH:mm» (۲۴ساعته)</summary>
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+
+    /// <summary>مقدار پیش‌فرض وقتی Value خالی یا نامعتبر است (به والد هم برگردانده می‌شود)</summary>
+    [Parameter] public string Default { get; set; } = "08:00";
+
+    [Parameter] public int MinuteStep { get; set; } = 1;
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string CssClass { get; set; } = "";
+    [Parameter] public string? Suffix { get; set; }
+
+    private TimeOnly Current => Parse(Value) ?? Parse(Default) ?? new TimeOnly(8, 0);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // اگر مقدار خالی است، پیش‌فرض نمایش‌داده‌شده را به والد هم بدهیم تا با آنچه کاربر می‌بیند یکی باشد
+        if (Parse(Value) is null && ValueChanged.HasDelegate)
+            await ValueChanged.InvokeAsync(Format(Current));
+    }
+
+    private Task OnChanged(TimeOnly t) => ValueChanged.InvokeAsync(Format(t));
+
+    private static string Format(TimeOnly t) => $"{t.Hour:D2}:{t.Minute:D2}";
+
+    private static TimeOnly? Parse(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        s = s.Trim();
+        // تبدیل ارقام فارسی/عربی به لاتین
+        var chars = s.Select(c => c is >= '۰' and <= '۹' ? (char)('0' + (c - '۰'))
+                              : c is >= '٠' and <= '٩' ? (char)('0' + (c - '٠')) : c).ToArray();
+        s = new string(chars);
+        return TimeSpan.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, out var ts)
+               && ts >= TimeSpan.Zero && ts < TimeSpan.FromDays(1)
+            ? new TimeOnly(ts.Hours, ts.Minutes)
+            : null;
+    }
+}

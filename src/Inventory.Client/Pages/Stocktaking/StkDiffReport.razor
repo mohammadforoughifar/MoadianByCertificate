@@ -1,0 +1,279 @@
+@page "/stk/reports/diff"
+@inject IStkSessionService SessionSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>گزارش مغایرت انبارگردانی</PageTitle>
+
+<div class="page-head no-print">
+    <div>
+        <h1>گزارش مغایرت انبارگردانی</h1>
+        <p class="lead">مقایسه موجودی سیستم با شمارش فیزیکی و ارزش ریالی اختلاف</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-outline-secondary" href="/stk/sessions"><i class="bi bi-arrow-right"></i> بازگشت</a>
+        @if (data is not null)
+        {
+            <a class="btn btn-outline-primary" href="/stk/sessions/@data.SessionId">
+                <i class="bi bi-card-checklist"></i> لیست شمارش
+            </a>
+            <button class="btn btn-primary" @onclick="Print"><i class="bi bi-printer"></i> چاپ</button>
+        }
+    </div>
+</div>
+
+<div class="card mb-3 no-print">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-4">
+                <label class="form-label">دوره انبارگردانی</label>
+                <select class="form-select" value="@sessionId" @onchange="OnSession">
+                    <option value="0">— انتخاب کنید —</option>
+                    @foreach (var s in sessions)
+                    {
+                        <option value="@s.Id">@s.Number.ToString().FaDigits() — @s.Title</option>
+                    }
+                </select>
+            </div>
+            <div class="col-12 col-md-3">
+                <div class="form-check mt-4">
+                    <input class="form-check-input" type="checkbox" id="onlyDiff" checked="@onlyDiff" @onchange="OnOnlyDiff" />
+                    <label class="form-check-label" for="onlyDiff">فقط اقلام دارای مغایرت</label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="card"><div class="card-body text-center py-5"><div class="spinner-border text-primary"></div></div></div>
+}
+else if (data is null)
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="bi bi-file-earmark-bar-graph"></i>
+                <h5>یک دوره انبارگردانی انتخاب کنید</h5>
+                <p>پس از انتخاب، مغایرت اقلام و اثر ریالی آن نمایش داده می‌شود.</p>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <div id="diffReport">
+        <!-- ---------- سربرگ گزارش ---------- -->
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                    <div>
+                        <h4 class="mb-1">@data.Title</h4>
+                        <div class="fs-8 text-muted">
+                            شماره <span class="num">@data.Number.ToString().FaDigits()</span> •
+                            انبار @data.WarehouseName •
+                            تاریخ <span class="num">@data.Date.ToFaDate()</span>
+                        </div>
+                    </div>
+                    <div class="text-center">
+                        <div class="fs-8 text-muted">دقت انبار</div>
+                        <div class="fs-2 fw-bold num @AccuracyClass()">@data.Accuracy.Num()٪</div>
+                        <div class="fs-8 text-muted">اقلام بدون مغایرت</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ---------- کارت آمار ---------- -->
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-lg-3">
+                <div class="stat-card">
+                    <div class="stat-icon bg-soft-primary"><i class="bi bi-list-ol"></i></div>
+                    <div>
+                        <div class="stat-label">اقلام شمارش‌شده</div>
+                        <div class="stat-value num">@data.CountedLines.ToString().FaDigits()</div>
+                        <div class="fs-8 text-muted">از @data.TotalLines.ToString().FaDigits() قلم</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="stat-card">
+                    <div class="stat-icon bg-soft-secondary"><i class="bi bi-question-circle"></i></div>
+                    <div>
+                        <div class="stat-label">شمارش‌نشده</div>
+                        <div class="stat-value num">@data.UncountedLines.ToString().FaDigits()</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="stat-card">
+                    <div class="stat-icon bg-soft-success"><i class="bi bi-arrow-up-circle"></i></div>
+                    <div>
+                        <div class="stat-label">اضافی انبار</div>
+                        <div class="stat-value num">@data.SurplusValue.Money()</div>
+                        <div class="fs-8 text-muted num">@data.SurplusQty.Num() واحد</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="stat-card">
+                    <div class="stat-icon bg-soft-danger"><i class="bi bi-arrow-down-circle"></i></div>
+                    <div>
+                        <div class="stat-label">کسری انبار</div>
+                        <div class="stat-value num">@data.ShortageValue.Money()</div>
+                        <div class="fs-8 text-muted num">@data.ShortageQty.Num() واحد</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ---------- جدول اقلام ---------- -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title"><i class="bi bi-table"></i> اقلام</span>
+                <span class="ms-auto fs-8 text-muted">
+                    @data.Rows.Count.ToString().FaDigits() سطر
+                </span>
+            </div>
+
+            @if (data.Rows.Count == 0)
+            {
+                <div class="card-body">
+                    <div class="empty-state">
+                        <i class="bi bi-check2-circle text-success"></i>
+                        <h5>هیچ مغایرتی یافت نشد</h5>
+                        <p>شمارش فیزیکی با موجودی سیستم کاملاً مطابقت دارد.</p>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th style="width:50px">#</th>
+                                <th>کالا</th>
+                                <th style="width:90px">قفسه</th>
+                                <th style="width:100px" class="text-end">سیستم</th>
+                                <th style="width:100px" class="text-end">شمارش</th>
+                                <th style="width:100px" class="text-end">مغایرت</th>
+                                <th style="width:120px" class="text-end">بهای واحد</th>
+                                <th style="width:140px" class="text-end">ارزش مغایرت</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{ var i = 1; }
+                            @foreach (var r in data.Rows)
+                            {
+                                <tr class="@(r.Diff > 0 ? "table-success" : r.Diff < 0 ? "table-danger" : "")">
+                                    <td class="num fs-8 text-muted">@((i++).ToString().FaDigits())</td>
+                                    <td>
+                                        <div class="fw-500">@r.ProductName</div>
+                                        <div class="fs-8 text-muted num">@r.ProductCode</div>
+                                        @if (!string.IsNullOrEmpty(r.Note))
+                                        {
+                                            <div class="fs-8 text-muted"><i class="bi bi-chat-left-text"></i> @r.Note</div>
+                                        }
+                                    </td>
+                                    <td class="fs-8 num text-muted">@r.ShelfCode</td>
+                                    <td class="text-end num">@r.SystemQty.Num()</td>
+                                    <td class="text-end num">
+                                        @if (r.IsCounted)
+                                        {
+                                            @r.CountedQty.Num()
+                                        }
+                                        else
+                                        {
+                                            <span class="badge badge-soft-secondary fs-8">نشمرده</span>
+                                        }
+                                    </td>
+                                    <td class="text-end num fw-500 @(r.Diff > 0 ? "text-success" : r.Diff < 0 ? "text-danger" : "text-muted")">
+                                        @(r.Diff == 0 ? "۰" : (r.Diff > 0 ? "+" : "") + r.Diff.Num())
+                                    </td>
+                                    <td class="text-end num">@r.UnitCost.Money()</td>
+                                    <td class="text-end num @(r.DiffValue > 0 ? "text-success" : r.DiffValue < 0 ? "text-danger" : "text-muted")">
+                                        @(r.DiffValue == 0 ? "—" : r.DiffValue.Money())
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot class="table-light">
+                            <tr>
+                                <th colspan="7" class="text-end">خالص اثر ریالی انبارگردانی</th>
+                                <th class="text-end num @(data.NetValue < 0 ? "text-danger" : "text-success")">
+                                    @data.NetValue.Money()
+                                </th>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "sessionId")] public int? QuerySessionId { get; set; }
+
+    private List<StkSession> sessions = new();
+    private StkDiffResult? data;
+
+    private int sessionId;
+    private bool onlyDiff = true;
+    private bool loading = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("گزارش مغایرت انبارگردانی");
+
+        try
+        {
+            var res = await SessionSvc.GetAllAsync(page: 1, pageSize: 100);
+            sessions = res.Items;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (QuerySessionId is > 0 && sessionId != QuerySessionId.Value)
+        {
+            sessionId = QuerySessionId.Value;
+            await Load();
+        }
+    }
+
+    private async Task Load()
+    {
+        if (sessionId <= 0) { data = null; return; }
+
+        loading = true;
+        try { data = await SessionSvc.GetDiffAsync(sessionId, onlyDiff); }
+        catch (Exception ex) { Toast.Error(ex.Message); data = null; }
+        finally { loading = false; }
+    }
+
+    private async Task OnSession(ChangeEventArgs e)
+    {
+        sessionId = int.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+        await Load();
+    }
+
+    private async Task OnOnlyDiff(ChangeEventArgs e)
+    {
+        onlyDiff = e.Value is bool b && b;
+        await Load();
+    }
+
+    private string AccuracyClass()
+        => data is null ? "" : data.Accuracy >= 98 ? "text-success" : data.Accuracy >= 90 ? "text-warning" : "text-danger";
+
+    private async Task Print()
+    {
+        try { await JS.InvokeVoidAsync("stkPrint", "diffReport", "گزارش مغایرت انبارگردانی"); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

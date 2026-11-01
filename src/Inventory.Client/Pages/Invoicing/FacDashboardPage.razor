@@ -1,0 +1,225 @@
+@page "/fac/dashboard"
+@inject IFacReportService ReportSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+
+<PageTitle>داشبورد فروش و خرید</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>داشبورد فروش و خرید</h1>
+        <p class="lead">خلاصه‌ی عملکرد بر پایه‌ی فاکتورهای قطعی‌شده</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-primary" href="/fac/invoices/new/Sale"><i class="bi bi-plus-lg"></i> فاکتور فروش</a>
+    </div>
+</div>
+
+<div class="card mb-3 d-print-none">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-6 col-md-3">
+                <label class="form-label">از تاریخ</label>
+                <DatePicker Value="from" ValueChanged="OnFrom" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">تا تاریخ</label>
+                <DatePicker Value="to" ValueChanged="OnTo" AllowClear="true" />
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else if (data is null)
+{
+    <div class="card"><div class="card-body"><div class="empty-state"><i class="bi bi-bar-chart"></i><h5>داده‌ای موجود نیست</h5></div></div></div>
+}
+else
+{
+    <!-- ---------- کارت‌های آماری ---------- -->
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-success"><i class="bi bi-cart-check text-success"></i></div>
+                <div>
+                    <div class="stat-label">فروش دوره</div>
+                    <div class="stat-value num text-success">@data.SaleTotal.Money()</div>
+                    <div class="fs-8 text-muted num">@data.SaleCount.Num() فاکتور</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-primary"><i class="bi bi-bag-plus text-primary"></i></div>
+                <div>
+                    <div class="stat-label">خرید دوره</div>
+                    <div class="stat-value num text-primary">@data.PurchaseTotal.Money()</div>
+                    <div class="fs-8 text-muted num">@data.PurchaseCount.Num() فاکتور</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon @(data.GrossProfit >= 0 ? "bg-soft-success" : "bg-soft-danger")">
+                    <i class="bi @(data.GrossProfit >= 0 ? "bi-graph-up-arrow text-success" : "bi-graph-down-arrow text-danger")"></i>
+                </div>
+                <div>
+                    <div class="stat-label">سود ناخالص</div>
+                    <div class="stat-value num @(data.GrossProfit >= 0 ? "text-success" : "text-danger")">@Math.Abs(data.GrossProfit).Money()</div>
+                    <div class="fs-8 text-muted">فروش خالص − بهای تمام‌شده</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-warning"><i class="bi bi-percent text-warning"></i></div>
+                <div>
+                    <div class="stat-label">مالیات قابل پرداخت</div>
+                    <div class="stat-value num">@data.VatPayable.Money()</div>
+                    <div class="fs-8 text-muted">مالیات فروش − مالیات خرید</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-info"><i class="bi bi-arrow-down-left-circle text-info"></i></div>
+                <div>
+                    <div class="stat-label">مطالبات (فروش نسیه)</div>
+                    <div class="stat-value num">@data.Receivable.Money()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-danger"><i class="bi bi-arrow-up-right-circle text-danger"></i></div>
+                <div>
+                    <div class="stat-label">بدهی‌ها (خرید نسیه)</div>
+                    <div class="stat-value num">@data.Payable.Money()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-warning"><i class="bi bi-arrow-return-left text-warning"></i></div>
+                <div>
+                    <div class="stat-label">برگشت از فروش</div>
+                    <div class="stat-value num">@data.SaleReturnTotal.Money()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-muted"><i class="bi bi-file-earmark-text text-muted"></i></div>
+                <div>
+                    <div class="stat-label">پیش‌نویس‌ها</div>
+                    <div class="stat-value num">@data.DraftCount.Num()</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <!-- ---------- پرفروش‌ترین کالاها ---------- -->
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-trophy text-primary"></i>
+                    <span class="card-title">پرفروش‌ترین کالاها</span>
+                </div>
+                <div class="card-body p-0">
+                    @if (data.TopProducts.Count == 0)
+                    {
+                        <div class="empty-state"><i class="bi bi-inbox"></i><h5>فروشی ثبت نشده است</h5></div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead><tr><th>کالا</th><th class="text-center">مقدار</th><th class="text-center">مبلغ</th></tr></thead>
+                            <tbody>
+                                @foreach (var p in data.TopProducts)
+                                {
+                                    <tr>
+                                        <td>@p.Title</td>
+                                        <td class="text-center num">@p.Quantity.Num()</td>
+                                        <td class="text-center num fw-600">@p.Net.Money()</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- ---------- مشتریان برتر ---------- -->
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-people text-primary"></i>
+                    <span class="card-title">مشتریان برتر</span>
+                </div>
+                <div class="card-body p-0">
+                    @if (data.TopParties.Count == 0)
+                    {
+                        <div class="empty-state"><i class="bi bi-inbox"></i><h5>فروشی ثبت نشده است</h5></div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead><tr><th>طرف حساب</th><th class="text-center">تعداد فاکتور</th><th class="text-center">مبلغ</th></tr></thead>
+                            <tbody>
+                                @foreach (var p in data.TopParties)
+                                {
+                                    <tr>
+                                        <td>@p.Title</td>
+                                        <td class="text-center num">@p.Count.Num()</td>
+                                        <td class="text-center num fw-600">@p.Net.Money()</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private FacDashboard? data;
+    private DateTime? from, to;
+    private bool loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("داشبورد فروش و خرید");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try { data = await ReportSvc.GetDashboardAsync(from, to); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnFrom(DateTime? d)
+    {
+        from = d;
+        await Load();
+    }
+
+    private async Task OnTo(DateTime? d)
+    {
+        to = d;
+        await Load();
+    }
+}

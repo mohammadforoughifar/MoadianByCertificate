@@ -1,0 +1,134 @@
+@page "/doc-archive/cartable"
+@inject IDocArchiveService Svc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+
+<PageTitle>کارتابل آرشیو اسناد</PageTitle>
+
+<div class="doc-archive-shell">
+<div class="d-flex justify-content-end mb-2"><DocOfflineStatus /></div>
+<div class="card shadow-sm mb-3">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center flex-wrap gap-2"
+         style="background:linear-gradient(135deg,#b45309,#b91c1c);color:#fff;border-radius:14px 14px 0 0;">
+        <span><i class="bi bi-inbox-fill me-2"></i>کارتابل آرشیو اسناد
+            <span class="badge bg-light text-dark ms-1">@items.Count(i => i.Status == 0).Num()</span>
+        </span>
+        <div class="d-flex gap-2 align-items-center">
+            <div class="form-check form-switch text-white">
+                <input class="form-check-input" type="checkbox" id="incDone" @bind="includeDone" @bind:after="Load" />
+                <label class="form-check-label fs-8" for="incDone">نمایش انجام‌شده‌ها</label>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-inbox"></i><h5>کاری در کارتابل شما نیست</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:150px">نوع کار</th>
+                            <th>موضوع</th>
+                            <th class="text-center">ورژن</th>
+                            <th>تاریخ</th>
+                            <th class="text-center">وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var t in items)
+                        {
+                            <tr class="@(t.Status == 0 ? "" : "text-muted")">
+                                <td>@KindBadge(t.Kind)</td>
+                                <td>
+                                    <b class="num">@t.DocumentCode</b> — @t.DocumentTitle
+                                    <div class="fs-9 text-muted">@t.Title</div>
+                                </td>
+                                <td class="text-center num">
+                                    @if (t.VersionNo > 0) { <span class="badge bg-primary">v@(t.VersionNo.Num())</span> } else { <span>—</span> }
+                                </td>
+                                <td class="num fs-8">@t.CreatedAt.ToFa()</td>
+                                <td class="text-center">
+                                    @if (t.Status == 0) { <span class="badge bg-warning text-dark">در انتظار</span> }
+                                    else if (t.Status == 1) { <span class="badge bg-success">انجام شد</span> }
+                                    else { <span class="badge bg-danger">رد شد</span> }
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-light" title="باز کردن مدرک" @onclick="() => Open(t.DocumentId)">
+                                        <i class="bi bi-box-arrow-up-left text-primary"></i>
+                                    </button>
+                                    @if (t.Status == 0 && t.Kind != "Approval")
+                                    {
+                                        <button class="btn btn-sm btn-light" title="علامت‌گذاری به‌عنوان انجام‌شده"
+                                                @onclick="() => Close(t.Id)">
+                                            <i class="bi bi-check2-circle text-success"></i>
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<style> .fs-9 { font-size:.68rem; } </style>
+</div>
+
+@code {
+    private List<DocCartableItemDto> items = new();
+    private bool loading = true, includeDone;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("کارتابل آرشیو اسناد");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try { items = await Svc.GetCartableAsync(includeDone); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void GoArchive() => Nav.NavigateTo("doc-archive");
+
+    private void Open(int docId) => Nav.NavigateTo($"doc-archive/documents/{docId}");
+
+    private async Task Close(int id)
+    {
+        try { await Svc.CloseTaskAsync(id); Toast.Success("کار بسته شد."); await Load(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static RenderFragment KindBadge(string kind) => builder =>
+    {
+        var (cls, txt) = kind switch
+        {
+            "Approval" => ("bg-warning text-dark", "تایید ورژن"),
+            "RelatedUpdate" => ("bg-info text-dark", "به‌روزرسانی مرتبط"),
+            "ExpiryAlert" => ("bg-danger", "هشدار انقضا"),
+            _ => ("bg-secondary", "اعلان ورژن")
+        };
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", "badge " + cls);
+        builder.AddContent(2, txt);
+        builder.CloseElement();
+    };
+}

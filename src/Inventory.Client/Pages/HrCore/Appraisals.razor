@@ -1,0 +1,525 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/appraisals"
+@inject IHrTalentService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>ارزیابی عملکرد</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-graph-up-arrow"></i> ارزیابی عملکرد</h1>
+    <div class="lead">دوره‌ها + شاخص‌های وزنی (KPI) + نمره مدیر و خودارزیابی</div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به ماژول کارگزینی برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body d-flex justify-content-end">
+        @if (canCreate)
+        {
+            <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> دوره جدید</button>
+        }
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+}
+else
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>عنوان</th><th>سال</th><th>بازه</th><th>وضعیت</th><th>شاخص‌ها</th><th>مجموع وزن</th><th>ارزیابی‌شده</th><th style="width:220px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var a in items)
+                        {
+                            <tr>
+                                <td class="fw-bold">@a.Title</td>
+                                <td class="num">@a.Year.Num()</td>
+                                <td>@HrCoreUi.AppraisalPeriod(a.Period)</td>
+                                <td><span class="badge @HrCoreUi.AppraisalBadge(a.Status)">@HrCoreUi.AppraisalStatus(a.Status)</span></td>
+                                <td class="num">@a.KpiCount.Num()</td>
+                                <td>
+                                    <span class="badge @(Math.Abs(a.WeightSum - 100) < 0.01 ? "text-bg-success" : "text-bg-warning") num">@a.WeightSum %</span>
+                                </td>
+                                <td class="num">@a.ScoredCount.Num() نفر</td>
+                                <td>
+                                    @if (canUpdate && a.Status != 2)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="شاخص‌ها (KPI)" @onclick="() => OpenKpis(a)"><i class="bi bi-list-check text-info"></i></button>
+                                        <button class="btn btn-sm btn-light" title="ثبت نمره" @onclick="() => OpenScores(a)"><i class="bi bi-pencil-square text-warning"></i></button>
+                                    }
+                                    <button class="btn btn-sm btn-light" title="نتایج" @onclick="() => OpenResults(a)"><i class="bi bi-trophy text-success"></i></button>
+                                    @if (canUpdate && a.Status != 2)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(a)"><i class="bi bi-pencil text-warning"></i></button>
+                                        <button class="btn btn-sm btn-light" title="نهایی کردن" @onclick="() => SetStatus(a, 2)"><i class="bi bi-lock text-primary"></i></button>
+                                    }
+                                    @if (canUpdate && a.Status == 2)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="بازگشایی" @onclick="() => SetStatus(a, 1)"><i class="bi bi-unlock text-secondary"></i></button>
+                                    }
+                                    @if (canDelete && a.Status != 2)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(a.Id)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+<Modal Visible="showEdit" Title="@(editId == null ? "دوره جدید" : "ویرایش دوره")" OnClose="() => showEdit = false">
+<ChildContent>
+    <div class="row g-2">
+        <div class="col-md-6">
+            <label class="form-label">عنوان</label>
+            <input class="form-control" @bind="fTitle" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">سال (شمسی)</label>
+            <input type="number" class="form-control num" @bind="fYear" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">بازه</label>
+            <select class="form-select" @bind="fPeriod">
+                <option value="0">سالانه</option>
+                <option value="1">شش‌ماهه اول</option>
+                <option value="2">شش‌ماهه دوم</option>
+                <option value="3">فصلی</option>
+            </select>
+        </div>
+    </div>
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-light" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" disabled="@saving" @onclick="SaveEdit">ثبت</button>
+    </div>
+</Footer>
+</Modal>
+
+<Modal Visible="showKpis" Title="@($"شاخص‌ها — {kpiAppTitle}")" Size="modal-lg" OnClose="() => showKpis = false">
+<ChildContent>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-2">
+            <thead class="table-light"><tr><th>شاخص</th><th>وزن ٪</th><th>سقف نمره</th><th style="width:90px"></th></tr></thead>
+            <tbody>
+                @foreach (var k in kpis)
+                {
+                    <tr>
+                        <td>@k.Title</td>
+                        <td class="num">@k.Weight</td>
+                        <td class="num">@k.MaxScore</td>
+                        <td>
+                            <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenKpiEdit(k)"><i class="bi bi-pencil text-warning"></i></button>
+                            <button class="btn btn-sm btn-light" title="حذف" @onclick="() => DeleteKpi(k.Id)"><i class="bi bi-trash text-danger"></i></button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <div class="row g-2 align-items-end">
+        <div class="col-md-6">
+            <label class="form-label small text-muted">عنوان شاخص</label>
+            <input class="form-control" @bind="kTitle" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small text-muted">وزن ٪</label>
+            <input type="number" class="form-control num" @bind="kWeight" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small text-muted">سقف</label>
+            <input type="number" class="form-control num" @bind="kMax" />
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-primary w-100" @onclick="SaveKpi">@(kpiEditId == null ? "افزودن" : "ثبت")</button>
+        </div>
+    </div>
+    @if (Math.Abs(kpis.Sum(k => k.Weight) - 100) > 0.01 && kpis.Count > 0)
+    {
+        <div class="alert alert-warning mt-2 mb-0">مجموع وزن‌ها باید ۱۰۰ شود (فعلی: <span class="num">@kpis.Sum(k => k.Weight)</span>).</div>
+    }
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-light" @onclick="() => showKpis = false">بستن</button>
+    </div>
+</Footer>
+</Modal>
+
+<Modal Visible="showScores" Title="@($"ثبت نمره — {scoreAppTitle}")" Size="modal-lg" OnClose="() => showScores = false">
+<ChildContent>
+    <div class="mb-2" style="max-width:340px">
+        <label class="form-label small text-muted">پرسنل</label>
+        <select class="form-select" @bind="scoreEmp" @bind:after="LoadScores">
+            @foreach (var m in employees)
+            {
+                <option value="@m.Id">@m.FirstName @m.LastName (@m.Code)</option>
+            }
+        </select>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light"><tr><th>شاخص</th><th>وزن ٪</th><th>نمره مدیر</th><th>خودارزیابی</th></tr></thead>
+            <tbody>
+                @foreach (var k in scoreKpis)
+                {
+                    <tr>
+                        <td>@k.Title <span class="small text-muted">(سقف @k.MaxScore)</span></td>
+                        <td class="num">@k.Weight</td>
+                        <td><input type="number" step="0.5" min="0" max="@k.MaxScore" class="form-control num" style="max-width:120px" @bind="mgrScores[k.Id]" /></td>
+                        <td><input type="number" step="0.5" min="0" max="@k.MaxScore" class="form-control num" style="max-width:120px" @bind="selfScores[k.Id]" /></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-light" @onclick="() => showScores = false">بستن</button>
+        <button class="btn btn-success" disabled="@saving" @onclick="SaveScores">ذخیره نمرات</button>
+    </div>
+</Footer>
+</Modal>
+
+<Modal Visible="showResults" Title="@($"نتایج — {resultAppTitle}")" Size="modal-lg" OnClose="() => showResults = false">
+<ChildContent>
+    @if (results.Count == 0)
+    {
+        <div class="text-center text-muted py-4">هنوز نمره‌ای ثبت نشده است.</div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light"><tr><th>رتبه</th><th>پرسنل</th><th>نمره نهایی</th><th>گرید</th><th>پوشش</th></tr></thead>
+                <tbody>
+                    @{ int rank = 0; }
+                    @foreach (var r in results)
+                    {
+                        rank++;
+                        <tr>
+                            <td class="num">@rank.Num()</td>
+                            <td><a href="hr-core/employees/@r.EmployeeId" class="fw-bold text-decoration-none">@r.EmployeeName</a></td>
+                            <td class="num fw-bold">@r.Total</td>
+                            <td><span class="badge @HrCoreUi.GradeBadge(r.Grade)">@r.Grade</span></td>
+                            <td class="num small text-muted">@r.ScoredKpis.Num() از @r.KpiCount.Num()</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        @if (canUpdate && results.Any(r => r.Grade is "A" or "B"))
+        {
+            <div class="me-auto d-flex flex-wrap align-items-end gap-2 border rounded p-2 bg-light">
+                <div>
+                    <label class="form-label small mb-0">افزایش حقوق (٪)</label>
+                    <input class="form-control form-control-sm num" type="number" min="0" max="100" step="0.5" style="width:90px" @bind="propRaise" />
+                </div>
+                <div>
+                    <label class="form-label small mb-0">نوع حکم</label>
+                    <select class="form-select form-select-sm" style="width:150px" @bind="propType">
+                        <option value="3">تغییر حقوق</option>
+                        <option value="1">ارتقا</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label small mb-0">تاریخ اجرا</label>
+                    <DatePicker @bind-Value="propEff" />
+                </div>
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="incB" @bind="propIncludeB" />
+                    <label class="form-check-label small" for="incB">شامل گرید B</label>
+                </div>
+                <button class="btn btn-sm btn-primary mb-1" disabled="@proposing" @onclick="ProposeDecrees" title="برای گرید A (و در صورت انتخاب B) با پوشش نمره‌گذاری کافی">
+                    <i class="bi bi-patch-plus"></i> @(proposing ? "..." : "صدور حکم برای منتخبان")
+                </button>
+            </div>
+        }
+        <button class="btn btn-light" @onclick="() => showResults = false">بستن</button>
+    </div>
+</Footer>
+</Modal>
+
+@code {
+    private bool canRead => Auth.Has("HrCore.Read") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrCore.Create") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrCore.Update") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrCore.Delete") || Auth.IsAdmin;
+
+    private bool loading = true, saving;
+    private bool showEdit, showKpis, showScores, showResults;
+    private List<HrAppraisalDto> items = new();
+    private List<HrEmployeeDto> employees = new();
+
+    // edit
+    private int? editId;
+    private string fTitle = "";
+    private int fYear = new System.Globalization.PersianCalendar().GetYear(DateTime.Today);
+    private int fPeriod;
+
+    // kpis
+    private int kpiAppId;
+    private string kpiAppTitle = "";
+    private List<HrAppraisalKpiDto> kpis = new();
+    private int? kpiEditId;
+    private string kTitle = "";
+    private double kWeight = 10, kMax = 100;
+
+    // scores
+    private int scoreAppId;
+    private string scoreAppTitle = "";
+    private List<HrAppraisalKpiDto> scoreKpis = new();
+    private int scoreEmp;
+    private Dictionary<int, double?> mgrScores = new();
+    private Dictionary<int, double?> selfScores = new();
+
+    // results
+    private string resultAppTitle = "";
+    private List<HrAppraisalResultDto> results = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) { loading = false; return; }
+        await Reload();
+        try
+        {
+            employees = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items;
+            scoreEmp = employees.FirstOrDefault()?.Id ?? 0;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { items = await Svc.GetAppraisalsAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void OpenEdit(HrAppraisalDto? a)
+    {
+        editId = a?.Id;
+        fTitle = a?.Title ?? "";
+        fYear = a?.Year ?? new System.Globalization.PersianCalendar().GetYear(DateTime.Today);
+        fPeriod = a?.Period ?? 0;
+        showEdit = true;
+    }
+
+    private async Task SaveEdit()
+    {
+        saving = true;
+        try
+        {
+            await Svc.SaveAppraisalAsync(editId, new HrAppraisalSaveDto { Title = fTitle, Year = fYear, Period = fPeriod });
+            showEdit = false;
+            Toast.Success("دوره ذخیره شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+
+    private async Task Delete(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "این دوره و همه نمراتش حذف شود؟")) return;
+        try
+        {
+            await Svc.DeleteAppraisalAsync(id);
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task SetStatus(HrAppraisalDto a, int status)
+    {
+        var msg = status == 2 ? "دوره نهایی شود؟ (پس از نهایی شدن قابل ویرایش نیست)" : "دوره بازگشایی شود؟";
+        if (!await JS.InvokeAsync<bool>("confirm", msg)) return;
+        try
+        {
+            await Svc.SetAppraisalStatusAsync(a.Id, status, Auth.DisplayName);
+            Toast.Success("وضعیت دوره به‌روز شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OpenKpis(HrAppraisalDto a)
+    {
+        kpiAppId = a.Id;
+        kpiAppTitle = a.Title;
+        kpiEditId = null;
+        kTitle = "";
+        kWeight = 10;
+        kMax = 100;
+        try
+        {
+            kpis = await Svc.GetKpisAsync(a.Id);
+            showKpis = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenKpiEdit(HrAppraisalKpiDto k)
+    {
+        kpiEditId = k.Id;
+        kTitle = k.Title;
+        kWeight = k.Weight;
+        kMax = k.MaxScore;
+    }
+
+    private async Task SaveKpi()
+    {
+        try
+        {
+            await Svc.SaveKpiAsync(kpiAppId, kpiEditId,
+                new HrAppraisalKpiSaveDto { Title = kTitle, Weight = kWeight, MaxScore = kMax });
+            kpiEditId = null;
+            kTitle = "";
+            kWeight = 10;
+            kMax = 100;
+            kpis = await Svc.GetKpisAsync(kpiAppId);
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteKpi(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "این شاخص و نمراتش حذف شود؟")) return;
+        try
+        {
+            await Svc.DeleteKpiAsync(id);
+            kpis = await Svc.GetKpisAsync(kpiAppId);
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OpenScores(HrAppraisalDto a)
+    {
+        scoreAppId = a.Id;
+        scoreAppTitle = a.Title;
+        try
+        {
+            scoreKpis = await Svc.GetKpisAsync(a.Id);
+            if (scoreKpis.Count == 0)
+            {
+                Toast.Error("ابتدا شاخص تعریف کنید.");
+                return;
+            }
+            await LoadScores();
+            showScores = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task LoadScores()
+    {
+        try
+        {
+            var rows = await Svc.GetScoresAsync(scoreAppId, scoreEmp);
+            mgrScores = scoreKpis.ToDictionary(k => k.Id,
+                k => rows.FirstOrDefault(r => r.KpiId == k.Id)?.ManagerScore);
+            selfScores = scoreKpis.ToDictionary(k => k.Id,
+                k => rows.FirstOrDefault(r => r.KpiId == k.Id)?.SelfScore);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task SaveScores()
+    {
+        saving = true;
+        try
+        {
+            foreach (var k in scoreKpis)
+            {
+                var m = mgrScores.GetValueOrDefault(k.Id) ?? 0;
+                var v = selfScores.GetValueOrDefault(k.Id) ?? 0;
+                if (m < 0 || m > k.MaxScore || v < 0 || v > k.MaxScore)
+                {
+                    Toast.Error($"نمره شاخص «{k.Title}» باید بین ۰ تا {k.MaxScore} باشد.");
+                    saving = false;
+                    return;
+                }
+            }
+            foreach (var k in scoreKpis)
+            {
+                await Svc.SaveScoreAsync(new HrAppraisalScoreSaveDto
+                {
+                    EmployeeId = scoreEmp, KpiId = k.Id,
+                    ManagerScore = mgrScores.GetValueOrDefault(k.Id),
+                    SelfScore = selfScores.GetValueOrDefault(k.Id)
+                });
+            }
+            Toast.Success("نمرات ذخیره شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+
+    private async Task OpenResults(HrAppraisalDto a)
+    {
+        resultAppTitle = a.Title;
+        resultAppId = a.Id;
+        try
+        {
+            results = await Svc.GetResultsAsync(a.Id);
+            showResults = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- صدور حکم از نتایج (اتصال ارزیابی → حقوق/ارتقا) ----------
+    private int resultAppId;
+    private double propRaise = 10;
+    private bool propIncludeB, propAutoApply = true, proposing;
+    private int propType = 3;
+    private DateTime? propEff = DateTime.Today;
+
+    private async Task ProposeDecrees()
+    {
+        if (resultAppId <= 0 || proposing) return;
+        if (!await JS.InvokeAsync<bool>("confirm", $"برای نفرات برتر (گرید A{(propIncludeB ? " و B" : "")}) حکم با افزایش {Fa.Digits(propRaise.ToString("0.#"))}٪ صادر شود؟"))
+            return;
+        proposing = true;
+        try
+        {
+            var r = await Svc.ProposeDecreesAsync(new HrAppraisalDecreeProposalDto
+            {
+                AppraisalId = resultAppId,
+                RaisePercent = propRaise,
+                IncludeGradeB = propIncludeB,
+                DecreeType = propType,
+                EffectiveDate = propEff ?? DateTime.Today,
+                AutoApply = propAutoApply
+            });
+            Toast.Success($"{Fa.Digits(r.Created)} حکم صادر شد — برای بازبینی/اجرا به «احکام کارگزینی» بروید.");
+            showResults = false;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { proposing = false; }
+    }
+}

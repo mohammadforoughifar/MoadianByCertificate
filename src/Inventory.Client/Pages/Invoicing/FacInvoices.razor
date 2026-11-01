@@ -1,0 +1,452 @@
+@page "/fac/invoices"
+@inject IFacInvoiceService InvoiceSvc
+@inject IInvWarehouseService WarehouseSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+@inject ICompanyProfileService ProfileSvc
+
+<PageTitle>فاکتورها</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>فاکتور خرید و فروش</h1>
+        <p class="lead">صدور فاکتور با محاسبه‌ی خودکار تخفیف و مالیات، متصل به انبار و دفاتر حسابداری</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-primary" href="/fac/invoices/new/Sale"><i class="bi bi-plus-lg"></i> فاکتور فروش</a>
+        <a class="btn btn-success" href="/fac/invoices/new/Purchase"><i class="bi bi-plus-lg"></i> فاکتور خرید</a>
+    </div>
+</div>
+
+@* ---------- فیلتر نوع فاکتور ---------- *@
+<div class="mtabs mb-3">
+    <button class="mtab @(fKind is null ? "active" : "")" @onclick="() => SetKind(null)">
+        <i class="bi bi-collection"></i> همه فاکتورها
+    </button>
+    <button class="mtab @(fKind == InvoiceKind.Sale ? "active" : "")" @onclick="() => SetKind(InvoiceKind.Sale)">
+        <i class="bi bi-cart-check"></i> فروش
+    </button>
+    <button class="mtab @(fKind == InvoiceKind.Purchase ? "active" : "")" @onclick="() => SetKind(InvoiceKind.Purchase)">
+        <i class="bi bi-bag-plus"></i> خرید
+    </button>
+    <button class="mtab @(fKind == InvoiceKind.SaleReturn ? "active" : "")" @onclick="() => SetKind(InvoiceKind.SaleReturn)">
+        <i class="bi bi-arrow-return-left"></i> برگشت از فروش
+    </button>
+    <button class="mtab @(fKind == InvoiceKind.PurchaseReturn ? "active" : "")" @onclick="() => SetKind(InvoiceKind.PurchaseReturn)">
+        <i class="bi bi-arrow-return-right"></i> برگشت از خرید
+    </button>
+</div>
+
+@* ---------- نوار فیلترها ---------- *@
+<div class="card mb-3">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-3">
+                <label class="form-label">جستجو</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="شماره، عطف، طرف حساب…" value="@search"
+                           @oninput="OnSearchInput" @onkeyup="OnSearchKey" />
+                </div>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">وضعیت</label>
+                <select class="form-select" value="@(fStatus is null ? "" : ((int)fStatus).ToString())" @onchange="OnStatus">
+                    <option value="">همه</option>
+                    <option value="0">پیش‌نویس</option>
+                    <option value="1">قطعی</option>
+                    <option value="2">ابطال شده</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">انبار</label>
+                <select class="form-select" value="@(fWarehouseId?.ToString() ?? "")" @onchange="OnWarehouse">
+                    <option value="">همه انبارها</option>
+                    @foreach (var w in warehouses)
+                    {
+                        <option value="@w.Id">@w.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-12 col-md-4">
+                <label class="form-label">بازه تاریخ</label>
+                <div class="d-flex gap-1">
+                    <DatePicker Value="fFrom" ValueChanged="OnFrom" AllowClear="true" />
+                    <DatePicker Value="fTo" ValueChanged="OnTo" AllowClear="true" />
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span><i class="bi bi-receipt text-primary"></i> فهرست فاکتورها</span>
+        <span class="badge badge-soft-primary num ms-auto">@total.Num() فاکتور</span>
+    </div>
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state">
+                <i class="bi bi-receipt"></i>
+                <h5>فاکتوری یافت نشد</h5>
+                <p class="text-muted">با دکمه‌های بالا اولین فاکتور فروش یا خرید را صادر کنید.</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th style="width:8px"></th>
+                            <th>شماره</th>
+                            <th>تاریخ</th>
+                            <th>نوع</th>
+                            <th>طرف حساب</th>
+                            <th>انبار</th>
+                            <th class="text-center">اقلام</th>
+                            <th class="text-center">مأخذ</th>
+                            <th class="text-center">مالیات</th>
+                            <th class="text-center">قابل پرداخت</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var f in items)
+                        {
+                            <tr>
+                                <td class="p-0"><div class="nature-strip @(f.IsIncoming ? "inc" : "dec")" style="height:44px"></div></td>
+                                <td class="num fw-600">@f.Number.FaDigits()</td>
+                                <td class="num">@f.Date.ToFaDate()</td>
+                                <td><span class="badge @KindBadge(f.Kind)"><i class="bi @KindIcon(f.Kind)"></i> @f.KindTitle</span></td>
+                                <td>
+                                    @(string.IsNullOrWhiteSpace(f.PartyName) ? "—" : f.PartyName)
+                                    <div class="fs-8 text-muted">@f.SettlementTitle</div>
+                                </td>
+                                <td class="text-muted">@f.WarehouseName</td>
+                                <td class="text-center num">@f.LineCount.Num()</td>
+                                <td class="text-center num">@f.TotalTaxable.Money()</td>
+                                <td class="text-center num text-muted">@f.TotalVat.Money()</td>
+                                <td class="text-center num fw-600">
+                                    @f.TotalNet.Money()
+                                    @if (f.Status == InvoiceStatus.Confirmed && f.Settlement == SettlementType.Credit)
+                                    {
+                                        <div class="small text-muted">مانده: @f.RemainingAmount.Money()</div>
+                                    }
+                                </td>
+                                <td>
+                                    <span class="badge @StatusBadge(f.Status)">@f.StatusTitle</span>
+                                    @if (f.InvDocId is > 0)
+                                    {
+                                        <a class="badge badge-soft-info fs-8" href="@($"/inv/docs/edit/{f.InvDocId}")" title="سند انبار">انبار</a>
+                                    }
+                                    @if (f.VoucherId is > 0)
+                                    {
+                                        <a class="badge badge-soft-primary fs-8" href="@($"/acc/vouchers/edit/{f.VoucherId}")" title="سند حسابداری">سند</a>
+                                    }
+                                </td>
+                                <td class="text-end text-nowrap">
+                                    <a class="btn btn-sm btn-light" title="مشاهده / ویرایش" href="@($"/fac/invoices/edit/{f.Id}")"><i class="bi bi-pencil text-primary"></i></a>
+                                    @if (f.Status == InvoiceStatus.Confirmed && (f.Kind == InvoiceKind.Sale || f.Kind == InvoiceKind.SaleReturn))
+                                    {
+                                        <button class="btn btn-sm btn-light" title="چاپ فاکتور" @onclick="() => Print(f)" disabled="@(printingId == f.Id)">
+                                            @if (printingId == f.Id)
+                                            {
+                                                <span class="spinner-border spinner-border-sm text-primary"></span>
+                                            }
+                                            else
+                                            {
+                                                <i class="bi bi-printer text-primary"></i>
+                                            }
+                                        </button>
+                                    }
+                                    @if (f.Status == InvoiceStatus.Draft)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="قطعی کردن" @onclick="() => Confirm(f)"><i class="bi bi-check2-circle text-success"></i></button>
+                                        <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(f)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                    else if (f.Status == InvoiceStatus.Confirmed)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="برگشت از قطعی" @onclick="() => Unconfirm(f)"><i class="bi bi-arrow-counterclockwise text-warning"></i></button>
+                                        <button class="btn btn-sm btn-light" title="ابطال" @onclick="() => Cancel(f)"><i class="bi bi-x-circle text-danger"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var f in items)
+                {
+                    <div class="m-card @StatusCard(f.Status)">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi @KindIcon(f.Kind)"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-700 num text-truncate">@f.KindTitle @f.Number.FaDigits()</span>
+                                    <span class="badge @StatusBadge(f.Status) fs-8">@f.StatusTitle</span>
+                                </div>
+                                <div class="fs-8 text-muted text-truncate">@(string.IsNullOrWhiteSpace(f.PartyName) ? "بدون طرف حساب" : f.PartyName)</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">تاریخ</div>
+                                <div class="num fw-700">@f.Date.ToFaDate()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-money">
+                                <span>قابل پرداخت</span>
+                                <b class="num">@f.TotalNet.Money() <small>ریال</small></b>
+                            </div>
+                            <div class="m-card-row"><span><i class="bi bi-list-ol text-muted"></i> اقلام</span><b class="num">@f.LineCount.Num()</b></div>
+                            <div class="m-card-row"><span><i class="bi bi-percent text-muted"></i> مالیات</span><b class="num">@f.TotalVat.Money()</b></div>
+                            @if (f.Status == InvoiceStatus.Confirmed && f.Settlement == SettlementType.Credit)
+                            {
+                                <div class="m-card-row"><span><i class="bi bi-wallet2 text-muted"></i> مانده تسویه</span><b class="num">@f.RemainingAmount.Money()</b></div>
+                            }
+                        </div>
+                        <div class="m-card-actions">
+                            <a class="btn btn-light text-primary" href="@($"/fac/invoices/edit/{f.Id}")"><i class="bi bi-pencil"></i> مشاهده</a>
+                            @if (f.Status == InvoiceStatus.Confirmed && (f.Kind == InvoiceKind.Sale || f.Kind == InvoiceKind.SaleReturn))
+                            {
+                                <button class="btn btn-light text-primary" @onclick="() => Print(f)" disabled="@(printingId == f.Id)">
+                                    @if (printingId == f.Id)
+                                    {
+                                        <span class="spinner-border spinner-border-sm"></span>
+                                    }
+                                    else
+                                    {
+                                        <i class="bi bi-printer"></i>
+                                    }
+                                    چاپ
+                                </button>
+                            }
+                            @if (f.Status == InvoiceStatus.Draft)
+                            {
+                                <button class="btn btn-light text-success" @onclick="() => Confirm(f)"><i class="bi bi-check2-circle"></i></button>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="OnPage" />
+        }
+    </div>
+</div>
+
+
+@code {
+    private List<FacInvoice> items = new();
+    private List<LookupItem> warehouses = new();
+
+    private bool loading = true;
+    private int page = 1, total;
+    private const int PageSize = 15;
+
+    private InvoiceKind? fKind;
+    private InvoiceStatus? fStatus;
+    private int? fWarehouseId;
+    private DateTime? fFrom, fTo;
+    private string search = "";
+
+    private int PageCount => total == 0 ? 1 : (int)Math.Ceiling(total / (double)PageSize);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("فاکتورها");
+        try { warehouses = await WarehouseSvc.GetLookupsAsync(); }
+        catch { warehouses = new(); }
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var res = await InvoiceSvc.GetAllAsync(fKind, fStatus, null, fWarehouseId, search, fFrom, fTo, page, PageSize);
+            items = res.Items;
+            total = res.TotalCount;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Reload()
+    {
+        page = 1;
+        await Load();
+    }
+
+    private async Task SetKind(InvoiceKind? k)
+    {
+        fKind = k;
+        await Reload();
+    }
+
+    private async Task OnStatus(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        fStatus = string.IsNullOrEmpty(raw) ? null : (InvoiceStatus)int.Parse(raw);
+        await Reload();
+    }
+
+    private async Task OnWarehouse(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        fWarehouseId = string.IsNullOrEmpty(raw) ? null : int.Parse(raw);
+        await Reload();
+    }
+
+    private async Task OnFrom(DateTime? d)
+    {
+        fFrom = d;
+        await Reload();
+    }
+
+    private async Task OnTo(DateTime? d)
+    {
+        fTo = d;
+        await Reload();
+    }
+
+    private void OnSearchInput(ChangeEventArgs e) => search = e.Value?.ToString() ?? "";
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Reload();
+    }
+
+    private async Task OnPage(int p)
+    {
+        page = p;
+        await Load();
+    }
+
+    // ---------- عملیات ----------
+    private async Task Confirm(FacInvoice f)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm",
+            $"{f.KindTitle} شماره {f.Number} قطعی شود؟ سند انبار و سند حسابداری آن به‌صورت خودکار صادر می‌شود."))
+            return;
+        try
+        {
+            await InvoiceSvc.ConfirmAsync(f.Id);
+            Toast.Success("فاکتور قطعی شد و اسناد خودکار صادر شدند.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Unconfirm(FacInvoice f)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm",
+            $"{f.KindTitle} شماره {f.Number} به پیش‌نویس برگردد؟ سند انبار و سند حسابداری آن حذف می‌شود."))
+            return;
+        try
+        {
+            await InvoiceSvc.UnconfirmAsync(f.Id);
+            Toast.Success("فاکتور به پیش‌نویس برگشت.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Cancel(FacInvoice f)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"{f.KindTitle} شماره {f.Number} ابطال شود؟")) return;
+        try
+        {
+            await InvoiceSvc.CancelAsync(f.Id);
+            Toast.Success("فاکتور ابطال شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Delete(FacInvoice f)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"{f.KindTitle} شماره {f.Number} حذف شود؟")) return;
+        try
+        {
+            await InvoiceSvc.DeleteAsync(f.Id);
+            Toast.Success("فاکتور حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- چاپ فاکتور ----------
+    /// <summary>شناسهٔ فاکتوری که همین حالا در حال آماده‌سازی چاپ است (اسپینر + جلوگیری از کلیک دوباره).</summary>
+    private int printingId;
+    private CompanyProfileDto? companyProfile;
+
+    /// <summary>
+    /// چاپ فاکتور در قالب مستقل (A4/A5 بر اساس «تعریف شرکت»).
+    /// فاکتور کامل همراه اقلام از سرور خوانده می‌شود (ردیف‌های لیست ممکن است فقط خلاصه باشند)
+    /// و سند در iframe جداگانه چاپ می‌شود؛ پس قواعد @media print پوستهٔ برنامه روی آن اثر نمی‌گذارد.
+    /// </summary>
+    private async Task Print(FacInvoice f)
+    {
+        if (printingId != 0) return;
+        printingId = f.Id;
+        try
+        {
+            companyProfile ??= await ProfileSvc.GetAsync();
+            var full = await InvoiceSvc.GetAsync(f.Id);
+            if (full is null || full.Lines.Count == 0)
+            {
+                Toast.Error("برای این فاکتور قلمی یافت نشد؛ چاپ انجام نشد.");
+                return;
+            }
+            var html = FacInvoicePrint.Build(full, companyProfile);
+            var opened = await JS.InvokeAsync<bool>("giPrint", html);
+            if (!opened)
+                Toast.Error("پنجرهٔ چاپ باز نشد؛ لطفاً اجازهٔ پنجرهٔ بازشو (pop-up) را در مرورگر فعال کنید.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { printingId = 0; }
+    }
+
+    // ---------- کمکی‌های نمایش ----------
+    private static string KindIcon(InvoiceKind k) => k switch
+    {
+        InvoiceKind.Purchase => "bi-bag-plus",
+        InvoiceKind.Sale => "bi-cart-check",
+        InvoiceKind.PurchaseReturn => "bi-arrow-return-right",
+        _ => "bi-arrow-return-left"
+    };
+
+    private static string KindBadge(InvoiceKind k) => k switch
+    {
+        InvoiceKind.Purchase => "badge-nature-inc",
+        InvoiceKind.Sale => "badge-nature-dec",
+        InvoiceKind.PurchaseReturn => "badge-soft-warning",
+        _ => "badge-soft-info"
+    };
+
+    private static string StatusBadge(InvoiceStatus s) => s switch
+    {
+        InvoiceStatus.Draft => "badge-soft-warning",
+        InvoiceStatus.Confirmed => "badge-soft-success",
+        _ => "badge-soft-muted"
+    };
+
+    private static string StatusCard(InvoiceStatus s) => s switch
+    {
+        InvoiceStatus.Draft => "st-progress",
+        InvoiceStatus.Confirmed => "st-ready",
+        _ => "st-cancelled"
+    };
+}

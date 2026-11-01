@@ -1,0 +1,110 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/leave-types"
+@inject IFaAttService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>انواع مرخصی</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-tags"></i> انواع مرخصی</h1>
+            <div class="lead">داده پایه مرخصی‌ها + سقف سالانه هر نوع</div>
+        </div>
+        @if (faManage)
+        {
+            <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> نوع جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد منابع انسانی است.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (types.Count == 0)
+        {
+            <div class="text-center text-muted py-5">نوعی ثبت نشده است.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>نام</th><th>سقف سالانه (روز)</th><th>ترتیب</th><th>وضعیت</th><th style="width:70px"></th></tr></thead>
+                <tbody>
+                    @foreach (var t in types)
+                    {
+                        <tr class="@(!t.IsActive ? "opacity-50" : "")">
+                            <td><b>@t.Name</b></td>
+                            <td class="num">@(t.AnnualLimitDays == null ? "نامحدود" : FaAttUi.Num(t.AnnualLimitDays.Value))</td>
+                            <td class="num">@FaAttUi.Num(t.SortOrder)</td>
+                            <td>@if (t.IsActive){<span class="badge text-bg-success">فعال</span>}else{<span class="badge text-bg-secondary">غیرفعال</span>}</td>
+                            <td class="text-end"><button class="btn btn-sm btn-outline-secondary" @onclick="() => OpenEdit(t)"><i class="bi bi-pencil"></i></button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="نوع مرخصی" OnClose="() => showEdit = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-12"><label class="form-label">نام *</label><input class="form-control" @bind="form.Name" /></div>
+        <div class="col-md-6"><label class="form-label">سقف سالانه (خالی = نامحدود)</label><input type="number" class="form-control" @bind="form.AnnualLimitDays" /></div>
+        <div class="col-md-6"><label class="form-label">ترتیب</label><input type="number" class="form-control" @bind="form.SortOrder" /></div>
+        <div class="col-12"><div class="form-check"><input type="checkbox" class="form-check-input" @bind="form.IsActive" /><label class="form-check-label">فعال</label></div></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" @onclick="Save">ذخیره</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faManage => Auth.Has("FaAtt.Manage") || Auth.IsAdmin;
+    private bool loading = true, showEdit;
+    private List<FaAttLeaveTypeDto> types = new();
+    private int? editId;
+    private FaAttLeaveTypeSaveDto form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { types = await Svc.GetLeaveTypesAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenEdit(FaAttLeaveTypeDto? t)
+    {
+        editId = t?.Id;
+        form = t == null ? new FaAttLeaveTypeSaveDto { SortOrder = types.Count + 1 }
+            : new FaAttLeaveTypeSaveDto { Name = t.Name, AnnualLimitDays = t.AnnualLimitDays, IsActive = t.IsActive, SortOrder = t.SortOrder };
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        try { await Svc.SaveLeaveTypeAsync(editId, form); Toast.Success("ذخیره شد."); showEdit = false; await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

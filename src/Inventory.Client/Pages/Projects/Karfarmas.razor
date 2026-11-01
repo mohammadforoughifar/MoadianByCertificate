@@ -1,0 +1,263 @@
+@page "/karfarmas"
+@inject IKarfarmaService KarfarmaSvc
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>کارفرماها</PageTitle>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center flex-wrap gap-2"
+         style="background:linear-gradient(135deg,#0ea5e9,#6366f1);color:#fff;border-radius:14px 14px 0 0;">
+        <span><i class="bi bi-briefcase-fill me-2"></i>کارفرماها
+            <span class="badge bg-light text-dark ms-1">@total</span>
+        </span>
+        @if (Auth.Has("Karfarmas.Create"))
+        {
+            <button class="btn btn-light btn-sm fw-700 shadow-sm" style="border-radius:8px;color:#4f5b8a;"
+                    data-hotkey="f2" title="کلید میانبر: F2" @onclick="OpenNew">
+                <i class="bi bi-plus-lg"></i> کارفرمای جدید (F2)
+            </button>
+        }
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="row g-2 align-items-center">
+                <div class="col-md-4">
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input class="form-control" placeholder="جستجوی نام، شماره ثبت یا موبایل…" @bind="search" @bind:event="oninput" @bind:after="SearchChanged" />
+                    </div>
+                </div>
+                <div class="col-auto ms-auto fs-8 text-muted">@total.Num() کارفرما</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (Paged.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-briefcase"></i><h5>کارفرمایی یافت نشد</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>نام کارفرما</th>
+                            <th>شماره ثبت</th>
+                            <th>موبایل مدیرعامل</th>
+                            <th>تلفن</th>
+                            <th class="text-start">پروژه‌ها</th>
+                            <th>تاریخ ایجاد</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var k in Paged)
+                        {
+                            <tr>
+                                <td class="fw-500"><i class="bi bi-briefcase text-muted ms-1"></i> @k.Name</td>
+                                <td class="num">@k.ShomareSabt</td>
+                                <td class="num">@k.ModirAmelPhone</td>
+                                <td class="num">@k.Telephone</td>
+                                <td class="text-start num">@k.ProjectCount.Num()</td>
+                                <td class="num">@k.CreatedAt.ToFa()</td>
+                                <td class="text-end">
+                                    @if (Auth.Has("Karfarmas.Update"))
+                                    {
+                                        <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(k)"><i class="bi bi-pencil text-primary"></i></button>
+                                    }
+                                    @if (Auth.Has("Karfarmas.Delete"))
+                                    {
+                                        <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(k)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var k in Paged)
+                {
+                    <div class="m-card st-ready">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi bi-briefcase"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-700">@k.Name</span>
+                                </div>
+                                <div class="fs-8 text-muted num">ثبت: @k.ShomareSabt — مدیرعامل: @k.ModirAmelPhone</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">پروژه‌ها</div>
+                                <div class="num fw-800 text-primary">@k.ProjectCount.Num()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-actions">
+                            @if (Auth.Has("Karfarmas.Update"))
+                            {
+                                <button class="btn btn-light text-primary" @onclick="() => OpenEdit(k)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            }
+                            @if (Auth.Has("Karfarmas.Delete"))
+                            {
+                                <button class="btn btn-light text-danger" @onclick="() => Delete(k)"><i class="bi bi-trash"></i></button>
+                            }
+
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="ChangePage" />
+        }
+    </div>
+</div>
+
+<Modal Visible="showModal" Title="@(editing ? "ویرایش کارفرما" : "کارفرمای جدید")" OnClose="CloseModal">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-md-8">
+            <label class="form-label">نام کارفرما <span class="text-danger">*</span></label>
+            <input class="form-control" @bind="form.Name" placeholder="نام شرکت یا شخص کارفرما" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">شماره ثبت</label>
+            <input class="form-control" @bind="form.ShomareSabt" />
+        </div>
+        <div class="col-12">
+            <label class="form-label">آدرس</label>
+            <input class="form-control" @bind="form.Address" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">موبایل مدیرعامل</label>
+            <input class="form-control" @bind="form.ModirAmelPhone" data-digits="tel" dir="ltr" inputmode="tel" placeholder="فقط عدد" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">تلفن</label>
+            <input class="form-control" @bind="form.Telephone" data-digits="tel" dir="ltr" inputmode="tel" placeholder="فقط عدد" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">فکس</label>
+            <input class="form-control" @bind="form.Fax" data-digits="tel" dir="ltr" inputmode="tel" placeholder="فقط عدد" />
+        </div>
+    </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseModal">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            <i class="bi bi-check-lg ms-1"></i> ذخیره (F1)
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<KarFarmaDto> items = new();
+    private bool loading = true;
+    private string search = "";
+
+    private KarFarmaDto form = new();
+    private bool showModal, saving;
+    private bool editing => form.Id != 0;
+
+
+    private int page = 1;
+    private const int PageSize = 12;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+    private List<KarFarmaDto> Paged => items;
+    private int total, loadVersion;
+    private async Task ChangePage(int value) { page = value; await Load(); }
+    private async Task SearchChanged() { page = 1; await Load(); }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("کارفرماها");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        var version = ++loadVersion;
+        loading = true;
+        try
+        {
+            var result = await KarfarmaSvc.GetPagedAsync((page - 1) * PageSize, PageSize, search);
+            if (version != loadVersion) return;
+            items = result.Items;
+            total = result.TotalCount;
+            if (page > PageCount) { page = PageCount; await Load(); }
+        }
+        catch (Exception ex) { if (version == loadVersion) Toast.Error(ex.Message); }
+        finally { if (version == loadVersion) loading = false; }
+    }
+
+    private void OpenNew()
+    {
+        if (showModal) return; // وقتی مودال باز است F2 کاری نکند
+        form = new KarFarmaDto();
+        showModal = true;
+    }
+
+    private void OpenEdit(KarFarmaDto k)
+    {
+        form = new KarFarmaDto
+        {
+            Id = k.Id,
+            Name = k.Name,
+            Address = k.Address,
+            ModirAmelPhone = k.ModirAmelPhone,
+            Telephone = k.Telephone,
+            Fax = k.Fax,
+            ShomareSabt = k.ShomareSabt,
+            CreatedAt = k.CreatedAt
+        };
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name)) { Toast.Error("نام کارفرما را وارد کنید."); return; }
+        saving = true;
+        try
+        {
+            if (editing)
+                await KarfarmaSvc.UpdateAsync(form.Id, form);
+            else
+                await KarfarmaSvc.CreateAsync(form);
+            Toast.Success(editing ? "کارفرما ویرایش شد." : "کارفرما ثبت شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(KarFarmaDto k)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف کارفرمای «{k.Name}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await KarfarmaSvc.DeleteAsync(k.Id);
+            Toast.Success("کارفرما حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

@@ -1,0 +1,596 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/contracts"
+@inject IHrCoreService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject IHrMainService RuleSvc
+
+<PageTitle>قراردادها</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-file-earmark-text"></i> قراردادها</h1>
+    <div class="lead">قراردادهای پرسنل + هشدار پایان قرارداد</div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به ماژول کارگزینی برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body d-flex flex-wrap gap-2 align-items-end">
+        <div>
+            <label class="form-label small text-muted">هشدار پایان تا</label>
+            <select class="form-select" @bind="expDays" @bind:after="Reload">
+                <option value="15">۱۵ روز آینده</option>
+                <option value="30">۳۰ روز آینده</option>
+                <option value="60">۶۰ روز آینده</option>
+                <option value="90">۹۰ روز آینده</option>
+            </select>
+        </div>
+        <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="actonly" @bind="onlyActive" @bind:after="Reload" />
+            <label class="form-check-label" for="actonly">فقط فعال‌ها</label>
+        </div>
+        <div class="ms-auto">
+            @if (canUpdate)
+            {
+                <button class="btn btn-outline-warning me-2" @onclick="CheckAlerts"><i class="bi bi-bell"></i> بررسی هشدارها</button>
+            }
+            <button class="btn btn-outline-success me-2" @onclick="ExportExcel"><i class="bi bi-file-earmark-excel"></i> اکسل</button>
+            @if (canCreate)
+            {
+                <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> قرارداد جدید</button>
+                <button class="btn btn-outline-primary ms-2" @onclick="OpenBulk"><i class="bi bi-stack"></i> صدور گروهی</button>
+            }
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+}
+else
+{
+    @if (expiring.Count > 0)
+    {
+        <div class="alert alert-warning d-flex align-items-center gap-2">
+            <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+            <div><b class="num">@expiring.Count.Num()</b> قرارداد تا <b class="num">@expDays.Num()</b> روز آینده به پایان می‌رسد یا منقضی شده است.</div>
+        </div>
+    }
+    @if (alerts.Count > 0)
+    {
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-white"><strong><i class="bi bi-bell-fill text-warning"></i> هشدارهای ثبت‌شده انقضا</strong></div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="table-light"><tr><th>پرسنل</th><th>قرارداد</th><th>پایان</th><th>مانده</th><th class="text-center">تعداد اعلام</th><th style="width:60px"></th></tr></thead>
+                        <tbody>
+                            @foreach (var al in alerts)
+                            {
+                                <tr>
+                                    <td><strong>@al.EmployeeName</strong></td>
+                                    <td class="num">@al.ContractNo</td>
+                                    <td class="num">@al.ExpireDate.ToFa()</td>
+                                    <td><span class="badge @RemainClass(al.DaysToEnd)">@RemainText(al.DaysToEnd)</span></td>
+                                    <td class="text-center num">@al.NotifiedCount.Num()</td>
+                                    <td>
+                                        @if (canDelete)
+                                        {
+                                            <button class="btn btn-sm btn-light" title="نادیده گرفتن" @onclick="() => DismissAlert(al.Id)"><i class="bi bi-x-lg text-danger"></i></button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    }
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>پرسنل</th><th>شماره</th><th>نوع</th><th>شروع</th><th>پایان</th><th>مانده</th><th>وضعیت</th><th>امضا</th><th style="width:150px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var c in items)
+                        {
+                            <tr class="@(c.DaysToEnd is not null && c.DaysToEnd <= expDays && c.IsActive ? "table-warning" : "")">
+                                <td><a href="hr-core/employees/@c.EmployeeId" class="fw-bold text-decoration-none">@c.EmployeeName</a></td>
+                                <td class="num">@c.ContractNo</td>
+                                <td>@HrCoreUi.EmpType(c.Type)</td>
+                                <td class="num">@c.StartDate.ToFa()</td>
+                                <td class="num">@(c.EndDate?.ToFa() ?? "دائمی")</td>
+                                <td><span class="badge @RemainClass(c.DaysToEnd)">@RemainText(c.DaysToEnd)</span></td>
+                                <td>
+                                    @if (c.IsActive)
+                                    {
+                                        <span class="badge text-bg-success">فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-secondary">غیرفعال</span>
+                                    }
+                                </td>
+                                <td>
+                                    <span class="badge @SignBadge(c.SignStatus)">@SignText(c.SignStatus)</span>
+                                    @if (!string.IsNullOrEmpty(SignHint(c)))
+                                    {
+                                        <div class="small text-muted">@SignHint(c)</div>
+                                    }
+                                </td>
+                                <td>
+                                    @if (canUpdate)
+                                    {
+                                        <button class="btn btn-sm btn-light" @onclick="() => OpenEdit(c)"><i class="bi bi-pencil text-warning"></i></button>
+                                    }
+                                    @if (canDelete)
+                                    {
+                                        <button class="btn btn-sm btn-light" @onclick="() => Delete(c.Id)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                    <button class="btn btn-sm btn-light" title="تاریخچه نسخه‌ها" @onclick="() => OpenVersions(c)"><i class="bi bi-clock-history text-info"></i></button>
+                                    <button class="btn btn-sm btn-light" title="چاپ قرارداد (PDF)" @onclick="() => PrintPdf(c.Id)"><i class="bi bi-printer text-primary"></i></button>
+                                    @if (canUpdate && c.IsActive && c.EndDate != null)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="تمدید یک‌کلیکه (۱۲ ماه)" @onclick="() => Renew(c)"><i class="bi bi-arrow-repeat text-success"></i></button>
+                                    }
+                                    @if (canUpdate && c.SignStatus == 0)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="ارسال برای امضا" @onclick="() => SubmitSign(c.Id)"><i class="bi bi-send text-primary"></i></button>
+                                    }
+                                    @if (canUpdate && c.SignStatus == 1)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="ثبت امضای کارمند" @onclick="() => OpenEmpSign(c)"><i class="bi bi-pen text-success"></i></button>
+                                        <button class="btn btn-sm btn-light" title="امضای کارفرما" @onclick="() => SignEmployer(c.Id)"><i class="bi bi-patch-check text-success"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+<Modal Visible="showEdit" Title="قرارداد" Size="modal-lg" OnClose="() => showEdit = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label">پرسنل <span class="text-danger">*</span></label>
+                <select class="form-select" @bind="form.EmployeeId">
+                    @foreach (var m in employees)
+                    {
+                        <option value="@m.Id">@m.FullName (@m.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3"><label class="form-label">شماره قرارداد</label><input class="form-control num" @bind="form.ContractNo" /></div>
+            <div class="col-md-3">
+                <label class="form-label">نوع</label>
+                <select class="form-select" @bind="form.Type">
+                    <option value="0">رسمی</option><option value="1">قراردادی</option><option value="2">پیمانی</option>
+                    <option value="3">ساعتی</option><option value="4">مشاوره‌ای</option>
+                    <option value="5">تمام‌وقت</option><option value="6">پاره‌وقت</option>
+                    <option value="7">پروژه‌ای</option><option value="8">آزمایشی</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">قالب قرارداد</label>
+                <select class="form-select" @bind="form.TemplateId">
+                    <option value="">—</option>
+                    @foreach (var tp in templates)
+                    {
+                        <option value="@tp.Id">@tp.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4"><label class="form-label">شروع</label><DatePicker @bind-Value="cStart" /></div>
+            <div class="col-md-4"><label class="form-label">پایان (خالی=دائمی)</label><DatePicker @bind-Value="cEnd" AllowClear="true" /></div>
+            <div class="col-md-4"><label class="form-label">حقوق پایه (ریال)</label><input class="form-control num" type="number" min="0" @bind="form.BaseSalary" /></div>
+            <div class="col-md-4"><label class="form-label">عنوان شغلی</label><input class="form-control" @bind="form.JobTitle" /></div>
+            <div class="col-md-4">
+                <label class="form-label">واحد سازمانی</label>
+                <select class="form-select" @bind="form.OrgUnitId">
+                    <option value="">—</option>
+                    @foreach (var u in units)
+                    {
+                        <option value="@u.Id">@u.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="ccact" @bind="form.IsActive" /><label class="form-check-label" for="ccact">فعال</label></div>
+            </div>
+            <div class="col-12"><label class="form-label">توضیح</label><input class="form-control" @bind="form.Description" /></div>
+            <div class="col-12"><label class="form-label">علت تغییر (برای نسخه جدید — هنگام ویرایش)</label><input class="form-control" @bind="form.ChangeNote" /></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="Save">ذخیره</button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showVersions" Title="@versionsTitle" Size="modal-lg" OnClose="() => showVersions = false">
+    <ChildContent>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>نسخه</th><th>تاریخ ثبت</th><th>ثبت‌کننده</th><th>حقوق پایه</th><th>وضعیت</th><th>علت تغییر</th></tr></thead>
+                <tbody>
+                    @foreach (var v in versions)
+                    {
+                        <tr>
+                            <td class="num">@v.VersionNo.Num()</td>
+                            <td class="num">@v.ChangedAt.ToFa()</td>
+                            <td>@(v.ChangedByName ?? "—")</td>
+                            <td class="num">@VerSalary(v)</td>
+                            <td>@if (v.IsActive) { <span class="badge text-bg-success">فعال</span> } else { <span class="badge text-bg-secondary">غیرفعال</span> }</td>
+                            <td class="small">@(v.ChangeNote ?? "—")</td>
+                        </tr>
+                    }
+                    @if (versions.Count == 0)
+                    {
+                        <tr><td colspan="6" class="text-center text-muted py-3">نسخه‌ای ثبت نشده است.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showVersions = false">بستن</button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showEmpSign" Title="ثبت امضای کارمند" OnClose="() => showEmpSign = false">
+    <ChildContent>
+        <label class="form-label">نام امضاکننده (کارمند)</label>
+        <input class="form-control" @bind="empSignName" />
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showEmpSign = false">انصراف</button>
+        <button class="btn btn-success" @onclick="DoEmpSign">ثبت امضا</button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showBulk" Title="صدور گروهی قرارداد" Size="modal-xl" OnClose="() => showBulk = false">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-5">
+                <div class="fw-bold mb-2">۱) انتخاب پرسنل <span class="badge text-bg-primary num">@bulkSel.Count نفر</span></div>
+                <div class="mb-2"><input class="form-control" placeholder="جستجو (نام / کد)…" @bind="bulkQ" @bind:event="oninput" /></div>
+                <div class="mb-2">
+                    <select class="form-select" @bind="bulkNode">
+                        <option value="0">همه واحدها</option>
+                        @foreach (var n in bulkNodes)
+                        {
+                            <option value="@n.Id">@(new string('—', n.Level)) @n.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="bact" @bind="bulkActiveOnly" @bind:after="ReloadBulkEmps" /><label class="form-check-label" for="bact">فقط فعال‌ها</label></div>
+                    <div class="ms-auto d-flex gap-1">
+                        <button class="btn btn-sm btn-light" @onclick="SelectAllBulk">انتخاب همه</button>
+                        <button class="btn btn-sm btn-light" @onclick="() => bulkSel.Clear()">پاک کردن</button>
+                    </div>
+                </div>
+                <div class="border rounded p-2" style="max-height:290px;overflow-y:auto">
+                    @foreach (var e in BulkFiltered)
+                    {
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="be@e.Id" checked="@bulkSel.Contains(e.Id)" @onchange="() => ToggleBulk(e.Id)" />
+                            <label class="form-check-label" for="be@e.Id">@e.FullName <span class="text-muted small num">(@e.Code)</span> <span class="text-muted small">— @(e.HrMainNodeName ?? "—")</span></label>
+                        </div>
+                    }
+                    @if (BulkFiltered.Count == 0)
+                    {
+                        <div class="text-muted small text-center py-3">موردی یافت نشد.</div>
+                    }
+                </div>
+            </div>
+            <div class="col-md-7">
+                <div class="fw-bold mb-2">۲) مشخصات قرارداد (یکسان برای همه انتخاب‌شده‌ها)</div>
+                <div class="row g-2">
+                    <div class="col-md-6"><label class="form-label">شماره قرارداد</label><input class="form-control num" @bind="bulkForm.ContractNo" placeholder="خالی = بدون شماره" /></div>
+                    <div class="col-md-6">
+                        <label class="form-label">نوع</label>
+                        <select class="form-select" @bind="bulkForm.Type">
+                            <option value="0">رسمی</option><option value="1">قراردادی</option><option value="2">پیمانی</option>
+                            <option value="3">ساعتی</option><option value="4">مشاوره‌ای</option>
+                            <option value="5">تمام‌وقت</option><option value="6">پاره‌وقت</option>
+                            <option value="7">پروژه‌ای</option><option value="8">آزمایشی</option>
+                        </select>
+                    </div>
+                    <div class="col-md-12">
+                        <label class="form-label">قالب قرارداد</label>
+                        <select class="form-select" @bind="bulkForm.TemplateId">
+                            <option value="">—</option>
+                            @foreach (var tp in templates)
+                            {
+                                <option value="@tp.Id">@tp.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-6"><label class="form-label">شروع</label><DatePicker @bind-Value="bStart" /></div>
+                    <div class="col-md-6"><label class="form-label">پایان (خالی=دائمی)</label><DatePicker @bind-Value="bEnd" AllowClear="true" /></div>
+                    <div class="col-md-6"><label class="form-label">حقوق پایه (ریال)</label><input class="form-control num" type="number" min="0" @bind="bulkForm.BaseSalary" /></div>
+                    <div class="col-md-6"><label class="form-label">عنوان شغلی</label><input class="form-control" @bind="bulkForm.JobTitle" /></div>
+                    <div class="col-md-6">
+                        <label class="form-label">واحد سازمانی</label>
+                        <select class="form-select" @bind="bulkForm.OrgUnitId">
+                            <option value="">—</option>
+                            @foreach (var u in units)
+                            {
+                                <option value="@u.Id">@u.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-6 d-flex align-items-end">
+                        <div class="form-check"><input class="form-check-input" type="checkbox" id="bbact" @bind="bulkForm.IsActive" /><label class="form-check-label" for="bbact">فعال</label></div>
+                    </div>
+                    <div class="col-12"><label class="form-label">توضیح</label><input class="form-control" @bind="bulkForm.Description" /></div>
+                </div>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showBulk = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@(bulkSaving || bulkSel.Count == 0)" @onclick="SaveBulk">صدور برای @bulkSel.Count نفر</button>
+    </Footer>
+</Modal>
+
+@code {
+    private async Task Renew(HrContractDto c)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"قرارداد {c.ContractNo} به مدت ۱۲ ماه از {c.EndDate!.Value.AddDays(1).ToFa()} تمدید شود؟")) return;
+        try
+        {
+            var n = await Svc.RenewContractAsync(c.Id, 12);
+            Toast.Success($"قرارداد جدید {n.ContractNo} صادر شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task ExportExcel()
+    {
+        try
+        {
+            var f = await Svc.ExportContractsExcelAsync();
+            await JS.InvokeVoidAsync("saveAsFile", f.FileName, System.Convert.ToBase64String(f.Data));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task PrintPdf(int id)
+    {
+        try
+        {
+            var f = await Svc.GetContractPdfAsync(id);
+            await JS.InvokeVoidAsync("saveAsFile", f.FileName, System.Convert.ToBase64String(f.Data));
+        }
+        catch (Exception ex) { Toast.Error("خطا در تولید PDF: " + ex.Message); }
+    }
+    private bool canRead => Auth.Has("HrCore.Read") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrCore.Create") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrCore.Update") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrCore.Delete") || Auth.IsAdmin;
+
+    private bool loading = true, saving, showEdit, onlyActive = true;
+    private int expDays = 30;
+    private List<HrContractDto> items = new();
+    private List<HrContractDto> expiring = new();
+    private List<HrContractAlertDto> alerts = new();
+    private List<HrEmployeeDto> employees = new();
+    private List<HrOrgUnitDto> units = new();
+    private List<HrContractTemplateDto> templates = new();
+    private int? editId;
+    private HrContractSaveDto form = new();
+    private DateTime? cStart, cEnd;
+    private bool showVersions, showEmpSign;
+    private List<HrContractVersionDto> versions = new();
+    private string versionsTitle = "";
+    private int empSignId;
+    private string empSignName = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) return;
+        try
+        {
+            employees = (await Svc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items;
+            units = await Svc.GetOrgUnitsAsync();
+            templates = await Svc.GetTemplatesAsync();
+            expDays = (await RuleSvc.GetRulesAsync()).ContractAlertDays;
+        }
+        catch { }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            items = await Svc.GetContractsAsync(onlyActive ? true : null);
+            expiring = await Svc.GetExpiringContractsAsync(expDays);
+            alerts = await Svc.GetAlertsAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenEdit(HrContractDto? c)
+    {
+        editId = c?.Id;
+        form = c is null
+            ? new HrContractSaveDto { StartDate = DateTime.Today, EmployeeId = employees.FirstOrDefault()?.Id ?? 0 }
+            : new HrContractSaveDto
+            {
+                EmployeeId = c.EmployeeId, ContractNo = c.ContractNo, Type = c.Type,
+                StartDate = c.StartDate, EndDate = c.EndDate, BaseSalary = c.BaseSalary,
+                JobTitle = c.JobTitle, OrgUnitId = c.OrgUnitId, Description = c.Description, IsActive = c.IsActive, TemplateId = c.TemplateId
+            };
+        cStart = form.StartDate; cEnd = form.EndDate;
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            form.StartDate = cStart ?? DateTime.Today; form.EndDate = cEnd;
+            await Svc.SaveContractAsync(editId, form);
+            showEdit = false;
+            await Reload();
+            Toast.Success("ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task OpenVersions(HrContractDto c)
+    {
+        versionsTitle = $"تاریخچه قرارداد {c.ContractNo}";
+        try { versions = await Svc.GetVersionsAsync(c.Id); showVersions = true; }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenEmpSign(HrContractDto c) { empSignId = c.Id; empSignName = c.EmployeeName; showEmpSign = true; }
+
+    private async Task SubmitSign(int id)
+    {
+        try { await Svc.SubmitForSignAsync(id); await Reload(); Toast.Success("برای امضا ارسال شد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DoEmpSign()
+    {
+        try { await Svc.SignEmployeeAsync(empSignId, empSignName); showEmpSign = false; await Reload(); Toast.Success("امضای کارمند ثبت شد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task SignEmployer(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "قرارداد از طرف کارفرما امضا و نهایی شود؟")) return;
+        try { await Svc.SignEmployerAsync(id); await Reload(); Toast.Success("قرارداد امضا و نهایی شد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string SignText(int s) => s switch { 0 => "پیش‌نویس", 1 => "در انتظار امضا", 2 => "امضاشده", _ => "—" };
+
+    private static string SignBadge(int s) => s switch { 0 => "text-bg-secondary", 1 => "text-bg-warning", 2 => "text-bg-success", _ => "text-bg-light" };
+
+    private static string VerSalary(HrContractVersionDto v) => Fa.Number((decimal)v.BaseSalary);
+
+    private static string? SignHint(HrContractDto c)
+    {
+        if (c.SignStatus == 2) return c.EmployerSignedByName;
+        if (c.EmployeeSignedAt != null) return $"کارمند: {c.EmployeeSignedBy}";
+        return null;
+    }
+
+    private async Task CheckAlerts()
+    {
+        try
+        {
+            var n = await Svc.CheckAlertsAsync(expDays);
+            await Reload();
+            Toast.Success(n == 0 ? "هشدار جدیدی نیست." : $"{n.Num()} هشدار جدید ثبت شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DismissAlert(int id)
+    {
+        try { await Svc.DismissAlertAsync(id); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Delete(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "قرارداد حذف شود؟")) return;
+        try { await Svc.DeleteContractAsync(id); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string RemainText(int? days) => days switch
+    {
+        null => "دائمی",
+        < 0 => "منقضی",
+        0 => "امروز",
+        _ => $"{days.Value.Num()} روز"
+    };
+
+    private static string RemainClass(int? days) => days switch
+    {
+        null => "text-bg-light border",
+        < 0 => "text-bg-danger",
+        <= 7 => "text-bg-warning",
+        _ => "text-bg-info"
+    };
+
+    // ==================== صدور گروهی ====================
+    private bool showBulk, bulkSaving, bulkActiveOnly = true;
+    private string? bulkQ;
+    private int bulkNode;
+    private List<HrEmployeeLiteDto> bulkEmps = new();
+    private List<HrMainOrgNodeDto> bulkNodes = new();
+    private HashSet<int> bulkSel = new();
+    private HrContractSaveDto bulkForm = new();
+    private DateTime? bStart, bEnd;
+
+    private List<HrEmployeeLiteDto> BulkFiltered => bulkEmps.Where(e =>
+        (bulkNode <= 0 || e.HrMainNodeId == bulkNode) &&
+        (string.IsNullOrWhiteSpace(bulkQ) || e.FullName.Contains(bulkQ.Trim()) || e.Code.Contains(bulkQ.Trim()))
+    ).ToList();
+
+    private async Task OpenBulk()
+    {
+        bulkForm = new HrContractSaveDto { StartDate = DateTime.Today, IsActive = true };
+        bStart = DateTime.Today; bEnd = null;
+        bulkSel.Clear(); bulkQ = null; bulkNode = 0;
+        showBulk = true;
+        try
+        {
+            bulkNodes = await RuleSvc.ListOrgNodesAsync();
+            await ReloadBulkEmps();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task ReloadBulkEmps()
+    {
+        try { bulkEmps = await Svc.ListEmployeeLiteAsync(bulkActiveOnly); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void ToggleBulk(int id) { if (!bulkSel.Add(id)) bulkSel.Remove(id); }
+    private void SelectAllBulk() { foreach (var e in BulkFiltered) bulkSel.Add(e.Id); }
+
+    private async Task SaveBulk()
+    {
+        if (bulkSel.Count == 0) { Toast.Info("پرسنلی انتخاب نشده است."); return; }
+        bulkForm.StartDate = bStart ?? DateTime.Today;
+        bulkForm.EndDate = bEnd;
+        bulkSaving = true;
+        try
+        {
+            var r = await Svc.SaveContractsBulkAsync(new HrContractBulkDto { EmployeeIds = bulkSel.ToList(), Contract = bulkForm });
+            Toast.Success($"{r.Created.Num()} قرارداد صادر شد.");
+            showBulk = false;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { bulkSaving = false; }
+    }
+
+}

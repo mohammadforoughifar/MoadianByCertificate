@@ -1,0 +1,563 @@
+@page "/moadian/invoices/new"
+@page "/moadian/invoices/{Id:int}/edit"
+@inject IMoadianClientService Mdn
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+
+<PageTitle>@(Id > 0 ? "ویرایش صورتحساب مودیان" : "صدور صورتحساب الکترونیکی جدید")</PageTitle>
+
+<MoadianSubNav />
+
+<div class="page-head">
+    <div>
+        <h1>@(Id > 0 ? $"ویرایش صورتحساب {internalNumber}" : "صدور صورتحساب الکترونیکی مودیان")</h1>
+        <p class="lead">محاسبه خودکار مبالغ ریالی مطابق دستورالعمل سازمان امور مالیاتی (SDK 2.0.29)</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-outline-secondary" href="moadian/invoices">بازگشت به فهرست</a>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else
+{
+    <!-- مشخصات سربرگ صورتحساب -->
+    <div class="card mb-3">
+        <div class="card-header">
+            <h6 class="mb-0"><i class="bi bi-file-earmark-text me-1"></i>۱. مشخصات الگوی صورتحساب و روش تسویه</h6>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-6 col-md-2">
+                    <label class="form-label">تاریخ صدور</label>
+                    <DatePicker Value="issueDateNullable" ValueChanged="d => { if (d.HasValue) form.IssueDate = d.Value; }" />
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <label class="form-label">نوع صورتحساب (inty)</label>
+                    <select class="form-select" @bind="form.InvoiceType">
+                        <option value="@MdnInvoiceType.Type1">نوع اول (فروش به مودی)</option>
+                        <option value="@MdnInvoiceType.Type2">نوع دوم (مصرف‌کننده نهایی)</option>
+                    </select>
+                </div>
+
+                <div class="col-6 col-md-3">
+                    <label class="form-label">الگوی صورتحساب (inp)</label>
+                    <select class="form-select" @bind="form.Pattern">
+                        <option value="@MdnInvoicePattern.Sale">۱ — فروش کالا و خدمات</option>
+                        <option value="@MdnInvoicePattern.CurrencySale">۲ — فروش ارزی</option>
+                        <option value="@MdnInvoicePattern.GoldJewelry">۳ — طلا، جواهر و پلاتین</option>
+                        <option value="@MdnInvoicePattern.Contracting">۴ — قرارداد پیمانکاری</option>
+                        <option value="@MdnInvoicePattern.UtilityBill">۵ — قبوض خدماتی</option>
+                        <option value="@MdnInvoicePattern.AirTicket">۶ — بلیط هواپیما</option>
+                        <option value="@MdnInvoicePattern.Export">۷ — صادرات</option>
+                    </select>
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <label class="form-label">موضوع (ins)</label>
+                    <select class="form-select" @bind="form.Subject">
+                        <option value="@MdnInvoiceSubject.Original">۱ — اصلی</option>
+                        <option value="@MdnInvoiceSubject.Corrective">۲ — اصلاحی</option>
+                        <option value="@MdnInvoiceSubject.Cancellation">۳ — ابطالی</option>
+                        <option value="@MdnInvoiceSubject.SalesReturn">۴ — برگشت از فروش</option>
+                    </select>
+                </div>
+
+                <div class="col-12 col-md-3">
+                    <label class="form-label">روش تسویه (setm)</label>
+                    <select class="form-select" @bind="form.SettlementMethod">
+                        <option value="@MdnSettlementMethod.Cash">۱ — نقدی</option>
+                        <option value="@MdnSettlementMethod.Credit">۲ — نسیه</option>
+                        <option value="@MdnSettlementMethod.CashAndCredit">۳ — نقدی / نسیه (ترکیبی)</option>
+                    </select>
+                </div>
+
+                @if (form.Subject != MdnInvoiceSubject.Original)
+                {
+                    <div class="col-12 col-md-6">
+                        <label class="form-label text-danger fw-semibold">شماره منحصر به فرد مالیاتی مرجع ۲۲ کاراکتری (irtaxid) *</label>
+                        <input class="form-control font-monospace text-uppercase" dir="ltr" maxlength="22"
+                               @bind="form.ReferenceTaxId" placeholder="A11226..." />
+                    </div>
+                }
+
+                @if (form.Pattern == MdnInvoicePattern.Contracting)
+                {
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">شماره ثبت قرارداد پیمانکاری (crn)</label>
+                        <input class="form-control font-monospace" dir="ltr" @bind="form.ContractRegistrationNumber" />
+                    </div>
+                }
+
+                @if (form.Pattern == MdnInvoicePattern.UtilityBill)
+                {
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">شماره اشتراک / شناسه قبض (bilid)</label>
+                        <input class="form-control font-monospace" dir="ltr" @bind="form.BillId" />
+                    </div>
+                }
+
+                @if (form.Pattern == MdnInvoicePattern.Export)
+                {
+                    <div class="col-md-4">
+                        <label class="form-label">کد گمرک محل اظهار (scc)</label>
+                        <input class="form-control font-monospace" dir="ltr" @bind="form.CustomsCode" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">شماره کوتاژ اظهارنامه گمرکی (cdcn)</label>
+                        <input class="form-control font-monospace" dir="ltr" @bind="form.CustomsDeclarationNumber" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">شماره پروانه گمرکی (scln)</label>
+                        <input class="form-control font-monospace" dir="ltr" @bind="form.CustomsLicenseNumber" />
+                    </div>
+                }
+
+                @if (form.SettlementMethod == MdnSettlementMethod.CashAndCredit)
+                {
+                    <div class="col-md-4">
+                        <label class="form-label">بخش پرداخت نقدی از مبلغ پس از تخفیف (cap — ریال)</label>
+                        <input type="number" min="0" class="form-control num" @bind="cashPartInput" />
+                        <div class="form-text num">سهم نسیه (insp) خودکار: @Math.Max(0L, CalcTadis - cashPartInput).Money() ریال</div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- مشخصات خریدار (فقط برای نوع اول) -->
+    @if (form.InvoiceType == MdnInvoiceType.Type1)
+    {
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0"><i class="bi bi-person-vcard me-1"></i>۲. مشخصات خریدار</h6>
+                <div class="d-flex gap-2 align-items-center">
+                    <select class="form-select form-select-sm" style="min-width:240px" @onchange="OnBuyerPicked">
+                        <option value="">-- انتخاب سریع از خریداران مودیان --</option>
+                        @foreach (var b in buyers)
+                        {
+                            <option value="@b.Id" selected="@(form.BuyerId == b.Id)">
+                                @b.Name @(string.IsNullOrWhiteSpace(b.EconomicCode) ? "" : $"({b.EconomicCode})")
+                            </option>
+                        }
+                    </select>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">نام خریدار</label>
+                        <input class="form-control" @bind="form.BuyerName" placeholder="نام شرکت یا شخص خریدار" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">نوع شخص خریدار (tob)</label>
+                        <select class="form-select" @bind="form.BuyerType">
+                            <option value="@MdnTaxpayerType.Legal">حقوقی</option>
+                            <option value="@MdnTaxpayerType.Natural">حقیقی</option>
+                            <option value="@MdnTaxpayerType.CivicPartnership">مشارکت مدنی</option>
+                            <option value="@MdnTaxpayerType.ForeignNational">اتباع غیر ایرانی</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">شماره اقتصادی خریدار (tinb)</label>
+                        <div class="input-group">
+                            <input class="form-control font-monospace" dir="ltr" @bind="form.BuyerEconomicCode" placeholder="10100302746" />
+                            <button type="button" class="btn btn-outline-secondary" title="استعلام آنلاین از سازمان امور مالیاتی"
+                                    disabled="@busy" @onclick="LookupBuyerOnlineAsync">
+                                <i class="bi bi-search"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">شناسه / کد ملی خریدار (bid)</label>
+                        <input class="form-control font-monospace" dir="ltr" @bind="form.BuyerNationalId" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">کد پستی ۱۰ رقمی خریدار (bpc)</label>
+                        <input class="form-control font-monospace" dir="ltr" maxlength="10" @bind="form.BuyerPostalCode" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">کد شعبه خریدار (bbc)</label>
+                        <input class="form-control font-monospace" dir="ltr" @bind="form.BuyerBranchCode" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">توضیحات داخلی</label>
+                        <input class="form-control" @bind="form.Description" />
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- اقلام کالا و خدمات صورتحساب -->
+    <div class="card mb-3">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <h6 class="mb-0"><i class="bi bi-list-ol me-1"></i>۳. اقلام کالا و خدمت صورتحساب</h6>
+            <div class="d-flex gap-2">
+                @if (catalog.Count > 0)
+                {
+                    <select class="form-select form-select-sm" style="min-width:250px" @onchange="OnQuickAddCatalog">
+                        <option value="">+ افزودن سریع از کاتالوگ مودیان...</option>
+                        @foreach (var c in catalog)
+                        {
+                            <option value="@c.Id">@c.Name — @c.Sstid</option>
+                        }
+                    </select>
+                }
+                <button type="button" class="btn btn-sm btn-outline-primary" @onclick="AddBlankLine">
+                    <i class="bi bi-plus-lg me-1"></i>افزودن ردیف دستی
+                </button>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-bordered align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:42px">#</th>
+                        <th style="min-width:155px">شناسه ۱۳ رقمی (sstid)</th>
+                        <th style="min-width:200px">شرح کالا/خدمت (sstt)</th>
+                        <th style="min-width:125px">واحد سنجش</th>
+                        <th style="min-width:100px">مقدار (am)</th>
+                        <th style="min-width:140px">مبلغ واحد ریال (fee)</th>
+                        <th style="min-width:125px">تخفیف ریال (dis)</th>
+                        <th style="min-width:95px">نرخ VAT٪</th>
+                        @if (form.Pattern == MdnInvoicePattern.GoldJewelry)
+                        {
+                            <th style="min-width:120px">اجرت ساخت</th>
+                            <th style="min-width:120px">سود فروشنده</th>
+                        }
+                        <th style="min-width:140px">جمع کل ردیف (ریال)</th>
+                        <th style="width:46px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @for (var idx = 0; idx < form.Lines.Count; idx++)
+                    {
+                        var line = form.Lines[idx];
+                        var lineTotals = PreviewLine(line);
+                        <tr>
+                            <td class="text-center num">@((idx + 1).FaDigits())</td>
+                            <td>
+                                <input class="form-control form-control-sm font-monospace" dir="ltr" maxlength="13"
+                                       @bind="line.Sstid" placeholder="2710000138624" />
+                            </td>
+                            <td>
+                                <input class="form-control form-control-sm" @bind="line.Description" placeholder="شرح کامل کالا یا خدمت" />
+                            </td>
+                            <td>
+                                <select class="form-select form-select-sm" @bind="line.UnitCode">
+                                    @foreach (var u in units)
+                                    {
+                                        <option value="@u.Code">@u.Name (@u.Code)</option>
+                                    }
+                                </select>
+                            </td>
+                            <td>
+                                <input type="number" step="0.001" min="0.001" class="form-control form-control-sm num" @bind="line.Quantity" />
+                            </td>
+                            <td>
+                                <input type="number" step="1" min="0" class="form-control form-control-sm num" @bind="line.UnitPrice" />
+                            </td>
+                            <td>
+                                <input type="number" step="1" min="0" class="form-control form-control-sm num" @bind="line.DiscountAmount" />
+                            </td>
+                            <td>
+                                <input type="number" step="0.1" min="0" max="100" class="form-control form-control-sm num" @bind="line.VatRate" />
+                            </td>
+                            @if (form.Pattern == MdnInvoicePattern.GoldJewelry)
+                            {
+                                <td>
+                                    <input type="number" step="1" min="0" class="form-control form-control-sm num" @bind="line.ConstructionFee" />
+                                </td>
+                                <td>
+                                    <input type="number" step="1" min="0" class="form-control form-control-sm num" @bind="line.SellerProfit" />
+                                </td>
+                            }
+                            <td class="num bg-light">
+                                <div class="fw-bold">@lineTotals.Total.Money()</div>
+                                <div class="small text-muted">VAT: @lineTotals.Vat.Money()</div>
+                            </td>
+                            <td class="text-center">
+                                @if (form.Lines.Count > 1)
+                                {
+                                    <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => RemoveLine(line)">
+                                        <i class="bi bi-x-lg"></i>
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <!-- خلاصه جمع کل صورتحساب -->
+        <div class="card-footer bg-light">
+            <div class="row g-2 text-center">
+                <div class="col-6 col-md-2">
+                    <div class="small text-muted">جمع قبل از تخفیف</div>
+                    <div class="fw-semibold num">@CalcTprdis.Money()</div>
+                </div>
+                <div class="col-6 col-md-2">
+                    <div class="small text-muted">مجموع تخفیفات</div>
+                    <div class="fw-semibold text-danger num">@CalcTdis.Money()</div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="small text-muted">مبلغ پس از تخفیف (tadis)</div>
+                    <div class="fw-semibold num">@CalcTadis.Money()</div>
+                </div>
+                <div class="col-6 col-md-2">
+                    <div class="small text-muted">مالیات ارزش افزوده (tvam)</div>
+                    <div class="fw-semibold text-primary num">@CalcTvam.Money()</div>
+                </div>
+                <div class="col-12 col-md-3">
+                    <div class="small text-muted">مبلغ کل صورتحساب (tbill — ریال)</div>
+                    <div class="fs-5 fw-bold text-success num">@CalcTbill.Money()</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- دکمه‌های ذخیره و ارسال -->
+    <div class="d-flex flex-wrap justify-content-end gap-2 mb-4">
+        <a class="btn btn-outline-secondary" href="moadian/invoices">انصراف</a>
+        <button class="btn btn-primary" disabled="@busy" @onclick="() => SubmitAsync(false)">
+            <i class="bi bi-save me-1"></i>ذخیره پیش‌نویس
+        </button>
+        @if (Auth.Has("Moadian.InvoiceSend"))
+        {
+            <button class="btn btn-success" disabled="@busy" @onclick="() => SubmitAsync(true)">
+                <i class="bi bi-send-check me-1"></i>ذخیره و ارسال فوری با گواهی امضا
+            </button>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private MdnSaveInvoiceRequest form = new();
+    private string internalNumber = "";
+    private decimal defaultVatRate = 10;
+    private long cashPartInput;
+
+    private List<MdnBuyerDto> buyers = new();
+    private List<MdnCatalogItemDto> catalog = new();
+    private List<MdnMeasureUnitDto> units = new();
+
+    private bool loading = true;
+    private bool busy;
+
+    private DateTime? issueDateNullable => form.IssueDate;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true;
+        try
+        {
+            var pTask = Mdn.GetProfileAsync();
+            var bTask = Mdn.GetBuyersAsync();
+            var cTask = Mdn.GetCatalogAsync();
+            var uTask = Mdn.GetUnitsAsync();
+            await Task.WhenAll(pTask, bTask, cTask, uTask);
+
+            defaultVatRate = pTask.Result.DefaultVatRate;
+            buyers = bTask.Result.Where(x => x.IsActive).ToList();
+            catalog = cTask.Result.Where(x => x.IsActive).ToList();
+            units = uTask.Result.Where(x => x.IsActive).ToList();
+            if (units.Count == 0)
+                units.Add(new MdnMeasureUnitDto { Code = "164", Name = "عدد / فقره" });
+
+            if (Id > 0)
+            {
+                var d = await Mdn.GetInvoiceDetailAsync(Id);
+                internalNumber = d.InternalNumber;
+                cashPartInput = d.CashAmount;
+                form = new MdnSaveInvoiceRequest
+                {
+                    Id = d.Id,
+                    IssueDate = d.IssueDate,
+                    InvoiceType = d.InvoiceType,
+                    Pattern = d.Pattern,
+                    Subject = d.Subject,
+                    SettlementMethod = d.SettlementMethod,
+                    ParentInvoiceId = d.ParentInvoiceId,
+                    ReferenceTaxId = d.ReferenceTaxId,
+                    BuyerId = d.BuyerId,
+                    BuyerName = d.BuyerName,
+                    BuyerType = d.BuyerType,
+                    BuyerEconomicCode = d.BuyerEconomicCode,
+                    BuyerNationalId = d.BuyerNationalId,
+                    BuyerPostalCode = d.BuyerPostalCode,
+                    BuyerBranchCode = d.BuyerBranchCode,
+                    BuyerPassportNumber = d.BuyerPassportNumber,
+                    ContractRegistrationNumber = d.ContractRegistrationNumber,
+                    BillId = d.BillId,
+                    CustomsLicenseNumber = d.CustomsLicenseNumber,
+                    CustomsCode = d.CustomsCode,
+                    CustomsDeclarationNumber = d.CustomsDeclarationNumber,
+                    CustomsDeclarationDate = d.CustomsDeclarationDate,
+                    Tax17 = d.Tax17,
+                    Description = d.Description,
+                    Lines = d.Lines
+                };
+            }
+            else
+            {
+                form = new MdnSaveInvoiceRequest
+                {
+                    IssueDate = DateTime.Now,
+                    InvoiceType = MdnInvoiceType.Type1,
+                    Pattern = MdnInvoicePattern.Sale,
+                    Subject = MdnInvoiceSubject.Original,
+                    SettlementMethod = MdnSettlementMethod.Cash
+                };
+                AddBlankLine();
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void AddBlankLine()
+    {
+        form.Lines.Add(new MdnInvoiceLineDto
+        {
+            RowNumber = form.Lines.Count + 1,
+            UnitCode = "164",
+            Quantity = 1,
+            UnitPrice = 0,
+            VatRate = defaultVatRate
+        });
+    }
+
+    private void RemoveLine(MdnInvoiceLineDto line) => form.Lines.Remove(line);
+
+    private void OnBuyerPicked(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var bid)) { form.BuyerId = null; return; }
+        var b = buyers.FirstOrDefault(x => x.Id == bid);
+        if (b is null) return;
+        form.BuyerId = b.Id;
+        form.BuyerName = b.Name;
+        form.BuyerType = b.BuyerType;
+        form.BuyerEconomicCode = b.EconomicCode;
+        form.BuyerNationalId = b.NationalId;
+        form.BuyerPostalCode = b.PostalCode;
+        form.BuyerBranchCode = b.BranchCode;
+    }
+
+    private void OnQuickAddCatalog(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var cid)) return;
+        var item = catalog.FirstOrDefault(x => x.Id == cid);
+        if (item is null) return;
+
+        // اگر ردیف اول هنوز خالی است همان را پر کن، در غیر این صورت ردیف جدید اضافه کن
+        var emptyFirst = form.Lines.FirstOrDefault(l => string.IsNullOrWhiteSpace(l.Sstid) && string.IsNullOrWhiteSpace(l.Description));
+        if (emptyFirst is not null)
+        {
+            emptyFirst.CatalogItemId = item.Id;
+            emptyFirst.Sstid = item.Sstid;
+            emptyFirst.Description = item.Name;
+            emptyFirst.UnitCode = item.UnitCode;
+            emptyFirst.UnitPrice = item.DefaultUnitPrice;
+            emptyFirst.VatRate = item.VatRate;
+            emptyFirst.HsCode = item.HsCode;
+        }
+        else
+        {
+            form.Lines.Add(new MdnInvoiceLineDto
+            {
+                RowNumber = form.Lines.Count + 1,
+                CatalogItemId = item.Id,
+                Sstid = item.Sstid,
+                Description = item.Name,
+                UnitCode = item.UnitCode,
+                Quantity = 1,
+                UnitPrice = item.DefaultUnitPrice,
+                VatRate = item.VatRate,
+                HsCode = item.HsCode
+            });
+        }
+    }
+
+    private async Task LookupBuyerOnlineAsync()
+    {
+        if (string.IsNullOrWhiteSpace(form.BuyerEconomicCode))
+        {
+            Toast.Warning("ابتدا کد اقتصادی خریدار را وارد کنید.");
+            return;
+        }
+        busy = true;
+        try
+        {
+            var res = await Mdn.LookupTaxpayerAsync(form.BuyerEconomicCode);
+            if (!string.IsNullOrWhiteSpace(res.NameTrade) || !string.IsNullOrWhiteSpace(res.TaxpayerStatus))
+            {
+                if (!string.IsNullOrWhiteSpace(res.NameTrade)) form.BuyerName = res.NameTrade;
+                if (!string.IsNullOrWhiteSpace(res.PostalCode)) form.BuyerPostalCode = res.PostalCode;
+                Toast.Success($"تأیید سازمان امور مالیاتی: {res.NameTrade} ({res.TaxpayerStatus})");
+            }
+            else
+            {
+                Toast.Warning("کد اقتصادی در سامانه یافت نشد.");
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private (long Prdis, long Dis, long Adis, long Vat, long Total) PreviewLine(MdnInvoiceLineDto l)
+    {
+        var prdis = (long)decimal.Round(l.Quantity * l.UnitPrice, 0, MidpointRounding.AwayFromZero);
+        var dis = Math.Clamp(l.DiscountAmount, 0L, Math.Max(0L, prdis));
+        var adis = prdis - dis;
+        var goldExtra = form.Pattern == MdnInvoicePattern.GoldJewelry
+            ? (l.ConstructionFee ?? 0L) + (l.SellerProfit ?? 0L) + (l.BrokerFee ?? 0L)
+            : 0L;
+        var vatBase = form.Pattern == MdnInvoicePattern.GoldJewelry ? goldExtra : adis;
+        var vat = (long)decimal.Round(vatBase * l.VatRate / 100m, 0, MidpointRounding.AwayFromZero);
+        return (prdis, dis, adis, vat, adis + goldExtra + vat);
+    }
+
+    private long CalcTprdis => form.Lines.Sum(l => PreviewLine(l).Prdis);
+    private long CalcTdis => form.Lines.Sum(l => PreviewLine(l).Dis);
+    private long CalcTadis => form.Lines.Sum(l => PreviewLine(l).Adis);
+    private long CalcTvam => form.Lines.Sum(l => PreviewLine(l).Vat);
+    private long CalcTbill => form.Lines.Sum(l => PreviewLine(l).Total);
+
+    private async Task SubmitAsync(bool sendImmediately)
+    {
+        busy = true;
+        try
+        {
+            if (form.SettlementMethod == MdnSettlementMethod.CashAndCredit)
+            {
+                form.CashAmount = Math.Clamp(cashPartInput, 0L, CalcTadis);
+                form.CreditAmount = CalcTadis - form.CashAmount;
+            }
+
+            var saved = await Mdn.SaveInvoiceAsync(form);
+            if (sendImmediately)
+            {
+                var sendRes = await Mdn.SendInvoicesAsync(new List<int> { saved.Id });
+                if (sendRes.Succeeded > 0) Toast.Success(sendRes.Items.FirstOrDefault()?.Message ?? sendRes.Message);
+                else Toast.Warning(sendRes.Items.FirstOrDefault()?.Message ?? sendRes.Message);
+            }
+            else
+            {
+                Toast.Success($"صورتحساب {saved.InternalNumber} ذخیره شد.");
+            }
+
+            Nav.NavigateTo($"moadian/invoices/{saved.Id}");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+}

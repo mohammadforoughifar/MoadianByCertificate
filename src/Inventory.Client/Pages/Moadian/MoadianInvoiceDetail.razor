@@ -1,0 +1,694 @@
+@page "/moadian/invoices/{Id:int}"
+@inject IMoadianClientService Mdn
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>سامانه مودیان — جزئیات صورتحساب</PageTitle>
+
+<MoadianSubNav />
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else if (inv is not null)
+{
+    <div class="page-head d-print-none">
+        <div>
+            <h1>صورتحساب الکترونیکی @inv.InternalNumber</h1>
+            <p class="lead">
+                @MdnUiLabels.SubjectTitle(inv.Subject) — @(inv.InvoiceType == MdnInvoiceType.Type1 ? "نوع اول" : "نوع دوم") — @MdnUiLabels.PatternTitle(inv.Pattern)
+            </p>
+        </div>
+
+        <div class="ms-auto d-flex flex-wrap gap-2">
+            <button class="btn btn-outline-secondary" @onclick="PrintAsync">
+                <i class="bi bi-printer me-1"></i>چاپ رسمی
+            </button>
+            <button class="btn btn-outline-secondary" @onclick="OpenJsonPreviewAsync">
+                <i class="bi bi-filetype-json me-1"></i>JSON
+            </button>
+
+            @if (inv.SubmissionStatus is MdnSubmissionStatus.Draft or MdnSubmissionStatus.Failed)
+            {
+                @if (Auth.Has("Moadian.InvoiceUpdate"))
+                {
+                    <a class="btn btn-outline-primary" href="moadian/invoices/@inv.Id/edit">
+                        <i class="bi bi-pencil me-1"></i>ویرایش
+                    </a>
+                }
+                @if (Auth.Has("Moadian.InvoiceSend"))
+                {
+                    <button class="btn btn-success" disabled="@busy" @onclick="SendAsync">
+                        <i class="bi bi-send-check me-1"></i>ارسال با گواهی امضا
+                    </button>
+                }
+            }
+            else
+            {
+                @if (Auth.Has("Moadian.InvoiceInquiry"))
+                {
+                    <button class="btn btn-outline-info" disabled="@busy" @onclick="InquirySubmissionAsync">
+                        <i class="bi bi-arrow-clockwise me-1"></i>استعلام درگاه
+                    </button>
+                }
+                @if (Auth.Has("Moadian.FolderStatus") && !string.IsNullOrWhiteSpace(inv.TaxId))
+                {
+                    <button class="btn btn-primary" disabled="@busy" @onclick="InquiryFolderAsync">
+                        <i class="bi bi-folder-check me-1"></i>استعلام به‌روز کارپوشه
+                    </button>
+                }
+                @if (Auth.Has("Moadian.PaymentRegister") && inv.Subject != MdnInvoiceSubject.Cancellation)
+                {
+                    <button class="btn btn-success" disabled="@busy" @onclick="OpenPaymentModal">
+                        <i class="bi bi-credit-card me-1"></i>ثبت پرداخت در مودیان
+                    </button>
+                }
+                @if (Auth.Has("Moadian.InvoiceUpdate") && !string.IsNullOrWhiteSpace(inv.TaxId) && inv.Subject != MdnInvoiceSubject.Cancellation)
+                {
+                    <button class="btn btn-outline-warning" disabled="@busy" @onclick="OpenDerivativeModal">
+                        <i class="bi bi-diagram-2 me-1"></i>اصلاحی / ابطالی / برگشت
+                    </button>
+                }
+            }
+        </div>
+    </div>
+
+    <!-- نوار سه وضعیتی: درگاه ارسال + کارپوشه به‌روز + تسویه و پرداخت -->
+    <div class="row g-3 mb-3 d-print-none">
+        <div class="col-12 col-md-4">
+            <div class="card h-100 border-start border-4 border-info">
+                <div class="card-body py-3">
+                    <div class="small text-muted mb-1">۱. وضعیت پذیرش درگاه ارسال</div>
+                    <div class="d-flex align-items-center justify-content-between">
+                        <span class="badge fs-6 @SubmissionBadge(inv.SubmissionStatus)">@MdnUiLabels.SubmissionTitle(inv.SubmissionStatus)</span>
+                        <span class="small text-muted">@(inv.LastInquiryAt?.ToFaDateTime() ?? inv.SentAt?.ToFaDateTime() ?? "—")</span>
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(inv.LastErrorMessage))
+                    {
+                        <div class="small text-danger mt-2">@inv.LastErrorMessage</div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-md-4">
+            <div class="card h-100 border-start border-4 border-primary">
+                <div class="card-body py-3">
+                    <div class="small text-muted mb-1">۲. وضعیت به‌روز کارپوشه مودیان (SDK 2.0.29)</div>
+                    <div class="d-flex align-items-center justify-content-between">
+                        <span class="badge fs-6 @FolderBadge(inv.FolderStatus)">@MdnUiLabels.FolderTitle(inv.FolderStatus)</span>
+                        <span class="small text-muted">@(inv.LastFolderInquiryAt?.ToFaDateTime() ?? "—")</span>
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(inv.Article6Status))
+                    {
+                        <div class="small text-muted mt-2">وضعیت حد مجاز ماده ۶: <strong>@inv.Article6Status</strong></div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-md-4">
+            <div class="card h-100 border-start border-4 border-success">
+                <div class="card-body py-3">
+                    <div class="small text-muted mb-1">۳. وضعیت تسویه و پرداخت‌های ثبت‌شده</div>
+                    <div class="d-flex align-items-center justify-content-between mb-1">
+                        <span class="badge fs-6 @PaymentBadge(inv.PaymentStatus)">@MdnUiLabels.PaymentStatusTitle(inv.PaymentStatus)</span>
+                        <span class="small fw-bold num">@inv.PaidAmount.Money() از @inv.TotalAmount.Money() ریال</span>
+                    </div>
+                    @{
+                        var pct = inv.TotalAmount > 0 ? Math.Clamp((int)(inv.PaidAmount * 100 / inv.TotalAmount), 0, 100) : 0;
+                    }
+                    <div class="progress" style="height:6px">
+                        <div class="progress-bar bg-success" style="width:@(pct)%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- قالب رسمی صورتحساب (قابل چاپ) -->
+    <div class="card mb-3">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div>
+                <strong>صورتحساب الکترونیکی فروش کالا و خدمات</strong>
+                <span class="ms-2 text-muted small">تاریخ صدور: <strong>@inv.IssueDate.ToFaDate()</strong></span>
+            </div>
+            <div class="d-flex flex-wrap gap-3 small">
+                <span>شماره مالیاتی ۲۲ کاراکتری (TaxId): <code class="fs-6">@(inv.TaxId ?? "—")</code></span>
+                @if (!string.IsNullOrWhiteSpace(inv.ReferenceTaxId))
+                {
+                    <span>مرجع (irtaxid): <code>@inv.ReferenceTaxId</code></span>
+                }
+            </div>
+        </div>
+
+        <div class="card-body">
+            <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                    <div class="p-3 rounded border bg-light h-100">
+                        <div class="fw-bold text-primary mb-1">مشخصات فروشنده</div>
+                        <div>نام تجاری: <strong>@(inv.SellerTradeName ?? "—")</strong></div>
+                        <div class="small">کد اقتصادی: <span class="font-monospace">@(inv.SellerEconomicCode ?? "—")</span> | کد پستی: <span class="font-monospace">@(inv.SellerPostalCode ?? "—")</span></div>
+                        <div class="small">حافظه مالیاتی: <span class="font-monospace">@(inv.MemoryId ?? "—")</span> | سریال هگز: <span class="font-monospace">@(inv.SerialHex ?? "—")</span></div>
+                    </div>
+                </div>
+
+                <div class="col-md-6">
+                    <div class="p-3 rounded border bg-light h-100">
+                        <div class="fw-bold text-primary mb-1">مشخصات خریدار</div>
+                        <div>نام: <strong>@(inv.BuyerName ?? "مصرف‌کننده نهایی")</strong></div>
+                        <div class="small">کد اقتصادی: <span class="font-monospace">@(inv.BuyerEconomicCode ?? "—")</span> | شناسه/کد ملی: <span class="font-monospace">@(inv.BuyerNationalId ?? "—")</span></div>
+                        <div class="small">کد پستی: <span class="font-monospace">@(inv.BuyerPostalCode ?? "—")</span> | تسویه: <strong>@MdnUiLabels.SettlementTitle(inv.SettlementMethod)</strong></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- جدول اقلام -->
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>شناسه کالا/خدمت (SSTID)</th>
+                            <th>شرح کالا یا خدمت</th>
+                            <th>واحد</th>
+                            <th>مقدار</th>
+                            <th>مبلغ واحد</th>
+                            <th>قبل از تخفیف</th>
+                            <th>تخفیف</th>
+                            <th>پس از تخفیف</th>
+                            <th>VAT (@(inv.Lines.FirstOrDefault()?.VatRate.Num() ?? "۰")٪)</th>
+                            <th>جمع کل ردیف (ریال)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var l in inv.Lines)
+                        {
+                            <tr>
+                                <td class="num text-center">@l.RowNumber.FaDigits()</td>
+                                <td class="font-monospace small">@l.Sstid</td>
+                                <td>@l.Description</td>
+                                <td class="text-center">@l.UnitCode</td>
+                                <td class="num">@l.Quantity.Qty()</td>
+                                <td class="num">@l.UnitPrice.Money()</td>
+                                <td class="num">@l.PriceBeforeDiscount.Money()</td>
+                                <td class="num text-danger">@l.DiscountAmount.Money()</td>
+                                <td class="num">@l.PriceAfterDiscount.Money()</td>
+                                <td class="num">@l.VatAmount.Money()</td>
+                                <td class="num fw-bold">@l.TotalLineAmount.Money()</td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot class="table-light fw-bold">
+                        <tr>
+                            <td colspan="6" class="text-end">جمع کل صورتحساب (ریال):</td>
+                            <td class="num">@inv.TotalBeforeDiscount.Money()</td>
+                            <td class="num text-danger">@inv.TotalDiscount.Money()</td>
+                            <td class="num">@inv.TotalAfterDiscount.Money()</td>
+                            <td class="num text-primary">@inv.TotalVat.Money()</td>
+                            <td class="num text-success fs-6">@inv.TotalAmount.Money()</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(inv.ReferenceNumber) || !string.IsNullOrWhiteSpace(inv.Uid))
+            {
+                <div class="small text-muted d-flex flex-wrap gap-3 mt-2 font-monospace">
+                    <span>ReferenceNumber: @(inv.ReferenceNumber ?? "—")</span>
+                    <span>UID: @(inv.Uid ?? "—")</span>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- بخش پرداخت‌های ثبت‌شده روی صورتحساب -->
+    <div class="card mb-3 d-print-none">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="bi bi-cash-stack me-1"></i>پرداخت‌های ثبت‌شده روی این صورتحساب (RegisterPaymentRequest — SDK 2.0.29)</h6>
+            @if (Auth.Has("Moadian.PaymentRegister") && inv.Subject != MdnInvoiceSubject.Cancellation)
+            {
+                <button class="btn btn-sm btn-success" @onclick="OpenPaymentModal">
+                    <i class="bi bi-plus-lg me-1"></i>ثبت پرداخت جدید
+                </button>
+            }
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>تاریخ پرداخت</th>
+                        <th>روش پرداخت رسمی</th>
+                        <th>مبلغ پرداختی (ریال)</th>
+                        <th>شماره پیگیری / پایانه</th>
+                        <th>وضعیت ثبت در سامانه مودیان</th>
+                        <th class="text-end">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (inv.Payments.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="6" class="text-center text-muted py-3">هنوز رکورد پرداخت جداگانه‌ای ثبت نشده است.</td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var p in inv.Payments)
+                        {
+                            <tr>
+                                <td>@p.PaymentDate.ToFaDateTime()</td>
+                                <td>@MdnUiLabels.PaymentMethodTitle(p.PaymentMethod)</td>
+                                <td class="num fw-bold">@p.PaidAmount.Money()</td>
+                                <td class="font-monospace small">
+                                    @(p.ReferenceNumber ?? "—")
+                                    @if (!string.IsNullOrWhiteSpace(p.TerminalNumber)) { <span class="text-muted"> | پایانه: @p.TerminalNumber</span> }
+                                </td>
+                                <td>
+                                    <span class="badge @PaySyncBadge(p.SyncState)">@PaySyncLabel(p.SyncState)</span>
+                                    @if (!string.IsNullOrWhiteSpace(p.LastError))
+                                    {
+                                        <div class="small text-danger mt-1">@p.LastError</div>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    @if (Auth.Has("Moadian.PaymentRegister") && p.SyncState is MdnPaymentSyncState.LocalDraft or MdnPaymentSyncState.Failed or MdnPaymentSyncState.InProgress)
+                                    {
+                                        <div class="btn-group btn-group-sm">
+                                            @if (!string.IsNullOrWhiteSpace(inv.TaxId))
+                                            {
+                                                <button class="btn btn-outline-success" disabled="@busy" @onclick="() => RetryPaymentAsync(p.Id)" title="ارسال به سامانه مودیان">
+                                                    <i class="bi bi-cloud-upload"></i> ارسال به مودیان
+                                                </button>
+                                            }
+                                            <button class="btn btn-outline-danger" disabled="@busy" @onclick="() => DeletePaymentAsync(p.Id)" title="حذف">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- صورتحساب‌های مرتبط (مرجع / اصلاحی / ابطالی / برگشتی) -->
+    @if (inv.RelatedInvoices.Count > 0)
+    {
+        <div class="card mb-3 d-print-none">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-diagram-3 me-1"></i>زنجیره صورتحساب‌های مرجع و مشتق</h6>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>شماره</th>
+                            <th>موضوع</th>
+                            <th>تاریخ</th>
+                            <th>شماره مالیاتی</th>
+                            <th>مبلغ کل</th>
+                            <th>وضعیت</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in inv.RelatedInvoices)
+                        {
+                            <tr>
+                                <td><a href="moadian/invoices/@r.Id">@r.InternalNumber</a></td>
+                                <td>@MdnUiLabels.SubjectTitle(r.Subject)</td>
+                                <td>@r.IssueDate.ToFaDate()</td>
+                                <td class="font-monospace small">@(r.TaxId ?? "—")</td>
+                                <td class="num">@r.TotalAmount.Money()</td>
+                                <td><span class="badge @SubmissionBadge(r.SubmissionStatus)">@MdnUiLabels.SubmissionTitle(r.SubmissionStatus)</span></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+
+    <!-- تاریخچه تبادلات و لاگ خطاها -->
+    <div class="card mb-4 d-print-none">
+        <div class="card-header">
+            <h6 class="mb-0"><i class="bi bi-journal-code me-1"></i>تاریخچه کامل ارسال، استعلام وضعیت و خطاهای درگاه</h6>
+        </div>
+        <div class="list-group list-group-flush">
+            @if (inv.Logs.Count == 0)
+            {
+                <div class="p-3 text-center text-muted">هنوز رویدادی ثبت نشده است.</div>
+            }
+            else
+            {
+                @foreach (var log in inv.Logs)
+                {
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <span class="badge @(log.IsSuccess ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger") me-2">
+                                    @log.ActionType — @log.StatusCode
+                                </span>
+                                <span class="fw-semibold small">@log.Summary</span>
+                            </div>
+                            <span class="small text-muted">@log.CreatedAt.ToFaDateTime() @(string.IsNullOrWhiteSpace(log.CreatedByUsername) ? "" : $"({log.CreatedByUsername})")</span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(log.ErrorDetailsJson))
+                        {
+                            <pre class="bg-light border rounded p-2 mt-2 mb-0 small font-monospace" dir="ltr">@log.ErrorDetailsJson</pre>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    </div>
+}
+
+<!-- مودال ثبت پرداخت در سامانه مودیان -->
+<Modal Visible="showPaymentModal" Title="ثبت پرداخت روی صورتحساب (RegisterPaymentRequest — SDK 2.0.29)" Size="modal-lg" OnClose="() => showPaymentModal = false">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">روش پرداخت رسمی</label>
+                <select class="form-select" @bind="payReq.PaymentMethod">
+                    <option value="@MdnPaymentMethod.Cheque">۱ — چک</option>
+                    <option value="@MdnPaymentMethod.Barter">۲ — تهاتر</option>
+                    <option value="@MdnPaymentMethod.Cash">۳ — وجه نقد</option>
+                    <option value="@MdnPaymentMethod.Pos">۴ — پایانه فروشگاهی (POS)</option>
+                    <option value="@MdnPaymentMethod.Internet">۵ — درگاه پرداخت اینترنتی</option>
+                    <option value="@MdnPaymentMethod.CardToCard">۶ — کارت به کارت</option>
+                    <option value="@MdnPaymentMethod.BankTransfer">۷ — انتقال به حساب بانکی (پایا/ساتنا)</option>
+                    <option value="@MdnPaymentMethod.Other">۸ — سایر</option>
+                </select>
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label">مبلغ پرداخت‌شده (ریال) *</label>
+                <input type="number" min="1" class="form-control num" @bind="payReq.PaidAmount" />
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label">تاریخ پرداخت</label>
+                <DatePicker Value="payDateNullable" ValueChanged="d => { if (d.HasValue) payReq.PaymentDate = d.Value; }" />
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label">شماره پیگیری پرداخت (trn)</label>
+                <input class="form-control font-monospace" dir="ltr" @bind="payReq.ReferenceNumber" placeholder="شماره مرجع/پیگیری بانکی" />
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label">شماره پایانه (trmn)</label>
+                <input class="form-control font-monospace" dir="ltr" @bind="payReq.TerminalNumber" />
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label">شماره سوئیچ / پذیرنده (iinn / acn)</label>
+                <div class="input-group">
+                    <input class="form-control font-monospace" dir="ltr" @bind="payReq.SwitchNumber" placeholder="سوئیچ" />
+                    <input class="form-control font-monospace" dir="ltr" @bind="payReq.AcceptorNumber" placeholder="پذیرنده" />
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <label class="form-label">شماره کارت پرداخت‌کننده (pcn — ۱۶ رقم یا ماسک‌شده)</label>
+                <input class="form-control font-monospace" dir="ltr" @bind="payReq.MaskedCardNumber" placeholder="603799******1234" />
+            </div>
+
+            <div class="col-md-6">
+                <label class="form-label">کد ملی / شناسه پرداخت‌کننده (pid)</label>
+                <input class="form-control font-monospace" dir="ltr" @bind="payReq.PayerNationalId" />
+            </div>
+
+            <div class="col-12">
+                <label class="form-label">توضیح داخلی</label>
+                <input class="form-control" @bind="payReq.Note" />
+            </div>
+
+            <div class="col-12">
+                <div class="form-check">
+                    <input type="checkbox" class="form-check-input" id="chkSendPayNow" @bind="payReq.SendToMoadianNow"
+                           disabled="@(inv is null || string.IsNullOrWhiteSpace(inv.TaxId))" />
+                    <label class="form-check-label" for="chkSendPayNow">
+                        ارسال مستقیم و هم‌زمان رکورد پرداخت با امضای دیجیتال به سامانه مودیان (<code>RegisterPaymentRequestAsync</code>)
+                    </label>
+                </div>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => showPaymentModal = false">انصراف</button>
+        <button class="btn btn-success" disabled="@busy" @onclick="SubmitPaymentAsync">
+            <i class="bi bi-check2-circle me-1"></i>ثبت پرداخت
+        </button>
+    </Footer>
+</Modal>
+
+<!-- مودال صدور صورتحساب اصلاحی / ابطالی / برگشت از فروش -->
+<Modal Visible="showDerivativeModal" Title="صدور صورتحساب مشتق (اصلاحی / ابطالی / برگشت از فروش)" Size="modal-md" OnClose="() => showDerivativeModal = false">
+    <ChildContent>
+        <div class="mb-3">
+            <label class="form-label">نوع صورتحساب پیرو</label>
+            <select class="form-select" @bind="derivReq.Subject">
+                <option value="@MdnInvoiceSubject.Corrective">۲ — صورتحساب اصلاحی</option>
+                <option value="@MdnInvoiceSubject.Cancellation">۳ — صورتحساب ابطالی</option>
+                <option value="@MdnInvoiceSubject.SalesReturn">۴ — صورتحساب برگشت از فروش</option>
+            </select>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">تاریخ صدور</label>
+            <DatePicker Value="derivDateNullable" ValueChanged="d => { if (d.HasValue) derivReq.IssueDate = d.Value; }" />
+        </div>
+        <div class="mb-2">
+            <label class="form-label">علت / توضیح</label>
+            <input class="form-control" @bind="derivReq.Description" placeholder="شرح علت اصلاح یا ابطال..." />
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => showDerivativeModal = false">انصراف</button>
+        <button class="btn btn-warning" disabled="@busy" @onclick="SubmitDerivativeAsync">ایجاد پیش‌نویس مشتق</button>
+    </Footer>
+</Modal>
+
+<!-- مودال JSON -->
+<Modal Visible="jsonPreview is not null" Title="پیش‌نمایش JSON رسمی (SDK 2.0.29)" Size="modal-lg" OnClose="() => jsonPreview = null">
+    <ChildContent>
+        @if (jsonPreview is not null)
+        {
+            <pre class="bg-dark text-light p-3 rounded small font-monospace mb-0" dir="ltr" style="max-height:430px;overflow:auto">@jsonPreview.JsonPayload</pre>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => jsonPreview = null">بستن</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private MdnInvoiceDetailDto? inv;
+    private MdnInvoiceJsonPreviewDto? jsonPreview;
+
+    private bool showPaymentModal;
+    private MdnRegisterPaymentRequest payReq = new();
+    private DateTime? payDateNullable => payReq.PaymentDate;
+
+    private bool showDerivativeModal;
+    private MdnCreateDerivativeRequest derivReq = new();
+    private DateTime? derivDateNullable => derivReq.IssueDate;
+
+    private bool loading = true;
+    private bool busy;
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try { inv = await Mdn.GetInvoiceDetailAsync(Id); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task PrintAsync() => await JS.InvokeVoidAsync("window.print");
+
+    private async Task OpenJsonPreviewAsync()
+    {
+        try { jsonPreview = await Mdn.PreviewJsonAsync(Id); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task SendAsync()
+    {
+        busy = true;
+        try
+        {
+            var res = await Mdn.SendInvoicesAsync(new List<int> { Id });
+            var item = res.Items.FirstOrDefault();
+            if (item?.Success == true) Toast.Success(item.Message);
+            else Toast.Warning(item?.Message ?? res.Message);
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task InquirySubmissionAsync()
+    {
+        busy = true;
+        try
+        {
+            var res = await Mdn.InquirySubmissionsAsync(new List<int> { Id });
+            Toast.Info(res.Items.FirstOrDefault()?.Message ?? res.Message);
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task InquiryFolderAsync()
+    {
+        busy = true;
+        try
+        {
+            var res = await Mdn.InquiryFolderAsync(new List<int> { Id });
+            Toast.Info(res.Items.FirstOrDefault()?.Message ?? res.Message);
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private void OpenPaymentModal()
+    {
+        var remaining = inv is not null ? Math.Max(0L, inv.TotalAmount - inv.PaidAmount) : 0L;
+        payReq = new MdnRegisterPaymentRequest
+        {
+            PaymentMethod = MdnPaymentMethod.BankTransfer,
+            PaidAmount = remaining > 0 ? remaining : (inv?.TotalAmount ?? 0),
+            PaymentDate = DateTime.Now,
+            PayerNationalId = inv?.BuyerNationalId ?? inv?.BuyerEconomicCode,
+            SendToMoadianNow = !string.IsNullOrWhiteSpace(inv?.TaxId)
+        };
+        showPaymentModal = true;
+    }
+
+    private async Task SubmitPaymentAsync()
+    {
+        busy = true;
+        try
+        {
+            var p = await Mdn.RegisterPaymentAsync(Id, payReq);
+            showPaymentModal = false;
+            if (p.SyncState == MdnPaymentSyncState.Registered)
+                Toast.Success("پرداخت با موفقیت در سامانه مودیان ثبت شد.");
+            else if (!string.IsNullOrWhiteSpace(p.LastError))
+                Toast.Warning($"پرداخت ذخیره شد اما سامانه مودیان خطا برگرداند: {p.LastError}");
+            else
+                Toast.Success("رکورد پرداخت ذخیره شد.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task RetryPaymentAsync(int paymentId)
+    {
+        busy = true;
+        try
+        {
+            var p = await Mdn.RetryPaymentAsync(Id, paymentId);
+            if (p.SyncState == MdnPaymentSyncState.Registered) Toast.Success("پرداخت در سامانه مودیان ثبت شد.");
+            else Toast.Warning(p.LastError ?? "عدم تأیید ثبت پرداخت");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task DeletePaymentAsync(int paymentId)
+    {
+        busy = true;
+        try
+        {
+            await Mdn.DeletePaymentAsync(Id, paymentId);
+            Toast.Success("رکورد پرداخت حذف شد.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private void OpenDerivativeModal()
+    {
+        derivReq = new MdnCreateDerivativeRequest
+        {
+            Subject = MdnInvoiceSubject.Corrective,
+            IssueDate = DateTime.Now
+        };
+        showDerivativeModal = true;
+    }
+
+    private async Task SubmitDerivativeAsync()
+    {
+        busy = true;
+        try
+        {
+            var created = await Mdn.CreateDerivativeAsync(Id, derivReq);
+            showDerivativeModal = false;
+            Toast.Success($"پیش‌نویس {MdnUiLabels.SubjectTitle(derivReq.Subject)} ({created.InternalNumber}) ساخته شد.");
+            Nav.NavigateTo(derivReq.Subject == MdnInvoiceSubject.Cancellation
+                ? $"moadian/invoices/{created.Id}"
+                : $"moadian/invoices/{created.Id}/edit");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private static string SubmissionBadge(MdnSubmissionStatus s) => s switch
+    {
+        MdnSubmissionStatus.Success => "bg-success-subtle text-success",
+        MdnSubmissionStatus.Sent or MdnSubmissionStatus.InProgress => "bg-info-subtle text-info-emphasis",
+        MdnSubmissionStatus.Failed or MdnSubmissionStatus.Timeout => "bg-danger-subtle text-danger",
+        _ => "bg-secondary-subtle text-secondary"
+    };
+
+    private static string FolderBadge(MdnFolderStatus s) => s switch
+    {
+        MdnFolderStatus.Approved or MdnFolderStatus.SystemApproved => "bg-primary-subtle text-primary",
+        MdnFolderStatus.Pending => "bg-warning-subtle text-warning-emphasis",
+        MdnFolderStatus.Rejected or MdnFolderStatus.Cancelled => "bg-danger-subtle text-danger",
+        _ => "bg-light text-muted"
+    };
+
+    private static string PaymentBadge(MdnPaymentStatus s) => s switch
+    {
+        MdnPaymentStatus.Paid => "bg-success-subtle text-success",
+        MdnPaymentStatus.PartiallyPaid => "bg-warning-subtle text-warning-emphasis",
+        MdnPaymentStatus.Unpaid => "bg-secondary-subtle text-secondary",
+        _ => "bg-light text-muted"
+    };
+
+    private static string PaySyncBadge(MdnPaymentSyncState s) => s switch
+    {
+        MdnPaymentSyncState.Registered or MdnPaymentSyncState.IncludedInInvoice => "bg-success-subtle text-success",
+        MdnPaymentSyncState.InProgress => "bg-info-subtle text-info-emphasis",
+        MdnPaymentSyncState.Failed => "bg-danger-subtle text-danger",
+        _ => "bg-secondary-subtle text-secondary"
+    };
+
+    private static string PaySyncLabel(MdnPaymentSyncState s) => s switch
+    {
+        MdnPaymentSyncState.IncludedInInvoice => "ارسال‌شده در بدنه صورتحساب",
+        MdnPaymentSyncState.Registered => "ثبت قطعی در سامانه مودیان",
+        MdnPaymentSyncState.InProgress => "در انتظار پاسخ مودیان",
+        MdnPaymentSyncState.Failed => "خطا در ثبت — نیازمند تلاش مجدد",
+        _ => "پیش‌نویس محلی"
+    };
+}

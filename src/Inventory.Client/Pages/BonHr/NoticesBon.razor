@@ -1,0 +1,331 @@
+@namespace Inventory.Client.Pages.BonHr
+@page "/bon-hr/notices"
+@inject BonHrApi Api
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject LayoutState Layout
+
+<PageTitle>اطلاعیه‌ها</PageTitle>
+<BonHrGuard Section="Notices">
+<BonHrShell Title="اطلاعیه‌ها" Sub="اعلان‌ها و تغییرات مهم">
+    <Actions>
+        @if (Auth.IsAdmin || Auth.Has("RadisHr.Access"))
+        {
+            <button class="btn btn-primary" type="button" @onclick="() => _showForm = true">
+                <i class="bi bi-plus-lg"></i> اطلاعیه جدید
+            </button>
+        }
+    </Actions>
+</BonHrShell>
+
+
+    @* ───────── کارتابل ممیزی مدیرعامل ───────── *@
+    @if (Auth.IsAdmin)
+    {
+        <section>
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                <div><p class="text-muted small mb-0">کارتابل مدیرعامل</p><h2>گزارش تغییرات مهم و قابل جست‌وجو</h2></div>
+                <input class="form-control" placeholder="جست‌وجوی تغییرات..." value="@_auditSearch" @oninput="e => _auditSearch = Text(e)" />
+            </div>
+
+            <div class="notification-list">
+                @foreach (var notice in FilteredNotices("statutory"))
+                {
+                    var item = notice;
+                    <div class="notification-row @(item.Seen ? "" : "unseen")">
+                        <div>
+                            <strong>@item.Title</strong>
+                            <small>@item.Message</small>
+                            <small class="text-muted">@item.Actor — @item.CreatedAt.ToString("yyyy-MM-dd HH:mm")</small>
+                        </div>
+                        @if (!item.Seen)
+                        {
+                            <button class="btn btn-light" type="button" @onclick="() => MarkNoticeSeenAsync(item)">خوانده شد</button>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="notification-list">
+                @foreach (var notice in FilteredNotices("operational"))
+                {
+                    var item = notice;
+                    <div class="notification-row @(item.Seen ? "" : "unseen")">
+                        <div>
+                            <strong>@item.Title</strong>
+                            <small>@item.Message</small>
+                            <small class="text-muted">@item.Actor — @item.CreatedAt.ToString("yyyy-MM-dd HH:mm")</small>
+                        </div>
+                        @if (!item.Seen)
+                        {
+                            <button class="btn btn-light" type="button" @onclick="() => MarkNoticeSeenAsync(item)">خوانده شد</button>
+                        }
+                    </div>
+                }
+            </div>
+
+            @if (_notices.Count == 0)
+            {
+                <p class="text-muted text-center py-4">گزارش تغییری ثبت نشده است.</p>
+            }
+        </section>
+    }
+
+    @* ───────── ایجاد اطلاعیه ───────── *@
+    <Modal Size="modal-xl" Visible="_showForm" Title="اطلاعیه جدید" OnClose="() => _showForm = false">
+        <ChildContent>
+        <form id="bon-notice-form" @onsubmit="PublishAsync" @onsubmit:preventDefault="true">
+            <div class="row g-3">
+                <div class="col-md-8">
+                    <label class="form-label">عنوان</label>
+                    <input class="form-control" required @bind="_announcement.Title" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">مدت نمایش (روز)</label>
+                    <input class="form-control" type="number" min="1" max="365" required @bind="_announcement.DurationDays" />
+                </div>
+                <div class="col-12">
+                    <label class="form-label">متن اطلاعیه</label>
+                    <textarea class="form-control" rows="4" required @bind="_announcement.Body"></textarea>
+                </div>
+                <div class="col-12">
+                    <label class="form-label">گیرندگان — نقش یا پرسنل (جستجو و چندانتخابی)</label>
+                    <MultiSearchSelect Items="_people" Values="_selectedPeople" ValuesChanged="OnPeopleChanged"
+                                       Placeholder="نام نقش یا پرسنل را تایپ کنید…" EmptyText="هنوز گیرنده‌ای انتخاب نشده است." />
+                </div>
+                <div class="col-12">
+                    <label class="form-label">پیوست‌ها</label>
+                    <InputFile class="form-control" multiple OnChange="OnAttachmentsChanged" />
+                    <div class="form-text">چند فایل را می‌توانید یکجا انتخاب کنید.</div>
+                </div>
+                @if (_attachments.Count > 0)
+                {
+                    <div class="col-12">
+                        <ul class="list-unstyled mb-0">
+                            @foreach (var attachment in _attachments)
+                            {
+                                <li><i class="bi bi-paperclip"></i> @attachment.Name <small class="text-muted">@BonFa.N((decimal)attachment.Size) بایت</small></li>
+                            }
+                        </ul>
+                    </div>
+                }
+                @if (!string.IsNullOrEmpty(_message))
+                {
+                    <div class="col-12"><div class="alert alert-info py-2 mb-0">@_message</div></div>
+                }
+            </div>
+        </form>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-light" type="button" @onclick="() => _showForm = false">انصراف (Esc)</button>
+            <button class="btn btn-primary" type="submit" form="bon-notice-form">ایجاد و ارسال اطلاعیه</button>
+        </Footer>
+    </Modal>
+
+    @* ───────── مرکز اطلاع‌رسانی ───────── *@
+    <div class="card card-body mt-3">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+            <div><p class="text-muted small mb-0">مرکز اطلاع‌رسانی</p><h2>اطلاعیه‌های فعال</h2></div>
+            <input class="form-control" placeholder="جست‌وجوی اطلاعیه..." value="@_noticeSearch" @oninput="e => _noticeSearch = Text(e)" />
+        </div>
+
+        <div class="notice-list">
+            @foreach (var announcement in FilteredAnnouncements)
+            {
+                var item = announcement;
+                <article class="notice-card">
+                    <header>
+                        <h3>@item.Title</h3>
+                        <span class="badge badge-soft-primary">@BonFa.N(item.DurationDays) روز</span>
+                    </header>
+                    <p>@item.Body</p>
+
+                    @if (item.Attachments.Count > 0)
+                    {
+                        <ul class="document-list">
+                            @foreach (var attachment in item.Attachments)
+                            {
+                                <li><a href="api/files/@attachment.StoredFileId" target="_blank">@attachment.Name</a></li>
+                            }
+                        </ul>
+                    }
+
+                    <footer>
+                        <small class="text-muted">
+                            @item.CreatedBy — @item.CreatedAt.ToString("yyyy-MM-dd") —
+                            گیرندگان: @string.Join("، ", item.Recipients.Select(RecipientName))
+                        </small>
+                        <div class="row-actions">
+                            <button class="btn btn-light" type="button" @onclick="() => MarkAnnouncementSeenAsync(item)">خوانده شد</button>
+                            @if (Auth.IsAdmin || Auth.Has("RadisHr.Access"))
+                            {
+                                <button class="btn btn-outline-danger" type="button" @onclick="() => DeleteAnnouncementAsync(item)">حذف</button>
+                            }
+                        </div>
+                    </footer>
+                </article>
+            }
+        </div>
+
+        @if (_announcements.Count == 0)
+        {
+            <p class="text-muted text-center py-4">اطلاعیه فعالی وجود ندارد.</p>
+        }
+    </div>
+
+
+</BonHrGuard>
+@code {
+    private static readonly Dictionary<string, string> Roles = new()
+    {
+        ["hr"] = "مالک فرآیند اداری",
+        ["ceo"] = "مدیرعامل",
+        ["guard"] = "مالک فرآیند نگهبانی",
+        ["hse"] = "مسئول HSE",
+        ["warehouse"] = "انباردار",
+        ["production"] = "مدیر تولید",
+        ["finance"] = "مالی",
+        ["accounting"] = "مدیر مالی حسابداری"
+    };
+
+    private List<AuditNotice> _notices = new();
+    private List<Announcement> _announcements = new();
+
+    private Announcement _announcement = new() { DurationDays = 7 };
+    private List<AnnouncementAttachment> _attachments = new();
+    private List<Employee> _employees = new();
+    private List<LookupItem> _people = new();
+    private List<int> _selectedPeople = new();
+    private Dictionary<int, string> _peopleKeys = new();
+
+    private static string Text(ChangeEventArgs args) => args.Value?.ToString() ?? "";
+
+    private string _auditSearch = "";
+    private string _noticeSearch = "";
+    private string _message = "";
+    private bool _showForm;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _announcements = await Api.ListAsync<Announcement>("api/workflows/announcements");
+        if (Auth.IsAdmin)
+            _notices = await Api.ListAsync<AuditNotice>("api/workflows/notices");
+        _employees = await Api.ListAsync<Employee>("api/employees");
+        BuildPeople();
+    }
+
+    private void BuildPeople()
+    {
+        _people = new();
+        _peopleKeys = new();
+        var i = 1;
+        foreach (var role in Roles)
+        {
+            _people.Add(new LookupItem { Id = i, Name = "نقش: " + role.Value });
+            _peopleKeys[i] = role.Key;
+            i++;
+        }
+        foreach (var e in _employees)
+        {
+            var id = e.Id > 0 ? e.Id + 1000 : i++;
+            while (_peopleKeys.ContainsKey(id)) id++;
+            _people.Add(new LookupItem { Id = id, Name = $"{e.First} {e.Last} — {e.Code}" });
+            _peopleKeys[id] = "emp:" + e.Code;
+        }
+    }
+
+    private Task OnPeopleChanged(List<int> values)
+    {
+        _selectedPeople = values ?? new();
+        return Task.CompletedTask;
+    }
+
+    private IEnumerable<AuditNotice> FilteredNotices(string channel) =>
+        _notices.Where(n => n.Channel == channel &&
+            (string.IsNullOrWhiteSpace(_auditSearch)
+             || n.Title.Contains(_auditSearch, StringComparison.OrdinalIgnoreCase)
+             || n.Message.Contains(_auditSearch, StringComparison.OrdinalIgnoreCase)
+             || n.Actor.Contains(_auditSearch, StringComparison.OrdinalIgnoreCase)));
+
+    private string RecipientName(AnnouncementRecipient r)
+    {
+        if (Roles.TryGetValue(r.RoleKey, out var role)) return role;
+        if (r.RoleKey.StartsWith("emp:"))
+        {
+            var code = r.RoleKey[4..];
+            var e = _employees.FirstOrDefault(x => x.Code == code);
+            return e == null ? code : $"{e.First} {e.Last}";
+        }
+        var e2 = _employees.FirstOrDefault(x => x.Code == r.RoleKey);
+        return e2 == null ? r.RoleKey : $"{e2.First} {e2.Last}";
+    }
+
+    private IEnumerable<Announcement> FilteredAnnouncements =>
+        _announcements.Where(a => string.IsNullOrWhiteSpace(_noticeSearch)
+            || a.Title.Contains(_noticeSearch, StringComparison.OrdinalIgnoreCase)
+            || a.Body.Contains(_noticeSearch, StringComparison.OrdinalIgnoreCase));
+
+    private async Task OnAttachmentsChanged(InputFileChangeEventArgs args)
+    {
+        _attachments.Clear();
+
+        foreach (var file in args.GetMultipleFiles(int.MaxValue))
+        {
+            using var content = new MultipartFormDataContent();
+            content.Add(new StreamContent(file.OpenReadStream(long.MaxValue)), "file", file.Name);
+
+            var stored = await Api.PostFormAsync<StoredFile>("api/files", content);
+            if (stored == null) continue;
+
+            _attachments.Add(new AnnouncementAttachment
+            {
+                Name = file.Name,
+                ContentType = file.ContentType,
+                Size = file.Size,
+                StoredFileId = stored.Uid
+            });
+        }
+    }
+
+    private async Task PublishAsync()
+    {
+        if (_selectedPeople.Count == 0) { _message = "حداقل یک گیرنده انتخاب کنید."; return; }
+
+        _announcement.Recipients = _selectedPeople
+            .Select(id => new AnnouncementRecipient { RoleKey = _peopleKeys.GetValueOrDefault(id, id.ToString()) })
+            .ToList();
+        _announcement.Attachments = _attachments.ToList();
+
+        var ok = await Api.SendAsync(HttpMethod.Post, "api/workflows/announcements", _announcement);
+        if (!ok) return;
+
+        _message = "اطلاعیه منتشر شد.";
+        _showForm = false;
+        _announcement = new Announcement { DurationDays = 7 };
+        _selectedPeople = new();
+        _attachments = new List<AnnouncementAttachment>();
+        await ReloadAsync();
+    }
+
+    private async Task MarkAnnouncementSeenAsync(Announcement announcement)
+    {
+        var ok = await Api.SendAsync(HttpMethod.Post, $"api/workflows/announcements/{announcement.Id}/seen");
+        if (ok) await ReloadAsync();
+    }
+
+    private async Task DeleteAnnouncementAsync(Announcement announcement)
+    {
+        var ok = await Api.SendAsync(HttpMethod.Delete, $"api/workflows/announcements/{announcement.Id}");
+        if (ok) await ReloadAsync();
+    }
+
+    private async Task MarkNoticeSeenAsync(AuditNotice notice)
+    {
+        var ok = await Api.SendAsync(HttpMethod.Post, $"api/workflows/notices/{notice.Id}/seen");
+        if (ok) _notices = await Api.ListAsync<AuditNotice>("api/workflows/notices");
+    }
+}

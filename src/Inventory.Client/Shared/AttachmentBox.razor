@@ -1,0 +1,524 @@
+@* ================== کامپوننت پیوست جامع ==================
+   استفاده در هر فرم: <AttachmentBox Module="WorkOrders" RefId="123" CanUpload="true" />
+   بک‌اند مشترک: /api/attachments/{module}/{refId} — بدون کد جدید برای فرم‌های بعدی
+   پیش‌نمایش داخل برنامه: PDF/عکس/متن و محتوای Word/Excel/PowerPoint *@
+@using System.Net.Http.Headers
+@using Inventory.Shared.Files
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject IDocArchiveService DocArchiveSvc
+
+<div class="attx-box">
+    <div class="attx-title">
+        <i class="bi bi-paperclip"></i> پیوست‌ها
+        <span class="attx-count">@items.Count</span>
+    </div>
+    <div class="attx-body">
+        @if (items.Count == 0)
+        {
+            <div class="fs-8 text-muted py-1">پیوستی ثبت نشده است.</div>
+        }
+        @foreach (var a in items.OrderByDescending(x => x.UploadedAt))
+        {
+            <div class="attx-row">
+                <i class="bi @IconOf(a) attx-fileicon @(CanPreviewOf(a) ? "attx-linkable" : "")"></i>
+                <div class="attx-main">
+                    @if (CanPreviewOf(a))
+                    {
+                        <button type="button" @onclick="() => Preview(a)" class="attx-name attx-name-btn" title="پیش‌نمایش داخل برنامه">
+                            @a.FileName
+                        </button>
+                    }
+                    else if (a.CanDownload)
+                    {
+                        <button class="attx-name attx-name-btn" title="دانلود" disabled="@downloading.Contains(a.Id)" @onclick="() => Download(a)">
+                            @a.FileName
+                        </button>
+                    }
+                    else
+                    {
+                        <span class="attx-name text-muted" title="این فایل قابل پیش‌نمایش نیست و اجازهٔ دانلود ندارید">
+                            @a.FileName
+                        </span>
+                    }
+                    <div class="attx-meta">
+                        @if (!CanPreviewOf(a) && a.CanDownload)
+                        {
+                            <span class="attx-tag">پیش‌نمایش ندارد</span>
+                        }
+                        @if (!a.CanDownload)
+                        {
+                            <span class="attx-tag attx-tag-warn"><i class="bi bi-eye"></i> فقط مشاهده</span>
+                        }
+                        @if (a.DocumentId > 0)
+                        {
+                            <span class="attx-tag attx-tag-conf" title="این مدرک محرمانه است؛ دانلود/مشاهده فایل‌های آن با تایید مجدد رمز است">
+                                <i class="bi bi-shield-lock"></i> @(NeedsConfirmNow(a) ? "محرمانه — نیازمند تایید رمز" : "محرمانه — نمایش تایید شده")
+                            </span>
+                        }
+                        @if (a.Watermark)
+                        {
+                            <span class="attx-tag attx-tag-wm" title="پیش‌نمایش فایل‌های این مدرک با واترمارک نام شما نمایش داده می‌شود">
+                                <i class="bi bi-droplet-half"></i> واترمارک
+                            </span>
+                        }
+                        <span>@a.UploaderName</span>
+                        <span>•</span>
+                        <span>@FormatSize(a.Size)</span>
+                        <span>•</span>
+                        <span title="@a.UploadedAt.ToString("g")">@a.UploadedAt.ToFa()</span>
+                    </div>
+                </div>
+                <div class="attx-actions">
+                    @if (CanPreviewOf(a))
+                    {
+                        <button type="button" class="btn btn-sm btn-light py-0" title="پیش‌نمایش" @onclick="() => Preview(a)">
+                            <i class="bi bi-eye text-primary"></i>
+                        </button>
+                    }
+                    @if (a.CanDownload)
+                    {
+                        <button type="button" class="btn btn-sm btn-light py-0" title="دانلود" disabled="@downloading.Contains(a.Id)" @onclick="() => Download(a)">
+                            <i class="@(downloading.Contains(a.Id) ? "spinner-border spinner-border-sm text-primary" : "bi bi-download text-success")"></i>
+                        </button>
+                    }
+                    @if (Module == "DocVersion" && a.CanDownload && CanPrintOf(a))
+                    {
+                        <button type="button" class="btn btn-sm btn-light py-0" title="چاپ با لاگ و واترمارک نام شما" @onclick="() => Print(a)">
+                            <i class="bi bi-printer text-info"></i>
+                        </button>
+                    }
+                    @if (CanUpload && a.CanDelete)
+                    {
+                        <button type="button" class="btn btn-sm btn-light py-0" title="حذف" @onclick="() => Delete(a.Id)">
+                            <i class="bi bi-trash text-danger"></i>
+                        </button>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (CanUpload)
+        {
+            <div class="attx-drop @(dragOver ? "drag" : "") @(uploading ? "busy" : "") mt-2"
+                 @ondragenter="OnDragEnter" @ondragenter:preventDefault
+                 @ondragover:preventDefault
+                 @ondragleave="OnDragLeave"
+                 @ondrop="OnDropReset" @ondrop:preventDefault>
+                <div class="attx-drop-inner">
+                    @if (uploading)
+                    {
+                        <div class="spinner-border spinner-border-sm text-primary"></div>
+                        <div class="fw-700 fs-8 text-primary ms-1 mt-1">در حال بارگذاری…</div>
+                        @if (pendingUploads.Count > 0)
+                        {
+                            <div class="fs-9 text-muted mt-1">
+                                @string.Join(" ، ", pendingUploads)
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <i class="bi bi-cloud-arrow-up attx-drop-icon"></i>
+                        <div class="fw-700 fs-8">فایل‌ها را اینجا رها کنید یا کلیک کنید</div>
+                        <div class="fs-9 text-muted">بدون محدودیت تعداد و حجم — هر نوع فایلی</div>
+                    }
+                </div>
+                <InputFile class="attx-file-overlay" OnChange="OnFiles" multiple disabled="@uploading" />
+            </div>
+            @if (Module == "DocVersion")
+            {
+                <div class="fs-9 text-muted mt-1">
+                    <i class="bi bi-info-circle ms-1"></i>
+                    پس از بارگذاری، متن PDF/Word/Excel/تصویر به‌صورت خودکار استخراج می‌شود و در جستجوی آرشیو قابل‌یافتن است.
+                </div>
+            }
+        }
+    </div>
+</div>
+
+<FilePreviewModal @ref="previewModal" DownloadRequested="DownloadFromPreview" ConfirmationRequired="PreviewConfirmationRequired" />
+
+@* مودال تایید مجدد رمز برای فایل‌های مدرک محرمانه *@
+@if (Module == "DocVersion")
+{
+    <Modal Visible="showConfirm" Title="تایید مجدد رمز — مدرک محرمانه" Size="modal-sm" OnClose="CloseConfirm">
+        <ChildContent>
+            <div class="fs-8 mb-2 text-body-secondary">
+                <i class="bi bi-shield-lock text-warning"></i>
+                مدیر این مدرک آن را محرمانه تعیین کرده است؛ برای @(pendingPrint ? "چاپ" : pendingDownload ? "دانلود" : "مشاهده")
+                فایل «@pendingItem?.FileName» رمز ورودتان را دوباره وارد کنید.
+            </div>
+            <input type="password" class="form-control form-control-sm" placeholder="رمز عبور شما"
+                   @bind="confirmPassword" @onkeydown="OnConfirmKey" disabled="@confirmBusy" autocomplete="current-password" />
+            @if (confirmError != null)
+            {
+                <div class="fs-8 text-danger mt-1"><i class="bi bi-exclamation-triangle"></i> @confirmError</div>
+            }
+            <div class="fs-9 text-muted mt-2">پس از تایید، تا ۱۵ دقیقه نیازی به ورود مجدد رمز نیست.</div>
+        </ChildContent>
+        <Footer>
+            <button type="button" class="btn btn-sm btn-light" @onclick="CloseConfirm" disabled="@confirmBusy">انصراف</button>
+            <button type="button" class="btn btn-sm btn-primary" @onclick="DoConfirm" disabled="@confirmBusy">
+                @if (confirmBusy)
+                {
+                    <span class="spinner-border spinner-border-sm"></span>
+                }
+                تایید رمز
+            </button>
+        </Footer>
+    </Modal>
+}
+
+<style>
+    .attx-box { border: 1px solid #e8edf3; border-radius: 14px; overflow: hidden; background:#fff; }
+    .attx-title { background: #f8fafc; padding: .5rem .85rem; font-size: .82rem; font-weight: 700; color: #334155;
+                  border-bottom: 1px solid #eef2f7; display:flex; align-items:center; gap:.4rem; }
+    .attx-title i { color: #2563eb; }
+    .attx-count { background:#e8eefc; color:#2563eb; border-radius:999px; font-size:.7rem; padding:.05rem .5rem; }
+    .attx-body { padding: .6rem .85rem; }
+    .attx-row { display:flex; align-items:flex-start; gap:.55rem; padding:.42rem .1rem; border-bottom:1px dashed #eef2f7; }
+    .attx-row:last-of-type { border-bottom:0; }
+    .attx-fileicon { font-size:1.15rem; line-height:1.4; color:#94a3b8; }
+    .attx-fileicon.attx-linkable { color:#2563eb; }
+    .attx-main { flex:1; min-width:0; }
+    .attx-name { font-size:.8rem; font-weight:600; color:#1e293b; text-decoration:none; word-break:break-all; }
+    a.attx-name:hover { color:#2563eb; text-decoration:underline; }
+    .attx-meta { font-size:.68rem; color:#94a3b8; display:flex; flex-wrap:wrap; gap:.35rem; align-items:center; margin-top:.1rem; }
+    .attx-name-btn { background:none; border:none; padding:0; font:inherit; color:inherit; text-align:right; cursor:pointer; }
+    .attx-tag { background:#f1f5f9; color:#64748b; border-radius:999px; padding:.02rem .45rem; }
+    .attx-tag-warn { background:#fef3c7; color:#92400e; }
+    .attx-tag-conf { background:#ede9fe; color:#5b21b6; }
+    .attx-tag-wm { background:#e0f2fe; color:#075985; }
+    .attx-actions { display:flex; gap:.25rem; align-items:center; }
+    .attx-actions .btn { line-height:1.3; }
+    .attx-drop { position: relative; border: 2px dashed #c7d7f5; border-radius: 12px; background: #f8fbff;
+                 transition: all .15s ease; overflow: hidden; }
+    .attx-drop-inner { padding: .85rem .75rem; text-align: center; color: #475569; pointer-events: none; }
+    .attx-drop-icon { font-size: 1.6rem; color: #2563eb; display: block; margin-bottom: .15rem; }
+    .attx-file-overlay { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+    .attx-file-overlay::-webkit-file-upload-button { cursor: pointer; }
+    .attx-drop.drag { border-color: #2563eb; background: #eff6ff; box-shadow: 0 0 0 4px rgba(37,99,235,.12); }
+    .attx-drop.busy { opacity: .8; pointer-events: none; }
+    .fs-9 { font-size: .68rem; }
+</style>
+
+@code {
+    /// <summary>نام ماژول — مثل WorkOrders، ItRequests، Orders، DocVersion</summary>
+    [Parameter] public string Module { get; set; } = "";
+
+    /// <summary>شناسه رکورد در ماژول</summary>
+    [Parameter] public int RefId { get; set; }
+
+    /// <summary>اجازه آپلود/حذف</summary>
+    [Parameter] public bool CanUpload { get; set; } = true;
+
+    /// <summary>
+    /// آدرس پایهٔ متن استخراج‌شده برای پیش‌نمایش Word/Excel (فقط آرشیو اسناد):
+    /// مثل "/api/doc-archive/attachments" — خالی یعنی چنین امکانی نیست.
+    /// </summary>
+    [Parameter] public string? TextPreviewApi { get; set; }
+
+    /// <summary>
+    /// تعداد پیوست‌ها پس از هر بارگذاری/حذف/بازخوانی به میزبان خبر داده می‌شود تا
+    /// شمارندهٔ پیوست در جای‌های دیگر همان فرم (مثلاً تب یا خلاصهٔ جزئیات) هم‌زمان
+    /// به‌روز شود؛ بدون این، شمارندهٔ نمایش‌داده‌شده با محتوای واقعی جعبه اختلاف داشت.
+    /// </summary>
+    [Parameter] public EventCallback<int> OnCountChanged { get; set; }
+
+    // بدون محدودیت حجم و تعداد فایل
+    private const long MaxBytes = long.MaxValue;
+    private const int MaxFiles = int.MaxValue;
+
+    private List<AttItem> items = new();
+    private readonly List<string> pendingUploads = new();
+    private readonly HashSet<int> downloading = new();
+    private FilePreviewModal? previewModal;
+    private string apiBase = "";
+    private bool dragOver, uploading;
+    private int dragDepth;
+    private int MyUserId => Auth.UserId;
+
+    // ---------- مدرک محرمانه (تایید مجدد رمز) ----------
+    private readonly Dictionary<int, DateTimeOffset> confirmedDocs = new();
+    private bool showConfirm;
+    private AttItem? pendingItem;
+    private bool pendingDownload;
+    private bool pendingPrint;
+    private string confirmPassword = "";
+    private bool confirmBusy;
+    private string? confirmError;
+
+    private bool NeedsConfirmNow(AttItem a) => a.DocumentId > 0 && a.NeedsConfirm &&
+        (!confirmedDocs.TryGetValue(a.DocumentId, out var until) || until <= DateTimeOffset.UtcNow);
+
+    private void OnDragEnter() { dragDepth++; dragOver = true; }
+    private void OnDragLeave() { if (--dragDepth <= 0) { dragDepth = 0; dragOver = false; } }
+    private void OnDropReset() { dragDepth = 0; dragOver = false; }
+
+    public class AttItem
+    {
+        public int Id { get; set; }
+        public string FileName { get; set; } = "";
+        public string UploaderName { get; set; } = "";
+        public int UploaderUserId { get; set; }
+        public DateTime UploadedAt { get; set; }
+        public long Size { get; set; }
+        public string? ContentType { get; set; }
+        /// <summary>قابل نمایش داخل برنامه (PDF/عکس/آفیس/متن) — از سمت سرور</summary>
+        public bool CanPreview { get; set; }
+        /// <summary>کاربر جاری حق دانلود دارد</summary>
+        public bool CanDownload { get; set; }
+        /// <summary>اجازه حذفِ محاسبه‌شده توسط سرور؛ خواندن/دانلود به‌تنهایی اجازه حذف نیست.</summary>
+        public bool CanDelete { get; set; }
+        /// <summary>شناسه مدرک — برای پیوست‌های DocVersion وقتی مدرک «محرمانه» است (0 یعنی محرمانه نیست)</summary>
+        public int DocumentId { get; set; }
+        /// <summary>قفل تایید رمز برای این کاربر هنوز باز نشده است</summary>
+        public bool NeedsConfirm { get; set; }
+        /// <summary>مدرک واترمارک‌دار است — پیش‌نمایش داخل برنامه با واترمارک کاربر نمایش داده می‌شود</summary>
+        public bool Watermark { get; set; }
+    }
+
+    /// <summary>ورد/اکسل — پیش‌نمایش HTML + متن استخراج‌شده</summary>
+    private static bool IsOffice(AttItem a) => AttachmentPreviewFormats.Kind(a.FileName, a.ContentType) == "office";
+    private static bool IsImage(AttItem a) => AttachmentPreviewFormats.Kind(a.FileName, a.ContentType) == "image";
+    private static bool IsPdf(AttItem a) => AttachmentPreviewFormats.Kind(a.FileName, a.ContentType) == "pdf";
+    private bool CanPreviewOf(AttItem a) => a.CanPreview || AttachmentPreviewFormats.Kind(a.FileName, a.ContentType) != "other";
+
+    private string DownloadUrl(AttItem a) =>
+        $"{apiBase}/api/attachments/download/{a.Id}";
+
+    /// <summary>قابل چاپ با لاگ؟ فقط PDF و عکس (همان پوشش واترمارک سمت سرور).</summary>
+    private static bool CanPrintOf(AttItem a) => IsPdf(a) || IsImage(a);
+
+    private string PrintUrl(AttItem a) =>
+        $"{apiBase}/api/doc-archive/print/file/{a.Id}?access_token={Auth.Token}";
+
+    private static string IconOf(AttItem a)
+    {
+        var fn = a.FileName.ToLowerInvariant();
+        var ct = (a.ContentType ?? "").ToLowerInvariant();
+        if (fn.EndsWith(".pdf") || ct.Contains("pdf")) return "bi-file-earmark-pdf";
+        if (ct.StartsWith("image/") || fn.EndsWith(".png") || fn.EndsWith(".jpg") || fn.EndsWith(".jpeg")
+            || fn.EndsWith(".gif") || fn.EndsWith(".webp") || fn.EndsWith(".bmp") || fn.EndsWith(".svg")
+            || fn.EndsWith(".tif") || fn.EndsWith(".tiff") || fn.EndsWith(".ico")) return "bi-file-earmark-image";
+        if (fn.EndsWith(".docx") || fn.EndsWith(".doc") || ct.Contains("wordprocessingml") || ct.Contains("msword")) return "bi-file-earmark-word";
+        if (fn.EndsWith(".pptx") || fn.EndsWith(".ppt") || fn.EndsWith(".ppsx") || fn.EndsWith(".pptm") || ct.Contains("presentationml") || ct.Contains("ms-powerpoint")) return "bi-file-earmark-ppt";
+        if (fn.EndsWith(".xlsx") || fn.EndsWith(".xls") || fn.EndsWith(".csv") || ct.Contains("spreadsheetml") || ct.Contains("ms-excel")) return "bi-file-earmark-excel";
+        return "bi-file-earmark-text";
+    }
+
+    private async Task Preview(AttItem a)
+    {
+        if (NeedsConfirmNow(a)) { ShowConfirm(a, false); return; }
+        if (previewModal is not null)
+        {
+            var textApi = TextPreviewApi != null && IsOffice(a)
+                ? TextPreviewApi.TrimEnd('/') + "/" + a.Id + "/text"
+                : null;
+            var wm = a.Watermark ? $"{Auth.DisplayName} — {DateTime.Now:yyyy/MM/dd HH:mm}" : null;
+            await previewModal.ShowAsync(a.Id, a.FileName, a.ContentType, a.CanDownload, textApi, wm);
+        }
+        else Toast.Error("پیش‌نمایش هنوز آماده نیست؛ صفحه را تازه کنید و دوباره تلاش کنید.");
+    }
+
+    private async Task PreviewConfirmationRequired(AttachmentPreviewResult result)
+    {
+        // The server remains authoritative even if a local confirmation cache is stale.
+        var a = items.FirstOrDefault(x => x.Id == previewModal?.CurrentAttachmentId);
+        if (a == null || Module != "DocVersion" || result.DocumentId <= 0) return;
+        a.DocumentId = result.DocumentId;
+        a.NeedsConfirm = true;
+        confirmedDocs.Remove(a.DocumentId);
+        if (previewModal != null) await previewModal.Close();
+        ShowConfirm(a, false);
+    }
+
+    private async Task DownloadFromPreview(int id)
+    {
+        var item = items.FirstOrDefault(a => a.Id == id);
+        if (item is not null) await Download(item);
+        else Toast.Error("فایل در فهرست فعلی یافت نشد؛ صفحه را تازه کنید.");
+    }
+
+    private async Task RequestDownloadPassword(AttItem a)
+    {
+        confirmedDocs.Remove(a.DocumentId);
+        a.NeedsConfirm = true;
+        if (previewModal is not null) await previewModal.Close();
+        ShowConfirm(a, true);
+    }
+
+    private async Task Download(AttItem a)
+    {
+        if (!a.CanDownload || downloading.Contains(a.Id)) return;
+        if (NeedsConfirmNow(a)) { await RequestDownloadPassword(a); return; }
+        downloading.Add(a.Id);
+        try
+        {
+            var result = await JS.InvokeAsync<AttachmentDownloadResult>("filePreview.download", DownloadUrl(a), Auth.Token, a.FileName);
+            if (result.Code == "PASSWORD_CONFIRM_REQUIRED" && result.DocumentId > 0)
+            {
+                // Server confirmation may have expired while the page remained open.
+                a.DocumentId = result.DocumentId;
+                await RequestDownloadPassword(a);
+            }
+            else if (!result.Success) Toast.Error(result.Message ?? "دانلود فایل انجام نشد.");
+        }
+        catch (Exception)
+        {
+            Toast.Error("دانلود فایل انجام نشد؛ صفحه را تازه کنید و دوباره تلاش کنید.");
+        }
+        finally { downloading.Remove(a.Id); }
+    }
+
+    /// <summary>باز کردن نسخه چاپی (واترمارک‌دار با نام چاپ‌کننده + تاریخ) در تب جدید — چاپ در لاگ ثبت می‌شود.</summary>
+    private async Task Print(AttItem a)
+    {
+        if (!a.CanDownload || !CanPrintOf(a)) return;
+        if (NeedsConfirmNow(a)) { ShowConfirm(a, false, true); return; }
+        await JS.InvokeVoidAsync("open", PrintUrl(a), "_blank");
+        Toast.Info("نسخه چاپی با واترمارک نام شما باز شد — با Ctrl+P چاپ کنید. این چاپ در لاگ ثبت می‌شود.");
+    }
+
+    private void ShowConfirm(AttItem a, bool download, bool print = false)
+    {
+        pendingItem = a;
+        pendingDownload = download;
+        pendingPrint = print;
+        confirmPassword = "";
+        confirmError = null;
+        showConfirm = true;
+    }
+
+    private Task CloseConfirm()
+    {
+        if (confirmBusy) return Task.CompletedTask;
+        showConfirm = false;
+        pendingItem = null;
+        pendingPrint = false;
+        return Task.CompletedTask;
+    }
+
+    private async Task OnConfirmKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await DoConfirm();
+    }
+
+    private async Task DoConfirm()
+    {
+        if (pendingItem is null) return;
+        if (string.IsNullOrWhiteSpace(confirmPassword))
+        {
+            confirmError = "رمز عبور را وارد کنید.";
+            return;
+        }
+
+        confirmBusy = true;
+        confirmError = null;
+        try
+        {
+            await DocArchiveSvc.ConfirmDownloadAsync(pendingItem.DocumentId, confirmPassword);
+            confirmedDocs[pendingItem.DocumentId] = DateTimeOffset.UtcNow.AddMinutes(14);
+            var item = pendingItem;
+            var wasDownload = pendingDownload;
+            var wasPrint = pendingPrint;
+            showConfirm = false;
+            pendingItem = null;
+            pendingPrint = false;
+            await Reload();
+            StateHasChanged();
+            Toast.Success("تایید شد — تا ۱۵ دقیقه فایل‌های این مدرک باز هستند.");
+            // Use refreshed server flags, not a stale instance from before confirmation.
+            item = items.FirstOrDefault(a => a.Id == item.Id) ?? item;
+            if (wasPrint) await Print(item);
+            else if (wasDownload) await Download(item);
+            else await Preview(item);
+        }
+        catch (Exception ex)
+        {
+            confirmError = string.IsNullOrWhiteSpace(ex.Message) ? "تایید رمز ناموفق بود." : ex.Message;
+        }
+        finally { confirmBusy = false; }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        apiBase = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+        Http.DefaultRequestHeaders.Authorization = string.IsNullOrWhiteSpace(Auth.Token) ? null : new AuthenticationHeaderValue("Bearer", Auth.Token);
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        if (RefId <= 0 || string.IsNullOrWhiteSpace(Module)) { items = new(); await NotifyCount(); return; }
+        try { items = await Http.GetFromJsonAsync<List<AttItem>>($"/api/attachments/{Module}/{RefId}") ?? new(); }
+        catch { items = new(); }
+        await NotifyCount();
+    }
+
+    /// <summary>اطلاع‌دادن تعداد پیوست‌ها به میزبان (آپلود/حذف/بازخوانی).</summary>
+    private async Task NotifyCount()
+    {
+        if (OnCountChanged.HasDelegate)
+            await OnCountChanged.InvokeAsync(items.Count);
+    }
+
+    private async Task OnFiles(Microsoft.AspNetCore.Components.Forms.InputFileChangeEventArgs e)
+    {
+        if (!CanUpload) return;
+        OnDropReset();
+        var files = e.GetMultipleFiles(int.MaxValue).ToList();
+
+        // پیش‌چک حجم/تعداد با پیام واضح
+        var oversized = files.Where(f => f.Size > 20 * 1024 * 1024).Select(f => f.Name).ToList();
+        foreach (var n in oversized) files.RemoveAll(f => f.Name == n);
+        if (oversized.Count > 0)
+            Toast.Error($"{string.Join("، ", oversized.Take(3))}{(oversized.Count > 3 ? " و …" : "")} حذف شد: هر فایل حداکثر ۱۰ مگابایت.");
+
+        if (files.Count == 0) { await Reload(); return; }
+
+        uploading = true;
+        try
+        {
+            var ok = 0;
+            foreach (var f in files)
+            {
+                pendingUploads.Add(f.Name);
+                try
+                {
+                    using var content = new MultipartFormDataContent();
+                    var sc = new StreamContent(f.OpenReadStream(long.MaxValue));
+                    sc.Headers.ContentType = new MediaTypeHeaderValue(
+                        string.IsNullOrWhiteSpace(f.ContentType) ? "application/octet-stream" : f.ContentType);
+                    content.Add(sc, "file", f.Name);
+                    var resp = await Http.PostAsync($"/api/attachments/{Module}/{RefId}", content);
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        var body = await resp.Content.ReadAsStringAsync();
+                        Toast.Error($"بارگذاری {f.Name} ناموفق بود ({(int)resp.StatusCode}).");
+                    }
+                    else ok++;
+                }
+                catch (Exception ex) { Toast.Error($"بارگذاری {f.Name}: {ex.Message}"); }
+                pendingUploads.Remove(f.Name);
+            }
+            await Reload();
+            if (ok > 0)
+                Toast.Success(Module == "DocVersion"
+                    ? $"{ok.Num()} پیوست بارگذاری شد — استخراج متن به‌صورت خودکار در حال انجام است."
+                    : $"{ok.Num()} پیوست بارگذاری شد.");
+        }
+        finally { uploading = false; pendingUploads.Clear(); }
+    }
+
+    private async Task Delete(int id)
+    {
+        try { await Http.DeleteAsync($"/api/attachments/{id}"); await Reload(); } catch { }
+    }
+
+    private static string FormatSize(long b) =>
+        b < 1024 ? $"{b}B" : b < 1024 * 1024 ? $"{b / 1024}KB" : $"{b / 1024 / 1024:0.#}MB";
+}

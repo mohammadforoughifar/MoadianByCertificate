@@ -1,0 +1,351 @@
+@namespace Inventory.Client.Pages
+@page "/referrers"
+@inject IReferrerService ReferrerSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>معرف‌ها</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>معرف‌ها</h1>
+        <p class="lead">بازاریاب‌ها و درصد پورسانت فروش کالا و خدمات</p>
+    </div>
+    <button class="btn btn-primary ms-auto" @onclick="OpenNew">
+        <i class="bi bi-plus-lg"></i> معرف جدید
+    </button>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="جستجوی نام معرف…" @bind="search" @bind:event="oninput" @bind:after="SearchChanged" />
+                </div>
+            </div>
+            <div class="col-md-auto">
+                <div class="form-check ms-2">
+                    <input class="form-check-input" type="checkbox" id="activeChk" checked="@activeOnly" @onchange="OnActiveChanged" />
+                    <label class="form-check-label" for="activeChk">فقط فعال‌ها</label>
+                </div>
+            </div>
+            <div class="col-auto ms-auto fs-8 text-muted">@total.Num() معرف</div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-person-badge"></i><h5>معرفی یافت نشد</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>نام معرف</th>
+                            <th>مجموعه</th>
+                            <th>تلفن</th>
+                            <th class="text-start">پورسانت کالا (٪ از سود)</th>
+                            <th class="text-start">پورسانت خدمات (٪ از مبلغ)</th>
+                            <th class="text-start">اسناد فروش</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in Paged)
+                        {
+                            <tr>
+                                <td class="fw-500"><i class="bi bi-person-badge text-muted ms-1"></i> @r.Name</td>
+                                <td class="text-muted">@(string.IsNullOrWhiteSpace(r.CompanyName) ? "—" : r.CompanyName)</td>
+                                <td>@(r.Phone ?? "—")</td>
+                                <td class="text-start num">@r.GoodsCommissionPercent.Num()٪</td>
+                                <td class="text-start num">@r.ServiceCommissionPercent.Num()٪</td>
+                                <td class="text-start"><span class="badge badge-soft-primary num">@r.OrderCount.Num()</span></td>
+                                <td>
+                                    @if (r.IsActive)
+                                    {
+                                        <span class="badge badge-soft-success"><i class="bi bi-check2"></i> فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-muted">غیرفعال</span>
+                                    }
+                                </td>
+                                <td class="text-end text-nowrap">
+                                    <button class="btn btn-sm btn-light" title="کارت ویزیت" @onclick="() => ShowCard(r)"><i class="bi bi-person-vcard text-success"></i></button>
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(r)"><i class="bi bi-pencil text-primary"></i></button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(r)"><i class="bi bi-trash text-danger"></i></button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var r in Paged)
+                {
+                    <div class="m-card @(r.IsActive ? "st-ready" : "st-delivered")">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi bi-person-badge"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <span class="fw-700 text-truncate">@r.Name</span>
+                                    @if (!r.IsActive)
+                                    {
+                                        <span class="badge badge-soft-muted fs-8">غیرفعال</span>
+                                    }
+                                </div>
+                                <div class="fs-8 text-muted text-truncate">@(string.IsNullOrWhiteSpace(r.CompanyName) ? "—" : r.CompanyName)@(string.IsNullOrWhiteSpace(r.Phone) ? "" : $" — {r.Phone}")</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">اسناد فروش</div>
+                                <div class="num fw-800 text-primary">@r.OrderCount.Num()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-money">
+                                <div>
+                                    <div class="fs-8 text-muted">پورسانت کالا (از سود)</div>
+                                    <div class="num fw-700">@r.GoodsCommissionPercent.Num()٪</div>
+                                </div>
+                                <div class="text-end">
+                                    <div class="fs-8 text-muted">پورسانت خدمات (از مبلغ)</div>
+                                    <div class="num fw-700">@r.ServiceCommissionPercent.Num()٪</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="m-card-actions">
+                            <button class="btn btn-light text-success" @onclick="() => ShowCard(r)"><i class="bi bi-person-vcard"></i> کارت</button>
+                            <button class="btn btn-light text-primary" @onclick="() => OpenEdit(r)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            <button class="btn btn-light text-danger" @onclick="() => Delete(r)"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="ChangePage" />
+        }
+    </div>
+</div>
+
+<Modal Visible="showModal" Title="@(editing ? "ویرایش معرف" : "معرف جدید")" OnClose="CloseModal">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-md-6">
+            <label class="form-label">نام معرف <span class="text-danger">*</span></label>
+            <input class="form-control" @bind="form.Name" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">نام مجموعه</label>
+            <input class="form-control" @bind="form.CompanyName" placeholder="شرکت / فروشگاه / مجموعه" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">تلفن</label>
+            <input class="form-control" @bind="form.Phone" dir="ltr" data-digits="tel" inputmode="tel" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">درصد پورسانت کالا</label>
+            <div class="input-group">
+                <input class="form-control num" value="@fGoods" @oninput="@(e => fGoods = e.Value?.ToString() ?? "")" inputmode="decimal" dir="ltr" />
+                <span class="input-group-text">٪</span>
+            </div>
+            <div class="fs-8 text-muted mt-1">بر مبنای <b>سود</b> سطرهای کالا</div>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">درصد پورسانت خدمات</label>
+            <div class="input-group">
+                <input class="form-control num" value="@fService" @oninput="@(e => fService = e.Value?.ToString() ?? "")" inputmode="decimal" dir="ltr" />
+                <span class="input-group-text">٪</span>
+            </div>
+            <div class="fs-8 text-muted mt-1">بر مبنای <b>کل مبلغ</b> سطرهای خدمات</div>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">شماره کارت</label>
+            <input class="form-control num" @bind="form.CardNumber" dir="ltr" maxlength="16"
+                   placeholder="6037xxxxxxxxxxxx" inputmode="numeric" />
+            <div class="fs-8 text-muted mt-1">۱۶ رقم — برای واریز پورسانت</div>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">شماره شبا (IBAN)</label>
+            <div class="input-group" dir="ltr">
+                <span class="input-group-text">IR</span>
+                <input class="form-control num" @bind="form.Iban" dir="ltr" maxlength="24"
+                       placeholder="xxxxxxxxxxxxxxxxxxxxxxxx" inputmode="numeric" />
+            </div>
+            <div class="fs-8 text-muted mt-1">۲۴ رقم بعد از IR</div>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">سقف تخفیف در سفارش ویزیتوری (٪)</label>
+            <div class="input-group">
+                <input class="form-control num" value="@fDiscountCap" @oninput="@(e => fDiscountCap = e.Value?.ToString() ?? "")" inputmode="decimal" placeholder="0" dir="ltr" />
+                <span class="input-group-text">٪</span>
+            </div>
+            <div class="fs-8 text-muted mt-1">۰ یا خالی = بدون سقف؛ عبور از سقف، سفارش را «نیازمند تأیید ویژه» می‌کند.</div>
+        </div>
+        <div class="col-12">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="refCanView" @bind="form.CanViewProducts" />
+                <label class="form-check-label" for="refCanView">
+                    <i class="bi bi-eye text-primary"></i> اجازه مشاهده «کالاهای موجود» در پنل معرف
+                </label>
+            </div>
+            <div class="fs-8 text-muted mt-1">در صورت فعال بودن، این معرف در پنل خودش فهرست کالاهای دارای موجودی (نام، کد، قیمت فروش) را می‌بیند — بدون قیمت خرید و مقدار موجودی.</div>
+        </div>
+        <div class="col-12">
+            <label class="form-label d-block">وضعیت</label>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="refStatus" id="refActive"
+                       checked="@form.IsActive" @onchange="@(() => form.IsActive = true)" />
+                <label class="form-check-label" for="refActive">فعال</label>
+            </div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="refStatus" id="refInactive"
+                       checked="@(!form.IsActive)" @onchange="@(() => form.IsActive = false)" />
+                <label class="form-check-label" for="refInactive">غیرفعال</label>
+            </div>
+        </div>
+    </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseModal">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+<Modal Visible="cardFor is not null" Title="@($"کارت ویزیت — {cardFor?.Name}")" Size="modal-lg" OnClose="() => cardFor = null">
+    <ChildContent>
+        @if (cardFor is not null)
+        {
+            <BusinessCard Name="@cardFor.Name" Shop="@cardFor.CompanyName" Phone="@cardFor.Phone" />
+        }
+    </ChildContent>
+</Modal>
+
+@code {
+    private Referrer? cardFor;
+    private void ShowCard(Referrer r) => cardFor = r;
+
+    private List<Referrer> items = new();
+    private bool loading = true, activeOnly;
+    private string search = "";
+
+    private Referrer form = new();
+    private string fGoods = "", fService = "";
+    private string fDiscountCap = "";
+    private bool showModal, saving;
+    private bool editing => form.Id != 0;
+
+
+    // ---------- صفحه‌بندی ----------
+    private int page = 1;
+    private const int PageSize = 12;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+    private List<Referrer> Paged => items;
+    private int total, loadVersion;
+    private async Task ChangePage(int value) { page = value; await Load(); }
+    private async Task SearchChanged() { page = 1; await Load(); }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("معرف‌ها");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        var version = ++loadVersion;
+        loading = true;
+        try
+        {
+            var result = await ReferrerSvc.GetPagedAsync((page - 1) * PageSize, PageSize, activeOnly, search);
+            if (version != loadVersion) return;
+            items = result.Items;
+            total = result.TotalCount;
+            if (page > PageCount) { page = PageCount; await Load(); }
+        }
+        catch (Exception ex) { if (version == loadVersion) Toast.Error(ex.Message); }
+        finally { if (version == loadVersion) loading = false; }
+    }
+
+    private async Task OnActiveChanged(ChangeEventArgs e)
+    {
+        activeOnly = e.Value is bool b && b;
+        page = 1;
+        await Load();
+    }
+
+    private void OpenNew()
+    {
+        form = new Referrer { IsActive = true };
+        fGoods = fService = fDiscountCap = "";
+        showModal = true;
+    }
+
+    private void OpenEdit(Referrer r)
+    {
+        form = new Referrer
+        {
+            Id = r.Id, Name = r.Name, CompanyName = r.CompanyName, Phone = r.Phone,
+            GoodsCommissionPercent = r.GoodsCommissionPercent,
+            ServiceCommissionPercent = r.ServiceCommissionPercent,
+            CardNumber = r.CardNumber, Iban = r.Iban, CanViewProducts = r.CanViewProducts,
+            MaxDiscountPercent = r.MaxDiscountPercent,
+            IsActive = r.IsActive, CreatedAt = r.CreatedAt, OrderCount = r.OrderCount
+        };
+        fGoods = r.GoodsCommissionPercent.ToString("0.##");
+        fService = r.ServiceCommissionPercent.ToString("0.##");
+        fDiscountCap = r.MaxDiscountPercent == 0 ? "" : r.MaxDiscountPercent.ToString("0.##");
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name)) { Toast.Error("نام معرف را وارد کنید."); return; }
+        form.GoodsCommissionPercent = Fa.ParseDecimal(fGoods);
+        form.ServiceCommissionPercent = Fa.ParseDecimal(fService);
+        form.MaxDiscountPercent = Math.Clamp(Fa.ParseDecimal(fDiscountCap), 0, 100);
+
+        saving = true;
+        try
+        {
+            await ReferrerSvc.SaveAsync(form);
+            Toast.Success(editing ? "معرف ویرایش شد." : "معرف ثبت شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(Referrer r)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف معرف «{r.Name}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await ReferrerSvc.DeleteAsync(r.Id);
+            Toast.Success("معرف حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

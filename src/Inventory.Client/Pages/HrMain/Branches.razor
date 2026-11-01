@@ -1,0 +1,213 @@
+@namespace Inventory.Client.Pages
+@page "/hr-main/branches"
+@inject IHrMainService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>شعب و دفاتر</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1><i class="bi bi-shop-window"></i> شعب و دفاتر</h1>
+    </div>
+    @if (canCreate)
+    {
+        <div class="ms-auto d-flex gap-2">
+            <button class="btn btn-primary" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> شعبه/دفتر جدید</button>
+        </div>
+    }
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به این بخش برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-inbox"></i><h5>هنوز شعبه یا دفتری ثبت نشده است</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr><th>کد</th><th>نام</th><th>نوع</th><th>شهر</th><th>تلفن</th><th>مدیر</th><th>گره‌های سازمانی</th><th>وضعیت</th><th style="width:110px"></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var b in items)
+                        {
+                            <tr class="@(!b.IsActive ? "opacity-50" : "")">
+                                <td class="num fw-bold">@b.Code</td>
+                                <td class="fw-bold">@b.Name</td>
+                                <td><span class="badge rounded-pill text-bg-light border">@HrMainUi.BranchType(b.Type)</span></td>
+                                <td>@(b.City ?? "—")</td>
+                                <td class="num">@(b.Phone ?? "—")</td>
+                                <td>@(b.ManagerName ?? "—")</td>
+                                <td class="num">@b.NodeCount.Num()</td>
+                                <td>
+                                    @if (b.IsActive)
+                                    {
+                                        <span class="badge text-bg-success">فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-secondary">غیرفعال</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                        @if (canUpdate)
+                                        {
+                                            <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(b)"><i class="bi bi-pencil text-primary"></i></button>
+                                        }
+                                        @if (canDelete)
+                                        {
+                                            <button class="btn btn-sm btn-light" title="حذف" @onclick="() => AskDelete(b)"><i class="bi bi-trash text-danger"></i></button>
+                                        }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="@(editId == null ? "شعبه/دفتر جدید" : "ویرایش شعبه/دفتر")" Size="modal-lg" OnClose="() => showEdit = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-3"><label class="form-label">کد <span class="text-danger">*</span></label><input class="form-control num" @bind="form.Code" /></div>
+            <div class="col-md-5"><label class="form-label">نام <span class="text-danger">*</span></label><input class="form-control" @bind="form.Name" /></div>
+            <div class="col-md-4">
+                <label class="form-label">نوع</label>
+                <select class="form-select" @bind="form.Type">
+                    <option value="0">شعبه</option><option value="1">دفتر</option><option value="2">نمایندگی</option>
+                </select>
+            </div>
+            <div class="col-md-4"><label class="form-label">شهر</label><input class="form-control" @bind="form.City" /></div>
+            <div class="col-md-4"><label class="form-label">تلفن</label><input class="form-control num" dir="ltr" @bind="form.Phone" /></div>
+            <div class="col-md-4"><label class="form-label">مدیر شعبه/دفتر</label><input class="form-control" @bind="form.ManagerName" /></div>
+            <div class="col-12"><label class="form-label">آدرس</label><input class="form-control" @bind="form.Address" /></div>
+            <div class="col-md-4"><label class="form-label">ترتیب نمایش</label><input class="form-control num" type="number" @bind="form.SortOrder" /></div>
+            <div class="col-md-8 d-flex align-items-end">
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="bact" @bind="form.IsActive" /><label class="form-check-label" for="bact">فعال</label></div>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="Save">
+            @if (saving)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showDelete" Title="حذف شعبه/دفتر" OnClose="() => showDelete = false">
+    <ChildContent>
+        <p>«<b>@delItem?.Name</b>» حذف شود؟</p>
+        @if ((delItem?.NodeCount ?? 0) > 0)
+        {
+            <div class="alert alert-warning mb-0">این شعبه/دفتر در ساختار سازمانی استفاده شده و قابل حذف نیست.</div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showDelete = false">انصراف</button>
+        <button class="btn btn-danger" disabled="@((delItem?.NodeCount ?? 0) > 0 || deleting)" @onclick="DoDelete">
+            @if (deleting)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            حذف
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private bool canRead => Auth.Has("HrMain.Read") || Auth.Has("HrMain.Branches") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrMain.Create") || Auth.Has("HrMain.Branches") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrMain.Update") || Auth.Has("HrMain.Branches") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrMain.Delete") || Auth.Has("HrMain.Branches") || Auth.IsAdmin;
+
+    private bool loading = true, saving, deleting;
+    private List<HrMainBranchDto> items = new();
+
+    private bool showEdit, showDelete;
+    private int? editId;
+    private HrMainBranchSaveDto form = new();
+    private HrMainBranchDto? delItem;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { items = await Svc.ListBranchesAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenEdit(HrMainBranchDto? b)
+    {
+        editId = b?.Id;
+        form = b is null
+            ? new HrMainBranchSaveDto()
+            : new HrMainBranchSaveDto
+            {
+                Code = b.Code, Name = b.Name, Type = b.Type, City = b.City,
+                Address = b.Address, Phone = b.Phone, ManagerName = b.ManagerName,
+                IsActive = b.IsActive, SortOrder = b.SortOrder
+            };
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            await Svc.SaveBranchAsync(editId, form);
+            showEdit = false;
+            Toast.Success("ذخیره شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private void AskDelete(HrMainBranchDto b)
+    {
+        delItem = b;
+        showDelete = true;
+    }
+
+    private async Task DoDelete()
+    {
+        if (delItem is null) return;
+        deleting = true;
+        try
+        {
+            await Svc.DeleteBranchAsync(delItem.Id);
+            showDelete = false;
+            Toast.Success("حذف شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { deleting = false; }
+    }
+}

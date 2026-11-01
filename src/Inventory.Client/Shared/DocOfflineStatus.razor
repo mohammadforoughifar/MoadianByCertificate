@@ -1,0 +1,119 @@
+@implements IDisposable
+@inject IJSRuntime JS
+@inject IToastService Toast
+@inject IDocArchiveService Svc
+
+<div class="d-flex align-items-center gap-2" dir="rtl">
+    @if (!isOnline)
+    {
+        <span class="badge bg-warning text-dark"><i class="bi bi-wifi-off"></i> آفلاین</span>
+    }
+    else
+    {
+        <span class="badge bg-success"><i class="bi bi-wifi"></i> آنلاین</span>
+    }
+    @if (queueCount > 0)
+    {
+        <span class="badge bg-primary" title="اقدامات در صف همگام‌سازی"><i class="bi bi-cloud-upload"></i> @queueCount در صف</span>
+        <button class="btn btn-xs btn-outline-primary" disabled="@syncing" @onclick="SyncNow">
+            @if (syncing) { <span class="spinner-border spinner-border-sm"></span> } else { <i class="bi bi-arrow-repeat"></i> } همگام‌سازی
+        </button>
+    }
+    @if (!string.IsNullOrWhiteSpace(lastSyncMsg))
+    {
+        <span class="fs-9 text-muted">@lastSyncMsg</span>
+    }
+</div>
+
+@code {
+    private bool isOnline = true;
+    private int queueCount;
+    private bool syncing;
+    private string? lastSyncMsg;
+    private DotNetObjectReference<DocOfflineStatus>? selfRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Refresh();
+    }
+
+    private bool disposed;
+    private readonly CancellationTokenSource pollCts = new();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // وضعیت آنلاین/آفلاین و شمارندهٔ صف فقط برای همین نشانگر خوانده می‌شود؛
+            // شنونده‌های window حذف نمی‌شدند و بعد از بسته‌شدن صفحه هم اجرا می‌شدند.
+            selfRef = DotNetObjectReference.Create(this);
+            try { await JS.InvokeVoidAsync("docOfflineStatus.attach"); } catch { }
+            _ = PollAsync(pollCts.Token);
+        }
+    }
+
+    private async Task PollAsync(CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested && !disposed)
+            {
+                await Task.Delay(4000, token);
+                if (disposed || token.IsCancellationRequested) break;
+                await Refresh();
+            }
+        }
+        catch (OperationCanceledException) { /* بستن صفحه */ }
+    }
+
+    private async Task Refresh()
+    {
+        if (disposed) return;
+        try { isOnline = await JS.InvokeAsync<bool>("eval", "navigator.onLine"); } catch { }
+        try { queueCount = await JS.InvokeAsync<int>("docArchiveQueueCount"); } catch { queueCount = 0; }
+        if (disposed) return;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        try { pollCts.Cancel(); } catch { }
+        try { _ = JS.InvokeVoidAsync("docOfflineStatus.detach"); } catch { }
+        try { selfRef?.Dispose(); } catch { }
+        selfRef = null;
+    }
+
+    private async Task SyncNow()
+    {
+        if (!isOnline) { Toast.Error("هنوز آفلاینی — وقتی آنلاین شدی دوباره بزن."); return; }
+        syncing = true;
+        try
+        {
+            // همگام‌سازی صف تاییدهای آفلاین
+            var res = await JS.InvokeAsync<SyncRes>("docArchiveSyncNow");
+            // برای هر آیتم صف، از طریق سرویس هم تایید را بفرست (fallback اگر service worker sync نکرده)
+            var qCount = res?.remaining ?? 0;
+            if (qCount == 0 && res != null)
+            {
+                Toast.Success($"همگام‌سازی انجام شد: {res.synced} مورد");
+                lastSyncMsg = $"{DateTime.Now:HH:mm} — {res.synced} همگام";
+            }
+            else if (res?.failed > 0)
+            {
+                Toast.Error($"{res.failed} مورد همگام نشد — بعداً دوباره تلاش می‌شود.");
+            }
+            await Refresh();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { syncing = false; }
+    }
+
+    [JSInvokable("DocOfflineStatus_OnlineChanged")]
+    public static Task OnlineChanged(bool online) => Task.CompletedTask;
+
+    [JSInvokable("DocOfflineStatus_QueueChanged")]
+    public static Task QueueChanged(int count) => Task.CompletedTask;
+
+    private class SyncRes { public int synced { get; set; } public int failed { get; set; } public int remaining { get; set; } }
+}

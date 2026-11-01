@@ -1,0 +1,294 @@
+@namespace Inventory.Client.Pages
+@page "/system-company"
+@inject HttpClient Http
+@using System.Net.Http
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+
+<PageTitle>مدیریت شرکت‌ها و شعب</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-building-fill"></i> مدیریت شرکت‌ها و شعب</h1>
+    <p class="lead">اطلاعات، مشخصات ثبتی و وضعیت شرکت‌های تابعه و طرف قرارداد</p>
+</div>
+
+<div class="card shadow mb-4" style="background:#fff;border:1px solid #e0e0f0;border-radius:16px;overflow:hidden;">
+    <div class="card-header d-flex justify-content-between align-items-center px-3 py-3" style="background:linear-gradient(90deg,#4f8cff,#8e5cff);color:#fff;border-radius:16px 16px 0 0;">
+        <h5 class="m-0 fw-700"><i class="bi bi-building-fill me-2"></i>لیست کمپانی‌ها</h5>
+        <button class="btn btn-sm btn-light fw-bold" @onclick="OpenForm" style="border-radius:8px;color:#4f5b8a;">+ افزودن</button>
+    </div>
+    <div class="card-body p-3">
+        @if (items == null)
+        {
+            <div class="text-center py-3 text-muted">در حال بارگذاری...</div>
+        }
+        else if (!items.Any())
+        {
+            <div class="alert alert-info">کمپانی ثبت نشده است.</div>
+        }
+        else
+        {
+            <div class="d-md-none">
+            @foreach (var c in items)
+            {
+                <div class="m-card">
+                    <div class="m-title">@c.Name</div>
+                    <div class="m-row"><span class="m-label">کد</span><span class="m-val">@c.Code</span></div>
+                    <div class="m-row"><span class="m-label">تلفن</span><span class="m-val">@(string.IsNullOrEmpty(c.Phone) ? "—" : c.Phone)</span></div>
+                    <div class="m-row"><span class="m-label">وضعیت</span><span class="m-val">@(c.IsActive ? "فعال ✅" : "غیرفعال")</span></div>
+                    <div class="m-actions">
+                        <button class="btn btn-sm @(c.IsActive ? "btn-success" : "btn-secondary")" @onclick="() => ToggleStatus(c)">@(c.IsActive ? "فعال" : "غیرفعال")</button>
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => EditCompany(c)"><i class="bi bi-pencil-fill"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteCompany(c.Id)" disabled="@(c.SystemCount > 0)"><i class="bi bi-trash-fill"></i></button>
+                    </div>
+                </div>
+            }
+        </div>
+        <div class="d-none d-md-block">
+            <table class="table table-sm table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr><th>#</th><th>نام</th><th>کد</th><th>تلفن</th><th>وضعیت</th><th>عملیات</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in items)
+                    {
+                        <tr>
+                            <td>@c.Id</td>
+                            <td><b>@c.Name</b></td>
+                            <td><span class="badge bg-secondary">@c.Code</span></td>
+                            <td>@c.Phone</td>
+                            <td>
+                                <button class="btn btn-sm @(c.IsActive ? "btn-success" : "btn-secondary") rounded-pill" @onclick="() => ToggleStatus(c)" title="تغییر وضعیت">
+                                    @(c.IsActive ? "فعال" : "غیرفعال")
+                                </button>
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary" @onclick="() => EditCompany(c)" title="ویرایش"><i class="bi bi-pencil-fill"></i></button>
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteCompany(c.Id)" disabled="@(c.SystemCount > 0)" title="@(c.SystemCount > 0 ? "سیستم اختصاص داده شده" : "حذف")"><i class="bi bi-trash-fill"></i></button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        }
+    </div>
+</div>
+
+@if (ShowForm)
+{
+    <Modal Visible="ShowForm" Title="@(editingCompany ? "ویرایش کمپانی" : "کمپانی جدید")" OnClose="CloseForm">
+        <ChildContent>
+            <div class="row g-3">
+                <div class="col-12">
+                    <label class="form-label">نام کمپانی <span class="text-danger">*</span></label>
+                    <input class="form-control" @bind="newCompany.Name" placeholder="نام کمپانی" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">کد</label>
+                    <input class="form-control" @bind="newCompany.Code" placeholder="کد" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">تلفن</label>
+                    <input class="form-control" @bind="newCompany.Phone" placeholder="تلفن" data-digits="tel" dir="ltr" inputmode="tel" />
+                </div>
+                <div class="col-12">
+                    <label class="form-label">آدرس</label>
+                    <textarea class="form-control" rows="2" @bind="newCompany.Address" placeholder="آدرس"></textarea>
+                </div>
+                <div class="col-12">
+                    <label class="form-label">فایل سربرگ (PDF) — برای چاپ نامه صادره</label>
+                    <InputFile class="form-control" OnChange="OnLetterheadFile" accept=".pdf" />
+                    @if (!string.IsNullOrWhiteSpace(newCompany.LetterheadFileName))
+                    {
+                        <div class="mt-1 mb-1"><b>فایل فعلی:</b> @newCompany.LetterheadFileName</div>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="ClearLetterhead">حذف سربرگ</button>
+                    }
+                    <small class="text-muted">فایل PDF سربرگ آپلود شود و در مسیر <b>wwwroot/uploads/letterheads/</b> ذخیره شود. هنگام چاپ نامه صادره (A4/A5)، متن نامه روی همین سربرگ چاپ می‌شود.</small>
+                    @if (!string.IsNullOrWhiteSpace(letterheadUploadError))
+                    {
+                        <div class="text-danger small mt-1">@letterheadUploadError</div>
+                    }
+                </div>
+                <div class="col-12">
+                    <div class="form-check form-switch mt-1">
+                        <input class="form-check-input" type="checkbox" id="companyActive" @bind="newCompany.IsActive" />
+                        <label class="form-check-label" for="companyActive">فعال باشد</label>
+                    </div>
+                </div>
+            </div>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-light" @onclick="CloseForm">انصراف (Esc)</button>
+            <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="SaveCompany" disabled="@(string.IsNullOrWhiteSpace(newCompany?.Name))">ذخیره</button>
+        </Footer>
+    </Modal>
+}
+
+@code {
+    private List<SystemCompanyItem> items = new();
+    private bool ShowForm = false;
+    private SystemCompanyItem newCompany = new() { IsActive = true, CreatedAt = DateTime.Now };
+    private bool editingCompany = false;
+    private IBrowserFile? pendingLetterhead;
+    private string? letterheadUploadError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { items = await Http.GetFromJsonAsync<List<SystemCompanyItem>>("/api/SystemCompanies") ?? new(); var sysInfos = await Http.GetFromJsonAsync<List<SystemInfoItem>>("/api/SystemInfo") ?? new(); foreach(var c in items) { c.SystemCount = sysInfos.Count(x => x.CompanyId == c.Id); } }
+        catch { items = new(); }
+    }
+
+    private void OpenForm() { newCompany = new() { IsActive = true, CreatedAt = DateTime.Now }; editingCompany = false; ShowForm = true; }
+    private void CloseForm() { ShowForm = false; editingCompany = false; }
+
+    private void EditCompany(SystemCompanyItem c)
+    {
+        newCompany = new() { Id = c.Id, Name = c.Name, Code = c.Code, Phone = c.Phone, Address = c.Address, IsActive = c.IsActive, CreatedAt = c.CreatedAt, LetterheadFileName = c.LetterheadFileName };
+        editingCompany = true; ShowForm = true; StateHasChanged();
+    }
+
+    private async Task SaveCompany()
+    {
+        try
+        {
+            HttpResponseMessage resp;
+            int? createdId = null;
+            if (editingCompany && newCompany.Id > 0)
+            {
+                resp = await Http.PutAsJsonAsync($"/api/SystemCompanies/{newCompany.Id}", newCompany);
+            }
+            else
+            {
+                resp = await Http.PostAsJsonAsync("/api/SystemCompanies", newCompany);
+                var result = await resp.Content.ReadFromJsonAsync<SaveResult>();
+                createdId = result?.Id;
+            }
+            if (resp.IsSuccessStatusCode)
+            {
+                ShowForm = false; editingCompany = false;
+                var fileToUpload = pendingLetterhead;
+                newCompany = new() { IsActive = true, CreatedAt = DateTime.Now };
+                pendingLetterhead = null;
+                letterheadUploadError = null;
+                await OnInitializedAsync();
+                // شرکت جدید: پس از دریافت Id، فایل سربرگ در انتظار (در صورت وجود) آپلود شود
+                if (createdId is > 0 && fileToUpload is { })
+                    await UploadLetterheadAsync(createdId.Value, fileToUpload);
+            }
+        }
+        catch { }
+    }
+
+    private async Task OnLetterheadFile(InputFileChangeEventArgs e)
+    {
+        letterheadUploadError = null;
+        var file = e.GetMultipleFiles(1).FirstOrDefault();
+        if (file == null) return;
+        if (!file.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            letterheadUploadError = "فقط فایل PDF برای سربرگ مجاز است.";
+            return;
+        }
+        pendingLetterhead = file;
+        // ویرایش شرکت موجود: بلافاصله آپلود شود
+        if (editingCompany && newCompany.Id > 0)
+            await UploadLetterheadAsync(newCompany.Id, file);
+    }
+
+    private async Task UploadLetterheadAsync(int companyId, IBrowserFile file)
+    {
+        try
+        {
+            letterheadUploadError = null;
+            await using var stream = file.OpenReadStream(maxAllowedSize: 10L * 1024 * 1024);
+            using var content = new MultipartFormDataContent();
+            var sc = new StreamContent(stream);
+            sc.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+            content.Add(sc, "file", file.Name);
+            var resp = await Http.PostAsync($"/api/SystemCompanies/{companyId}/letterhead", content);
+            if (resp.IsSuccessStatusCode)
+            {
+                var result = await resp.Content.ReadFromJsonAsync<LetterheadResult>();
+                if (result?.LetterheadFileName is { } path)
+                    newCompany.LetterheadFileName = path;
+                pendingLetterhead = null;
+            }
+            else
+            {
+                var text = await resp.Content.ReadAsStringAsync();
+                letterheadUploadError = "آپلود سربرگ ناموفق بود: " + text;
+            }
+        }
+        catch (Exception ex) { letterheadUploadError = ex.Message; }
+    }
+
+    private void ClearLetterhead()
+    {
+        newCompany.LetterheadFileName = null;
+        pendingLetterhead = null;
+        letterheadUploadError = null;
+    }
+
+    private record SaveResult { public int Id { get; set; } }
+    private record LetterheadResult { public string? LetterheadFileName { get; set; } }
+
+    private async Task ToggleStatus(SystemCompanyItem c)
+    {
+        try
+        {
+            c.IsActive = !c.IsActive;
+            await Http.PutAsJsonAsync($"/api/SystemCompanies/{c.Id}", c);
+            await OnInitializedAsync();
+        }
+        catch { }
+    }
+
+    private async Task DeleteCompany(int id)
+    {
+        try
+        {
+            var systemCount = await Http.GetFromJsonAsync<List<SystemInfoItem>>("/api/SystemInfo") ?? new();
+            var count = systemCount.Count(x => x.CompanyId == id);
+            if (count > 0) { return; }
+            var resp = await Http.DeleteAsync($"/api/SystemCompanies/{id}");
+            if (resp.IsSuccessStatusCode) await OnInitializedAsync();
+        }
+        catch { }
+    }
+
+    public class SystemCompanyItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public string? Code { get; set; }
+        public string? Phone { get; set; }
+        public string? Address { get; set; }
+        public bool IsActive { get; set; } = true;
+        public int SystemCount { get; set; }
+        public DateTime CreatedAt { get; set; } = DateTime.Now;
+
+        /// <summary>نام فایل PDF سربرگ شرکت در مسیر روت API — برای چاپ نامه صادره</summary>
+        public string? LetterheadFileName { get; set; }
+    }
+
+    public class SystemInfoItem
+    {
+        public int Id { get; set; }
+        public string AgentId { get; set; } = "";
+        public int? CompanyId { get; set; }
+        public int? DepartmentId { get; set; }
+    }
+}
+<script>
+window.addEventListener('keydown', function(e) {
+    if (e.key === 'F1') {
+        var saveBtn = document.querySelector('.btn-success');
+        if (saveBtn && !saveBtn.disabled) saveBtn.click();
+    }
+    if (e.key === 'Escape') {
+        var closeBtn = document.querySelector('.btn-outline-secondary');
+        if (closeBtn) closeBtn.click();
+    }
+});
+</script>

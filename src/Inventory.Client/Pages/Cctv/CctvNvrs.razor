@@ -1,0 +1,287 @@
+@namespace Inventory.Client.Pages
+@page "/cctv-nvrs"
+@inject HttpClient Http
+
+<PageTitle>دستگاه‌های NVR</PageTitle>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header fw-700 d-flex justify-content-between align-items-center flex-wrap gap-2" style="background:linear-gradient(135deg,#4f8cff,#8e5cff);color:#fff;border-radius:14px 14px 0 0;">
+        <span><i class="bi bi-hdd-stack-fill me-2"></i>لیست دستگاه‌های NVR / DVR
+            <span class="badge bg-light text-dark ms-1">@filtered.Count</span>
+        </span>
+        <button class="btn btn-light btn-sm fw-700 shadow-sm" style="border-radius:8px;color:#4f5b8a;" @onclick="OpenForm"><i class="bi bi-plus-lg"></i> افزودن NVR</button>
+    </div>
+    <div class="card-body">
+        <div class="d-flex flex-wrap gap-2 mb-3 mt-2">
+            <input type="text" class="form-control form-control-sm" style="max-width:280px"
+                   placeholder="جستجو: مدل / سریال / آی‌پی..." @bind="searchText" @bind:event="oninput" />
+            <span class="badge bg-secondary">@filtered.Count دستگاه</span>
+        </div>
+
+        @if (isLoading)
+        {
+            <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (filtered.Count == 0)
+        {
+            <div class="alert alert-info py-2 mb-0">هنوز دستگاهی ثبت نشده است — «افزودن NVR» را بزنید.</div>
+        }
+        else
+        {
+            @* ---------- جدول دسکتاپ ---------- *@
+            <div class="table-responsive d-none d-md-block">
+                <table class="table table-hover align-middle mb-0" style="white-space:nowrap;">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th><th>مدل</th><th>شماره سریال</th><th>آی‌پی</th>
+                            <th>مک آدرس</th><th>محل استقرار</th><th>دوربین‌های متصل</th><th>وضعیت</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{ var i = 1; }
+                        @foreach (var n in filtered)
+                        {
+                            <tr>
+                                <td class="text-secondary fw-600">@(i++)</td>
+                                <td class="fw-700">@n.Model</td>
+                                <td><code>@n.SerialNumber</code></td>
+                                <td>@(string.IsNullOrEmpty(n.Ip) ? "—" : n.Ip)</td>
+                                <td><code>@(string.IsNullOrEmpty(n.Mac) ? "—" : n.Mac)</code></td>
+                                <td>@(string.IsNullOrEmpty(n.Location) ? "—" : n.Location)</td>
+                                <td><span class="badge bg-info">@CamerasOf(n.Id).Count دوربین</span></td>
+                                <td>
+                                    @if (n.IsActive)
+                                    { <span class="badge bg-success">فعال</span> }
+                                    else
+                                    { <span class="badge bg-secondary">غیرفعال</span> }
+                                </td>
+                                <td>
+                                    <div class="d-flex gap-1 justify-content-center">
+                                        <button class="btn btn-sm btn-outline-primary ops-btn" title="ویرایش" @onclick="() => Edit(n)"><i class="bi bi-pencil-fill"></i></button>
+                                        <button class="btn btn-sm btn-outline-danger ops-btn" title="حذف" @onclick="() => Delete(n.Id)"><i class="bi bi-trash-fill"></i></button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- کارت‌ویو موبایل ---------- *@
+            <div class="d-md-none">
+                @{ var k = 1; }
+                @foreach (var n in filtered)
+                {
+                    <div class="m-card">
+                        <div class="m-title">@(k++). @n.Model</div>
+                        <div class="m-row"><span class="m-label">سریال</span><span class="m-val"><code>@n.SerialNumber</code></span></div>
+                        <div class="m-row"><span class="m-label">آی‌پی</span><span class="m-val">@(string.IsNullOrEmpty(n.Ip) ? "—" : n.Ip)</span></div>
+                        <div class="m-row"><span class="m-label">مک</span><span class="m-val">@(string.IsNullOrEmpty(n.Mac) ? "—" : n.Mac)</span></div>
+                        <div class="m-row"><span class="m-label">محل</span><span class="m-val">@(string.IsNullOrEmpty(n.Location) ? "—" : n.Location)</span></div>
+                        <div class="m-row"><span class="m-label">دوربین‌ها</span><span class="m-val">@CamerasOf(n.Id).Count دستگاه</span></div>
+                        <div class="m-row"><span class="m-label">وضعیت</span><span class="m-val">@(n.IsActive ? "فعال ✅" : "غیرفعال")</span></div>
+                        @if (CamerasOf(n.Id).Count > 0)
+                        {
+                            <div class="m-row"><span class="m-label">لیست</span>
+                                <span class="m-val small">@string.Join("، ", CamerasOf(n.Id).Select(c => c.Model).Take(5))@(CamerasOf(n.Id).Count > 5 ? " …" : "")</span>
+                            </div>
+                        }
+                        <div class="m-actions">
+                            <button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(n)"><i class="bi bi-pencil-fill"></i> ویرایش</button>
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(n.Id)"><i class="bi bi-trash-fill"></i> حذف</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@if (ShowForm)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+        <div class="modal-dialog modal-dialog-centered" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(editing ? "ویرایش NVR" : "افزودن دستگاه NVR/DVR")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseForm"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrWhiteSpace(formError))
+                    { <div class="alert alert-danger py-2">@formError</div> }
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-800">مدل <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-sm" maxlength="150" @bind="form.Model" placeholder="مثلاً: Hikvision DS-7716NI-M4" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-800">شماره سریال <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-sm" maxlength="150" @bind="form.SerialNumber" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-800">آی‌پی</label>
+                            <input class="form-control form-control-sm" maxlength="50" @bind="form.Ip" placeholder="192.168.1.10" style="direction:ltr;text-align:right;" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-800">مک آدرس</label>
+                            <input class="form-control form-control-sm" maxlength="50" @bind="form.Mac" style="direction:ltr;text-align:right;" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-800">محل استقرار</label>
+                            <input class="form-control form-control-sm" maxlength="250" @bind="form.Location" placeholder="مثلاً: اتاق سرور" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-800">توضیحات</label>
+                            <textarea class="form-control form-control-sm" rows="2" maxlength="500" @bind="form.Notes"></textarea>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check form-switch mt-1">
+                                <input class="form-check-input" type="checkbox" role="switch" id="nvrActive" @bind="form.IsActive" />
+                                <label class="form-check-label" for="nvrActive">فعال باشد</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary rounded-pill px-4" @onclick="CloseForm">انصراف</button>
+                    <button class="btn btn-primary rounded-pill px-4 fw-800" disabled="@busy" @onclick="Save">@(editing ? "ذخیره تغییرات" : "افزودن")</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+.ops-btn{width:34px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;border-radius:8px;}
+</style>
+
+@code {
+    private List<CctvNvrItem> items = new();
+    private List<CctvCameraItem> cameras = new();
+    private bool isLoading = true;
+    private string searchText = "";
+
+    private bool ShowForm = false;
+    private bool editing = false;
+    private bool busy;
+    private string formError = "";
+    private int editId;
+    private NvrForm form = new();
+
+    private List<CctvNvrItem> filtered => string.IsNullOrWhiteSpace(searchText)
+        ? items
+        : items.Where(n =>
+            (n.Model ?? "").Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            (n.SerialNumber ?? "").Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            (n.Ip ?? "").Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            (n.Location ?? "").Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private List<CctvCameraItem> CamerasOf(int nvrId) => cameras.Where(c => c.NvrId == nvrId).ToList();
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        isLoading = true;
+        try { items = await Http.GetFromJsonAsync<List<CctvNvrItem>>("/api/CctvNvrs") ?? new(); }
+        catch { items = new(); }
+        try { cameras = await Http.GetFromJsonAsync<List<CctvCameraItem>>("/api/CctvCameras") ?? new(); }
+        catch { cameras = new(); }
+        finally { isLoading = false; }
+    }
+
+    private void OpenForm()
+    {
+        editing = false; editId = 0; formError = "";
+        form = new NvrForm();
+        ShowForm = true;
+    }
+
+    private void Edit(CctvNvrItem n)
+    {
+        editing = true; editId = n.Id; formError = "";
+        form = new NvrForm
+        {
+            Model = n.Model, SerialNumber = n.SerialNumber, Ip = n.Ip,
+            Mac = n.Mac, Location = n.Location, Notes = n.Notes, IsActive = n.IsActive
+        };
+        ShowForm = true;
+    }
+
+    private void CloseForm() => ShowForm = false;
+
+    private async Task Save()
+    {
+        formError = "";
+        if (string.IsNullOrWhiteSpace(form.Model)) { formError = "مدل را وارد کنید."; return; }
+        if (string.IsNullOrWhiteSpace(form.SerialNumber)) { formError = "شماره سریال را وارد کنید."; return; }
+
+        busy = true;
+        try
+        {
+            var payload = new CctvNvrItem
+            {
+                Id = editId, Model = form.Model.Trim(), SerialNumber = form.SerialNumber.Trim(),
+                Ip = string.IsNullOrWhiteSpace(form.Ip) ? null : form.Ip.Trim(),
+                Mac = string.IsNullOrWhiteSpace(form.Mac) ? null : form.Mac.Trim(),
+                Location = string.IsNullOrWhiteSpace(form.Location) ? null : form.Location.Trim(),
+                Notes = string.IsNullOrWhiteSpace(form.Notes) ? null : form.Notes.Trim(),
+                IsActive = form.IsActive
+            };
+            HttpResponseMessage resp;
+            if (editing && editId > 0) resp = await Http.PutAsJsonAsync($"/api/CctvNvrs/{editId}", payload);
+            else resp = await Http.PostAsJsonAsync("/api/CctvNvrs", payload);
+
+            if (resp.IsSuccessStatusCode) { ShowForm = false; await Load(); }
+            else
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                try { formError = "سرور: " + System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("message").GetString(); }
+                catch { formError = $"کد {(int)resp.StatusCode}"; }
+            }
+        }
+        catch (Exception ex) { formError = "ارتباط با API برقرار نشد. (" + ex.Message + ")"; }
+        finally { busy = false; }
+    }
+
+    private async Task Delete(int id)
+    {
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/CctvNvrs/{id}");
+            if (resp.IsSuccessStatusCode) await Load();
+        }
+        catch { }
+    }
+
+    private class NvrForm
+    {
+        public string Model { get; set; } = "";
+        public string SerialNumber { get; set; } = "";
+        public string? Ip { get; set; }
+        public string? Mac { get; set; }
+        public string? Location { get; set; }
+        public string? Notes { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class CctvNvrItem
+    {
+        public int Id { get; set; }
+        public string Model { get; set; } = "";
+        public string SerialNumber { get; set; } = "";
+        public string? Ip { get; set; }
+        public string? Mac { get; set; }
+        public string? Location { get; set; }
+        public string? Notes { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class CctvCameraItem
+    {
+        public int Id { get; set; }
+        public string Model { get; set; } = "";
+        public int? NvrId { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+}

@@ -1,0 +1,229 @@
+@page "/trs/reports/flow"
+@inject ITrsReportService ReportSvc
+@inject ITrsAccountService AccountSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>گردش صندوق و بانک</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>گردش صندوق و بانک</h1>
+        <p class="lead">ریز وارده و صادره با مانده تجمعی — فقط اسناد قطعی</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-outline-secondary" @onclick="Print"><i class="bi bi-printer"></i> چاپ</button>
+    </div>
+</div>
+
+<div class="card mb-3 d-print-none">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-4">
+                <label class="form-label">صندوق / بانک <span class="text-danger">*</span></label>
+                <select class="form-select" value="@accountId" @onchange="OnAccount">
+                    <option value="0">— انتخاب کنید —</option>
+                    @foreach (var a in accounts)
+                    {
+                        <option value="@a.Id">@a.DisplayName</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">از تاریخ</label>
+                <DatePicker Value="from" ValueChanged="OnFrom" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">تا تاریخ</label>
+                <DatePicker Value="to" ValueChanged="OnTo" AllowClear="true" />
+            </div>
+            <div class="col-12 col-md-2 d-grid">
+                <button class="btn btn-outline-secondary" @onclick="Reset"><i class="bi bi-x-circle"></i> پاک کردن</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (accountId == 0)
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="bi bi-list-columns"></i>
+                <h5>یک صندوق یا حساب بانکی انتخاب کنید</h5>
+                <p class="text-muted">گردش وجه آن حساب با مانده تجمعی نمایش داده می‌شود.</p>
+            </div>
+        </div>
+    </div>
+}
+else if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else if (result is null)
+{
+    <div class="card"><div class="card-body"><div class="empty-state"><i class="bi bi-inbox"></i><h5>داده‌ای موجود نیست</h5></div></div></div>
+}
+else
+{
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-muted"><i class="bi bi-hourglass-top text-muted"></i></div>
+                <div><div class="stat-label">مانده ابتدای دوره</div><div class="stat-value num">@result.OpeningBalance.Money()</div></div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-success"><i class="bi bi-arrow-down-left text-success"></i></div>
+                <div><div class="stat-label">جمع وارده</div><div class="stat-value num text-success">@result.TotalIn.Money()</div></div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-danger"><i class="bi bi-arrow-up-right text-danger"></i></div>
+                <div><div class="stat-label">جمع صادره</div><div class="stat-value num text-danger">@result.TotalOut.Money()</div></div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-primary"><i class="bi bi-wallet2 text-primary"></i></div>
+                <div>
+                    <div class="stat-label">مانده پایان دوره</div>
+                    <div class="stat-value num @(result.ClosingBalance >= 0 ? "text-primary" : "text-danger")">@result.ClosingBalance.Money()</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-list-columns text-primary"></i>
+            <span class="card-title">@result.AccountName</span>
+            <span class="badge badge-soft-muted fs-8 ms-2">@result.AccountKindTitle</span>
+            <span class="badge badge-soft-primary ms-auto num">@result.Rows.Count.Num() گردش</span>
+        </div>
+        <div class="card-body p-0">
+            @if (result.Rows.Count == 0)
+            {
+                <div class="empty-state">
+                    <i class="bi bi-inbox"></i>
+                    <h5>در این بازه گردشی ثبت نشده است</h5>
+                    <p class="text-muted num">مانده: @result.OpeningBalance.Money()</p>
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th style="width:44px">#</th>
+                                <th>تاریخ</th>
+                                <th>سند</th>
+                                <th>ابزار</th>
+                                <th>طرف حساب</th>
+                                <th>شرح</th>
+                                <th class="text-center">وارده</th>
+                                <th class="text-center">صادره</th>
+                                <th class="text-center">مانده</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="table-light">
+                                <td colspan="8" class="text-end fw-600">مانده ابتدای دوره</td>
+                                <td class="text-center num fw-700">@result.OpeningBalance.Money()</td>
+                            </tr>
+                            @{ var i = 1; }
+                            @foreach (var r in result.Rows)
+                            {
+                                <tr>
+                                    <td class="num text-muted">@((i++).FaDigits())</td>
+                                    <td class="num">@r.Date.ToFaDate()</td>
+                                    <td>
+                                        @if (r.TrsVoucherId > 0)
+                                        {
+                                            <a class="num" href="@($"/trs/vouchers/edit/{r.TrsVoucherId}")">@r.Number.Num()</a>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted">—</span>
+                                        }
+                                    </td>
+                                    <td><span class="badge badge-soft-muted fs-8">@r.Method</span></td>
+                                    <td class="fs-8">@(r.PartyName ?? "—")</td>
+                                    <td class="fs-8 text-muted text-truncate" style="max-width:240px">@r.Description</td>
+                                    <td class="text-center num text-success">@(r.In == 0 ? "—" : r.In.Money())</td>
+                                    <td class="text-center num text-danger">@(r.Out == 0 ? "—" : r.Out.Money())</td>
+                                    <td class="text-center num fw-600 @(r.Balance < 0 ? "text-danger" : "")">@r.Balance.Money()</td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot class="table-light">
+                            <tr>
+                                <th colspan="6" class="text-end">جمع دوره</th>
+                                <th class="text-center num text-success">@result.TotalIn.Money()</th>
+                                <th class="text-center num text-danger">@result.TotalOut.Money()</th>
+                                <th class="text-center num">@result.ClosingBalance.Money()</th>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>پشتیبانی از لینک مستقیم ?accountId=… از صفحات دیگر</summary>
+    [SupplyParameterFromQuery(Name = "accountId")] public int? QueryAccountId { get; set; }
+
+    private List<TrsAccount> accounts = new();
+    private TrsFlowResult? result;
+
+    private int accountId;
+    private DateTime? from, to;
+    private bool loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("گردش صندوق و بانک");
+        try { accounts = await AccountSvc.GetAllAsync(true); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+
+        if (QueryAccountId is > 0)
+            accountId = QueryAccountId.Value;
+        else if (accounts.Count > 0)
+            accountId = accounts.FirstOrDefault(a => a.IsDefault)?.Id ?? accounts[0].Id;
+
+        if (accountId > 0) await Load();
+    }
+
+    private async Task Load()
+    {
+        if (accountId == 0) { result = null; return; }
+        loading = true;
+        try { result = await ReportSvc.GetFlowAsync(accountId, from, to); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnAccount(ChangeEventArgs e)
+    {
+        accountId = int.Parse(e.Value?.ToString() ?? "0");
+        await Load();
+    }
+
+    private async Task OnFrom(DateTime? d) { from = d; await Load(); }
+    private async Task OnTo(DateTime? d) { to = d; await Load(); }
+
+    private async Task Reset()
+    {
+        from = null; to = null;
+        await Load();
+    }
+
+    private async Task Print() => await JS.InvokeVoidAsync("window.print");
+}

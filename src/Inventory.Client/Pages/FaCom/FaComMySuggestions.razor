@@ -1,0 +1,144 @@
+@namespace Inventory.Client.Pages
+@page "/fa-com/my-suggestions"
+@inject IFaComService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>پیشنهادهای من</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-lightbulb"></i> صندوق پیشنهادها</h1>
+            <div class="lead">ثبت پیشنهاد/انتقاد + پیگیری وضعیت (امکان ثبت ناشناس)</div>
+        </div>
+        <button class="btn btn-success" @onclick="() => showNew = true"><i class="bi bi-plus-lg"></i> ثبت جدید</button>
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+@if (rows.Count == 0)
+{
+    <div class="alert alert-light text-center">هنوز چیزی ثبت نکرده‌اید.</div>
+}
+else
+{
+    <div class="row g-3">
+        @foreach (var s in rows)
+        {
+            <div class="col-lg-6">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <strong>@s.Title</strong>
+                        <span class="badge @FaComUi.SuggestionBadge(s.Status)">@FaComUi.SuggestionStatus(s.Status)</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-2">
+                            <span class="badge text-bg-info">@FaComUi.SuggestionCategory(s.Category)</span>
+                            @if (s.IsAnonymous)
+                            {
+                                <span class="badge text-bg-secondary">ناشناس</span>
+                            }
+                            <span class="small text-muted num ms-2">@s.CreatedAt.ToFa()</span>
+                        </div>
+                        <p class="mb-2">@s.Body</p>
+                        @if (!string.IsNullOrWhiteSpace(s.Response))
+                        {
+                            <div class="alert alert-success mb-0">
+                                <b><i class="bi bi-reply"></i> پاسخ منابع انسانی (@s.RespondedByName):</b>
+                                <div>@s.Response</div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<Modal Visible="showNew" Title="ثبت در صندوق پیشنهادها" OnClose="() => showNew = false">
+<ChildContent>
+    <div class="row g-2">
+        <div class="col-md-8">
+            <label class="form-label">عنوان</label>
+            <input class="form-control" @bind="fTitle" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">دسته</label>
+            <select class="form-select" @bind="fCategory">
+                <option value="0">پیشنهاد</option>
+                <option value="1">انتقاد</option>
+                <option value="2">سایر</option>
+            </select>
+        </div>
+        <div class="col-12">
+            <label class="form-label">متن</label>
+            <textarea class="form-control" rows="4" @bind="fBody"></textarea>
+        </div>
+        <div class="col-12">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="sugan" @bind="fAnon" />
+                <label class="form-check-label" for="sugan">ثبت ناشناس (نام شما نمایش داده نمی‌شود ولی پاسخ را دریافت می‌کنید)</label>
+            </div>
+        </div>
+    </div>
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showNew = false">انصراف</button>
+        <button class="btn btn-success" disabled="@saving" @onclick="Create">ثبت</button>
+    </div>
+</Footer>
+</Modal>
+
+@code {
+    private bool faRead => Auth.Has("FaCom.Read") || Auth.Has("FaCom.Manage") || Auth.IsAdmin;
+    private bool loading = true, saving, showNew;
+    private List<FaComSuggestionDto> rows = new();
+
+    private string fTitle = "";
+    private string fBody = "";
+    private int fCategory;
+    private bool fAnon;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { rows = await Svc.MySuggestionsAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private async Task Create()
+    {
+        saving = true;
+        try
+        {
+            await Svc.CreateSuggestionAsync(new FaComSuggestionSaveDto
+                { Title = fTitle, Body = fBody, Category = fCategory, IsAnonymous = fAnon });
+            showNew = false;
+            fTitle = ""; fBody = ""; fCategory = 0; fAnon = false;
+            Toast.Success("در صندوق پیشنهادها ثبت شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+}

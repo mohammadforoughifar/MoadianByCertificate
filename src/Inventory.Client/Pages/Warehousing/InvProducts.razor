@@ -1,0 +1,1655 @@
+@page "/inv/products"
+@inject IInvProductService ProductSvc
+@inject IInvAttributeService AttrSvc
+@inject IInvCategoryService CategorySvc
+@inject IInvWarehouseService WarehouseSvc
+@inject IInvSettingsService SettingsSvc
+@inject IUnitService UnitSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+@inject IServiceProvider ServiceProvider
+@inject IApiClient Api
+@inject ApiOptions ApiCfg
+
+<PageTitle>تعریف کالا</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>تعریف کالا</h1>
+        <p class="lead">مشخصات کامل کالا: اطلاعات پایه، مالیات، انبار و ویژگی‌ها</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-primary" @onclick="() => OpenNew()">
+            <i class="bi bi-plus-lg"></i> کالای جدید
+        </button>
+    </div>
+</div>
+
+<!-- ================= فیلترها ================= -->
+<div class="card">
+    <div class="card-body">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="جستجوی نام، کد، بارکد، کد مالیاتی…" @bind="search" @onkeydown="OnSearchKey" />
+                    <button class="btn btn-primary" @onclick="OnSearch">جستجو</button>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" @bind="filterCategoryStr" @bind:after="OnSearch">
+                    <option value="0">همه گروه‌ها</option>
+                    @foreach (var c in categories)
+                    {
+                        <option value="@c.Id">@(new string('\u00A0', c.Depth * 3))@(c.Depth > 0 ? "└ " : "")@c.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" @bind="filterWarehouseStr" @bind:after="OnSearch">
+                    <option value="0">همه انبارها</option>
+                    @foreach (var w in warehouses)
+                    {
+                        <option value="@w.Id">@w.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-auto">
+                <div class="form-check ms-2">
+                    <input class="form-check-input" type="checkbox" id="belowChk" checked="@belowOnly" @onchange="OnBelowChanged" />
+                    <label class="form-check-label" for="belowChk">فقط زیر نقطه سفارش</label>
+                </div>
+            </div>
+            <div class="col-auto ms-auto fs-8 text-muted">@total.Num() کالا</div>
+        </div>
+    </div>
+</div>
+
+<!-- ================= فهرست ================= -->
+<div class="card mt-3">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-box-seam"></i><h5>کالایی یافت نشد</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>کد</th>
+                            <th>نام کالا</th>
+                            <th>گروه</th>
+                            <th>کد مالیاتی</th>
+                            <th>واحد</th>
+                            <th>روش قیمت‌گذاری</th>
+                            <th class="text-start">قیمت خرید</th>
+                            <th class="text-start">قیمت فروش</th>
+                            <th class="text-start">موجودی</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in items)
+                        {
+                            <tr>
+                                <td class="doc-number text-muted">@p.Code.FaDigits()</td>
+                                <td>
+                                    <div class="d-flex align-items-center gap-2">
+                                        @if (!string.IsNullOrWhiteSpace(p.ImageUrl))
+                                        {
+                                            <img src="@ResolveThumbnailUrl(p.ImageUrl)" alt="" class="rounded border" style="width:36px;height:36px;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'" />
+                                        }
+                                        <div>
+                                            <div class="fw-500">@p.Name</div>
+                                            @if (!string.IsNullOrWhiteSpace(p.Brand))
+                                            {
+                                                <div class="fs-8 text-muted">@p.Brand @p.Model</div>
+                                            }
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="fs-8">@(p.CategoryName ?? "—")</td>
+                                <td class="num fs-8">@(string.IsNullOrWhiteSpace(p.TaxCode) ? "—" : p.TaxCode.FaDigits())</td>
+                                <td>@p.Unit</td>
+                                <td>
+                                    <span class="badge @(p.Valuation is null ? "badge-soft-muted" : "badge-soft-primary") fs-8">
+                                        @MethodTitle(p.EffectiveValuation)
+                                    </span>
+                                </td>
+                                <td class="text-start num">@p.PurchasePrice.Money()</td>
+                                <td class="text-start num fw-500">@p.SalePrice.Money()</td>
+                                <td class="text-start num">@p.TotalStock.Num()</td>
+                                <td>
+                                    @if (!p.IsActive)
+                                    {
+                                        <span class="badge badge-soft-muted">غیرفعال</span>
+                                    }
+                                    else if (p.BelowReorder)
+                                    {
+                                        <span class="badge badge-soft-danger"><i class="bi bi-exclamation-triangle"></i> زیر نقطه سفارش</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-success"><i class="bi bi-check2"></i> فعال</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    <a class="btn btn-sm btn-light" title="کاردکس" href="inv/kardex?productId=@p.Id"><i class="bi bi-journal-text text-info"></i></a>
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(p)"><i class="bi bi-pencil text-primary"></i></button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(p)"><i class="bi bi-trash text-danger"></i></button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var p in items)
+                {
+                    <div class="m-card @(p.BelowReorder ? "st-cancelled" : "st-ready")">
+                        <div class="m-card-head">
+                            @if (!string.IsNullOrWhiteSpace(p.ImageUrl))
+                            {
+                                <img src="@ResolveThumbnailUrl(p.ImageUrl)" alt="" class="rounded border" style="width:40px;height:40px;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'" />
+                            }
+                            else
+                            {
+                                <div class="m-card-icon"><i class="bi bi-box-seam"></i></div>
+                            }
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <span class="doc-number text-muted fs-8">@p.Code.FaDigits()</span>
+                                    <span class="badge badge-soft-primary fs-8">@MethodTitle(p.EffectiveValuation)</span>
+                                </div>
+                                <div class="fw-700 text-truncate">@p.Name</div>
+                                <div class="fs-8 text-muted text-truncate">@(p.CategoryName ?? "بدون گروه") — @p.Unit</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-row"><span><i class="bi bi-boxes text-muted"></i> موجودی</span><b class="num">@p.TotalStock.Num()</b></div>
+                            <div class="m-card-money">
+                                <div>
+                                    <div class="fs-8 text-muted">قیمت خرید</div>
+                                    <div class="num fw-500">@p.PurchasePrice.Money()</div>
+                                </div>
+                                <div class="text-end">
+                                    <div class="fs-8 text-muted">قیمت فروش</div>
+                                    <div class="num fw-800 text-primary">@p.SalePrice.Money()</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="m-card-actions">
+                            <button class="btn btn-light text-primary" @onclick="() => OpenEdit(p)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            <button class="btn btn-light text-danger" @onclick="() => Delete(p)"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="pageCount" OnPageChanged="GoToPage" />
+        }
+    </div>
+</div>
+
+<!-- ================= مودال تعریف کالا (چند مرحله‌ای) ================= -->
+<Modal Visible="showModal" Title="@ModalTitle" Size="modal-xl" OnClose="CloseModal">
+    <ChildContent>
+        @* ---------- نوار مرحله ---------- *@
+        <div class="wiz-bar">
+            @for (var i = 0; i < TabTitles.Length; i++)
+            {
+                var idx = i;
+                <span class="wiz-dot @(idx == tab ? "active" : idx < tab ? "done" : "")">@((idx + 1).FaDigits())</span>
+                if (idx < TabTitles.Length - 1)
+                {
+                    <span class="wiz-line @(idx < tab ? "done" : "")"></span>
+                }
+            }
+        </div>
+
+        @* ---------- تب‌ها ---------- *@
+        <div class="mtabs">
+            @for (var i = 0; i < TabTitles.Length; i++)
+            {
+                var idx = i;
+                <button type="button" class="mtab @(tab == idx ? "active" : "")" @onclick="() => tab = idx">
+                    <i class="bi @TabIcons[idx]"></i>
+                    <span>@TabTitles[idx]</span>
+                </button>
+            }
+        </div>
+
+        @* ============ تب ۱: اطلاعات اصلی ============ *@
+        @if (tab == 0)
+        {
+            <div class="row g-3">
+                <div class="col-12">
+                    <label class="form-label fw-600">گروه کالا</label>
+                    <select class="form-select" @bind="categoryStr" @bind:after="OnCategoryChanged">
+                        <option value="0">— بدون گروه —</option>
+                        @foreach (var c in categories)
+                        {
+                            <option value="@c.Id">@(new string('\u00A0', c.Depth * 4))@(c.Depth > 0 ? "└ " : "")@c.Name @(!string.IsNullOrEmpty(c.HierarchyCode) ? $"({c.HierarchyCode})" : "")</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="col-md-5">
+                    <label class="form-label fw-600">
+                        کد کالا <span class="text-danger">*</span>
+                        <span class="fs-8 text-muted fw-normal">(@(!string.IsNullOrEmpty(categoryPrefix) ? "پیشوند گروه + " : "")حداکثر @productCodeLength کاراکتر گام کالا)</span>
+                    </label>
+                    <div class="input-group" dir="ltr">
+                        @if (!string.IsNullOrEmpty(categoryPrefix))
+                        {
+                            <span class="input-group-text bg-light text-primary font-monospace fw-bold" title="پیشوند سلسله‌مراتب گروه کالا">
+                                <i class="bi bi-folder2-open me-1"></i>@categoryPrefix@whSettings.CodeDelimiter
+                            </span>
+                        }
+                        <input class="form-control num font-monospace fw-bold"
+                               value="@productSuffix"
+                               @oninput="OnProductSuffixInput"
+                               @onblur="OnProductSuffixBlur"
+                               maxlength="@productCodeLength"
+                               placeholder="تا @productCodeLength کاراکتر"
+                               dir="ltr" />
+                    </div>
+                    <div class="d-flex align-items-center justify-content-between mt-1 fs-8">
+                        <span class="text-muted">
+                            کد کامل کالا: <b class="num text-dark font-monospace">@(string.IsNullOrWhiteSpace(form.Code) ? "—" : form.Code)</b>
+                        </span>
+                        <button type="button" class="btn btn-link p-0 text-decoration-none fs-8" @onclick="ToggleManualCodeEdit">
+                            <i class="bi @(manualCodeEdit ? "bi-magic" : "bi-pencil")"></i>
+                            @(manualCodeEdit ? "بازگشت به کد هوشمند" : "ویرایش دستی کل کد")
+                        </button>
+                    </div>
+                    @if (manualCodeEdit)
+                    {
+                        <div class="mt-2 p-2 bg-light border rounded">
+                            <div class="fs-8 text-muted mb-1">ویرایش مستقیم رشته کامل کد:</div>
+                            <input class="form-control form-control-sm num font-monospace"
+                                   @bind="form.Code"
+                                   @bind:after="OnManualCodeChanged"
+                                   dir="ltr" />
+                        </div>
+                    }
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">نام کالا <span class="text-danger">*</span></label>
+                    <input class="form-control" @bind="form.Name" placeholder="مثلاً: روغن موتور ۲۰-۵۰" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">نام لاتین</label>
+                    <input class="form-control" @bind="form.EnName" dir="ltr" />
+                </div>
+
+                <div class="col-12">
+                    <div class="d-flex flex-wrap gap-4">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="pActive" checked="@form.IsActive"
+                                   @onchange="e => form.IsActive = (bool)(e.Value ?? false)" />
+                            <label class="form-check-label" for="pActive">کالا فعال است</label>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="pService" checked="@form.IsService"
+                                   @onchange="e => form.IsService = (bool)(e.Value ?? false)" />
+                            <label class="form-check-label" for="pService">خدمات است (بدون موجودی انبار)</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @* ============ تب ۲: قیمت و مالیات ============ *@
+        else if (tab == 1)
+        {
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">قیمت خرید (ریال)</label>
+                    <input class="form-control num" value="@fPurchase" @oninput="@(e => fPurchase = FormatMoney(e.Value))" inputmode="decimal" dir="ltr" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">قیمت فروش (ریال)</label>
+                    <input class="form-control num" value="@fSale" @oninput="@(e => fSale = FormatMoney(e.Value))" inputmode="decimal" dir="ltr" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">قیمت فروش عمده (ریال)</label>
+                    <input class="form-control num" value="@fSale2" @oninput="@(e => fSale2 = FormatMoney(e.Value))" inputmode="decimal" dir="ltr" />
+                </div>
+
+                <div class="col-12"><hr class="my-1" /></div>
+
+                <div class="col-md-3">
+                    <label class="form-label d-block">مشمول ارزش افزوده</label>
+                    <div class="form-check form-switch mt-1">
+                        <input class="form-check-input" type="checkbox" id="pVat" checked="@form.IsVatIncluded"
+                               @onchange="e => form.IsVatIncluded = (bool)(e.Value ?? false)" />
+                        <label class="form-check-label" for="pVat">@(form.IsVatIncluded ? "بله" : "خیر")</label>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">نرخ ارزش افزوده (٪)</label>
+                    <input type="number" step="any" class="form-control num" @bind="form.VatRate" dir="ltr" disabled="@(!form.IsVatIncluded)" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">نرخ عوارض (٪)</label>
+                    <input type="number" step="any" class="form-control num" @bind="form.DutyRate" dir="ltr" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">سایر مالیات و عوارض (٪)</label>
+                    <input type="number" step="any" class="form-control num" @bind="form.OtherTaxRate" dir="ltr" />
+                </div>
+
+                <div class="col-12">
+                    <div class="doc-total-bar">
+                        <div>
+                            <div class="lbl">قیمت فروش</div>
+                            <div class="val">@Fa.ParseDecimal(fSale).Money()</div>
+                        </div>
+                        <div>
+                            <div class="lbl">مالیات و عوارض</div>
+                            <div class="val text-warning">@TaxAmount.Money()</div>
+                        </div>
+                        <div class="ms-auto">
+                            <div class="lbl">قیمت نهایی با مالیات</div>
+                            <div class="val text-primary fs-5">@((Fa.ParseDecimal(fSale) + TaxAmount).Money()) <span class="fs-8 text-muted">ریال</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @* ============ تب ۳: بارکد و کدهای کاربردی ============ *@
+        else if (tab == 2)
+        {
+            <div class="row g-3">
+                <div class="col-12">
+                    <div class="alert alert-light border py-2 d-flex align-items-center gap-2 mb-1" style="font-size: .84rem;">
+                        <i class="bi bi-upc-scan text-primary fs-5"></i>
+                        <span>اطلاعات بارکد، برند، مدل، شماره فنی کالا و شناسه‌های استاندارد مالیاتی و گمرکی.</span>
+                    </div>
+                </div>
+
+                @* بخش اول: بارکد، شماره فنی، برند و مدل *@
+                <div class="col-md-6">
+                    <label class="form-label fw-600">بارکد کالا</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-light"><i class="bi bi-upc"></i></span>
+                        <input class="form-control num font-monospace" @bind="form.Barcode" dir="ltr" placeholder="مثلاً: 6260123456789" />
+                    </div>
+                    <div class="fs-8 text-muted mt-1">کد میله‌ای، شناسه اسکن یا بارکد بین‌المللی کالا</div>
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label fw-600">شماره فنی (Part Number)</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-light"><i class="bi bi-hash"></i></span>
+                        <input class="form-control font-monospace" @bind="form.PartNumber" dir="ltr" placeholder="مثلاً: PN-9842-X" />
+                    </div>
+                    <div class="fs-8 text-muted mt-1">شماره فنی یا پارت نامبر اختصاصی قطعه/کالا</div>
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label fw-600">برند (Brand / شرکت سازنده)</label>
+                    <input class="form-control" @bind="form.Brand" placeholder="مثلاً: بوش، بهران، سامسونگ…" />
+                    <div class="fs-8 text-muted mt-1">برند تجاری یا کمپانی تولیدکننده کالا</div>
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label fw-600">مدل کالا (Model)</label>
+                    <input class="form-control" @bind="form.Model" placeholder="مثلاً: ۲۰۲۴ سوپر پلاس" />
+                    <div class="fs-8 text-muted mt-1">مدل، تیپ یا مشخصه تولید محصول</div>
+                </div>
+
+                <div class="col-12"><hr class="my-2" /></div>
+
+                @* بخش دوم: شناسه‌ها و استانداردهای کاربردی مودیان و گمرک *@
+                <div class="col-md-6">
+                    <label class="form-label">
+                        شناسه کالای مالیاتی <span class="fs-8 text-muted">(سامانه مودیان — ۱۳ رقمی)</span>
+                    </label>
+                    <input class="form-control num font-monospace" @bind="form.TaxCode" dir="ltr" maxlength="20" placeholder="2710000000000" />
+                    <div class="fs-8 text-muted mt-1">شناسه یکتای اختصاص داده شده توسط سازمان امور مالیاتی</div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">کد واحد سنجش مالیاتی</label>
+                    <input class="form-control num font-monospace" @bind="form.TaxUnitCode" dir="ltr" placeholder="164" />
+                    <div class="fs-8 text-muted mt-1">کد واحد سنجش بر اساس جدول استانداردهای سامانه مودیان</div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">کد گمرکی / تعرفه (HS Code)</label>
+                    <input class="form-control num font-monospace" @bind="form.CustomsCode" dir="ltr" placeholder="مثلاً: 84713020" />
+                    <div class="fs-8 text-muted mt-1">شماره تعرفه ۸ رقمی گمرک</div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">کشور سازنده</label>
+                    <input class="form-control" @bind="form.CountryOfOrigin" placeholder="مثلاً: ایران، آلمان، چین…" />
+                    <div class="fs-8 text-muted mt-1">کشور مبدا تولید برای امور گمرکی و بازرگانی</div>
+                </div>
+            </div>
+        }
+
+        @* ============ تب ۴: انبار و موجودی ============ *@
+        else if (tab == 3)
+        {
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">انبار پیش‌فرض</label>
+                    <select class="form-select" @bind="warehouseStr" @bind:after="UpdateEffectiveValuation">
+                        <option value="0">— همه انبارها —</option>
+                        @foreach (var w in warehouses)
+                        {
+                            <option value="@w.Id">@w.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">روش قیمت‌گذاری کالا</label>
+                    <select class="form-select" @bind="valuationStr" @bind:after="UpdateEffectiveValuation">
+                        <option value="">— ارث‌بری (گروه کالا ← انبار ← تنظیمات) —</option>
+                        <option value="0">میانگین موزون</option>
+                        <option value="1">اولین صادره از اولین وارده (FIFO)</option>
+                        <option value="2">اولین صادره از آخرین وارده (LIFO)</option>
+                    </select>
+                    <div class="fs-8 text-muted mt-1">
+                        <i class="bi bi-info-circle"></i> روش موثر فعلی: <b>@MethodTitle(form.EffectiveValuation)</b>
+                        @if (!string.IsNullOrWhiteSpace(form.ValuationSource))
+                        {
+                            <span class="text-primary me-1">— منبع: @form.ValuationSource</span>
+                        }
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">محل قفسه / آدرس انبارش</label>
+                    <input class="form-control" @bind="form.ShelfCode" placeholder="مثلاً: A-12-3" />
+                </div>
+
+                <div class="col-md-3">
+                    <label class="form-label">نقطه سفارش</label>
+                    <input class="form-control num" value="@fReorder" @oninput="@(e => fReorder = FormatMoney(e.Value))" inputmode="decimal" dir="ltr" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">حداکثر موجودی</label>
+                    <input class="form-control num" value="@fMax" @oninput="@(e => fMax = FormatMoney(e.Value))" inputmode="decimal" dir="ltr" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">حداقل مقدار سفارش</label>
+                    <input class="form-control num" value="@fMinOrder" @oninput="@(e => fMinOrder = FormatMoney(e.Value))" inputmode="decimal" dir="ltr" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">مدت اعتبار (روز)</label>
+                    <input type="number" class="form-control num" @bind="form.ShelfLifeDays" dir="ltr" />
+                </div>
+
+                <div class="col-12">
+                    <div class="attr-box">
+                        <div class="fw-500 mb-2 fs-8 text-muted">ردیابی موجودی</div>
+                        <div class="d-flex flex-wrap gap-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="tBatch" checked="@form.TrackBatch"
+                                       @onchange="e => form.TrackBatch = (bool)(e.Value ?? false)" />
+                                <label class="form-check-label" for="tBatch">ردیابی شماره بچ / سری ساخت</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="tSerial" checked="@form.TrackSerial"
+                                       @onchange="e => form.TrackSerial = (bool)(e.Value ?? false)" />
+                                <label class="form-check-label" for="tSerial">ردیابی شماره سریال</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="tExpiry" checked="@form.TrackExpiry"
+                                       @onchange="e => form.TrackExpiry = (bool)(e.Value ?? false)" />
+                                <label class="form-check-label" for="tExpiry">ردیابی تاریخ انقضا</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-3">
+                    <label class="form-label">وزن (کیلوگرم)</label>
+                    <input type="number" step="any" class="form-control num" @bind="form.Weight" dir="ltr" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">طول (سانتی‌متر)</label>
+                    <input type="number" step="any" class="form-control num" @bind="form.Length" dir="ltr" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">عرض (سانتی‌متر)</label>
+                    <input type="number" step="any" class="form-control num" @bind="form.Width" dir="ltr" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">ارتفاع (سانتی‌متر)</label>
+                    <input type="number" step="any" class="form-control num" @bind="form.Height" dir="ltr" />
+                </div>
+
+                @if (editing)
+                {
+                    <div class="col-12">
+                        <div class="doc-total-bar">
+                            <div>
+                                <div class="lbl">موجودی فعلی</div>
+                                <div class="val">@form.TotalStock.Num() <span class="fs-8 text-muted">@form.Unit</span></div>
+                            </div>
+                            <div>
+                                <div class="lbl">بهای میانگین</div>
+                                <div class="val">@form.AvgCost.Money()</div>
+                            </div>
+                            <div class="ms-auto">
+                                <div class="lbl">ارزش موجودی</div>
+                                <div class="val text-primary">@form.StockValue.Money() <span class="fs-8 text-muted">ریال</span></div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        @* ============ تب ۵: ویژگی‌ها (انتخاب از کمبو + مقدار + رادیوباتن الزام) ============ *@
+        else if (tab == 4)
+        {
+            <div class="attr-box">
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3 pb-2 border-bottom">
+                    <div>
+                        <span class="fw-700 fs-6"><i class="bi bi-sliders text-primary me-1"></i> ویژگی‌های کالا</span>
+                        <span class="text-muted fs-8 me-2">(انتخاب ویژگی، ثبت مقدار و تعیین الزام)</span>
+                        @if (form.Attributes.Count > 0)
+                        {
+                            <span class="badge bg-soft-primary text-primary num ms-1">@form.Attributes.Count.FaDigits() سطر</span>
+                        }
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" @onclick="OpenQuickNewAttribute" title="تعریف ویژگی جدید در سامانه">
+                            <i class="bi bi-plus-circle"></i> تعریف ویژگی جدید
+                        </button>
+                        <button type="button" class="btn btn-sm btn-primary" @onclick="AddAttributeRow" title="افزودن سطر مشخصه به این کالا">
+                            <i class="bi bi-plus-lg"></i> افزودن سطر ویژگی
+                        </button>
+                    </div>
+                </div>
+
+                @if (form.Attributes.Count == 0)
+                {
+                    <div class="attr-empty py-4 text-center border rounded bg-light">
+                        <i class="bi bi-sliders fs-1 d-block mb-2 text-primary opacity-75"></i>
+                        <h6 class="fw-600 mb-1">هنوز ویژگی‌ای برای این کالا افزوده نشده است</h6>
+                        <p class="text-muted fs-8 mb-3">
+                            می‌توانید با دکمه «افزودن سطر ویژگی» از لیست مشخصات موجود انتخاب کنید یا با «تعریف ویژگی جدید» مشخصه جدیدی ایجاد کنید.
+                        </p>
+                        <div class="d-flex justify-content-center gap-2">
+                            <button type="button" class="btn btn-primary btn-sm px-3" @onclick="AddAttributeRow">
+                                <i class="bi bi-plus-lg"></i> افزودن اولین سطر ویژگی
+                            </button>
+                            <button type="button" class="btn btn-outline-primary btn-sm px-3" @onclick="OpenQuickNewAttribute">
+                                <i class="bi bi-plus-circle"></i> تعریف ویژگی جدید
+                            </button>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="doc-grid table-responsive">
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width:40px" class="text-center">#</th>
+                                    <th style="min-width:240px">نام ویژگی</th>
+                                    <th style="min-width:220px">مقدار ویژگی</th>
+                                    <th style="width:230px">الزام (آیا دارد یا خیر)</th>
+                                    <th style="width:50px" class="text-center">حذف</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @for (var i = 0; i < form.Attributes.Count; i++)
+                                {
+                                    var idx = i;
+                                    var a = form.Attributes[idx];
+                                    <tr>
+                                        <td class="text-center"><span class="row-no num">@((idx + 1).FaDigits())</span></td>
+                                        <td>
+                                            <div class="d-flex align-items-center gap-1">
+                                                <select class="form-select form-select-sm"
+                                                        value="@a.AttributeId"
+                                                        @onchange="e => OnAttributeChanged(idx, e)">
+                                                    <option value="0">— انتخاب ویژگی از فهرست —</option>
+                                                    @foreach (var attr in availableAttributes)
+                                                    {
+                                                        <option value="@attr.Id">
+                                                            @attr.Name @(!string.IsNullOrWhiteSpace(attr.Unit) ? $"({attr.Unit})" : "")
+                                                            @(attr.CategoryId.HasValue && attr.CategoryId == form.CategoryId ? " ★" : "")
+                                                        </option>
+                                                    }
+                                                </select>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary px-2" title="تعریف ویژگی جدید در سامانه" @onclick="OpenQuickNewAttribute">
+                                                    <i class="bi bi-plus-lg"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            @if (a.AttributeId == 0)
+                                            {
+                                                <span class="text-muted fs-8">ابتدا ویژگی را از ستون قبل انتخاب کنید</span>
+                                            }
+                                            else if (a.ValueType == AttrValueType.Text)
+                                            {
+                                                <input type="text" class="form-control form-control-sm"
+                                                       @bind="a.TextValue"
+                                                       placeholder="مقدار متنی…" />
+                                            }
+                                            else if (a.ValueType == AttrValueType.Number)
+                                            {
+                                                <div class="input-group input-group-sm">
+                                                    <input type="number" step="any" class="form-control num" dir="ltr"
+                                                           @bind="a.NumberValue"
+                                                           placeholder="0" />
+                                                    @if (!string.IsNullOrWhiteSpace(a.Unit))
+                                                    {
+                                                        <span class="input-group-text">@a.Unit</span>
+                                                    }
+                                                </div>
+                                            }
+                                            else if (a.ValueType == AttrValueType.List)
+                                            {
+                                                <select class="form-select form-select-sm"
+                                                        value="@(a.OptionId ?? 0)"
+                                                        @onchange="e => a.OptionId = int.TryParse(e.Value?.ToString(), out var ov) && ov > 0 ? ov : null">
+                                                    <option value="0">— انتخاب گزینه —</option>
+                                                    @foreach (var opt in a.Options)
+                                                    {
+                                                        <option value="@opt.Id">@opt.Title</option>
+                                                    }
+                                                </select>
+                                            }
+                                            else if (a.ValueType == AttrValueType.Boolean)
+                                            {
+                                                <select class="form-select form-select-sm"
+                                                        value="@BoolStr(a)"
+                                                        @onchange="e => SetBool(a, e)">
+                                                    <option value="">— انتخاب —</option>
+                                                    <option value="true">بله</option>
+                                                    <option value="false">خیر</option>
+                                                </select>
+                                            }
+                                            else if (a.ValueType == AttrValueType.Date)
+                                            {
+                                                <DatePicker Value="a.DateValue" ValueChanged="d => a.DateValue = d" AllowClear="true" />
+                                            }
+                                        </td>
+                                        <td>
+                                            <div class="d-inline-flex align-items-center gap-3">
+                                                <div class="form-check form-check-inline mb-0">
+                                                    <input class="form-check-input cursor-pointer"
+                                                           type="radio"
+                                                           name="attr_req_@idx"
+                                                           id="req_yes_@idx"
+                                                           checked="@a.IsRequired"
+                                                           @onchange="() => a.IsRequired = true" />
+                                                    <label class="form-check-label cursor-pointer text-danger fw-500" for="req_yes_@idx">
+                                                        دارد (الزامی)
+                                                    </label>
+                                                </div>
+                                                <div class="form-check form-check-inline mb-0">
+                                                    <input class="form-check-input cursor-pointer"
+                                                           type="radio"
+                                                           name="attr_req_@idx"
+                                                           id="req_no_@idx"
+                                                           checked="@(!a.IsRequired)"
+                                                           @onchange="() => a.IsRequired = false" />
+                                                    <label class="form-check-label cursor-pointer text-muted" for="req_no_@idx">
+                                                        ندارد (اختیاری)
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td class="text-center">
+                                            <button type="button" class="btn btn-sm btn-light text-danger" title="حذف سطر" @onclick="() => RemoveAttributeRow(idx)">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" @onclick="AddAttributeRow">
+                            <i class="bi bi-plus-lg"></i> افزودن سطر جدید
+                        </button>
+                    </div>
+                }
+            </div>
+        }
+
+        @* ============ تب ۶: ضریب مصرف ============ *@
+        else if (tab == 5)
+        {
+            <div class="row g-3">
+                <div class="col-12">
+                    <div class="alert alert-info py-2 d-flex align-items-center gap-2 mb-1" style="font-size: .84rem;">
+                        <i class="bi bi-calculator text-primary fs-5"></i>
+                        <span>تعریف واحد اصلی، واحد فرعی و نسبت تبدیل میان آن‌ها برای اسناد انبار، فاکتور و گزارش‌ها.</span>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">واحد اصلی <span class="text-danger">*</span></label>
+                    <input class="form-control" list="unitList" @bind="form.Unit" placeholder="مثلاً: عدد، کیلوگرم، لیتر…" />
+                    <datalist id="unitList">
+                        @foreach (var u in units)
+                        {
+                            <option value="@u.Name"></option>
+                        }
+                    </datalist>
+                    <div class="fs-8 text-muted mt-1">واحد پایه نگهداری موجودی در انبار</div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">واحد فرعی</label>
+                    <input class="form-control" @bind="form.SecondUnit" placeholder="مثلاً: کارتن، بسته، جعبه…" />
+                    <div class="fs-8 text-muted mt-1">واحد ثانویه برای فروش یا بسته‌بندی</div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">ضریب تبدیل</label>
+                    <input type="number" step="any" class="form-control num" @bind="form.UnitFactor" dir="ltr" placeholder="مثلاً: ۱۲" />
+                    <div class="fs-8 text-muted mt-1">تعداد واحد اصلی در هر یک واحد فرعی</div>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(form.SecondUnit) && (form.UnitFactor ?? 0) > 0)
+                {
+                    <div class="col-12">
+                        <div class="p-3 bg-light border rounded-3 d-flex align-items-center justify-content-between">
+                            <span class="fw-600"><i class="bi bi-arrow-left-right text-primary me-2"></i>رابطه تبدیل واحد:</span>
+                            <span class="badge bg-white text-dark border px-3 py-2 fs-7 num">
+                                ۱ @form.SecondUnit = @(form.UnitFactor?.ToString("G29")) @(string.IsNullOrWhiteSpace(form.Unit) ? "واحد اصلی" : form.Unit)
+                            </span>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        @* ============ تب ۵: شرح و تصویر ============ *@
+        else
+        {
+            <div class="row g-3">
+                <div class="col-12">
+                    <label class="form-label">شرح کالا</label>
+                    <textarea class="form-control" rows="3" @bind="form.Description" placeholder="توضیحاتی که در فاکتور و گزارش‌ها دیده می‌شود…"></textarea>
+                </div>
+                <div class="col-12">
+                    <label class="form-label">یادداشت داخلی</label>
+                    <textarea class="form-control" rows="2" @bind="form.Note"></textarea>
+                </div>
+                <div class="col-12">
+                    <label class="form-label d-flex align-items-center justify-content-between">
+                        <span><i class="bi bi-image me-1"></i> تصویر کالا</span>
+                        @if (uploadingImage)
+                        {
+                            <span class="text-primary fs-8">
+                                <span class="spinner-border spinner-border-sm me-1"></span> در حال بارگذاری تصویر…
+                            </span>
+                        }
+                    </label>
+
+                    @if (!string.IsNullOrWhiteSpace(ImagePreviewSrc))
+                    {
+                        <div class="p-3 border rounded-3 bg-light d-flex flex-column align-items-center justify-content-center text-center">
+                            <div class="mb-3 position-relative">
+                                <img src="@ImagePreviewSrc" alt="پیش‌نمایش تصویر کالا" class="rounded shadow-sm border bg-white" style="max-height: 200px; max-width: 100%; object-fit: contain;" />
+                            </div>
+                            <div class="d-flex gap-2">
+                                <label class="btn btn-sm btn-outline-primary mb-0" style="cursor:pointer">
+                                    <InputFile OnChange="OnImagePicked" accept="image/*" style="display:none" disabled="@uploadingImage" />
+                                    <i class="bi bi-arrow-repeat me-1"></i> تغییر تصویر
+                                </label>
+                                <button type="button" class="btn btn-sm btn-outline-danger" @onclick="RemoveImage" disabled="@uploadingImage">
+                                    <i class="bi bi-trash me-1"></i> حذف تصویر
+                                </button>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="p-4 border rounded-3 bg-light text-center" style="border-style: dashed !important; border-width: 2px !important;">
+                            <div class="text-muted mb-2">
+                                <i class="bi bi-cloud-arrow-up text-primary" style="font-size: 2.5rem;"></i>
+                            </div>
+                            <div class="fw-600 mb-1">بارگذاری تصویر کالا</div>
+                            <div class="text-muted fs-8 mb-3">فرمت‌های مجاز: JPG، PNG، WEBP (حداکثر ۱۰ مگابایت)</div>
+                            <label class="btn btn-primary btn-sm mb-0" style="cursor:pointer">
+                                <InputFile OnChange="OnImagePicked" accept="image/*" style="display:none" disabled="@uploadingImage" />
+                                <i class="bi bi-cloud-arrow-up me-1"></i> انتخاب تصویر از سیستم
+                            </label>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(uploadError))
+                    {
+                        <div class="alert alert-danger py-2 mt-2 fs-8 mb-0">
+                            <i class="bi bi-exclamation-triangle me-1"></i> @uploadError
+                        </div>
+                    }
+                </div>
+                @if (editing)
+                {
+                    <div class="col-12 fs-8 text-muted">
+                        <i class="bi bi-clock-history"></i> تاریخ ایجاد: @form.CreatedAt.ToFaDateTime()
+                    </div>
+                }
+            </div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseModal">انصراف (Esc)</button>
+        @if (tab > 0)
+        {
+            <button class="btn btn-outline-primary" @onclick="() => tab--"><i class="bi bi-chevron-right"></i> مرحله قبل</button>
+        }
+        @if (tab < TabTitles.Length - 1)
+        {
+            <button class="btn btn-outline-primary" @onclick="() => tab++">مرحله بعد <i class="bi bi-chevron-left"></i></button>
+        }
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@(saving || uploadingImage)">
+            @if (saving || uploadingImage) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            ذخیره کالا
+        </button>
+    </Footer>
+</Modal>
+
+@* ================= مودال سریع تعریف ویژگی جدید ================= *@
+@if (showQuickAttrModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15,23,42,.65); z-index: 1070;">
+        <div class="modal-dialog modal-dialog-centered modal-lg" @onclick:stopPropagation="true">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-light border-bottom">
+                    <h5 class="modal-title fs-6 fw-700">
+                        <i class="bi bi-sliders text-primary me-1"></i> تعریف ویژگی جدید برای کالا
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="CloseQuickAttrModal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="row g-3">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">نام ویژگی <span class="text-danger">*</span></label>
+                            <input class="form-control" @bind="quickAttr.Name" placeholder="مثلاً: رنگ، سایز، جنس، ولتاژ، گارانتی…" />
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label">کد لاتین (اختیاری)</label>
+                            <input class="form-control" @bind="quickAttr.Code" dir="ltr" placeholder="COLOR" />
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label">نوع مقدار</label>
+                            <select class="form-select" value="@((int)quickAttr.ValueType)" @onchange="OnQuickTypeChanged">
+                                <option value="@((int)AttrValueType.Text)">متنی</option>
+                                <option value="@((int)AttrValueType.Number)">عددی</option>
+                                <option value="@((int)AttrValueType.List)">انتخاب از فهرست (چندگزینه‌ای)</option>
+                                <option value="@((int)AttrValueType.Boolean)">بله / خیر (دودویی)</option>
+                                <option value="@((int)AttrValueType.Date)">تاریخ</option>
+                            </select>
+                        </div>
+                        <div class="col-6 col-md-4">
+                            <label class="form-label">واحد سنجش (اختیاری)</label>
+                            <input class="form-control" @bind="quickAttr.Unit" placeholder="سانتی‌متر، کیلوگرم، ماه…" />
+                        </div>
+                        <div class="col-6 col-md-4">
+                            <label class="form-label">گروه کالای مرتبط</label>
+                            <select class="form-select" value="@(quickAttr.CategoryId?.ToString() ?? "")"
+                                    @onchange="e => quickAttr.CategoryId = int.TryParse(e.Value?.ToString(), out var cid) && cid > 0 ? cid : null">
+                                <option value="">همه گروه‌ها (مشترک/عمومی)</option>
+                                @foreach (var c in categories)
+                                {
+                                    <option value="@c.Id">@c.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label d-block">الزام پر کردن</label>
+                            <div class="d-flex align-items-center gap-3 pt-2">
+                                <div class="form-check mb-0">
+                                    <input class="form-check-input" type="radio" name="quickReq" id="qreqYes"
+                                           checked="@quickAttr.IsRequired" @onchange="() => quickAttr.IsRequired = true" />
+                                    <label class="form-check-label text-danger fw-500 cursor-pointer" for="qreqYes">دارد (الزامی)</label>
+                                </div>
+                                <div class="form-check mb-0">
+                                    <input class="form-check-input" type="radio" name="quickReq" id="qreqNo"
+                                           checked="@(!quickAttr.IsRequired)" @onchange="() => quickAttr.IsRequired = false" />
+                                    <label class="form-check-label text-muted cursor-pointer" for="qreqNo">ندارد (اختیاری)</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        @if (quickAttr.ValueType == AttrValueType.List)
+                        {
+                            <div class="col-12">
+                                <div class="p-3 border rounded bg-light">
+                                    <label class="form-label fw-600 mb-2">گزینه‌های مجاز فهرست</label>
+                                    <div class="input-group mb-2">
+                                        <input class="form-control" @bind="newQuickOption" placeholder="عنوان گزینه (مثلاً: قرمز، آبی، مشکی…)"
+                                               @onkeydown='e => { if (e.Key == "Enter") AddQuickOption(); }' />
+                                        <button type="button" class="btn btn-outline-primary" @onclick="AddQuickOption">
+                                            <i class="bi bi-plus-lg"></i> افزودن گزینه
+                                        </button>
+                                    </div>
+                                    @if (quickAttr.Options.Count > 0)
+                                    {
+                                        <div class="d-flex flex-wrap gap-2 pt-1">
+                                            @for (var oi = 0; oi < quickAttr.Options.Count; oi++)
+                                            {
+                                                var optIdx = oi;
+                                                var opt = quickAttr.Options[optIdx];
+                                                <span class="badge bg-white text-dark border d-inline-flex align-items-center gap-2 px-2 py-1 fs-8">
+                                                    @opt.Title
+                                                    <i class="bi bi-x cursor-pointer text-danger" @onclick="() => RemoveQuickOption(optIdx)"></i>
+                                                </span>
+                                            }
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="fs-8 text-muted">حداقل یک گزینه برای این ویژگی تعریف کنید.</div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer bg-light border-top">
+                    <button type="button" class="btn btn-light" @onclick="CloseQuickAttrModal">انصراف</button>
+                    <button type="button" class="btn btn-primary" disabled="@quickAttrSaving" @onclick="SaveQuickAttribute">
+                        @if (quickAttrSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm ms-1"></span>
+                        }
+                        <i class="bi bi-check2-circle"></i> ذخیره و افزودن به این کالا
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<InvProduct> items = new();
+    private List<InvCategory> categories = new();
+    private List<InvWarehouse> warehouses = new();
+    private List<MeasureUnit> units = new();
+
+    private int total, page = 1, pageCount = 1;
+    private const int PageSize = 12;
+    private string search = "", filterCategoryStr = "0", filterWarehouseStr = "0";
+    private bool belowOnly, loading = true;
+
+    private InvProduct form = new();
+    private bool showModal, saving;
+    private int tab;
+    private string categoryStr = "0", warehouseStr = "0", valuationStr = "";
+    private string fSale = "", fSale2 = "", fPurchase = "", fReorder = "", fMax = "", fMinOrder = "";
+    private bool editing => form.Id != 0;
+
+    // تنظیمات ساختار کدینگ
+    private WarehousingSettingsDto whSettings = new();
+    private int productCodeLength => whSettings.ProductCodeLength > 0 ? whSettings.ProductCodeLength : 4;
+    private string categoryPrefix = "";
+    private string productSuffix = "";
+    private bool manualCodeEdit = false;
+
+    private static readonly string[] TabTitles = { "اطلاعات اصلی", "قیمت و مالیات", "بارکد و کدهای کاربردی", "انبار و موجودی", "ویژگی‌ها", "ضریب مصرف", "شرح و تصویر" };
+    private static readonly string[] TabIcons = { "bi-info-circle", "bi-cash-coin", "bi-upc-scan", "bi-boxes", "bi-sliders", "bi-calculator", "bi-card-image" };
+
+    private string ModalTitle => editing ? $"ویرایش کالا — {form.Name}" : "تعریف کالای جدید";
+
+    private decimal TaxAmount
+    {
+        get
+        {
+            var basePrice = Fa.ParseDecimal(fSale);
+            var rate = (form.IsVatIncluded ? form.VatRate : 0) + form.DutyRate + form.OtherTaxRate;
+            return Math.Round(basePrice * rate / 100m, 0);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("تعریف کالا");
+        await LoadLookups();
+        await Load();
+    }
+
+    private async Task LoadLookups()
+    {
+        try
+        {
+            whSettings = await SettingsSvc.GetSettingsAsync() ?? new WarehousingSettingsDto();
+            categories = await CategorySvc.GetFlatAsync(activeOnly: true);
+            warehouses = await WarehouseSvc.GetAllAsync(activeOnly: true);
+            units = await UnitSvc.GetAllAsync(activeOnly: true);
+        }
+        catch { /* نبود اطلاعات پایه مانع کار صفحه نیست */ }
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var catId = int.TryParse(filterCategoryStr, out var c) ? c : 0;
+            var whId = int.TryParse(filterWarehouseStr, out var w) ? w : 0;
+            var res = await ProductSvc.GetAllAsync(search, catId, whId, belowOnly, false, page, PageSize);
+            items = res.Items;
+            total = res.TotalCount;
+            pageCount = Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnSearch() { page = 1; await Load(); }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") { page = 1; await Load(); }
+    }
+
+    private async Task OnBelowChanged(ChangeEventArgs e)
+    {
+        belowOnly = e.Value is bool b && b;
+        page = 1;
+        await Load();
+    }
+
+    private async Task GoToPage(int p) { page = p; await Load(); }
+
+    // ---------- مودال ----------
+    private async Task OpenNew()
+    {
+        await LoadLookups();
+        try
+        {
+            form = await ProductSvc.NewAsync(int.TryParse(filterCategoryStr, out var c) && c > 0 ? c : null);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); return; }
+
+        categoryStr = (form.CategoryId ?? 0).ToString();
+        warehouseStr = "0";
+        valuationStr = "";
+        fSale = fSale2 = fPurchase = fReorder = fMax = fMinOrder = "";
+        imagePreviewData = null;
+        uploadError = null;
+        uploadingImage = false;
+        tab = 0;
+        showModal = true;
+
+        categoryPrefix = form.CategoryCodePrefix ?? "";
+        productSuffix = form.ProductCodeSuffix ?? "";
+        manualCodeEdit = false;
+        SyncFullProductCode();
+
+        await LoadAvailableAttributes();
+        EnsureAttributeOptions();
+        UpdateEffectiveValuation();
+    }
+
+    private async Task OpenEdit(InvProduct p)
+    {
+        await LoadLookups();
+        try { form = await ProductSvc.GetAsync(p.Id); }
+        catch (Exception ex) { Toast.Error(ex.Message); return; }
+
+        categoryStr = (form.CategoryId ?? 0).ToString();
+        warehouseStr = (form.WarehouseId ?? 0).ToString();
+        valuationStr = form.Valuation is null ? "" : ((int)form.Valuation.Value).ToString();
+        fSale = Fa.Money(form.SalePrice);
+        fSale2 = Fa.Money(form.SalePrice2);
+        fPurchase = Fa.Money(form.PurchasePrice);
+        fReorder = Fa.Money(form.ReorderPoint);
+        fMax = Fa.Money(form.MaxStock);
+        fMinOrder = Fa.Money(form.MinOrderQty);
+        imagePreviewData = null;
+        uploadError = null;
+        uploadingImage = false;
+        tab = 0;
+        showModal = true;
+
+        categoryPrefix = form.CategoryCodePrefix ?? "";
+        productSuffix = form.ProductCodeSuffix ?? "";
+        if (string.IsNullOrEmpty(categoryPrefix) && form.CategoryId is > 0)
+        {
+            var cat = categories.FirstOrDefault(c => c.Id == form.CategoryId.Value);
+            if (cat is not null && !string.IsNullOrEmpty(cat.HierarchyCode))
+            {
+                categoryPrefix = cat.HierarchyCode;
+                if (!string.IsNullOrEmpty(form.Code) && form.Code.StartsWith(categoryPrefix))
+                {
+                    productSuffix = form.Code.Substring(categoryPrefix.Length).TrimStart('-', '/', '.');
+                }
+            }
+        }
+        if (string.IsNullOrEmpty(productSuffix))
+        {
+            productSuffix = form.Code ?? "";
+        }
+        manualCodeEdit = false;
+
+        await LoadAvailableAttributes();
+        EnsureAttributeOptions();
+        UpdateEffectiveValuation();
+    }
+
+    private void CloseModal()
+    {
+        showModal = false;
+        imagePreviewData = null;
+        uploadError = null;
+        uploadingImage = false;
+    }
+
+    /// <summary>با تغییر گروه، کد پیشنهادی و ویژگی‌های همان گروه بارگذاری می‌شوند.</summary>
+    private async Task OnCategoryChanged()
+    {
+        form.CategoryId = int.TryParse(categoryStr, out var c) && c > 0 ? c : null;
+        try
+        {
+            var fresh = await ProductSvc.NewAsync(form.CategoryId);
+            categoryPrefix = fresh.CategoryCodePrefix ?? "";
+            if (form.Id == 0)
+            {
+                productSuffix = fresh.ProductCodeSuffix ?? "";
+                form.Code = fresh.Code;
+            }
+            else
+            {
+                SyncFullProductCode();
+            }
+
+            foreach (var a in fresh.Attributes)
+            {
+                var old = form.Attributes.FirstOrDefault(x => x.AttributeId == a.AttributeId);
+                if (old is null) continue;
+                a.TextValue = old.TextValue;
+                a.NumberValue = old.NumberValue;
+                a.BoolValue = old.BoolValue;
+                a.DateValue = old.DateValue;
+                a.OptionId = old.OptionId;
+                a.IsRequired = old.IsRequired;
+            }
+            form.Attributes = fresh.Attributes;
+            await LoadAvailableAttributes();
+            EnsureAttributeOptions();
+            UpdateEffectiveValuation();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OnProductSuffixInput(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString() ?? "";
+        if (raw.Length > productCodeLength)
+        {
+            raw = raw.Substring(0, productCodeLength);
+        }
+        productSuffix = raw;
+        SyncFullProductCode();
+    }
+
+    private void OnProductSuffixBlur()
+    {
+        if (!string.IsNullOrWhiteSpace(productSuffix) && productSuffix.All(char.IsDigit) && productSuffix.Length < productCodeLength)
+        {
+            productSuffix = productSuffix.PadLeft(productCodeLength, '0');
+            SyncFullProductCode();
+        }
+    }
+
+    private void SyncFullProductCode()
+    {
+        if (manualCodeEdit) return;
+
+        if (!string.IsNullOrEmpty(categoryPrefix) && whSettings.AutoCodeFromCategory)
+        {
+            var delim = whSettings.CodeDelimiter ?? "";
+            form.Code = string.IsNullOrEmpty(delim) ? $"{categoryPrefix}{productSuffix}" : $"{categoryPrefix}{delim}{productSuffix}";
+        }
+        else
+        {
+            form.Code = productSuffix;
+        }
+    }
+
+    private void ToggleManualCodeEdit()
+    {
+        manualCodeEdit = !manualCodeEdit;
+        if (!manualCodeEdit)
+        {
+            SyncFullProductCode();
+        }
+    }
+
+    private void OnManualCodeChanged()
+    {
+        if (!string.IsNullOrEmpty(categoryPrefix) && (form.Code ?? "").StartsWith(categoryPrefix))
+        {
+            productSuffix = form.Code.Substring(categoryPrefix.Length).TrimStart('-', '/', '.');
+        }
+        else
+        {
+            productSuffix = form.Code ?? "";
+        }
+    }
+
+    private void UpdateEffectiveValuation()
+    {
+        form.Valuation = int.TryParse(valuationStr, out var v) ? (ValuationMethod)v : null;
+        form.CategoryId = int.TryParse(categoryStr, out var c) && c > 0 ? c : null;
+        form.WarehouseId = int.TryParse(warehouseStr, out var w) && w > 0 ? w : null;
+
+        // اولویت ۱: کالا
+        if (form.Valuation.HasValue)
+        {
+            form.EffectiveValuation = form.Valuation.Value;
+            form.ValuationSource = "کالا (اولویت ۱)";
+            return;
+        }
+
+        // اولویت ۲: گروه کالا
+        var selectedCat = categories.FirstOrDefault(x => x.Id == form.CategoryId);
+        if (selectedCat != null && (selectedCat.Valuation.HasValue || !selectedCat.ValuationInherited))
+        {
+            form.EffectiveValuation = selectedCat.EffectiveValuation;
+            form.ValuationSource = selectedCat.Valuation.HasValue ? $"گروه کالا: {selectedCat.Name} (اولویت ۲)" : "گروه کالای والد (اولویت ۲)";
+            return;
+        }
+
+        // اولویت ۳: انبار
+        var selectedWh = warehouses.FirstOrDefault(x => x.Id == form.WarehouseId);
+        if (selectedWh?.Valuation != null)
+        {
+            form.EffectiveValuation = selectedWh.Valuation.Value;
+            form.ValuationSource = $"انبار: {selectedWh.Name} (اولویت ۳)";
+            return;
+        }
+
+        // اولویت ۴: تنظیمات کلی سیستم
+        form.EffectiveValuation = selectedCat?.EffectiveValuation ?? ValuationMethod.Average;
+        form.ValuationSource = "تنظیمات کلی سیستم (پیش‌فرض)";
+    }
+
+    private void EnsureAttributeOptions()
+    {
+        foreach (var a in form.Attributes)
+        {
+            var matched = availableAttributes.FirstOrDefault(x => x.Id == a.AttributeId);
+            if (matched != null && (a.Options == null || a.Options.Count == 0))
+            {
+                a.Options = matched.Options?.Select(o => new InvAttributeOption
+                {
+                    Id = o.Id,
+                    AttributeId = o.AttributeId,
+                    Title = o.Title,
+                    SortOrder = o.SortOrder
+                }).ToList() ?? new();
+                if (string.IsNullOrEmpty(a.AttributeName)) a.AttributeName = matched.Name;
+                if (string.IsNullOrEmpty(a.Unit)) a.Unit = matched.Unit;
+                a.ValueType = matched.ValueType;
+            }
+            if (a.ValueType == AttrValueType.Boolean && (a.Options == null || a.Options.Count == 0))
+            {
+                a.Options = new List<InvAttributeOption>
+                {
+                    new() { Id = 1, AttributeId = a.AttributeId, Title = "بله", SortOrder = 1 },
+                    new() { Id = 2, AttributeId = a.AttributeId, Title = "خیر", SortOrder = 2 }
+                };
+            }
+        }
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name)) { Toast.Error("نام کالا را وارد کنید."); tab = 0; return; }
+
+        SyncFullProductCode();
+        if (string.IsNullOrWhiteSpace(form.Code)) { Toast.Error("کد کالا را وارد کنید."); tab = 0; return; }
+
+        form.Attributes.RemoveAll(a => a.AttributeId == 0);
+
+        form.CategoryId = int.TryParse(categoryStr, out var c) && c > 0 ? c : null;
+        form.WarehouseId = int.TryParse(warehouseStr, out var w) && w > 0 ? w : null;
+        form.Valuation = int.TryParse(valuationStr, out var v) ? (ValuationMethod)v : null;
+        form.SalePrice = Fa.ParseDecimal(fSale);
+        form.SalePrice2 = Fa.ParseDecimal(fSale2);
+        form.PurchasePrice = Fa.ParseDecimal(fPurchase);
+        form.ReorderPoint = Fa.ParseDecimal(fReorder);
+        form.MaxStock = Fa.ParseDecimal(fMax);
+        form.MinOrderQty = Fa.ParseDecimal(fMinOrder);
+
+        saving = true;
+        try
+        {
+            await ProductSvc.SaveAsync(form);
+            Toast.Success(editing ? "کالا ویرایش شد." : "کالا ثبت شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(InvProduct p)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف «{p.Name}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await ProductSvc.DeleteAsync(p.Id);
+            Toast.Success("کالا حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- کمکی ----------
+    private static string FormatMoney(object? value)
+    {
+        var raw = Fa.ToEn(value?.ToString() ?? "").Replace(",", "");
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+
+        var parts = raw.Split('.', 2);
+        var intPart = new string(parts[0].Where(char.IsDigit).ToArray());
+        if (intPart.Length == 0) intPart = "0";
+
+        var formatted = decimal.Parse(intPart).ToString("#,##0");
+        if (parts.Length == 2)
+        {
+            var frac = new string(parts[1].Where(char.IsDigit).ToArray());
+            return $"{formatted}.{frac}";
+        }
+        return formatted;
+    }
+
+    // ---------- ویژگی‌ها: لیست ویژگی‌های قابل انتخاب و مودال سریع ----------
+    private List<InvAttribute> availableAttributes = new();
+    private bool showQuickAttrModal;
+    private InvAttribute quickAttr = new();
+    private string newQuickOption = "";
+    private bool quickAttrSaving;
+
+    private async Task LoadAvailableAttributes()
+    {
+        try
+        {
+            var all = await AttrSvc.GetAllAsync(true);
+            availableAttributes = all.OrderByDescending(a => a.CategoryId == form.CategoryId || a.CategoryId == null)
+                                     .ThenBy(a => a.SortOrder)
+                                     .ThenBy(a => a.Name)
+                                     .ToList();
+        }
+        catch { availableAttributes = new(); }
+    }
+
+    private void OpenQuickNewAttribute()
+    {
+        quickAttr = new InvAttribute
+        {
+            IsActive = true,
+            CategoryId = form.CategoryId,
+            ValueType = AttrValueType.Text
+        };
+        newQuickOption = "";
+        showQuickAttrModal = true;
+    }
+
+    private void CloseQuickAttrModal()
+    {
+        showQuickAttrModal = false;
+    }
+
+    private void OnQuickTypeChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var tv))
+        {
+            quickAttr.ValueType = (AttrValueType)tv;
+            if (quickAttr.ValueType == AttrValueType.List && quickAttr.Options.Count == 0)
+            {
+                quickAttr.Options = new();
+            }
+        }
+    }
+
+    private void AddQuickOption()
+    {
+        var t = (newQuickOption ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(t)) return;
+        quickAttr.Options.Add(new InvAttributeOption
+        {
+            Title = t,
+            SortOrder = quickAttr.Options.Count + 1
+        });
+        newQuickOption = "";
+    }
+
+    private void RemoveQuickOption(int idx)
+    {
+        if (idx >= 0 && idx < quickAttr.Options.Count)
+            quickAttr.Options.RemoveAt(idx);
+    }
+
+    private async Task SaveQuickAttribute()
+    {
+        if (string.IsNullOrWhiteSpace(quickAttr.Name))
+        {
+            Toast.Error("نام ویژگی الزامی است.");
+            return;
+        }
+
+        if (quickAttr.ValueType == AttrValueType.List && quickAttr.Options.Count == 0)
+        {
+            Toast.Error("برای ویژگی فهرستی حداقل یک گزینه تعریف کنید.");
+            return;
+        }
+
+        quickAttrSaving = true;
+        try
+        {
+            var saved = await AttrSvc.SaveAsync(quickAttr);
+            Toast.Success($"ویژگی «{saved.Name}» ایجاد شد.");
+            await LoadAvailableAttributes();
+
+            // افزودن خودکار سطر این ویژگی به کالا
+            var newRow = new InvProductAttrValue
+            {
+                AttributeId = saved.Id,
+                AttributeName = saved.Name,
+                ValueType = saved.ValueType,
+                Unit = saved.Unit,
+                IsRequired = saved.IsRequired,
+                Options = saved.Options?.Select(o => new InvAttributeOption
+                {
+                    Id = o.Id,
+                    AttributeId = o.AttributeId,
+                    Title = o.Title,
+                    SortOrder = o.SortOrder
+                }).ToList() ?? new()
+            };
+            form.Attributes.Add(newRow);
+            showQuickAttrModal = false;
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            quickAttrSaving = false;
+        }
+    }
+
+    private void AddAttributeRow()
+    {
+        form.Attributes.Add(new InvProductAttrValue());
+    }
+
+    private async Task OnAttributeChanged(int idx, ChangeEventArgs e)
+    {
+        var attrId = int.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+        var attr = availableAttributes.FirstOrDefault(a => a.Id == attrId);
+        var row = form.Attributes[idx];
+        row.AttributeId = attrId;
+        row.OptionId = null;
+        row.TextValue = null;
+        row.NumberValue = null;
+        row.BoolValue = null;
+        row.DateValue = null;
+
+        if (attr != null)
+        {
+            row.AttributeName = attr.Name;
+            row.ValueType = attr.ValueType;
+            row.Unit = attr.Unit;
+            row.IsRequired = attr.IsRequired;
+            row.Options = attr.Options?.Select(o => new InvAttributeOption
+            {
+                Id = o.Id,
+                AttributeId = o.AttributeId,
+                Title = o.Title,
+                SortOrder = o.SortOrder
+            }).ToList() ?? new();
+        }
+        else
+        {
+            row.AttributeName = "";
+            row.ValueType = AttrValueType.Text;
+            row.Unit = "";
+            row.IsRequired = false;
+            row.Options = new();
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void RemoveAttributeRow(int idx)
+    {
+        if (idx >= 0 && idx < form.Attributes.Count)
+            form.Attributes.RemoveAt(idx);
+    }
+
+    private static string BoolStr(InvProductAttrValue a) => a.BoolValue is null ? "" : (a.BoolValue.Value ? "true" : "false");
+
+    private static void SetBool(InvProductAttrValue a, ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        a.BoolValue = string.IsNullOrEmpty(raw) ? null : raw == "true";
+    }
+
+    private static string MethodTitle(ValuationMethod m) => m switch
+    {
+        ValuationMethod.Fifo => "FIFO",
+        ValuationMethod.Lifo => "LIFO",
+        _ => "میانگین موزون"
+    };
+
+    // ---------- تصویر و پیش‌نمایش ----------
+    private string? imagePreviewData;
+    private bool uploadingImage;
+    private string? uploadError;
+
+    private string? ImagePreviewSrc
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(imagePreviewData)) return imagePreviewData;
+            if (!string.IsNullOrWhiteSpace(form.ImageUrl))
+            {
+                if (form.ImageUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                    form.ImageUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+                    form.ImageUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                {
+                    return form.ImageUrl;
+                }
+                var baseUri = (ApiCfg?.BaseUrl ?? "").TrimEnd('/');
+                return $"{baseUri}/{form.ImageUrl.TrimStart('/')}";
+            }
+            return null;
+        }
+    }
+
+    private string ResolveThumbnailUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return "";
+        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            url.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+            url.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            return url;
+        var baseUri = (ApiCfg?.BaseUrl ?? "").TrimEnd('/');
+        return $"{baseUri}/{url.TrimStart('/')}";
+    }
+
+    private async Task OnImagePicked(InputFileChangeEventArgs e)
+    {
+        uploadError = null;
+        var file = e.File;
+        if (file is null) return;
+
+        if (file.Size > 10 * 1024 * 1024)
+        {
+            uploadError = "حداکثر حجم مجاز تصویر ۱۰ مگابایت است.";
+            Toast.Error(uploadError);
+            return;
+        }
+
+        uploadingImage = true;
+        StateHasChanged();
+
+        try
+        {
+            var contentType = string.IsNullOrWhiteSpace(file.ContentType) ? "image/jpeg" : file.ContentType;
+
+            await using var stream = file.OpenReadStream(10 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var bytes = ms.ToArray();
+
+            // پیش‌نمایش فوری کلاینت با Base64
+            imagePreviewData = $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
+            StateHasChanged();
+
+            // آپلود از طریق IApiClient که هدر توکن Bearer را به‌طور خودکار ارسال می‌کند
+            using var uploadMs = new MemoryStream(bytes);
+            var uploadRes = await Api.PostFileAsync<FileUploadResult>("api/files/upload/products", uploadMs, file.Name, "file", contentType);
+            if (uploadRes != null && !string.IsNullOrWhiteSpace(uploadRes.Url))
+            {
+                form.ImageUrl = uploadRes.Url;
+                Toast.Success("تصویر با موفقیت بارگذاری شد.");
+            }
+        }
+        catch (Exception ex)
+        {
+            uploadError = "خطا در بارگذاری تصویر: " + ex.Message;
+            Toast.Error(uploadError);
+        }
+        finally
+        {
+            uploadingImage = false;
+            StateHasChanged();
+        }
+    }
+
+    private void RemoveImage()
+    {
+        form.ImageUrl = null;
+        imagePreviewData = null;
+        uploadError = null;
+    }
+
+    private class FileUploadResult
+    {
+        public string Url { get; set; } = "";
+        public string FileName { get; set; } = "";
+        public long Size { get; set; }
+        public string ContentType { get; set; } = "";
+    }
+}

@@ -1,0 +1,372 @@
+@using Inventory.Shared
+@using Inventory.Shared.Dtos
+@inject ITrsAccountService AccountSvc
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<Modal Visible="Visible" Title="@Title" Size="modal-lg" OnClose="Close">
+    <ChildContent>
+        <div class="row g-3">
+            <!-- نوع حساب -->
+            <div class="col-md-6">
+                <label class="form-label fs-8 fw-bold">نوع حساب <span class="text-danger">*</span></label>
+                <div class="btn-group w-100" role="group">
+                    <button type="button" class="btn btn-sm @(form.Kind == TreasuryAccountKind.Bank ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick="() => SetKind(TreasuryAccountKind.Bank)">
+                        <i class="bi bi-bank ms-1"></i> حساب بانکی
+                    </button>
+                    <button type="button" class="btn btn-sm @(form.Kind == TreasuryAccountKind.Pos ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick="() => SetKind(TreasuryAccountKind.Pos)">
+                        <i class="bi bi-credit-card ms-1"></i> کارتخوان (POS)
+                    </button>
+                    <button type="button" class="btn btn-sm @(form.Kind == TreasuryAccountKind.Cash ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick="() => SetKind(TreasuryAccountKind.Cash)">
+                        <i class="bi bi-wallet2 ms-1"></i> صندوق
+                    </button>
+                    <button type="button" class="btn btn-sm @(form.Kind == TreasuryAccountKind.PettyCash ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick="() => SetKind(TreasuryAccountKind.PettyCash)">
+                        <i class="bi bi-cash-stack ms-1"></i> تنخواه
+                    </button>
+                </div>
+            </div>
+
+            <!-- انتخاب سریع نام بانک -->
+            @if (form.Kind is TreasuryAccountKind.Bank or TreasuryAccountKind.Pos)
+            {
+                <div class="col-md-6">
+                    <label class="form-label fs-8 fw-bold">انتخاب سریع بانک</label>
+                    <div class="input-group">
+                        <select class="form-select form-select-sm" value="@selectedBank" @onchange="OnQuickBankPick">
+                            <option value="">— انتخاب از لیست بانک‌ها —</option>
+                            @foreach (var b in AllBanks)
+                            {
+                                <option value="@b">@b</option>
+                            }
+                        </select>
+                        <button type="button" class="btn btn-outline-primary" title="مدیریت و افزودن بانک" aria-label="مدیریت و افزودن بانک" @onclick="OpenBankManager">
+                            <i class="bi bi-plus-lg"></i>
+                        </button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="col-md-6"></div>
+            }
+
+            <!-- عنوان حساب -->
+            <div class="col-md-6">
+                <label class="form-label fs-8 fw-bold">نام / عنوان حساب <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="form.Name" placeholder="مثال: بانک ملت - حساب جاری ۱۲۳" />
+            </div>
+
+            <!-- نام بانک (دستی یا خودکار) -->
+            @if (form.Kind is TreasuryAccountKind.Bank or TreasuryAccountKind.Pos)
+            {
+                <div class="col-md-6">
+                    <label class="form-label fs-8 fw-bold">نام بانک <span class="text-danger">*</span></label>
+                    <input class="form-control" @bind="form.BankName" placeholder="مثال: ملت، صادرات، ملی، سامان…" />
+                </div>
+
+                <div class="col-md-4">
+                    <label class="form-label fs-8">شماره حساب</label>
+                    <input class="form-control num" @bind="form.AccountNumber" dir="ltr" placeholder="شماره حساب بانکی" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fs-8">شماره کارت (۱۶ رقم)</label>
+                    <input class="form-control num" @bind="form.CardNumber" dir="ltr" maxlength="19" placeholder="xxxx-xxxx-xxxx-xxxx" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fs-8">شماره شبا (بدون IR)</label>
+                    <div class="input-group" dir="ltr">
+                        <span class="input-group-text">IR</span>
+                        <input class="form-control num" @bind="form.Iban" maxlength="24" placeholder="۲۴ رقم شبا" />
+                    </div>
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label fs-8">نام شعبه</label>
+                    <input class="form-control" @bind="form.BranchName" placeholder="مثال: شعبه مرکزی" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fs-8">کد شعبه</label>
+                    <input class="form-control num" @bind="form.BranchCode" placeholder="کد عددی شعبه" />
+                </div>
+            }
+
+            <!-- مانده اول دوره -->
+            <div class="col-md-6">
+                <label class="form-label fs-8">مانده ابتدای دوره (ریال)</label>
+                <input class="form-control num" value="@openingText" @oninput="OnOpeningInput" placeholder="0" />
+                @if (form.OpeningBalance > 0)
+                {
+                    <div class="form-text fs-9 text-muted num">@Fa.MoneyWithWords(form.OpeningBalance)</div>
+                }
+            </div>
+
+            <!-- تنظیمات وضعیت -->
+            <div class="col-md-6 d-flex align-items-center pt-3">
+                <div class="form-check form-switch me-4">
+                    <input class="form-check-input" type="checkbox" id="chkQuickDefault" @bind="form.IsDefault" />
+                    <label class="form-check-label fs-8" for="chkQuickDefault">حساب پیش‌فرض دریافت/پرداخت</label>
+                </div>
+            </div>
+
+            <div class="col-12">
+                <label class="form-label fs-8">توضیحات اختیاری</label>
+                <input class="form-control form-control-sm" @bind="form.Description" placeholder="یادداشت یا توضیحات اضافی…" />
+            </div>
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button type="button" class="btn btn-secondary" @onclick="Close" disabled="@saving">
+            انصراف
+        </button>
+        <button type="button" class="btn btn-primary" @onclick="Save" disabled="@saving">
+            @if (saving)
+            {
+                <span class="spinner-border spinner-border-sm ms-1" role="status"></span>
+                <span>در حال ثبت…</span>
+            }
+            else
+            {
+                <i class="bi bi-check-lg ms-1"></i>
+                <span>ثبت و انتخاب بانک</span>
+            }
+        </button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showBankManager" Title="مدیریت بانک‌ها" Size="modal-lg" OnClose="CloseBankManager">
+    <ChildContent>
+        <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
+            <div>
+                <div class="fw-bold">فهرست بانک‌های سفارشی</div>
+                <div class="text-muted fs-8">بانک‌های پیش‌فرض در کمبو هستند؛ از اینجا بانک‌های اختصاصی را اضافه یا حذف کنید.</div>
+            </div>
+        </div>
+        <div class="row g-2 mb-3">
+            <div class="col-sm-8"><input class="form-control" @bind="newBankName" @bind:event="oninput" @onkeydown="OnBankInputKeyDown" placeholder="نام بانک جدید، مثلاً بانک خاورمیانه" /></div>
+            <div class="col-sm-4"><button type="button" class="btn btn-primary w-100" @onclick="AddBank" disabled="@string.IsNullOrWhiteSpace(newBankName)"><i class="bi bi-plus-lg ms-1"></i>افزودن بانک</button></div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead><tr><th>نام بانک</th><th>وضعیت در فهرست انتخاب سریع</th><th class="text-end">عملیات</th></tr></thead>
+                <tbody>
+                    @if (customBanks.Count == 0)
+                    {
+                        <tr><td colspan="3" class="text-center text-muted py-4">هنوز بانک سفارشی اضافه نشده است.</td></tr>
+                    }
+                    else
+                    {
+                        @foreach (var bank in customBanks)
+                        {
+                            <tr>
+                                <td class="fw-semibold"><i class="bi bi-bank text-primary ms-2"></i>@bank</td>
+                                <td><span class="badge bg-success-subtle text-success">در کمبو موجود است</span></td>
+                                <td class="text-end"><button type="button" class="btn btn-sm btn-outline-danger" title="حذف بانک" @onclick="() => RemoveBank(bank)"><i class="bi bi-trash"></i><span class="me-1">حذف</span></button></td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button type="button" class="btn btn-light" @onclick="CloseBankManager">بستن</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+    [Parameter] public EventCallback<TrsAccount> OnAccountCreated { get; set; }
+    [Parameter] public TreasuryAccountKind DefaultKind { get; set; } = TreasuryAccountKind.Bank;
+    [Parameter] public string Title { get; set; } = "تعریف بانک و حساب جدید";
+
+    private TrsAccount form = new();
+    private string openingText = "0";
+    private bool saving = false;
+    private bool showBankManager;
+    private string newBankName = "";
+    private string selectedBank = "";
+    private List<string> customBanks = new();
+    private IEnumerable<string> AllBanks => PopularBanks.Concat(customBanks).Distinct(StringComparer.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var saved = await JS.InvokeAsync<string?>("localStorage.getItem", "quickBank.customBanks");
+            if (!string.IsNullOrWhiteSpace(saved))
+                customBanks = System.Text.Json.JsonSerializer.Deserialize<List<string>>(saved) ?? new();
+        }
+        catch { }
+    }
+
+    private void OpenBankManager() => showBankManager = true;
+    private void CloseBankManager() => showBankManager = false;
+
+    private async Task OnBankInputKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await AddBank();
+    }
+
+    private async Task AddBank()
+    {
+        var name = newBankName.Trim();
+        if (string.IsNullOrWhiteSpace(name)) return;
+        if (AllBanks.Contains(name, StringComparer.OrdinalIgnoreCase))
+        {
+            Toast.Error("این بانک از قبل در فهرست وجود دارد.");
+            return;
+        }
+        customBanks.Add(name);
+        newBankName = "";
+        await SaveCustomBanks();
+        selectedBank = name;
+        ApplyBankSelection(name);
+        showBankManager = false;
+    }
+
+    private async Task RemoveBank(string name)
+    {
+        customBanks.RemoveAll(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase));
+        if (string.Equals(selectedBank, name, StringComparison.OrdinalIgnoreCase)) selectedBank = "";
+        await SaveCustomBanks();
+    }
+
+    private void ApplyBankSelection(string picked)
+    {
+        form.BankName = picked;
+        if (string.IsNullOrWhiteSpace(form.Name) || form.Name.StartsWith("بانک ") || form.Name.StartsWith("حساب "))
+            form.Name = $"{picked} - جاری";
+    }
+
+    private async Task SaveCustomBanks()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", "quickBank.customBanks", System.Text.Json.JsonSerializer.Serialize(customBanks));
+        }
+        catch { Toast.Error("ذخیره فهرست بانک‌ها در این مرورگر ممکن نشد."); }
+    }
+
+    private static readonly string[] PopularBanks =
+    [
+        "بانک ملت",
+        "بانک ملی ایران",
+        "بانک صادرات ایران",
+        "بانک تجارت",
+        "بانک سپه",
+        "بانک سامان",
+        "بانک پاسارگاد",
+        "بانک پارسیان",
+        "بانک رسالت",
+        "بانک مهر ایران",
+        "بانک کشاورزی",
+        "بانک مسکن",
+        "بانک رفاه کارگران",
+        "بانک آینده",
+        "بانک شهر",
+        "بانک سینا",
+        "بانک دی",
+        "بانک اقتصاد نوین",
+        "بانک کارآفرین",
+        "بانک سرمایه",
+        "بانک گردشگری",
+        "پست بانک ایران"
+    ];
+
+    protected override void OnParametersSet()
+    {
+        if (Visible && form.Id == 0 && string.IsNullOrWhiteSpace(form.Name))
+        {
+            ResetForm();
+        }
+    }
+
+    private void ResetForm()
+    {
+        form = new TrsAccount
+        {
+            Kind = DefaultKind,
+            IsActive = true
+        };
+        openingText = "0";
+    }
+
+    private void SetKind(TreasuryAccountKind kind)
+    {
+        form.Kind = kind;
+        if (kind == TreasuryAccountKind.Cash && string.IsNullOrWhiteSpace(form.Name))
+            form.Name = "صندوق نقدی";
+        else if (kind == TreasuryAccountKind.Pos && string.IsNullOrWhiteSpace(form.Name))
+            form.Name = "دستگاه کارتخوان";
+        else if (kind == TreasuryAccountKind.PettyCash && string.IsNullOrWhiteSpace(form.Name))
+            form.Name = "تنخواه‌گردان";
+    }
+
+    private void OnQuickBankPick(ChangeEventArgs e)
+    {
+        var picked = e.Value?.ToString() ?? "";
+        selectedBank = picked;
+        if (string.IsNullOrWhiteSpace(picked)) return;
+        ApplyBankSelection(picked);
+    }
+
+    private void OnOpeningInput(ChangeEventArgs e)
+    {
+        openingText = Fa.FormatTyping(e.Value?.ToString());
+        form.OpeningBalance = Fa.ParseDecimal(openingText);
+    }
+
+    private async Task Close()
+    {
+        Visible = false;
+        await VisibleChanged.InvokeAsync(false);
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name))
+        {
+            Toast.Error("لطفاً نام / عنوان حساب را وارد کنید.");
+            return;
+        }
+
+        if (form.Kind == TreasuryAccountKind.Bank && string.IsNullOrWhiteSpace(form.BankName))
+        {
+            Toast.Error("لطفاً نام بانک را مشخص کنید.");
+            return;
+        }
+
+        saving = true;
+        try
+        {
+            // شبا بدون حروف اضافه
+            if (!string.IsNullOrWhiteSpace(form.Iban))
+            {
+                var cleanIban = form.Iban.Trim().ToUpperInvariant();
+                if (cleanIban.StartsWith("IR")) cleanIban = cleanIban.Substring(2);
+                form.Iban = cleanIban;
+            }
+
+            var saved = await AccountSvc.SaveAsync(form);
+            Toast.Success($"حساب «{saved.Name}» با موفقیت ثبت و افزوده شد.");
+
+            await OnAccountCreated.InvokeAsync(saved);
+            await Close();
+            ResetForm();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

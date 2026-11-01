@@ -1,0 +1,145 @@
+@page "/my-wallet"
+@inject IAuthState Auth
+@inject IAuthApi AuthApi
+@inject IToastService Toast
+@inject LayoutState Layout
+
+<PageTitle>کیف پول من</PageTitle>
+
+@if (!Auth.IsReferrer)
+{
+    <div class="alert alert-warning">این صفحه مخصوص معرف‌هاست.</div>
+}
+else if (Auth.ReferrerId is not > 0)
+{
+    <div class="alert alert-info mt-3">
+        <i class="bi bi-info-circle"></i>
+        هنوز معرفی به حساب کاربری شما متصل نشده است. برای اتصال معرف با مدیر سیستم تماس بگیرید.
+    </div>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>کیف پول من</h1>
+            <p class="lead">همه اسناد دریافت پورسانت شما</p>
+        </div>
+    </div>
+
+    @if (dash is not null)
+    {
+        <div class="row g-3 mb-3">
+            <div class="col-md-4">
+                <div class="ref-stat ref-grad-1">
+                    <i class="bi bi-wallet2 bg-ico"></i>
+                    <div class="fs-8 opacity-75">مانده کیف پول</div>
+                    <div class="fs-4 fw-800 num">@dash.WalletBalance.Money()</div>
+                    <div class="fs-8 opacity-75">ریال</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="ref-stat ref-grad-2">
+                    <i class="bi bi-graph-up-arrow bg-ico"></i>
+                    <div class="fs-8 opacity-75">جمع پورسانت</div>
+                    <div class="fs-4 fw-800 num">@dash.TotalCommission.Money()</div>
+                    <div class="fs-8 opacity-75">ریال</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="ref-stat ref-grad-3">
+                    <i class="bi bi-cash-stack bg-ico"></i>
+                    <div class="fs-8 opacity-75">جمع دریافتی</div>
+                    <div class="fs-4 fw-800 num">@dash.TotalPaid.Money()</div>
+                    <div class="fs-8 opacity-75">ریال</div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-receipt text-primary"></i>
+            <span class="card-title">اسناد دریافت</span>
+        </div>
+        <div class="card-body p-0">
+            @if (loading)
+            {
+                <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+            }
+            else if (payments.Count == 0)
+            {
+                <div class="empty-state"><i class="bi bi-cash-stack"></i><h5>هنوز پرداختی ثبت نشده است</h5></div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th>شماره سند</th>
+                                <th>تاریخ</th>
+                                <th class="text-start">مبلغ (ریال)</th>
+                                <th>توضیحات</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var p in Paged)
+                            {
+                                <tr>
+                                    <td class="doc-number fw-700 text-primary">@p.Number</td>
+                                    <td class="num">@p.Date.ToFa()</td>
+                                    <td class="text-start num fw-700 text-success">@p.Amount.Money()</td>
+                                    <td class="text-muted">@(string.IsNullOrWhiteSpace(p.Description) ? "—" : p.Description)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <Pager Page="page" PageCount="PageCount" OnPageChanged="ChangePage" />
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private List<ReferrerPayment> payments = new();
+    private ReferrerDashboard? dash;
+    private bool loading = true;
+
+    private int page = 1;
+    private const int PageSize = 12;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+    private List<ReferrerPayment> Paged => payments;
+    private int total;
+    private async Task ChangePage(int value)
+    {
+        page = value;
+        loading = true;
+        try { await LoadPayments(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task LoadPayments()
+    {
+        var result = await AuthApi.GetMyPaymentsPagedAsync((page - 1) * PageSize, PageSize);
+        payments = result.Items;
+        total = result.TotalCount;
+        if (page > PageCount) { page = PageCount; await LoadPayments(); }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.IsReferrer) { loading = false; return; }
+        Layout.SetTitle("کیف پول من");
+        if (Auth.ReferrerId is not > 0) { loading = false; return; } // معرفی متصل نیست
+        try
+        {
+            dash = await AuthApi.GetMyDashboardAsync();
+            await LoadPayments();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+}

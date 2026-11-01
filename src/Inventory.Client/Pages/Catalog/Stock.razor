@@ -1,0 +1,295 @@
+@namespace Inventory.Client.Pages
+@page "/stock"
+@inject IStockService StockSvc
+@inject IWarehouseService WarehouseSvc
+@inject IProductService ProductSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+
+<PageTitle>موجودی انبار</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>موجودی انبار</h1>
+        <p class="lead">وضعیت لحظه‌ای موجودی کالاها به تفکیک انبار</p>
+    </div>
+    <button class="btn btn-outline-primary me-auto" @onclick="OpenAdjust">
+        <i class="bi bi-sliders"></i> اصلاح موجودی
+    </button>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">انبار</label>
+                <SearchSelect Items="whLookup" Value="filterWarehouseId" ValueChanged="v => filterWarehouseId = v" Placeholder="همه انبارها" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">جستجو</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="نام یا کد کالا…" @bind="search" @onkeydown="OnSearchKey" />
+                </div>
+            </div>
+            <div class="col-md-auto">
+                <div class="form-check ms-2">
+                    <input class="form-check-input" type="checkbox" id="belowChk" checked="@belowOnly" @onchange="OnBelowChanged" />
+                    <label class="form-check-label" for="belowChk">فقط زیر نقطه سفارش</label>
+                </div>
+            </div>
+            <div class="col-md-auto">
+                <button class="btn btn-primary" @onclick="OnSearch">جستجو</button>
+            </div>
+            <div class="col-auto ms-auto fs-8 text-muted">@total.Num() ردیف</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-boxes"></i><h5>موجودی ثبت نشده است</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>کالا</th>
+                            <th>گروه</th>
+                            <th>انبار</th>
+                            <th>واحد</th>
+                            <th class="text-start">موجودی</th>
+                            <th class="text-start">میانگین خرید</th>
+                            <th class="text-start">ارزش موجودی</th>
+                            <th class="text-start">نقطه سفارش</th>
+                            <th>وضعیت</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var s in items)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="fw-500">@s.ProductName</div>
+                                    <div class="fs-8 text-muted">@s.ProductCode</div>
+                                </td>
+                                <td>@(s.Category ?? "—")</td>
+                                <td class="text-muted">@s.WarehouseName</td>
+                                <td>@s.Unit</td>
+                                <td class="text-start num fw-700 @(s.BelowReorder ? "text-danger" : "")">@s.Quantity.Num()</td>
+                                <td class="text-start num">@s.AvgCost.Money()</td>
+                                <td class="text-start num">@((s.Quantity * s.AvgCost).Money())</td>
+                                <td class="text-start num">@s.ReorderPoint.Num()</td>
+                                <td>
+                                    @if (s.BelowReorder)
+                                    {
+                                        <span class="badge badge-soft-danger">زیر نقطه سفارش</span>
+                                    }
+                                    else if (s.Quantity == 0)
+                                    {
+                                        <span class="badge badge-soft-muted">ناموجود</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-success">موجود</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var s in items)
+                {
+                    <div class="m-card @(s.BelowReorder ? "st-cancelled" : s.Quantity == 0 ? "st-delivered" : "st-ready")">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi bi-boxes"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <span class="fw-700 text-truncate">@s.ProductName</span>
+                                    @if (s.BelowReorder)
+                                    {
+                                        <span class="badge badge-soft-danger fs-8">زیر نقطه سفارش</span>
+                                    }
+                                    else if (s.Quantity == 0)
+                                    {
+                                        <span class="badge badge-soft-muted fs-8">ناموجود</span>
+                                    }
+                                </div>
+                                <div class="fs-8 text-muted text-truncate">@s.ProductCode — @(s.Category ?? "بدون گروه") — @s.WarehouseName</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">موجودی (@s.Unit)</div>
+                                <div class="num fw-800 @(s.BelowReorder ? "text-danger" : "text-primary")">@s.Quantity.Num()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-money">
+                                <div>
+                                    <div class="fs-8 text-muted">میانگین خرید</div>
+                                    <div class="num fw-500">@s.AvgCost.Money()</div>
+                                </div>
+                                <div class="text-end">
+                                    <div class="fs-8 text-muted">ارزش موجودی</div>
+                                    <div class="num fw-800 text-success">@((s.Quantity * s.AvgCost).Money())</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="pageCount" OnPageChanged="GoToPage" />
+        }
+    </div>
+</div>
+
+<Modal Visible="showAdjust" Title="اصلاح موجودی" OnClose="() => showAdjust = false">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label">انبار <span class="text-danger">*</span></label>
+                <SearchSelect Items="whLookup" Value="adjWarehouseId" ValueChanged="v => adjWarehouseId = v" Placeholder="انتخاب انبار…" />
+            </div>
+            <div class="col-12">
+                <label class="form-label">کالا <span class="text-danger">*</span></label>
+                <SearchSelect Items="productLookup" Value="adjProductId" ValueChanged="v => adjProductId = v" Placeholder="جستجوی کالا…" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">موجودی جدید <span class="text-danger">*</span></label>
+                <input class="form-control" inputmode="decimal" @bind="adjQty" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">تاریخ</label>
+                <DatePicker @bind-Value="adjDate" />
+            </div>
+            <div class="col-12">
+                <label class="form-label">توضیحات</label>
+                <input class="form-control" @bind="adjDesc" placeholder="مثلاً: شمارش دوره‌ای" />
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showAdjust = false">انصراف (Esc)</button>
+        <button class="btn btn-primary me-auto" data-hotkey="f1" title="کلید میانبر: F1" @onclick="SaveAdjust" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            ثبت اصلاح
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<StockItem> items = new();
+    private int total, page = 1, pageCount = 1;
+    private const int PageSize = 15;
+    private bool loading = true;
+    private string search = "";
+    private bool belowOnly;
+    private int filterWarehouseId;
+    private List<LookupItem> whLookup = new();
+    private List<LookupItem> productLookup = new();
+
+    private bool showAdjust, saving;
+    private int adjWarehouseId, adjProductId;
+    private string adjQty = "";
+    private DateTime? adjDate;
+    private string adjDesc = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("موجودی انبار");
+        await LoadLookups();
+        await Load();
+    }
+
+    private async Task LoadLookups()
+    {
+        try
+        {
+            whLookup = await WarehouseSvc.GetLookupsAsync();
+            productLookup = await ProductSvc.GetLookupsAsync();
+        }
+        catch { }
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var res = await StockSvc.GetStockAsync(filterWarehouseId, search, belowOnly, page, PageSize);
+            items = res.Items;
+            total = res.TotalCount;
+            pageCount = Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnSearch() { page = 1; await Load(); }
+
+    private async Task OnBelowChanged(ChangeEventArgs e)
+    {
+        belowOnly = e.Value is bool b && b;
+        page = 1;
+        await Load();
+    }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") { page = 1; await Load(); }
+    }
+
+    private void OpenAdjust()
+    {
+        adjWarehouseId = filterWarehouseId;
+        adjProductId = 0;
+        adjQty = "";
+        adjDate = DateTime.Now;
+        adjDesc = "";
+        showAdjust = true;
+    }
+
+    private async Task SaveAdjust()
+    {
+        if (adjWarehouseId == 0) { Toast.Error("انبار را انتخاب کنید."); return; }
+        if (adjProductId == 0) { Toast.Error("کالا را انتخاب کنید."); return; }
+        var qty = Fa.ParseDecimal(adjQty);
+        if (qty <= 0) { Toast.Error("موجودی جدید باید بزرگ‌تر از صفر باشد."); return; }
+
+        saving = true;
+        try
+        {
+            await StockSvc.AdjustAsync(new AdjustmentCommand
+            {
+                WarehouseId = adjWarehouseId,
+                ProductId = adjProductId,
+                Quantity = qty,
+                Date = adjDate ?? DateTime.Now,
+                Description = adjDesc
+            });
+            Toast.Success("موجودی اصلاح شد.");
+            showAdjust = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task GoToPage(int p)
+    {
+        page = p;
+        await Load();
+    }
+}

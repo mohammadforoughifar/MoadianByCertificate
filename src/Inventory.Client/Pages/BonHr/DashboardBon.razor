@@ -1,0 +1,295 @@
+@namespace Inventory.Client.Pages.BonHr
+@page "/bon-hr"
+@page "/bon-hr/dashboard"
+@inject BonHrApi Api
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject LayoutState Layout
+
+<PageTitle>داشبورد بن‌سازه</PageTitle>
+<BonHrGuard Section="Dashboard">
+<BonHrShell Title="داشبورد بن‌سازه" Sub="نمای کلی منابع انسانی بن‌سازه" />
+
+
+    <div class="welcome">
+        <div>
+            <p class="text-muted small mb-0">نمای کلی @(_dash?.LastMonthLabel ?? "سازمان")</p>
+            <h2>روز بخیر؛ وضعیت سازمان در یک نگاه</h2>
+            <p>اطلاعات مستقیم از بانک اطلاعاتی SQL Server خوانده می‌شود.</p>
+        </div>
+        <div class="badge badge-soft-primary fs-6">@BonFa.N(_today)</div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3"><div class="kpi kpi-blue"><div class="kpi-num">@BonFa.N(_dash?.ActiveEmployees ?? 0)</div><div class="kpi-lbl">پرسنل فعال</div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi kpi-purple"><div class="kpi-num">@BonFa.N(_averageSalary)</div><div class="kpi-lbl">میانگین حقوق پایه</div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi kpi-green"><div class="kpi-num">@BonFa.N((double)(_dash?.LastMonthOvertimeHours ?? 0))</div><div class="kpi-lbl">اضافه‌کار ماه آخر</div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi kpi-orange"><div class="kpi-num">@BonFa.N(_dash?.LastMonthNet ?? 0)</div><div class="kpi-lbl">خالص پرداختی ماه</div></div></div>
+    </div>
+
+    <div class="dashboard-toolbar">
+        <label class="form-label">
+            محدوده تحلیل
+            <select class="form-select" value="@_unit" @onchange="OnUnitChanged">
+                <option value="">کل کارخانه</option>
+                @foreach (var unit in _units)
+                {
+                    <option value="@unit">@unit</option>
+                }
+            </select>
+        </label>
+        <button class="btn btn-light" type="button" @onclick="ExportAsync">خروجی CSV داشبورد</button>
+    </div>
+
+    <div class="charts-grid">
+        <article class="card card-body mt-3 chart-panel">
+            <h3>مقایسه حقوق پایه واحدها</h3>
+            <p class="text-muted">میانگین حقوق پایه در محدوده انتخابی</p>
+            <BonHrBar Items="_salaryBars" />
+        </article>
+
+        <article class="card card-body mt-3 chart-panel">
+            <h3>سهم واحدها از حقوق تخصیص‌یافته</h3>
+            <p class="text-muted">درصد از مجموع حقوق پایه</p>
+            <BonHrBar Items="_salaryPie" />
+        </article>
+
+        <article class="card card-body mt-3 chart-panel">
+            <h3>ترکیب سابقه کارکنان</h3>
+            <div class="progress-list">
+                @foreach (var bucket in _tenure)
+                {
+                    var width = _scope.Count == 0 ? 0d : bucket.Value / (double)_scope.Count * 100d;
+                    <div>
+                        <span>@bucket.Key</span>
+                        <i><b style="width:@width.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)%"></b></i>
+                        <strong>@BonFa.N(bucket.Value) نفر</strong>
+                    </div>
+                }
+            </div>
+        </article>
+
+        <article class="card card-body mt-3 chart-panel">
+            <h3>شاخص‌های عملیاتی</h3>
+            <div class="row g-3 mb-3">
+                <div><b>@BonFa.N((double)(_dash?.LastMonthShortfallHours ?? 0))</b><span>ساعت کسرکار ماه</span></div>
+                <div><b>@BonFa.N(_dash?.IncidentsThisYear ?? 0)</b><span>حادثه در سال جاری</span></div>
+                <div><b>@BonFa.N(_dash?.LostDaysThisYear ?? 0)</b><span>روزهای از دست رفته</span></div>
+                <div><b>@BonFa.N(_averageTenure) سال</b><span>میانگین سابقه</span></div>
+            </div>
+        </article>
+    </div>
+
+    <section class="executive-analytics">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+            <div>
+                <p class="text-muted small mb-0">تحلیل مقایسه‌ای مدیرعامل</p>
+                <h2>روند کارکرد و پرداخت</h2>
+                <p class="text-muted">مقایسه ماه‌های ثبت‌شده یا مشاهده کل سال</p>
+            </div>
+            <div class="analytics-filters">
+                <label class="all-months-toggle">
+                    <input class="form-control" type="checkbox" checked="@_allMonths" @onchange="OnAllMonthsChanged" /> کل ماه‌های ثبت‌شده
+                </label>
+                <label class="form-label">
+                    ماه‌های مورد مقایسه
+                    <select class="form-select" multiple size="4" disabled="@_allMonths" @onchange="OnMonthsChanged">
+                        @foreach (var month in _months)
+                        {
+                            <option value="@month.Key" selected="@_selectedMonths.Contains(month.Key)">@month.Label</option>
+                        }
+                    </select>
+                </label>
+                <label class="form-label">
+                    زاویه مقایسه مرخصی
+                    <select class="form-select" value="@_leaveMode" @onchange="OnLeaveModeChanged">
+                        <option value="units">مقایسه واحدها با یکدیگر</option>
+                        <option value="months">مقایسه ماه‌های انتخابی</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+
+        <p class="chart-message muted">@(_exec?.Message ?? "")</p>
+
+        <div class="executive-chart-grid">
+            <article class="card card-body mt-3 executive-chart-card">
+                <div class="chart-card-head">
+                    <div><h3>مقایسه اضافه‌کار</h3><p class="text-muted">مجموع ساعات اضافه‌کار در هر ماه</p></div>
+                    <span class="chart-unit">ساعت</span>
+                </div>
+                <BonHrBar Items="Points(_exec?.Overtime)" Decimals="2" />
+            </article>
+
+            <article class="card card-body mt-3 executive-chart-card">
+                <div class="chart-card-head">
+                    <div><h3>مقایسه جمع پرداختی</h3><p class="text-muted">مجموع خالص پرداختی ماهانه</p></div>
+                    <span class="chart-unit">میلیارد ریال</span>
+                </div>
+                <BonHrBar Items="Points(_exec?.Payment)" Decimals="2" />
+            </article>
+
+            <article class="card card-body mt-3 executive-chart-card leave-chart-card">
+                <div class="chart-card-head">
+                    <div><h3>مقایسه مرخصی استفاده‌شده</h3><p class="text-muted">@(_exec?.LeaveSubtitle ?? "")</p></div>
+                    <span class="chart-unit">ساعت</span>
+                </div>
+                <BonHrBar Items="Points(_exec?.Leave)" Decimals="2" />
+            </article>
+        </div>
+    </section>
+
+    <div class="grid2">
+        <article class="card card-body mt-3">
+            <h3>آخرین اعلان‌ها</h3>
+            @if (_notices.Count == 0)
+            {
+                <p class="text-muted text-center py-4">اعلان جدیدی وجود ندارد.</p>
+            }
+            else
+            {
+                @foreach (var notice in _notices.Take(5))
+                {
+                    <div class="message"><b>@notice.Title</b><span>@notice.Message</span></div>
+                }
+            }
+        </article>
+        <article class="card card-body mt-3">
+            <h3>خلاصه وضعیت مالی</h3>
+            <div class="message"><b>بیمه ماه آخر</b><span>@BonFa.N(_dash?.LastMonthInsurance ?? 0) ریال (سهم کارگر و کارفرما)</span></div>
+            <div class="message"><b>مالیات ماه آخر</b><span>@BonFa.N(_dash?.LastMonthTax ?? 0) ریال</span></div>
+            <div class="message"><b>مساعده‌های تعیین‌تکلیف‌نشده</b><span>@BonFa.N(_dash?.OpenAdvances ?? 0) مورد</span></div>
+        </article>
+    </div>
+
+
+</BonHrGuard>
+@code {
+    private DashboardDto? _dash;
+    private ExecutiveDto? _exec;
+    private List<Employee> _employees = new();
+    private List<MonthOption> _months = new();
+    private List<AuditNotice> _notices = new();
+
+    private string _unit = "";
+    private string _today = "";
+    private bool _allMonths = true;
+    private string _leaveMode = "units";
+    private HashSet<string> _selectedMonths = new();
+
+    private List<Employee> _scope = new();
+    private List<string> _units = new();
+    private List<BonHrBar.Item> _salaryBars = new();
+    private List<BonHrBar.Item> _salaryPie = new();
+    private Dictionary<string, int> _tenure = new();
+    private decimal _averageSalary;
+    private double _averageTenure;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _dash = await Api.GetAsync<DashboardDto>("api/analytics/dashboard");
+        _employees = await Api.ListAsync<Employee>("api/employees");
+        _months = await Api.ListAsync<MonthOption>("api/analytics/months");
+        _notices = await Api.ListAsync<AuditNotice>("api/workflows/notices");
+        _units = _employees.Select(e => string.IsNullOrEmpty(e.Unit) ? "بدون واحد" : e.Unit)
+            .Distinct().OrderBy(u => u).ToList();
+
+        _today = PersianCalendarUtil.TodayKey();
+        BuildLocalCharts();
+        await LoadExecutiveAsync();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender) return;
+        _today = PersianCalendarUtil.TodayKey();
+    }
+
+    private static List<BonHrBar.Item> Points(List<ChartPoint>? points) =>
+        points?.Select(p => new BonHrBar.Item(p.ShortLabel, p.Value)).ToList() ?? new();
+
+    private void BuildLocalCharts()
+    {
+        _scope = string.IsNullOrEmpty(_unit)
+            ? _employees
+            : _employees.Where(e => (string.IsNullOrEmpty(e.Unit) ? "بدون واحد" : e.Unit) == _unit).ToList();
+
+        var groups = _scope.GroupBy(e => string.IsNullOrEmpty(e.Unit) ? "بدون واحد" : e.Unit).ToList();
+
+        _salaryBars = groups
+            .Select(g => new BonHrBar.Item(g.Key, Math.Round(g.Sum(e => e.Salary) / g.Count())))
+            .ToList();
+
+        _salaryPie = groups
+            .Select(g => new BonHrBar.Item(g.Key, g.Sum(e => e.Salary)))
+            .ToList();
+
+        _averageSalary = _scope.Count == 0 ? 0 : Math.Round(_scope.Sum(e => e.Salary) / _scope.Count);
+
+        // همان سه سطل نسخهٔ اصلی؛ مبنا: سال ۱۴۰۵ منهای سال جذب
+        var currentYear = PersianCalendarUtil.Today().Jy;
+        _tenure = new Dictionary<string, int>
+        {
+            ["کمتر از ۲ سال"] = 0,
+            ["۲ تا ۵ سال"] = 0,
+            ["بیش از ۵ سال"] = 0
+        };
+
+        var ages = new List<int>();
+        foreach (var employee in _scope)
+        {
+            var head = BonFa.ToLatin(employee.Hire ?? "").Split('/').FirstOrDefault() ?? "";
+            if (!int.TryParse(head, out var hireYear)) continue;
+            var age = currentYear - hireYear;
+            ages.Add(age);
+            if (age < 2) _tenure["کمتر از ۲ سال"]++;
+            else if (age <= 5) _tenure["۲ تا ۵ سال"]++;
+            else _tenure["بیش از ۵ سال"]++;
+        }
+        _averageTenure = ages.Count == 0 ? 0 : Math.Round(ages.Average(), 1);
+    }
+
+    private async Task LoadExecutiveAsync()
+    {
+        var months = _allMonths ? "" : string.Join(",", _selectedMonths);
+        _exec = await Api.GetAsync<ExecutiveDto>($"api/analytics/executive?months={Uri.EscapeDataString(months)}&mode={_leaveMode}");
+        StateHasChanged();
+    }
+
+    private void OnUnitChanged(ChangeEventArgs args)
+    {
+        _unit = args.Value?.ToString() ?? "";
+        BuildLocalCharts();
+    }
+
+    private async Task OnAllMonthsChanged(ChangeEventArgs args)
+    {
+        _allMonths = args.Value is bool b && b;
+        await LoadExecutiveAsync();
+    }
+
+    private async Task OnMonthsChanged(ChangeEventArgs args)
+    {
+        _selectedMonths = (args.Value as string[] ?? Array.Empty<string>()).ToHashSet();
+        await LoadExecutiveAsync();
+    }
+
+    private async Task OnLeaveModeChanged(ChangeEventArgs args)
+    {
+        _leaveMode = args.Value?.ToString() ?? "units";
+        await LoadExecutiveAsync();
+    }
+
+    private async Task ExportAsync()
+    {
+        var lines = new List<string> { "واحد,میانگین حقوق پایه,مجموع حقوق پایه,تعداد" };
+        foreach (var group in _scope.GroupBy(e => string.IsNullOrEmpty(e.Unit) ? "بدون واحد" : e.Unit))
+            lines.Add($"{group.Key},{Math.Round(group.Sum(e => e.Salary) / group.Count())},{group.Sum(e => e.Salary)},{group.Count()}");
+
+        var csv = string.Join("\n", lines);
+        var bytes = System.Text.Encoding.UTF8.GetPreamble().Concat(System.Text.Encoding.UTF8.GetBytes(csv)).ToArray();
+        await JS.InvokeVoidAsync("saveAsFile", "dashboard.csv", Convert.ToBase64String(bytes));
+    }
+}

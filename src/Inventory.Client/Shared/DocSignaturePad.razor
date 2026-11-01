@@ -1,0 +1,101 @@
+@inject IJSRuntime JS
+
+<div class="doc-signature-pad" dir="rtl">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <label class="form-label mb-0 fw-700">امضای شما</label>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-xs btn-outline-secondary" @onclick="Clear"><i class="bi bi-eraser"></i> پاک</button>
+            @if (biometricAvailable)
+            {
+                <button type="button" class="btn btn-xs @(biometricVerified ? "btn-success" : "btn-outline-primary")" @onclick="VerifyBiometric" disabled="@biometricLoading">
+                    @if (biometricLoading) { <span class="spinner-border spinner-border-sm"></span> }
+                    else { <i class="bi @(biometricVerified ? "bi-shield-check" : "bi-fingerprint")"></i> }
+                    @(biometricVerified ? "بیومتریک تایید شد" : "تایید اثر انگشت")
+                </button>
+            }
+        </div>
+    </div>
+    <div class="border rounded bg-white" style="touch-action:none; position:relative;">
+        <canvas id="@CanvasId" style="width:100%; height:140px; display:block; cursor:crosshair;"></canvas>
+        @if (isEmpty)
+        {
+            <div class="position-absolute top-50 start-50 translate-middle text-muted fs-8 pointer-events-none">با انگشت یا موس امضا کنید</div>
+        }
+    </div>
+    <div class="fs-9 text-muted mt-1">
+        @if (biometricVerified) { <span class="text-success"><i class="bi bi-check-circle-fill"></i> هویت بیومتریک تایید شد — امضا معتبرتر است.</span> }
+        else { <span>امضای ترسیمی + تایید بیومتریک اختیاری است.</span> }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string CanvasId { get; set; } = $"sig-{Guid.NewGuid():N}";
+    private bool isEmpty = true;
+    private bool biometricAvailable;
+    private bool biometricVerified;
+    private bool biometricLoading;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try { await JS.InvokeVoidAsync("signaturePad.init", CanvasId); } catch {}
+            try { biometricAvailable = await JS.InvokeAsync<bool>("biometric.isAvailable"); } catch { biometricAvailable = false; }
+            StateHasChanged();
+            // poll empty state
+            PollEmpty();
+        }
+    }
+
+    private async void PollEmpty()
+    {
+        while (true)
+        {
+            await Task.Delay(600);
+            try
+            {
+                var empty = await JS.InvokeAsync<bool>("signaturePad.isEmpty");
+                if (empty != isEmpty) { isEmpty = empty; await InvokeAsync(StateHasChanged); }
+            }
+            catch { break; }
+        }
+    }
+
+    private async Task Clear()
+    {
+        try { await JS.InvokeVoidAsync("signaturePad.clear"); isEmpty = true; } catch {}
+    }
+
+    private async Task VerifyBiometric()
+    {
+        biometricLoading = true;
+        try
+        {
+            var res = await JS.InvokeAsync<BiometricResult>("biometric.verify");
+            biometricVerified = res?.ok == true;
+            if (!biometricVerified) await JS.InvokeVoidAsync("alert", "بیومتریک در این دستگاه در دسترس نیست یا لغو شد.");
+        }
+        catch { }
+        finally { biometricLoading = false; }
+    }
+
+    public async Task<string?> GetDataUrlAsync()
+    {
+        try { return await JS.InvokeAsync<string?>("signaturePad.toDataUrl"); } catch { return null; }
+    }
+
+    public bool IsBiometricVerified => biometricVerified;
+    public async Task<bool> IsEmptyAsync()
+    {
+        try { return await JS.InvokeAsync<bool>("signaturePad.isEmpty"); } catch { return true; }
+    }
+
+    private class BiometricResult { public bool ok { get; set; } public string? reason { get; set; } }
+
+    public void Dispose()
+    {
+#pragma warning disable CS4014
+        try { _ = JS.InvokeVoidAsync("signaturePad.destroy"); } catch {}
+#pragma warning restore CS4014
+    }
+}

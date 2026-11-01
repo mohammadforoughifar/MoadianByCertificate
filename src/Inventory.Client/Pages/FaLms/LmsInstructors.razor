@@ -1,0 +1,228 @@
+@namespace Inventory.Client.Pages
+@page "/fa-lms/instructors"
+@inject IFaLmsService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>مدرس‌ها</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-person-video3"></i> پرونده مدرس‌ها</h1>
+    <div class="lead">مدرس داخلی/خارجی + نرخ حق‌التدریس ساعتی</div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">دسترسی مشاهده برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body d-flex flex-wrap gap-2 align-items-end">
+        <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="iact" @bind="onlyActive" @bind:after="Reload" />
+            <label class="form-check-label" for="iact">فقط فعال‌ها</label>
+        </div>
+        <div class="ms-auto">
+            @if (faManage)
+            {
+                <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> مدرس جدید</button>
+            }
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+}
+else
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>نام</th><th>نوع</th><th>حوزه تخصص</th><th>تماس</th><th>نرخ ساعتی (ریال)</th><th>دوره‌ها</th><th>جمع حق‌التدریس</th><th>وضعیت</th><th style="width:90px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var i in items)
+                        {
+                            <tr>
+                                <td class="fw-bold">@i.Name</td>
+                                <td><span class="badge @(i.Type == 0 ? "text-bg-primary" : "text-bg-info")">@(i.Type == 0 ? "داخلی" : "خارجی")</span></td>
+                                <td>@(i.Field ?? "—")</td>
+                                <td class="num">@(i.Phone ?? "—")</td>
+                                <td class="num">@FaLmsUi.Money(i.FeePerHour)</td>
+                                <td class="num">@FaLmsUi.Num(i.CourseCount)</td>
+                                <td class="num fw-bold">@FaLmsUi.Money(i.TotalFee)</td>
+                                <td>
+                                    @if (i.IsActive)
+                                    {
+                                        <span class="badge text-bg-success">فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-secondary">غیرفعال</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (faManage)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(i)"><i class="bi bi-pencil text-warning"></i></button>
+                                        <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(i.Id)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr class="table-light fw-bold">
+                            <td colspan="6">جمع کل حق‌التدریس</td>
+                            <td class="num" colspan="3">@FaLmsUi.Money(items.Sum(x => x.TotalFee)) ریال</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+<Modal Visible="showEdit" Title="@(editId == null ? "مدرس جدید" : "ویرایش مدرس")" OnClose="() => showEdit = false">
+<ChildContent>
+    <div class="row g-2">
+        <div class="col-md-6">
+            <label class="form-label">نام *</label>
+            <input class="form-control" @bind="fName" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">نوع</label>
+            <select class="form-select" @bind="fType">
+                <option value="0">داخلی (پرسنل شرکت)</option>
+                <option value="1">خارجی (مدعو/پیمانکار)</option>
+            </select>
+        </div>
+        @if (fType == 0)
+        {
+            <div class="col-12">
+                <label class="form-label">پیوند به پرسنل</label>
+                <select class="form-select" @bind="fEmp" @bind:after="OnEmpChanged">
+                    <option value="">— بدون پیوند —</option>
+                    @foreach (var m in emps)
+                    {
+                        <option value="@m.Id">@m.FirstName @m.LastName (@m.Code)</option>
+                    }
+                </select>
+            </div>
+        }
+        <div class="col-md-6">
+            <label class="form-label">حوزه تخصص</label>
+            <input class="form-control" @bind="fField" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">تماس</label>
+            <input class="form-control num" @bind="fPhone" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">نرخ حق‌التدریس ساعتی (ریال)</label>
+            <input type="number" class="form-control num" @bind="fFee" />
+        </div>
+        <div class="col-md-6">
+            <div class="form-check mt-4">
+                <input type="checkbox" class="form-check-input" @bind="fActive" id="iack" />
+                <label class="form-check-label" for="iack">فعال</label>
+            </div>
+        </div>
+    </div>
+</ChildContent>
+<Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" disabled="@saving" @onclick="Save">ذخیره</button>
+    </div>
+</Footer>
+</Modal>
+
+@code {
+    private bool faRead => Auth.Has("FaLms.Read") || Auth.IsAdmin;
+    private bool faManage => Auth.Has("FaLms.Manage") || Auth.IsAdmin;
+
+    private bool loading = true, saving, showEdit, onlyActive = true;
+    private List<FaLmsInstructorDto> items = new();
+    private List<HrEmployeeDto> emps = new();
+
+    private int? editId;
+    private string fName = "";
+    private int fType;
+    private string? fEmp, fField, fPhone;
+    private double fFee;
+    private bool fActive = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        await Reload();
+        try { emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items; }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { items = await Svc.ListInstructorsAsync(onlyActive ? true : null); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void OpenEdit(FaLmsInstructorDto? i)
+    {
+        editId = i?.Id;
+        fName = i?.Name ?? "";
+        fType = i?.Type ?? 0;
+        fEmp = i?.EmployeeId?.ToString();
+        fField = i?.Field;
+        fPhone = i?.Phone;
+        fFee = i?.FeePerHour ?? 0;
+        fActive = i?.IsActive ?? true;
+        showEdit = true;
+    }
+
+    private void OnEmpChanged()
+    {
+        var m = emps.FirstOrDefault(x => x.Id.ToString() == fEmp);
+        if (m != null && string.IsNullOrWhiteSpace(fName))
+        {
+            fName = $"{m.FirstName} {m.LastName}";
+            fPhone = m.Mobile;
+        }
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            await Svc.SaveInstructorAsync(editId, new FaLmsInstructorSaveDto
+            {
+                Name = fName, Type = fType, Field = fField, Phone = fPhone, FeePerHour = fFee,
+                EmployeeId = int.TryParse(fEmp, out var v) ? v : null, IsActive = fActive
+            });
+            Toast.Success("مدرس ذخیره شد.");
+            showEdit = false;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        saving = false;
+    }
+
+    private async Task Delete(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "این مدرس حذف شود؟")) return;
+        try
+        {
+            await Svc.DeleteInstructorAsync(id);
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

@@ -1,0 +1,558 @@
+@page "/moadian/invoices"
+@inject IMoadianClientService Mdn
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+
+<PageTitle>سامانه مودیان — صورتحساب‌ها</PageTitle>
+
+<MoadianSubNav />
+
+<div class="page-head">
+    <div>
+        <h1>مدیریت صورتحساب‌های الکترونیکی</h1>
+        <p class="lead">فهرست صورتحساب‌ها، ارسال دسته‌ای با گواهی امضا، استعلام به‌روز وضعیت کارپوشه و پیگیری تسویه</p>
+    </div>
+    <div class="ms-auto d-flex flex-wrap gap-2">
+        @if (Auth.Has("Moadian.InvoiceCreate"))
+        {
+            <button class="btn btn-outline-secondary" disabled="@busy" @onclick="OpenErpImportModalAsync">
+                <i class="bi bi-box-arrow-in-down me-1"></i>تبدیل از فاکتور فروش سیستم
+            </button>
+            <a class="btn btn-primary" href="moadian/invoices/new">
+                <i class="bi bi-plus-lg me-1"></i>صدور صورتحساب جدید
+            </a>
+        }
+    </div>
+</div>
+
+<!-- فیلترهای جستجو -->
+<div class="card mb-3 d-print-none">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-3">
+                <label class="form-label small mb-1">جستجو (شماره، TaxId، خریدار، رهگیری)</label>
+                <input class="form-control form-control-sm" @bind="filter.Search" @bind:event="oninput"
+                       @onkeydown="OnSearchKeyDown" placeholder="نام خریدار، کد ۲۲ کاراکتری..." />
+            </div>
+
+            <div class="col-6 col-md-2">
+                <label class="form-label small mb-1">وضعیت ارسال درگاه</label>
+                <select class="form-select form-select-sm" value="@subFilterStr" @onchange="OnSubFilterChanged">
+                    <option value="">همه</option>
+                    <option value="0">پیش‌نویس</option>
+                    <option value="2">در حال پردازش</option>
+                    <option value="3">ثبت موفق</option>
+                    <option value="4">رد شده در ارسال</option>
+                    <option value="5">عدم پاسخ (Timeout)</option>
+                </select>
+            </div>
+
+            <div class="col-6 col-md-2">
+                <label class="form-label small mb-1">وضعیت به‌روز کارپوشه</label>
+                <select class="form-select form-select-sm" value="@folderFilterStr" @onchange="OnFolderFilterChanged">
+                    <option value="">همه</option>
+                    <option value="1">در انتظار تأیید خریدار</option>
+                    <option value="2">تأیید شده در کارپوشه</option>
+                    <option value="3">تأیید سیستمی</option>
+                    <option value="4">رد شده توسط خریدار</option>
+                    <option value="5">باطل شده</option>
+                </select>
+            </div>
+
+            <div class="col-6 col-md-2">
+                <label class="form-label small mb-1">وضعیت پرداخت</label>
+                <select class="form-select form-select-sm" value="@payFilterStr" @onchange="OnPayFilterChanged">
+                    <option value="">همه</option>
+                    <option value="0">پرداخت نشده (نسیه)</option>
+                    <option value="1">تسویه جزئی</option>
+                    <option value="2">تسویه کامل</option>
+                </select>
+            </div>
+
+            <div class="col-6 col-md-1">
+                <label class="form-label small mb-1">از تاریخ</label>
+                <DatePicker Value="filter.FromDate" ValueChanged="OnFromChanged" AllowClear="true" />
+            </div>
+
+            <div class="col-6 col-md-1">
+                <label class="form-label small mb-1">تا تاریخ</label>
+                <DatePicker Value="filter.ToDate" ValueChanged="OnToChanged" AllowClear="true" />
+            </div>
+
+            <div class="col-6 col-md-1 d-grid">
+                <button class="btn btn-sm btn-primary" disabled="@loading" @onclick="() => ApplyFilterAsync(1)">
+                    <i class="bi bi-funnel"></i> فیلتر
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- نوار عملیات گروهی -->
+@if (selectedIds.Count > 0)
+{
+    <div class="alert alert-primary py-2 px-3 d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <div>
+            <i class="bi bi-check2-square me-1"></i>
+            <strong>@selectedIds.Count.Num()</strong> صورتحساب انتخاب شده است.
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            @if (Auth.Has("Moadian.InvoiceSend"))
+            {
+                <button class="btn btn-sm btn-success" disabled="@busy" @onclick="SendSelectedAsync">
+                    <i class="bi bi-send me-1"></i>ارسال دسته‌ای با گواهی امضا
+                </button>
+            }
+            @if (Auth.Has("Moadian.InvoiceInquiry"))
+            {
+                <button class="btn btn-sm btn-info text-white" disabled="@busy" @onclick="InquirySubmissionSelectedAsync">
+                    <i class="bi bi-arrow-clockwise me-1"></i>استعلام درگاه
+                </button>
+            }
+            @if (Auth.Has("Moadian.FolderStatus"))
+            {
+                <button class="btn btn-sm btn-primary" disabled="@busy" @onclick="InquiryFolderSelectedAsync">
+                    <i class="bi bi-folder-check me-1"></i>استعلام به‌روز کارپوشه
+                </button>
+            }
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => selectedIds.Clear()">لغو انتخاب</button>
+        </div>
+    </div>
+}
+
+<!-- جدول صورتحساب‌ها -->
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th style="width:36px">
+                        <input type="checkbox" class="form-check-input" checked="@IsAllSelected" @onchange="ToggleSelectAll" />
+                    </th>
+                    <th>شماره داخلی / تاریخ</th>
+                    <th>نوع / الگو / موضوع</th>
+                    <th>خریدار</th>
+                    <th>شماره مالیاتی ۲۲ کاراکتری</th>
+                    <th>مبلغ کل / ارزش افزوده (ریال)</th>
+                    <th>وضعیت ارسال درگاه</th>
+                    <th>وضعیت کارپوشه</th>
+                    <th>تسویه و پرداخت</th>
+                    <th class="text-end">عملیات</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (loading)
+                {
+                    <tr><td colspan="10" class="text-center py-5"><div class="spinner-border text-primary"></div></td></tr>
+                }
+                else if (result.Items.Count == 0)
+                {
+                    <tr>
+                        <td colspan="10" class="text-center text-muted py-5">
+                            <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+                            صورتحسابی با فیلتر انتخابی یافت نشد.
+                        </td>
+                    </tr>
+                }
+                else
+                {
+                    @foreach (var inv in result.Items)
+                    {
+                        var isChecked = selectedIds.Contains(inv.Id);
+                        <tr class="@(isChecked ? "table-active" : "")">
+                            <td>
+                                <input type="checkbox" class="form-check-input" checked="@isChecked"
+                                       @onchange="e => ToggleRow(inv.Id, e.Value is true)" />
+                            </td>
+                            <td>
+                                <a class="fw-bold text-decoration-none" href="moadian/invoices/@inv.Id">@inv.InternalNumber</a>
+                                <div class="small text-muted">@inv.IssueDate.ToFaDate()</div>
+                                @if (inv.SourceFacInvoiceNumber.HasValue)
+                                {
+                                    <span class="badge bg-light text-dark border small">فاکتور @inv.SourceFacInvoiceNumber.Value.NoGroup()</span>
+                                }
+                            </td>
+                            <td class="small">
+                                <div>@(inv.InvoiceType == MdnInvoiceType.Type1 ? "نوع اول" : "نوع دوم") — @MdnUiLabels.PatternTitle(inv.Pattern)</div>
+                                <span class="badge @SubjectBadge(inv.Subject)">@MdnUiLabels.SubjectTitle(inv.Subject)</span>
+                            </td>
+                            <td>
+                                <div class="fw-semibold">@(inv.BuyerName ?? "مصرف‌کننده نهایی")</div>
+                                @if (!string.IsNullOrWhiteSpace(inv.BuyerEconomicCode))
+                                {
+                                    <div class="small text-muted font-monospace">@inv.BuyerEconomicCode</div>
+                                }
+                            </td>
+                            <td>
+                                @if (!string.IsNullOrWhiteSpace(inv.TaxId))
+                                {
+                                    <code class="small d-block">@inv.TaxId</code>
+                                }
+                                else
+                                {
+                                    <span class="text-muted small">تخصیص پس از ارسال</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(inv.ReferenceNumber))
+                                {
+                                    <div class="small text-muted font-monospace" title="کد رهگیری ارسال">Ref: @Shorten(inv.ReferenceNumber, 14)</div>
+                                }
+                            </td>
+                            <td class="num">
+                                <div class="fw-bold">@inv.TotalAmount.Money()</div>
+                                <div class="small text-muted">VAT: @inv.TotalVat.Money()</div>
+                            </td>
+                            <td>
+                                <span class="badge @SubmissionBadge(inv.SubmissionStatus)">@MdnUiLabels.SubmissionTitle(inv.SubmissionStatus)</span>
+                                @if (!string.IsNullOrWhiteSpace(inv.LastErrorMessage) && inv.SubmissionStatus != MdnSubmissionStatus.Success)
+                                {
+                                    <div class="small text-danger mt-1 text-truncate" style="max-width:170px" title="@inv.LastErrorMessage">
+                                        @inv.LastErrorMessage
+                                    </div>
+                                }
+                            </td>
+                            <td>
+                                <span class="badge @FolderBadge(inv.FolderStatus)">@MdnUiLabels.FolderTitle(inv.FolderStatus)</span>
+                                @if (!string.IsNullOrWhiteSpace(inv.Article6Status))
+                                {
+                                    <div class="small text-muted mt-1">ماده ۶: @inv.Article6Status</div>
+                                }
+                            </td>
+                            <td>
+                                <span class="badge @PaymentBadge(inv.PaymentStatus)">@MdnUiLabels.PaymentStatusTitle(inv.PaymentStatus)</span>
+                                <div class="small text-muted num mt-1">وصولی: @inv.PaidAmount.Money()</div>
+                            </td>
+                            <td class="text-end">
+                                <div class="btn-group btn-group-sm">
+                                    <a class="btn btn-outline-primary" href="moadian/invoices/@inv.Id" title="مشاهده جزئیات، کارپوشه و ثبت پرداخت">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                    <button class="btn btn-outline-secondary" @onclick="() => OpenJsonPreviewAsync(inv.Id)" title="پیش‌نمایش JSON رسمی SDK">
+                                        <i class="bi bi-filetype-json"></i>
+                                    </button>
+                                    @if (inv.SubmissionStatus is MdnSubmissionStatus.Draft or MdnSubmissionStatus.Failed)
+                                    {
+                                        @if (Auth.Has("Moadian.InvoiceUpdate"))
+                                        {
+                                            <a class="btn btn-outline-secondary" href="moadian/invoices/@inv.Id/edit" title="ویرایش">
+                                                <i class="bi bi-pencil"></i>
+                                            </a>
+                                        }
+                                        @if (Auth.Has("Moadian.InvoiceSend"))
+                                        {
+                                            <button class="btn btn-outline-success" disabled="@busy" @onclick="() => SendSingleAsync(inv.Id)" title="ارسال به سامانه مودیان">
+                                                <i class="bi bi-send"></i>
+                                            </button>
+                                        }
+                                        @if (Auth.Has("Moadian.InvoiceDelete"))
+                                        {
+                                            <button class="btn btn-outline-danger" disabled="@busy" @onclick="() => DeleteInvoiceAsync(inv.Id)" title="حذف پیش‌نویس">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        @if (Auth.Has("Moadian.InvoiceInquiry") || Auth.Has("Moadian.FolderStatus"))
+                                        {
+                                            <button class="btn btn-outline-info" disabled="@busy" @onclick="() => RefreshSingleAsync(inv.Id)" title="به‌روزرسانی وضعیت درگاه و کارپوشه">
+                                                <i class="bi bi-arrow-repeat"></i>
+                                            </button>
+                                        }
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (PageCount > 1)
+    {
+        <div class="card-footer d-flex justify-content-between align-items-center">
+            <span class="small text-muted num">کل رکوردها: @result.TotalCount.Num()</span>
+            <Pager Page="filter.Page" PageCount="PageCount" OnPageChanged="ApplyFilterAsync" />
+        </div>
+    }
+</div>
+
+<!-- مودال پیش‌نمایش JSON رسمی SDK -->
+<Modal Visible="jsonPreview is not null" Title="پیش‌نمایش ساختار رسمی JSON (SDK 2.0.29)" Size="modal-lg" OnClose="() => jsonPreview = null">
+    <ChildContent>
+        @if (jsonPreview is not null)
+        {
+            <div class="d-flex flex-wrap gap-3 mb-2 small">
+                <span>شماره مالیاتی ۲۲ کاراکتری (TaxId): <code class="fs-6">@jsonPreview.PotentialTaxId</code></span>
+                <span>سریال هگزادسیمال (inno): <code>@jsonPreview.PotentialSerialHex</code></span>
+            </div>
+            @if (jsonPreview.ValidationWarnings.Count > 0)
+            {
+                <div class="alert alert-warning py-2 small">
+                    @foreach (var w in jsonPreview.ValidationWarnings)
+                    {
+                        <div><i class="bi bi-exclamation-circle me-1"></i>@w</div>
+                    }
+                </div>
+            }
+            <pre class="bg-dark text-light p-3 rounded small font-monospace mb-0" dir="ltr" style="max-height:420px;overflow:auto">@jsonPreview.JsonPayload</pre>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => jsonPreview = null">بستن</button>
+    </Footer>
+</Modal>
+
+<!-- مودال تبدیل از فاکتور فروش سیستم -->
+<Modal Visible="showErpModal" Title="تبدیل فاکتور فروش سیستم به صورتحساب الکترونیکی مودیان" Size="modal-lg" OnClose="() => showErpModal = false">
+    <ChildContent>
+        @if (erpLoading)
+        {
+            <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (erpInvoices.Count == 0)
+        {
+            <div class="text-center text-muted py-4">فاکتور فروشی یافت نشد.</div>
+        }
+        else
+        {
+            <div class="alert alert-info py-2 small">
+                کالاهای فاکتور باید در بخش کاتالوگ دارای «شناسه مالیاتی ۱۳ رقمی» باشند. پس از تبدیل، یک پیش‌نویس مودیان ایجاد می‌شود تا پیش از ارسال بازبینی نمایید.
+            </div>
+            <div class="table-responsive" style="max-height:380px;overflow:auto">
+                <table class="table table-sm table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>شماره فاکتور</th>
+                            <th>تاریخ</th>
+                            <th>طرف حساب</th>
+                            <th>اقلام</th>
+                            <th>مبلغ خالص</th>
+                            <th>وضعیت</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var f in erpInvoices)
+                        {
+                            <tr>
+                                <td class="fw-bold num">@f.Number.NoGroup()</td>
+                                <td>@f.Date.ToFaDate()</td>
+                                <td>
+                                    <div>@f.PartyName</div>
+                                    @if (!string.IsNullOrWhiteSpace(f.PartyTaxId))
+                                    {
+                                        <div class="small text-muted font-monospace">@f.PartyTaxId</div>
+                                    }
+                                </td>
+                                <td class="num">@f.LineCount.Num()</td>
+                                <td class="num">@f.TotalNet.Money()</td>
+                                <td>
+                                    @if (f.AlreadyImported)
+                                    {
+                                        <span class="badge bg-secondary-subtle text-secondary">تبدیل شده</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-success-subtle text-success">آماده تبدیل</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-primary" disabled="@busy" @onclick="() => ImportErpAsync(f.Id)">
+                                        تبدیل به پیش‌نویس
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => showErpModal = false">بستن</button>
+    </Footer>
+</Modal>
+
+@code {
+    private MdnInvoiceFilterRequest filter = new() { Page = 1, PageSize = 20 };
+    private MdnInvoiceListResultDto result = new();
+    private HashSet<int> selectedIds = new();
+
+    private string subFilterStr = "";
+    private string folderFilterStr = "";
+    private string payFilterStr = "";
+
+    private MdnInvoiceJsonPreviewDto? jsonPreview;
+    private bool showErpModal;
+    private bool erpLoading;
+    private List<MdnErpFacInvoicePickDto> erpInvoices = new();
+
+    private bool loading = true;
+    private bool busy;
+
+    private int PageCount => Math.Max(1, (int)Math.Ceiling((double)result.TotalCount / filter.PageSize));
+    private bool IsAllSelected => result.Items.Count > 0 && result.Items.All(i => selectedIds.Contains(i.Id));
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            result = await Mdn.GetInvoicesAsync(filter);
+            selectedIds.RemoveWhere(id => result.Items.All(x => x.Id != id));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task ApplyFilterAsync(int page)
+    {
+        filter.Page = page;
+        await LoadAsync();
+    }
+
+    private async Task OnSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await ApplyFilterAsync(1);
+    }
+
+    private async Task OnSubFilterChanged(ChangeEventArgs e)
+    {
+        subFilterStr = e.Value?.ToString() ?? "";
+        filter.SubmissionStatus = int.TryParse(subFilterStr, out var v) ? (MdnSubmissionStatus)v : null;
+        await ApplyFilterAsync(1);
+    }
+
+    private async Task OnFolderFilterChanged(ChangeEventArgs e)
+    {
+        folderFilterStr = e.Value?.ToString() ?? "";
+        filter.FolderStatus = int.TryParse(folderFilterStr, out var v) ? (MdnFolderStatus)v : null;
+        await ApplyFilterAsync(1);
+    }
+
+    private async Task OnPayFilterChanged(ChangeEventArgs e)
+    {
+        payFilterStr = e.Value?.ToString() ?? "";
+        filter.PaymentStatus = int.TryParse(payFilterStr, out var v) ? (MdnPaymentStatus)v : null;
+        await ApplyFilterAsync(1);
+    }
+
+    private async Task OnFromChanged(DateTime? d) { filter.FromDate = d; await ApplyFilterAsync(1); }
+    private async Task OnToChanged(DateTime? d) { filter.ToDate = d; await ApplyFilterAsync(1); }
+
+    private void ToggleSelectAll(ChangeEventArgs e)
+    {
+        if (e.Value is true)
+            foreach (var i in result.Items) selectedIds.Add(i.Id);
+        else
+            selectedIds.Clear();
+    }
+
+    private void ToggleRow(int id, bool check)
+    {
+        if (check) selectedIds.Add(id);
+        else selectedIds.Remove(id);
+    }
+
+    private async Task SendSingleAsync(int id) => await RunBatchAsync(() => Mdn.SendInvoicesAsync(new List<int> { id }));
+    private async Task SendSelectedAsync() => await RunBatchAsync(() => Mdn.SendInvoicesAsync(selectedIds.ToList()));
+    private async Task InquirySubmissionSelectedAsync() => await RunBatchAsync(() => Mdn.InquirySubmissionsAsync(selectedIds.ToList()));
+    private async Task InquiryFolderSelectedAsync() => await RunBatchAsync(() => Mdn.InquiryFolderAsync(selectedIds.ToList()));
+    private async Task RefreshSingleAsync(int id) => await RunBatchAsync(() => Mdn.RefreshAllAsync(new List<int> { id }));
+
+    private async Task RunBatchAsync(Func<Task<MdnBatchActionResultDto>> action)
+    {
+        busy = true;
+        try
+        {
+            var res = await action();
+            if (res.Failed == 0 && res.Succeeded > 0) Toast.Success(res.Message);
+            else if (res.Succeeded > 0) Toast.Warning(res.Message);
+            else Toast.Info(res.Message);
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task DeleteInvoiceAsync(int id)
+    {
+        busy = true;
+        try
+        {
+            await Mdn.DeleteInvoiceAsync(id);
+            Toast.Success("پیش‌نویس صورتحساب حذف شد.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task OpenJsonPreviewAsync(int id)
+    {
+        try { jsonPreview = await Mdn.PreviewJsonAsync(id); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OpenErpImportModalAsync()
+    {
+        showErpModal = true;
+        erpLoading = true;
+        try { erpInvoices = await Mdn.GetErpInvoicesAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { erpLoading = false; }
+    }
+
+    private async Task ImportErpAsync(int facId)
+    {
+        busy = true;
+        try
+        {
+            var detail = await Mdn.ImportErpInvoiceAsync(facId);
+            showErpModal = false;
+            Toast.Success($"پیش‌نویس مودیان {detail.InternalNumber} ایجاد شد.");
+            Nav.NavigateTo($"moadian/invoices/{detail.Id}");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private static string Shorten(string s, int max) => s.Length <= max ? s : s[..max] + "…";
+
+    private static string SubjectBadge(MdnInvoiceSubject s) => s switch
+    {
+        MdnInvoiceSubject.Original => "bg-light text-dark border",
+        MdnInvoiceSubject.Corrective => "bg-info-subtle text-info-emphasis",
+        MdnInvoiceSubject.Cancellation => "bg-danger-subtle text-danger",
+        MdnInvoiceSubject.SalesReturn => "bg-warning-subtle text-warning-emphasis",
+        _ => "bg-light text-dark"
+    };
+
+    private static string SubmissionBadge(MdnSubmissionStatus s) => s switch
+    {
+        MdnSubmissionStatus.Success => "bg-success-subtle text-success",
+        MdnSubmissionStatus.Sent or MdnSubmissionStatus.InProgress => "bg-info-subtle text-info-emphasis",
+        MdnSubmissionStatus.Failed or MdnSubmissionStatus.Timeout => "bg-danger-subtle text-danger",
+        _ => "bg-secondary-subtle text-secondary"
+    };
+
+    private static string FolderBadge(MdnFolderStatus s) => s switch
+    {
+        MdnFolderStatus.Approved or MdnFolderStatus.SystemApproved => "bg-primary-subtle text-primary",
+        MdnFolderStatus.Pending => "bg-warning-subtle text-warning-emphasis",
+        MdnFolderStatus.Rejected or MdnFolderStatus.Cancelled => "bg-danger-subtle text-danger",
+        _ => "bg-light text-muted"
+    };
+
+    private static string PaymentBadge(MdnPaymentStatus s) => s switch
+    {
+        MdnPaymentStatus.Paid => "bg-success-subtle text-success",
+        MdnPaymentStatus.PartiallyPaid => "bg-warning-subtle text-warning-emphasis",
+        MdnPaymentStatus.Unpaid => "bg-secondary-subtle text-secondary",
+        _ => "bg-light text-muted"
+    };
+}

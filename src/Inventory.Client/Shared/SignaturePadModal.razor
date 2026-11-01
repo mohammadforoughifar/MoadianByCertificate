@@ -1,0 +1,85 @@
+@inject IJSRuntime JS
+@* ================== مودال امضای الکترونیکی (canvas) ==================
+   استفاده: <SignaturePadModal Visible="sigVisible" VisibleChanged="v => sigVisible = v" OnSign="OnSigned" /> *@
+<Modal Visible="Visible" Title="ModalTitle"
+       Size="modal-lg" OnClose="Close">
+    <ChildContent>
+    <div style="direction:ltr">
+        <canvas id="sig-canvas" @ref="_canvas" width="640" height="220"
+                style="width:100%;height:auto;border:2px dashed #94a3b8;border-radius:12px;
+                       background:repeating-linear-gradient(0deg,transparent,transparent 26px,#e2e8f0 27px);
+                       background-color:#fff;touch-action:none"></canvas>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-2 fs-7 text-muted">
+        <span>با ماوس یا انگشت روی ناحیهٔ بالا امضا کنید.</span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="Clear">
+            <i class="bi bi-eraser ms-1"></i>پاک‌کردن
+        </button>
+    </div>
+
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="Close">انصراف</button>
+        <button class="btn btn-primary" @onclick="Confirm">✍️ ثبت امضا</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+    [Parameter] public string SignerName { get; set; } = "";
+    /// <summary>base64 PNG امضا — وقتی کاربر «ثبت امضا» را زد</summary>
+    [Parameter] public EventCallback<string> OnSign { get; set; }
+
+    private ElementReference _canvas;
+
+    private string ModalTitle => string.IsNullOrWhiteSpace(SignerName) ? "امضای الکترونیکی" : "امضای الکترونیکی — " + SignerName;
+
+private bool _wasVisible;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // canvas فقط وقتی مودال باز است رندر می‌شود — پس از رندر، JS را راه‌اندازی می‌کنیم
+        if (Visible && !_wasVisible && _canvas.Id is not null)
+        {
+            try
+            {
+                await JS.InvokeAsync<bool>("sigPadInit", _canvas);
+                await JS.InvokeAsync<bool>("sigPadClear", _canvas);
+            }
+            catch (JSException) { }
+        }
+        _wasVisible = Visible;
+    }
+
+    private Task Close()
+    {
+        Visible = false;
+        return VisibleChanged.InvokeAsync(false);
+    }
+
+    private async Task Clear()
+    {
+        try { await JS.InvokeAsync<bool>("sigPadClear", _canvas); } catch (JSException) { }
+        StateHasChanged();
+    }
+
+    private async Task Confirm()
+    {
+        bool empty;
+        string? data;
+        try
+        {
+            empty = await JS.InvokeAsync<bool>("sigPadEmpty", _canvas);
+            data = await JS.InvokeAsync<string>("sigPadToBase64", _canvas);
+        }
+        catch (JSException)
+        {
+            return;
+        }
+        if (empty || string.IsNullOrWhiteSpace(data))
+            return;
+        await OnSign.InvokeAsync(data);
+        await Close();
+    }
+}

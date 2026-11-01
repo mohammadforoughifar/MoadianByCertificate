@@ -1,0 +1,1048 @@
+@page "/trs/vouchers/new/{KindParam}"
+@page "/trs/vouchers/edit/{Id:int}"
+@page "/trs/vouchers/settle/{InvoiceId:int}/pay"
+@inject ITrsVoucherService VoucherSvc
+@inject ITrsAccountService AccountSvc
+@inject IPartyService PartySvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>@doc.KindTitle</PageTitle>
+
+<div class="page-head d-print-none">
+    <div>
+        <h1>
+            @doc.KindTitle
+            @if (doc.Id > 0)
+            {
+                <span class="num text-muted">شماره @doc.Number.Num()</span>
+            }
+        </h1>
+    </div>
+    <div class="ms-auto d-flex gap-2 align-items-center">
+        <button type="button" class="btn btn-outline-primary btn-sm" @onclick="() => OpenQuickBankGeneral(TreasuryAccountKind.Bank)">
+            <i class="bi bi-bank ms-1"></i> تعریف بانک / صندوق
+        </button>
+        <span class="badge @StatusBadge fs-8">@doc.StatusTitle</span>
+        <a class="btn btn-outline-secondary" href="/trs/vouchers"><i class="bi bi-arrow-right"></i> بازگشت</a>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else
+{
+    <!-- ===================== سربرگ ===================== -->
+    <div class="card mb-3">
+        <div class="card-header">
+            <i class="bi bi-file-earmark-text text-primary"></i>
+            <span class="card-title">مشخصات سند</span>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-6 col-md-2">
+                    <label class="form-label">شماره</label>
+                    <input type="number" class="form-control num" @bind="doc.Number" disabled="@IsLocked" />
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label">تاریخ <span class="text-danger">*</span></label>
+                    <DatePicker Value="doc.Date" ValueChanged="OnDate" />
+                </div>
+
+                @if (doc.Kind == TreasuryKind.Transfer)
+                {
+                    <div class="col-md-3">
+                        <label class="form-label">از حساب <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <select class="form-select" value="@(doc.FromAccountId ?? 0)" @onchange="OnFromAccount" disabled="@IsLocked">
+                                <option value="0">— انتخاب کنید —</option>
+                                @foreach (var a in accounts)
+                                {
+                                    <option value="@a.Id">@a.DisplayName — مانده @a.Balance.Money()</option>
+                                }
+                            </select>
+                            @if (!IsLocked)
+                            {
+                                <button type="button" class="btn btn-outline-primary" title="تعریف بانک/حساب جدید"
+                                        @onclick="() => OpenQuickBankForTransfer(true)">
+                                    <i class="bi bi-plus-lg"></i>
+                                </button>
+                            }
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">به حساب <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <select class="form-select" value="@(doc.ToAccountId ?? 0)" @onchange="OnToAccount" disabled="@IsLocked">
+                                <option value="0">— انتخاب کنید —</option>
+                                @foreach (var a in accounts)
+                                {
+                                    <option value="@a.Id">@a.DisplayName — مانده @a.Balance.Money()</option>
+                                }
+                            </select>
+                            @if (!IsLocked)
+                            {
+                                <button type="button" class="btn btn-outline-primary" title="تعریف بانک/حساب جدید"
+                                        @onclick="() => OpenQuickBankForTransfer(false)">
+                                    <i class="bi bi-plus-lg"></i>
+                                </button>
+                            }
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2">
+                        <label class="form-label">شماره پیگیری</label>
+                        <input class="form-control num" @bind="doc.RefNumber" disabled="@IsLocked" />
+                    </div>
+                }
+                else
+                {
+                    <div class="col-md-4">
+                        <label class="form-label">
+                            @(doc.Kind == TreasuryKind.Receipt ? "دریافت از" : "پرداخت به") <span class="text-danger">*</span>
+                        </label>
+                        <SearchSelect Items="parties" Value="@(doc.PartyId ?? 0)" ValueChanged="OnParty"
+                                      Placeholder="انتخاب طرف حساب…" />
+                    </div>
+                    <div class="col-6 col-md-2">
+                        <label class="form-label">شماره عطف</label>
+                        <input class="form-control num" @bind="doc.RefNumber" disabled="@IsLocked" />
+                    </div>
+                    @if (doc.InvoiceAllocations.Count == 1 && doc.InvoiceAllocations[0].InvoiceId > 0)
+                    {
+                        <div class="col-6 col-md-2">
+                            <label class="form-label">فاکتور مرتبط</label>
+                            <a class="btn btn-outline-primary w-100" href="@($"/fac/invoices/edit/{doc.InvoiceAllocations[0].InvoiceId}")">
+                                <i class="bi bi-receipt"></i> <span class="num">@doc.InvoiceAllocations[0].InvoiceNumber.Num()</span>
+                            </a>
+                        </div>
+                    }
+                    else if (doc.InvoiceAllocations.Count > 1)
+                    {
+                        <div class="col-6 col-md-2">
+                            <label class="form-label">فاکتورهای مرتبط</label>
+                            <span class="btn btn-outline-primary w-100 disabled">@doc.InvoiceAllocations.Count.Num() فاکتور</span>
+                        </div>
+                    }
+                }
+
+                <div class="@(doc.Kind == TreasuryKind.Transfer ? "col-12" : "col-md-12")">
+                    <label class="form-label">بابت / شرح سند</label>
+                    <input class="form-control" @bind="doc.Description" disabled="@IsLocked"
+                           />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (doc.Kind != TreasuryKind.Transfer)
+    {
+        <!-- ===================== تخصیص به فاکتورها ===================== -->
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="bi bi-receipt-cutoff text-primary"></i>
+                <span class="card-title">تخصیص به فاکتورها</span>
+                <span class="badge badge-soft-primary ms-2 num">@doc.InvoiceAllocations.Count.Num() فاکتور</span>
+            </div>
+            <div class="card-body">
+                @if (doc.Status == TreasuryStatus.Cancelled && doc.InvoiceAllocations.Count > 0)
+                {
+                    <div class="alert alert-warning fs-8">این سند ابطال شده است؛ تخصیص‌های آن در ماندهٔ فعلی فاکتورها محاسبه نمی‌شوند.</div>
+                }
+
+                @if (doc.PartyId is not > 0)
+                {
+                }
+                else if (!IsLocked)
+                {
+                    <div class="row g-2 align-items-end mb-3">
+                        <div class="col-12 col-lg-7">
+                            <label class="form-label">فاکتور باز</label>
+                            <select class="form-select num" value="@selectedInvoiceId" @onchange="OnCandidateInvoice">
+                                <option value="0">— انتخاب فاکتور برای تخصیص —</option>
+                                @foreach (var invoice in AvailableInvoices)
+                                {
+                                    <option value="@invoice.InvoiceId">
+                                        @invoice.KindTitle شماره @invoice.InvoiceNumber.Num() — مانده @invoice.RemainingAmount.Money()
+                                    </option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-8 col-lg-3">
+                            <label class="form-label">مبلغ تخصیص</label>
+                            <input class="form-control num" value="@allocationAmountText" @onchange="OnAllocationAmountText" />
+                        </div>
+                        <div class="col-4 col-lg-2 d-grid">
+                            <button class="btn btn-outline-primary" @onclick="AddInvoiceAllocation" disabled="@(!CanAddInvoiceAllocation)">
+                                <i class="bi bi-plus-lg"></i> افزودن
+                            </button>
+                        </div>
+                    </div>
+
+                    @if (openInvoices.Count == 0)
+                    {
+                        <div class="alert alert-light border mb-3">برای این طرف حساب، فاکتور نسیهٔ باز و قابل تسویه‌ای پیدا نشد.</div>
+                    }
+                    else if (AvailableInvoices.Count == 0)
+                    {
+                        <div class="alert alert-light border mb-3">همهٔ فاکتورهای بازِ قابل انتخاب به این سند اضافه شده‌اند.</div>
+                    }
+                }
+
+                @if (doc.InvoiceAllocations.Count > 0)
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover align-middle mb-2">
+                            <thead>
+                                <tr>
+                                    <th>فاکتور</th>
+                                    <th class="text-end">کل فاکتور</th>
+                                    <th class="text-end">مانده بدون این سند</th>
+                                    <th class="text-end">مبلغ تخصیص اولیه</th>
+                                    <th class="text-end">مانده با اثر این سند</th>
+                                    @if (!IsLocked)
+                                    {
+                                        <th style="width:52px"></th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var allocation in doc.InvoiceAllocations.OrderBy(a => a.InvoiceNumber))
+                                {
+                                    var currentAllocation = allocation;
+                                    <tr>
+                                        <td>
+                                            <a href="@($"/fac/invoices/edit/{currentAllocation.InvoiceId}")">
+                                                @InvoiceKindTitle(currentAllocation.InvoiceKind)
+                                                <span class="num">#@currentAllocation.InvoiceNumber.Num()</span>
+                                            </a>
+                                            @if (currentAllocation.InvoiceDate != DateTime.MinValue)
+                                            {
+                                                <div class="small text-muted num">@currentAllocation.InvoiceDate.ToFaDate()</div>
+                                            }
+                                        </td>
+                                        <td class="text-end num">@currentAllocation.InvoiceTotal.Money()</td>
+                                        <td class="text-end num">@currentAllocation.RemainingBeforeSettlement.Money()</td>
+                                        <td class="text-end" style="min-width:150px">
+                                            @if (IsLocked)
+                                            {
+                                                <span class="num fw-600">@currentAllocation.Amount.Money()</span>
+                                                @if (doc.Status == TreasuryStatus.Confirmed
+                                                     && currentAllocation.EffectiveAmount < currentAllocation.Amount)
+                                                {
+                                                    <div class="small text-danger">مؤثر پس از برگشت چک: @currentAllocation.EffectiveAmount.Money()</div>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <input class="form-control form-control-sm num text-end" value="@AllocationAmountText(currentAllocation)"
+                                                       @onchange="e => OnInvoiceAllocationAmount(currentAllocation, e)" />
+                                            }
+                                        </td>
+                                        <td class="text-end num">@RemainingAfter(currentAllocation).Money()</td>
+                                        @if (!IsLocked)
+                                        {
+                                            <td class="text-end">
+                                                <button class="btn btn-sm btn-outline-danger" title="حذف تخصیص" @onclick="() => RemoveInvoiceAllocation(currentAllocation)">
+                                                    <i class="bi bi-x-lg"></i>
+                                                </button>
+                                            </td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+
+                <div class="d-flex flex-wrap gap-3 justify-content-end small">
+                    <span>جمع سند: <b class="num">@Total.Money()</b></span>
+                    <span>تخصیص‌یافته به فاکتورها: <b class="num">@InvoiceAllocatedTotal.Money()</b></span>
+                    <span>تخصیص‌نیافته / پیش‌پرداخت: <b class="num">@UnallocatedAmount.Money()</b></span>
+                </div>
+                @if (InvoiceAllocatedTotal > Total)
+                {
+                    <div class="alert alert-danger mt-2 mb-0">جمع تخصیص از مبلغ ابزارهای این سند بیشتر است؛ مبلغ ابزارها را تکمیل کنید یا تخصیص‌ها را کاهش دهید.</div>
+                }
+                else if (UnallocatedAmount > 0 && doc.InvoiceAllocations.Count > 0)
+                {
+                }
+            </div>
+        </div>
+    }
+
+    @if (doc.Kind == TreasuryKind.Transfer)
+    {
+        <!-- ===================== انتقال وجه ===================== -->
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="bi bi-arrow-left-right text-primary"></i>
+                <span class="card-title">مبلغ انتقال</span>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">مبلغ <span class="text-danger">*</span></label>
+                        <input class="form-control num" value="@amountText" @onchange="OnTransferAmount" disabled="@IsLocked" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">کارمزد بانکی</label>
+                        <input class="form-control num" value="@feeText" @onchange="OnFee" disabled="@IsLocked" />
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <div class="alert alert-light border mb-0 w-100 py-2">
+                            <div class="d-flex justify-content-between">
+                                <span class="fs-8 text-muted">کسر از حساب مبدأ</span>
+                                <b class="num">@((doc.TotalAmount + doc.FeeAmount).Money())</b>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="fs-8 text-muted num">@Fa.MoneyWithWords(doc.TotalAmount)</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <!-- ===================== سطرهای ابزار ===================== -->
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="bi bi-list-ol text-primary"></i>
+                <span class="card-title">ابزارهای @(doc.Kind == TreasuryKind.Receipt ? "دریافت" : "پرداخت")</span>
+                <span class="badge badge-soft-primary ms-2 num">@doc.Lines.Count.Num() سطر</span>
+
+                @if (!IsLocked)
+                {
+                    <div class="ms-auto d-flex gap-1 flex-wrap">
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => AddLine(PayMethod.Cash)">
+                            <i class="bi bi-cash"></i> نقد
+                        </button>
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => AddLine(PayMethod.Card)">
+                            <i class="bi bi-credit-card"></i> کارتخوان
+                        </button>
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => AddLine(PayMethod.Transfer)">
+                            <i class="bi bi-bank"></i> حواله
+                        </button>
+                        <button class="btn btn-sm btn-outline-warning" @onclick="() => AddLine(PayMethod.Cheque)">
+                            <i class="bi bi-card-checklist"></i> چک
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => AddLine(PayMethod.Discount)">
+                            <i class="bi bi-percent"></i> تخفیف
+                        </button>
+                    </div>
+                }
+            </div>
+            <div class="card-body p-0">
+                @if (doc.Lines.Count == 0)
+                {
+                    <div class="empty-state">
+                        <i class="bi bi-cash-coin"></i>
+                        <h5>هنوز سطری اضافه نشده است</h5>
+                    </div>
+                }
+                else
+                {
+                    @foreach (var l in doc.Lines)
+                    {
+                        var line = l;
+                        <div class="border-bottom p-3">
+                            <div class="d-flex align-items-center mb-2">
+                                <span class="badge @MethodBadge(line.Method)">
+                                    <i class="bi @MethodIcon(line.Method)"></i> @line.MethodTitle
+                                </span>
+                                <span class="num text-muted fs-8 me-2">ردیف @line.RowNo.Num()</span>
+                                @if (line.ChequeStatus is not null && line.ChequeStatus != Inventory.Shared.ChequeStatus.InHand)
+                                {
+                                    <span class="badge badge-soft-info fs-8 me-2">
+                                        وضعیت چک: @ChequeStatusTitle(line.ChequeStatus.Value)
+                                    </span>
+                                }
+                                @if (!IsLocked)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger ms-auto" @onclick="() => RemoveLine(line)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                }
+                            </div>
+
+                            <div class="row g-2">
+                                <div class="col-6 col-md-3">
+                                    <label class="form-label fs-8">مبلغ <span class="text-danger">*</span></label>
+                                    <input class="form-control num" value="@LineText(line)"
+                                           @onchange="e => OnLineAmount(line, e)" disabled="@IsLocked" />
+                                </div>
+
+                                @if (line.NeedsAccount)
+                                {
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label fs-8">صندوق/بانک <span class="text-danger">*</span></label>
+                                        <div class="input-group input-group-sm">
+                                            <select class="form-select" value="@(line.TrsAccountId ?? 0)"
+                                                    @onchange="e => OnLineAccount(line, e)" disabled="@IsLocked">
+                                                <option value="0">— انتخاب —</option>
+                                                @foreach (var a in AccountsFor(line.Method))
+                                                {
+                                                    <option value="@a.Id">@a.DisplayName</option>
+                                                }
+                                            </select>
+                                            @if (!IsLocked)
+                                            {
+                                                <button type="button" class="btn btn-outline-primary" title="تعریف بانک/حساب جدید"
+                                                        @onclick="() => OpenQuickBankForLine(line)">
+                                                    <i class="bi bi-plus-lg"></i>
+                                                </button>
+                                            }
+                                        </div>
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label fs-8">شماره پیگیری</label>
+                                        <input class="form-control num" @bind="line.RefNumber" disabled="@IsLocked" />
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label fs-8">توضیح</label>
+                                        <input class="form-control" @bind="line.Description" disabled="@IsLocked" />
+                                    </div>
+                                }
+                                else if (line.Method == PayMethod.Cheque)
+                                {
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label fs-8">شماره چک <span class="text-danger">*</span></label>
+                                        <input class="form-control num" @bind="line.ChequeNumber" disabled="@IsChequeLocked(line)" />
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label fs-8">شناسه صیاد</label>
+                                        <input class="form-control num" @bind="line.SayadId" maxlength="16" dir="ltr" disabled="@IsChequeLocked(line)" />
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label fs-8">سررسید <span class="text-danger">*</span></label>
+                                        <DatePicker Value="line.DueDate" ValueChanged="d => line.DueDate = d" />
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label fs-8">تاریخ صدور</label>
+                                        <DatePicker Value="line.IssueDate" ValueChanged="d => line.IssueDate = d" AllowClear="true" />
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label fs-8">بانک صادرکننده</label>
+                                        <div class="input-group input-group-sm">
+                                            <input class="form-control" list="trsBankDataList" @bind="line.ChequeBankName" disabled="@IsChequeLocked(line)" placeholder="نام بانک…" />
+                                            @if (!IsChequeLocked(line))
+                                            {
+                                                <button type="button" class="btn btn-outline-primary" title="تعریف بانک جدید"
+                                                        @onclick="() => OpenQuickBankForChequeReceipt(line)">
+                                                    <i class="bi bi-plus-lg"></i>
+                                                </button>
+                                            }
+                                        </div>
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label fs-8">شعبه</label>
+                                        <input class="form-control" @bind="line.ChequeBranchName" disabled="@IsChequeLocked(line)" />
+                                    </div>
+                                    @if (doc.Kind == TreasuryKind.Receipt)
+                                    {
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label fs-8">شماره حساب صادرکننده</label>
+                                            <input class="form-control num" @bind="line.ChequeAccountNumber" dir="ltr" disabled="@IsChequeLocked(line)" />
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label fs-8">از حساب بانکی ما <span class="text-danger">*</span></label>
+                                            <div class="input-group input-group-sm">
+                                                <select class="form-select" value="@(line.TrsAccountId ?? 0)"
+                                                        @onchange="e => OnLineAccount(line, e)" disabled="@IsChequeLocked(line)">
+                                                    <option value="0">— انتخاب —</option>
+                                                    @foreach (var a in accounts.Where(x => x.Kind == TreasuryAccountKind.Bank))
+                                                    {
+                                                        <option value="@a.Id">@a.DisplayName</option>
+                                                    }
+                                                </select>
+                                                @if (!IsChequeLocked(line))
+                                                {
+                                                    <button type="button" class="btn btn-outline-primary" title="تعریف حساب بانکی جدید"
+                                                            @onclick="() => OpenQuickBankForLine(line, TreasuryAccountKind.Bank)">
+                                                        <i class="bi bi-plus-lg"></i>
+                                                    </button>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                    @if (line.ChequeId is > 0)
+                                    {
+                                        <div class="col-6 col-md-3 d-flex align-items-end">
+                                            <a class="btn btn-outline-primary w-100" href="@($"/trs/cheques?search={line.ChequeNumber}")">
+                                                <i class="bi bi-box-arrow-up-left"></i> پرونده چک
+                                            </a>
+                                        </div>
+                                    }
+                                }
+                                else
+                                {
+                                    <div class="col-md-9">
+                                        <label class="form-label fs-8">بابت تخفیف / کسورات</label>
+                                        <input class="form-control" @bind="line.Description" disabled="@IsLocked"
+                                               />
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+
+        <!-- ===================== جمع‌بندی ===================== -->
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-6 col-md-3">
+                        <div class="d-flex justify-content-between">
+                            <span class="text-muted fs-8">نقد و بانک</span>
+                            <b class="num">@doc.Lines.Where(l => l.NeedsAccount).Sum(l => l.Amount).Money()</b>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="d-flex justify-content-between">
+                            <span class="text-muted fs-8">چک</span>
+                            <b class="num">@doc.Lines.Where(l => l.Method == PayMethod.Cheque).Sum(l => l.Amount).Money()</b>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="d-flex justify-content-between">
+                            <span class="text-muted fs-8">تخفیف و کسورات</span>
+                            <b class="num">@doc.Lines.Where(l => l.Method == PayMethod.Discount).Sum(l => l.Amount).Money()</b>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="d-flex justify-content-between align-items-baseline">
+                            <span class="fw-600">جمع کل</span>
+                            <b class="fs-5 num text-success">@Total.Money()</b>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="fs-8 text-muted text-center num">@Fa.MoneyWithWords(Total)</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- ===================== عملیات ===================== -->
+    <div class="card d-print-none">
+        <div class="card-body d-flex flex-wrap gap-2 justify-content-end">
+            @if (doc.VoucherId is > 0)
+            {
+                <a class="btn btn-outline-primary me-auto" href="@($"/acc/vouchers/edit/{doc.VoucherId}")">
+                    <i class="bi bi-journal-text"></i> سند حسابداری
+                    <span class="num">@doc.VoucherNumber.GetValueOrDefault().Num()</span>
+                </a>
+            }
+
+            <button class="btn btn-outline-secondary" @onclick="Print"><i class="bi bi-printer"></i> چاپ</button>
+
+            @if (doc.Status == TreasuryStatus.Draft)
+            {
+                <button class="btn btn-outline-primary" @onclick="() => Save(false)" disabled="@saving">
+                    <i class="bi bi-save"></i> ذخیره پیش‌نویس
+                </button>
+                <button class="btn btn-success" @onclick="() => Save(true)" disabled="@saving">
+                    @if (saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    <i class="bi bi-check2-circle"></i> ثبت و قطعی
+                </button>
+            }
+            else if (doc.Status == TreasuryStatus.Confirmed)
+            {
+                <button class="btn btn-outline-warning" @onclick="Unconfirm" disabled="@saving">
+                    <i class="bi bi-arrow-counterclockwise"></i> برگشت از قطعی
+                </button>
+            }
+        </div>
+    </div>
+
+    <!-- دیتالیست بانک‌های سیستم جهت پیشنهاد سریع -->
+    <datalist id="trsBankDataList">
+        @foreach (var b in accounts.Where(x => !string.IsNullOrWhiteSpace(x.BankName)).Select(x => x.BankName!).Distinct())
+        {
+            <option value="@b" />
+        }
+        <option value="بانک ملت" />
+        <option value="بانک ملی" />
+        <option value="بانک صادرات" />
+        <option value="بانک تجارت" />
+        <option value="بانک سپه" />
+        <option value="بانک سامان" />
+        <option value="بانک پاسارگاد" />
+        <option value="بانک پارسیان" />
+        <option value="بانک رسالت" />
+        <option value="بانک مهر ایران" />
+        <option value="بانک کشاورزی" />
+        <option value="بانک مسکن" />
+        <option value="بانک رفاه" />
+        <option value="بانک آینده" />
+        <option value="بانک شهر" />
+    </datalist>
+
+    <QuickBankModal @bind-Visible="showQuickBank"
+                    DefaultKind="quickBankDefaultKind"
+                    OnAccountCreated="OnQuickBankCreated" />
+}
+
+@code {
+    [Parameter] public string? KindParam { get; set; }
+    [Parameter] public int Id { get; set; }
+    [Parameter] public int InvoiceId { get; set; }
+
+    private TrsVoucher doc = new();
+    private List<TrsAccount> accounts = new();
+    private List<LookupItem> parties = new();
+    private List<TrsSettlementInvoice> openInvoices = new();
+
+    private int selectedInvoiceId;
+    private string allocationAmountText = "";
+    private string amountText = "", feeText = "";
+    private bool loading = true, saving;
+
+    // تعریف سریع بانک/حساب
+    private bool showQuickBank;
+    private TreasuryAccountKind quickBankDefaultKind = TreasuryAccountKind.Bank;
+    private TrsVoucherLine? activeQuickBankLine;
+    private bool? activeQuickBankForFromAccount;
+
+    private void OpenQuickBankGeneral(TreasuryAccountKind kind = TreasuryAccountKind.Bank)
+    {
+        activeQuickBankLine = null;
+        activeQuickBankForFromAccount = null;
+        quickBankDefaultKind = kind;
+        showQuickBank = true;
+    }
+
+    private void OpenQuickBankForLine(TrsVoucherLine line, TreasuryAccountKind? kind = null)
+    {
+        activeQuickBankLine = line;
+        activeQuickBankForFromAccount = null;
+        quickBankDefaultKind = kind ?? (line.Method switch
+        {
+            PayMethod.Cash => TreasuryAccountKind.Cash,
+            PayMethod.Card => TreasuryAccountKind.Pos,
+            _ => TreasuryAccountKind.Bank
+        });
+        showQuickBank = true;
+    }
+
+    private void OpenQuickBankForChequeReceipt(TrsVoucherLine line)
+    {
+        activeQuickBankLine = line;
+        activeQuickBankForFromAccount = null;
+        quickBankDefaultKind = TreasuryAccountKind.Bank;
+        showQuickBank = true;
+    }
+
+    private void OpenQuickBankForTransfer(bool isFrom)
+    {
+        activeQuickBankLine = null;
+        activeQuickBankForFromAccount = isFrom;
+        quickBankDefaultKind = TreasuryAccountKind.Bank;
+        showQuickBank = true;
+    }
+
+    private async Task OnQuickBankCreated(TrsAccount newAcc)
+    {
+        accounts = await AccountSvc.GetAllAsync(true, true);
+
+        if (activeQuickBankForFromAccount == true)
+        {
+            doc.FromAccountId = newAcc.Id;
+            doc.FromAccountName = newAcc.Name;
+        }
+        else if (activeQuickBankForFromAccount == false)
+        {
+            doc.ToAccountId = newAcc.Id;
+            doc.ToAccountName = newAcc.Name;
+        }
+        else if (activeQuickBankLine != null)
+        {
+            activeQuickBankLine.TrsAccountId = newAcc.Id;
+            activeQuickBankLine.TrsAccountName = newAcc.DisplayName;
+            if (activeQuickBankLine.Method == PayMethod.Cheque)
+            {
+                activeQuickBankLine.ChequeBankName = newAcc.BankName ?? newAcc.Name;
+            }
+        }
+        StateHasChanged();
+    }
+
+    private bool IsLocked => doc.Status != TreasuryStatus.Draft;
+
+    private decimal Total => doc.Lines.Sum(l => l.Amount);
+    private decimal InvoiceAllocatedTotal => doc.InvoiceAllocations.Sum(a => a.Amount);
+    private decimal UnallocatedAmount => Math.Max(0, Total - InvoiceAllocatedTotal);
+    private List<TrsSettlementInvoice> AvailableInvoices => openInvoices
+        .Where(i => !doc.InvoiceAllocations.Any(a => a.InvoiceId == i.InvoiceId)).ToList();
+    private bool CanAddInvoiceAllocation => !IsLocked && selectedInvoiceId > 0
+        && Fa.ParseDecimal(allocationAmountText) > 0;
+
+    private string StatusBadge => doc.Status switch
+    {
+        TreasuryStatus.Draft => "badge-soft-muted",
+        TreasuryStatus.Confirmed => "badge-soft-success",
+        _ => "badge-soft-danger"
+    };
+
+    private string Hint => doc.Kind switch
+    {
+        TreasuryKind.Receipt => "دریافت نقد، کارتخوان، حواله یا چک از مشتری",
+        TreasuryKind.Payment => "پرداخت نقد، حواله یا صدور چک برای تأمین‌کننده",
+        _ => "جابه‌جایی وجه بین صندوق‌ها و حساب‌های بانکی"
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true;
+        try
+        {
+            accounts = await AccountSvc.GetAllAsync(true, true);
+
+            var customers = await PartySvc.GetLookupsAsync(PartyType.Customer, true);
+            var suppliers = await PartySvc.GetLookupsAsync(PartyType.Supplier, true);
+            parties = customers.Concat(suppliers)
+                .GroupBy(p => p.Id).Select(g => g.First())
+                .OrderBy(p => p.Name).ToList();
+
+            if (Id > 0)
+            {
+                doc = await VoucherSvc.GetAsync(Id);
+            }
+            else if (InvoiceId > 0)
+            {
+                doc = await VoucherSvc.NewSettlementAsync(InvoiceId);
+            }
+            else
+            {
+                var kind = Enum.TryParse<TreasuryKind>(KindParam, true, out var k) ? k : TreasuryKind.Receipt;
+                doc = await VoucherSvc.NewAsync(kind);
+            }
+
+            doc.InvoiceAllocations ??= new();
+            amountText = doc.TotalAmount == 0 ? "" : doc.TotalAmount.ToString("0.##");
+            feeText = doc.FeeAmount == 0 ? "" : doc.FeeAmount.ToString("0.##");
+            await LoadOpenInvoicesAsync();
+
+            Layout.SetTitle(doc.KindTitle);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    // ---------- سربرگ ----------
+
+    private void OnDate(DateTime? d) => doc.Date = d ?? DateTime.Now;
+
+    private async Task OnParty(int id)
+    {
+        var nextPartyId = id > 0 ? id : (int?)null;
+        if (doc.PartyId != nextPartyId && doc.InvoiceAllocations.Count > 0)
+        {
+            if (!await JS.InvokeAsync<bool>("confirm",
+                "با تغییر طرف حساب، تخصیص‌های فاکتور فعلی پاک می‌شوند. ادامه می‌دهید؟")) return;
+            doc.InvoiceAllocations.Clear();
+            doc.InvoiceId = null;
+            doc.InvoiceNumber = null;
+        }
+
+        doc.PartyId = nextPartyId;
+        doc.PartyName = parties.FirstOrDefault(p => p.Id == id)?.Name;
+        selectedInvoiceId = 0;
+        allocationAmountText = "";
+        await LoadOpenInvoicesAsync();
+    }
+
+    private async Task LoadOpenInvoicesAsync()
+    {
+        openInvoices = new();
+        if (doc.PartyId is not > 0 || doc.Kind == TreasuryKind.Transfer || IsLocked) return;
+        try
+        {
+            openInvoices = await VoucherSvc.GetOpenInvoicesAsync(doc.PartyId.Value, doc.Kind);
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+    }
+
+    private void OnCandidateInvoice(ChangeEventArgs e)
+    {
+        selectedInvoiceId = int.TryParse(e.Value?.ToString(), out var id) ? id : 0;
+        var invoice = openInvoices.FirstOrDefault(i => i.InvoiceId == selectedInvoiceId);
+        if (invoice is null)
+        {
+            allocationAmountText = "";
+            return;
+        }
+
+        var capacity = Math.Max(0, Total - InvoiceAllocatedTotal);
+        var suggested = capacity > 0 ? Math.Min(invoice.RemainingAmount, capacity) : invoice.RemainingAmount;
+        allocationAmountText = suggested.ToString("0.##");
+    }
+
+    private void OnAllocationAmountText(ChangeEventArgs e)
+        => allocationAmountText = e.Value?.ToString() ?? "";
+
+    private void AddInvoiceAllocation()
+    {
+        var invoice = openInvoices.FirstOrDefault(i => i.InvoiceId == selectedInvoiceId);
+        if (invoice is null) return;
+        if (doc.InvoiceAllocations.Any(a => a.InvoiceId == invoice.InvoiceId))
+        {
+            Toast.Info("این فاکتور قبلاً به سند اضافه شده است.");
+            return;
+        }
+
+        var amount = Math.Max(0, Fa.ParseDecimal(allocationAmountText));
+        if (amount <= 0)
+        {
+            Toast.Info("مبلغ تخصیص باید بیشتر از صفر باشد.");
+            return;
+        }
+        if (amount > invoice.RemainingAmount)
+        {
+            Toast.Error($"مبلغ تخصیص از ماندهٔ فاکتور بیشتر است ({invoice.RemainingAmount:N0}).");
+            return;
+        }
+        doc.InvoiceAllocations.Add(new TrsInvoiceAllocationDto
+        {
+            InvoiceId = invoice.InvoiceId,
+            InvoiceNumber = invoice.InvoiceNumber,
+            InvoiceKind = invoice.InvoiceKind,
+            InvoiceDate = invoice.InvoiceDate,
+            InvoiceTotal = invoice.InvoiceTotal,
+            RemainingBeforeSettlement = invoice.RemainingAmount,
+            Amount = amount,
+            EffectiveAmount = amount
+        });
+        SyncLegacyInvoiceLink();
+        selectedInvoiceId = 0;
+        allocationAmountText = "";
+    }
+
+    private void OnInvoiceAllocationAmount(TrsInvoiceAllocationDto allocation, ChangeEventArgs e)
+    {
+        allocation.Amount = Math.Max(0, Fa.ParseDecimal(e.Value?.ToString()));
+        allocation.EffectiveAmount = allocation.Amount;
+    }
+
+    private void RemoveInvoiceAllocation(TrsInvoiceAllocationDto allocation)
+    {
+        doc.InvoiceAllocations.Remove(allocation);
+        SyncLegacyInvoiceLink();
+    }
+
+    private void SyncLegacyInvoiceLink()
+    {
+        if (doc.InvoiceAllocations.Count == 1)
+        {
+            doc.InvoiceId = doc.InvoiceAllocations[0].InvoiceId;
+            doc.InvoiceNumber = doc.InvoiceAllocations[0].InvoiceNumber;
+        }
+        else
+        {
+            doc.InvoiceId = null;
+            doc.InvoiceNumber = null;
+        }
+    }
+
+    private static string AllocationAmountText(TrsInvoiceAllocationDto allocation)
+        => allocation.Amount.ToString("0.##");
+
+    private decimal RemainingAfter(TrsInvoiceAllocationDto allocation)
+        => doc.Status == TreasuryStatus.Cancelled
+            ? allocation.RemainingBeforeSettlement
+            : Math.Max(0, allocation.RemainingBeforeSettlement - allocation.EffectiveAmount);
+
+    private static string InvoiceKindTitle(InvoiceKind kind) => kind switch
+    {
+        InvoiceKind.Sale => "فروش",
+        InvoiceKind.Purchase => "خرید",
+        InvoiceKind.PurchaseReturn => "برگشت از خرید",
+        _ => "برگشت از فروش"
+    };
+
+    private void OnFromAccount(ChangeEventArgs e)
+    {
+        var id = int.Parse(e.Value?.ToString() ?? "0");
+        doc.FromAccountId = id > 0 ? id : null;
+        doc.FromAccountName = accounts.FirstOrDefault(a => a.Id == id)?.Name;
+    }
+
+    private void OnToAccount(ChangeEventArgs e)
+    {
+        var id = int.Parse(e.Value?.ToString() ?? "0");
+        doc.ToAccountId = id > 0 ? id : null;
+        doc.ToAccountName = accounts.FirstOrDefault(a => a.Id == id)?.Name;
+    }
+
+    private void OnTransferAmount(ChangeEventArgs e)
+    {
+        amountText = e.Value?.ToString() ?? "";
+        doc.TotalAmount = Math.Max(0, Fa.ParseDecimal(amountText));
+    }
+
+    private void OnFee(ChangeEventArgs e)
+    {
+        feeText = e.Value?.ToString() ?? "";
+        doc.FeeAmount = Math.Max(0, Fa.ParseDecimal(feeText));
+    }
+
+    // ---------- سطرها ----------
+
+    private List<TrsAccount> AccountsFor(PayMethod m) => m switch
+    {
+        PayMethod.Cash => accounts.Where(a => a.Kind is TreasuryAccountKind.Cash or TreasuryAccountKind.PettyCash).ToList(),
+        PayMethod.Card => accounts.Where(a => a.Kind is TreasuryAccountKind.Pos or TreasuryAccountKind.Bank).ToList(),
+        _ => accounts.Where(a => a.Kind == TreasuryAccountKind.Bank).ToList()
+    };
+
+    private void AddLine(PayMethod method)
+    {
+        var pool = AccountsFor(method);
+        var def = pool.FirstOrDefault(a => a.IsDefault) ?? pool.FirstOrDefault();
+
+        doc.Lines.Add(new TrsVoucherLine
+        {
+            RowNo = doc.Lines.Count + 1,
+            Method = method,
+            TrsAccountId = method is PayMethod.Cash or PayMethod.Card or PayMethod.Transfer ? def?.Id : null,
+            TrsAccountName = method is PayMethod.Cash or PayMethod.Card or PayMethod.Transfer ? def?.Name : null,
+            IssueDate = method == PayMethod.Cheque ? doc.Date : null,
+            DueDate = method == PayMethod.Cheque ? doc.Date : null
+        });
+        Renumber();
+    }
+
+    private void RemoveLine(TrsVoucherLine line)
+    {
+        doc.Lines.Remove(line);
+        Renumber();
+        AdjustSingleInvoiceAllocationToTotal();
+    }
+
+    private void Renumber()
+    {
+        var i = 1;
+        foreach (var l in doc.Lines) l.RowNo = i++;
+    }
+
+    /// <summary>متن قابل ویرایش مبلغ سطر (صفر خالی نشان داده می‌شود).</summary>
+    private static string LineText(TrsVoucherLine l) => l.Amount == 0 ? "" : l.Amount.ToString("0.##");
+
+    private void OnLineAmount(TrsVoucherLine line, ChangeEventArgs e)
+    {
+        line.Amount = Math.Max(0, Fa.ParseDecimal(e.Value?.ToString()));
+        AdjustSingleInvoiceAllocationToTotal();
+    }
+
+    // در تسویهٔ تک‌فاکتوری، کم‌کردن مبلغ پرداخت به‌صورت خودکار همان مبلغ تخصیص را هم قسطی می‌کند.
+    private void AdjustSingleInvoiceAllocationToTotal()
+    {
+        if (doc.InvoiceAllocations.Count != 1) return;
+        var allocation = doc.InvoiceAllocations[0];
+        allocation.Amount = Math.Min(Total, allocation.RemainingBeforeSettlement);
+        allocation.EffectiveAmount = allocation.Amount;
+    }
+
+    private void OnLineAccount(TrsVoucherLine line, ChangeEventArgs e)
+    {
+        var id = int.Parse(e.Value?.ToString() ?? "0");
+        line.TrsAccountId = id > 0 ? id : null;
+        line.TrsAccountName = accounts.FirstOrDefault(a => a.Id == id)?.Name;
+    }
+
+    /// <summary>چکی که از صندوق خارج شده دیگر از روی سند قابل ویرایش نیست.</summary>
+    private bool IsChequeLocked(TrsVoucherLine line)
+        => IsLocked || (line.ChequeStatus is not null
+                        && line.ChequeStatus != Inventory.Shared.ChequeStatus.InHand);
+
+    // ---------- ذخیره ----------
+
+    private async Task Save(bool confirm)
+    {
+        saving = true;
+        try
+        {
+            doc.TotalAmount = doc.Kind == TreasuryKind.Transfer ? doc.TotalAmount : Total;
+
+            var saved = await VoucherSvc.SaveAsync(doc);
+            // Keep the new draft/id if confirmation validation fails, so a retry updates rather than duplicates it.
+            doc = saved;
+
+            if (confirm)
+            {
+                doc = await VoucherSvc.ConfirmAsync(saved.Id);
+                Toast.Success("سند ثبت و قطعی شد.");
+            }
+            else
+            {
+                Toast.Success("پیش‌نویس ذخیره شد.");
+            }
+
+            amountText = doc.TotalAmount == 0 ? "" : doc.TotalAmount.ToString("0.##");
+            feeText = doc.FeeAmount == 0 ? "" : doc.FeeAmount.ToString("0.##");
+
+            if (Id == 0) Nav.NavigateTo($"/trs/vouchers/edit/{doc.Id}", replace: true);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Unconfirm()
+    {
+        if (!await JS.InvokeAsync<bool>("confirm",
+            "سند به پیش‌نویس برگردد؟ سند حسابداری آن حذف می‌شود.")) return;
+        saving = true;
+        try
+        {
+            doc = await VoucherSvc.UnconfirmAsync(doc.Id);
+            Toast.Success("سند به پیش‌نویس برگشت.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Print() => await JS.InvokeVoidAsync("window.print");
+
+    // ---------- کمکی ----------
+
+    private static string MethodIcon(PayMethod m) => m switch
+    {
+        PayMethod.Cash => "bi-cash",
+        PayMethod.Card => "bi-credit-card",
+        PayMethod.Transfer => "bi-bank",
+        PayMethod.Cheque => "bi-card-checklist",
+        _ => "bi-percent"
+    };
+
+    private static string MethodBadge(PayMethod m) => m switch
+    {
+        PayMethod.Cash => "badge-soft-success",
+        PayMethod.Card => "badge-soft-primary",
+        PayMethod.Transfer => "badge-soft-info",
+        PayMethod.Cheque => "badge-soft-warning",
+        _ => "badge-soft-muted"
+    };
+
+    private static string ChequeStatusTitle(ChequeStatus s) => s switch
+    {
+        Inventory.Shared.ChequeStatus.InHand => "نزد صندوق",
+        Inventory.Shared.ChequeStatus.InCollection => "در جریان وصول",
+        Inventory.Shared.ChequeStatus.Cleared => "وصول شده",
+        Inventory.Shared.ChequeStatus.Bounced => "برگشتی",
+        Inventory.Shared.ChequeStatus.Endorsed => "خرج شده",
+        _ => "ابطال شده"
+    };
+}

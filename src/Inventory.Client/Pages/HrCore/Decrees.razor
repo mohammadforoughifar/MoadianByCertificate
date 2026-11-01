@@ -1,0 +1,413 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/decrees"
+@inject IHrCoreService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject IHrMainService RuleSvc
+
+<PageTitle>احکام کارگزینی</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-patch-check"></i> احکام کارگزینی</h1>
+    <div class="lead">صدور و اجرای احکام پرسنل</div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به ماژول کارگزینی برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body d-flex flex-wrap gap-2 align-items-end">
+        <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="pend" @bind="onlyPending" @bind:after="Reload" />
+            <label class="form-check-label" for="pend">فقط اجرا نشده‌ها</label>
+        </div>
+        <div class="ms-auto">
+            <button class="btn btn-outline-success me-2" @onclick="ExportExcel"><i class="bi bi-file-earmark-excel"></i> اکسل</button>
+            @if (canUpdate)
+            {
+                <button class="btn btn-outline-warning me-2" title="اجرای همه‌ی احکامی که تاریخ اجرایشان رسیده است" @onclick="ApplyDue"><i class="bi bi-play-fill"></i> اجرای احکام رسیده</button>
+            }
+            @if (canCreate)
+            {
+                <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> حکم جدید</button>
+                <button class="btn btn-outline-primary ms-2" @onclick="OpenBulk"><i class="bi bi-stack"></i> صدور گروهی</button>
+            }
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+}
+else
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light"><tr><th>پرسنل</th><th>نوع حکم</th><th>شماره</th><th>اجرا از</th><th>تغییرات</th><th>وضعیت</th><th style="width:120px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var d in items)
+                        {
+                            <tr>
+                                <td><a href="hr-core/employees/@d.EmployeeId" class="fw-bold text-decoration-none">@d.EmployeeName</a></td>
+                                <td><span class="badge rounded-pill text-bg-primary">@HrCoreUi.DecreeType(d.Type)</span></td>
+                                <td class="num">@d.DecreeNo</td>
+                                <td class="num">@d.EffectiveDate.ToFa()</td>
+                                <td class="small text-muted">@ChangeSummary(d)</td>
+                                <td>
+                                    @if (d.IsApplied)
+                                    {
+                                        <span class="badge text-bg-success">اجرا شده</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-secondary">در انتظار</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (!d.IsApplied && canUpdate)
+                                    {
+                                        <button class="btn btn-sm btn-primary py-0" @onclick="() => Apply(d.Id)">اجرا</button>
+                                        <button class="btn btn-sm btn-light py-0" @onclick="() => OpenEdit(d)"><i class="bi bi-pencil"></i></button>
+                                    }
+                                    @if (!d.IsApplied && canDelete)
+                                    {
+                                        <button class="btn btn-sm btn-light py-0" @onclick="() => Delete(d.Id)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                    <button class="btn btn-sm btn-light py-0" title="چاپ حکم (PDF)" @onclick="() => PrintPdf(d.Id)"><i class="bi bi-printer text-primary"></i></button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+<Modal Visible="showEdit" Title="حکم کارگزینی" Size="modal-lg" OnClose="() => showEdit = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label">پرسنل <span class="text-danger">*</span></label>
+                <select class="form-select" @bind="form.EmployeeId">
+                    @foreach (var m in employees)
+                    {
+                        <option value="@m.Id">@m.FullName (@m.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3"><label class="form-label">شماره حکم</label><input class="form-control num" @bind="form.DecreeNo" /></div>
+            <div class="col-md-3">
+                <label class="form-label">نوع حکم</label>
+                <select class="form-select" @bind="form.Type">
+                    <option value="0">استخدام</option><option value="1">ارتقا</option><option value="2">انتقال</option>
+                    <option value="3">تغییر حقوق</option><option value="4">تشویق</option><option value="5">تنبیه</option>
+                    <option value="6">قطع همکاری</option><option value="7">بازنشستگی</option>
+                </select>
+            </div>
+            <div class="col-md-4"><label class="form-label">تاریخ اجرا</label><DatePicker @bind-Value="dEff" /></div>
+            <div class="col-md-4"><label class="form-label">پست جدید</label><input class="form-control" @bind="form.NewPostTitle" /></div>
+            <div class="col-md-4">
+                <label class="form-label">واحد جدید</label>
+                <select class="form-select" @bind="form.NewOrgUnitId">
+                    <option value="">—</option>
+                    @foreach (var u in units)
+                    {
+                        <option value="@u.Id">@u.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4"><label class="form-label">حقوق جدید (ریال)</label><input class="form-control num" type="number" min="0" @bind="form.NewBaseSalary" /></div>
+            <div class="col-md-4">
+                <label class="form-label">وضعیت جدید</label>
+                <select class="form-select" @bind="form.NewStatus">
+                    <option value="">— بدون تغییر —</option>
+                    <option value="0">فعال</option><option value="1">مرخصی بلندمدت</option><option value="2">معلق</option>
+                    <option value="3">قطع همکاری</option><option value="4">بازنشسته</option>
+                </select>
+            </div>
+            <div class="col-12"><label class="form-label">شرح حکم</label><input class="form-control" @bind="form.Description" /></div>
+            <div class="col-12">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="decreeAutoApply" @bind="form.AutoApply" />
+                    <label class="form-check-label" for="decreeAutoApply">
+                        اعمال خودکار روی پرونده پرسنل در صورت رسیده‌بودن تاریخ اجرا
+                        <span class="d-block small text-muted">حقوق پایه/پست/واحد پرونده به‌روز می‌شود تا دوره‌ی حقوقی بعدی خودکار مبلغ جدید را محاسبه کند. برای تاریخ‌های آینده، هر روز صبح به‌طور خودکار اجرا می‌شود.</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="Save">ذخیره</button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showBulk" Title="صدور گروهی حکم" Size="modal-xl" OnClose="() => showBulk = false">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-5">
+                <div class="fw-bold mb-2">۱) انتخاب پرسنل <span class="badge text-bg-primary num">@bulkSel.Count نفر</span></div>
+                <div class="mb-2"><input class="form-control" placeholder="جستجو (نام / کد)…" @bind="bulkQ" @bind:event="oninput" /></div>
+                <div class="mb-2">
+                    <select class="form-select" @bind="bulkNode">
+                        <option value="0">همه واحدها</option>
+                        @foreach (var n in bulkNodes)
+                        {
+                            <option value="@n.Id">@(new string('—', n.Level)) @n.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="bact" @bind="bulkActiveOnly" @bind:after="ReloadBulkEmps" /><label class="form-check-label" for="bact">فقط فعال‌ها</label></div>
+                    <div class="ms-auto d-flex gap-1">
+                        <button class="btn btn-sm btn-light" @onclick="SelectAllBulk">انتخاب همه</button>
+                        <button class="btn btn-sm btn-light" @onclick="() => bulkSel.Clear()">پاک کردن</button>
+                    </div>
+                </div>
+                <div class="border rounded p-2" style="max-height:290px;overflow-y:auto">
+                    @foreach (var e in BulkFiltered)
+                    {
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="be@e.Id" checked="@bulkSel.Contains(e.Id)" @onchange="() => ToggleBulk(e.Id)" />
+                            <label class="form-check-label" for="be@e.Id">@e.FullName <span class="text-muted small num">(@e.Code)</span> <span class="text-muted small">— @(e.HrMainNodeName ?? "—")</span></label>
+                        </div>
+                    }
+                    @if (BulkFiltered.Count == 0)
+                    {
+                        <div class="text-muted small text-center py-3">موردی یافت نشد.</div>
+                    }
+                </div>
+            </div>
+            <div class="col-md-7">
+                <div class="fw-bold mb-2">۲) مشخصات حکم (یکسان برای همه انتخاب‌شده‌ها)</div>
+                <div class="row g-2">
+                    <div class="col-md-6"><label class="form-label">شماره حکم</label><input class="form-control num" @bind="bulkForm.DecreeNo" placeholder="خالی = بدون شماره" /></div>
+                    <div class="col-md-6">
+                        <label class="form-label">نوع حکم</label>
+                        <select class="form-select" @bind="bulkForm.Type">
+                            <option value="0">استخدام</option><option value="1">ارتقا</option><option value="2">انتقال</option>
+                            <option value="3">تغییر حقوق</option><option value="4">تشویق</option><option value="5">تنبیه</option>
+                            <option value="6">قطع همکاری</option><option value="7">بازنشستگی</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6"><label class="form-label">تاریخ اجرا</label><DatePicker @bind-Value="bEff" /></div>
+                    <div class="col-md-6"><label class="form-label">پست جدید</label><input class="form-control" @bind="bulkForm.NewPostTitle" /></div>
+                    <div class="col-md-6">
+                        <label class="form-label">واحد جدید</label>
+                        <select class="form-select" @bind="bulkForm.NewOrgUnitId">
+                            <option value="">—</option>
+                            @foreach (var u in units)
+                            {
+                                <option value="@u.Id">@u.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-6"><label class="form-label">حقوق جدید (ریال)</label><input class="form-control num" type="number" min="0" @bind="bulkForm.NewBaseSalary" /></div>
+                    <div class="col-md-6">
+                        <label class="form-label">وضعیت جدید</label>
+                        <select class="form-select" @bind="bulkForm.NewStatus">
+                            <option value="">— بدون تغییر —</option>
+                            <option value="0">فعال</option><option value="1">مرخصی بلندمدت</option><option value="2">معلق</option>
+                            <option value="3">قطع همکاری</option><option value="4">بازنشسته</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 d-flex align-items-end">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="bapply" @bind="bulkApply" />
+                            <label class="form-check-label" for="bapply">اجرای خودکار روی پرونده <span class="text-muted small">(برگشت‌ناپذیر)</span></label>
+                        </div>
+                    </div>
+                    <div class="col-12"><label class="form-label">شرح حکم</label><input class="form-control" @bind="bulkForm.Description" /></div>
+                </div>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showBulk = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@(bulkSaving || bulkSel.Count == 0)" @onclick="SaveBulk">صدور برای @bulkSel.Count نفر</button>
+    </Footer>
+</Modal>
+
+@code {
+    private async Task PrintPdf(int id)
+    {
+        try
+        {
+            var f = await Svc.GetDecreePdfAsync(id);
+            await JS.InvokeVoidAsync("saveAsFile", f.FileName, System.Convert.ToBase64String(f.Data));
+        }
+        catch (Exception ex) { Toast.Error("خطا در تولید PDF: " + ex.Message); }
+    }
+    private bool canRead => Auth.Has("HrCore.Read") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrCore.Create") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrCore.Update") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrCore.Delete") || Auth.IsAdmin;
+
+    private bool loading = true, saving, showEdit, onlyPending;
+    private List<HrDecreeDto> items = new();
+    private List<HrEmployeeDto> employees = new();
+    private List<HrOrgUnitDto> units = new();
+    private int? editId;
+    private HrDecreeSaveDto form = new();
+    private DateTime? dEff;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) return;
+        try
+        {
+            employees = (await Svc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items;
+            units = await Svc.GetOrgUnitsAsync();
+        }
+        catch { }
+        await Reload();
+    }
+
+    private async Task ExportExcel()
+    {
+        try
+        {
+            var f = await Svc.ExportDecreesExcelAsync();
+            await JS.InvokeVoidAsync("saveAsFile", f.FileName, System.Convert.ToBase64String(f.Data));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { items = await Svc.GetDecreesAsync(null, onlyPending ? true : null); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenEdit(HrDecreeDto? d)
+    {
+        editId = d?.Id;
+        form = d is null
+            ? new HrDecreeSaveDto { EffectiveDate = DateTime.Today, EmployeeId = employees.FirstOrDefault()?.Id ?? 0 }
+            : new HrDecreeSaveDto
+            {
+                EmployeeId = d.EmployeeId, DecreeNo = d.DecreeNo, Type = d.Type, EffectiveDate = d.EffectiveDate,
+                NewPostTitle = d.NewPostTitle, NewOrgUnitId = d.NewOrgUnitId,
+                NewBaseSalary = d.NewBaseSalary, NewStatus = d.NewStatus, Description = d.Description
+            };
+        dEff = form.EffectiveDate;
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            form.EffectiveDate = dEff ?? DateTime.Today;
+            await Svc.SaveDecreeAsync(editId, form);
+            showEdit = false;
+            await Reload();
+            Toast.Success("ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Apply(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "حکم روی پرونده اعمال شود؟ این عمل برگشت‌ناپذیر است.")) return;
+        try { await Svc.ApplyDecreeAsync(id); await Reload(); Toast.Success("حکم اجرا شد."); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task ApplyDue()
+    {
+        try
+        {
+            var n = await Svc.ApplyDueDecreesAsync();
+            await Reload();
+            Toast.Success(n > 0 ? $"{Fa.Digits(n)} حکم رسیده‌به‌تاریخ روی پرونده پرسنل اعمال شد." : "حکم رسیده‌به‌تاریخِ اجرانشده‌ای وجود ندارد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Delete(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "حکم حذف شود؟")) return;
+        try { await Svc.DeleteDecreeAsync(id); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string ChangeSummary(HrDecreeDto d)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(d.NewPostTitle)) parts.Add($"پست: {d.NewPostTitle}");
+        if (!string.IsNullOrWhiteSpace(d.NewOrgUnitName)) parts.Add($"واحد: {d.NewOrgUnitName}");
+        if (d.NewBaseSalary is > 0) parts.Add("حقوق جدید");
+        if (d.NewStatus is >= 0) parts.Add(HrCoreUi.EmpStatus(d.NewStatus.Value));
+        return parts.Count == 0 ? "—" : string.Join(" • ", parts);
+    }
+
+    // ==================== صدور گروهی ====================
+    private bool showBulk, bulkSaving, bulkApply, bulkActiveOnly = true;
+    private string? bulkQ;
+    private int bulkNode;
+    private List<HrEmployeeLiteDto> bulkEmps = new();
+    private List<HrMainOrgNodeDto> bulkNodes = new();
+    private HashSet<int> bulkSel = new();
+    private HrDecreeSaveDto bulkForm = new();
+    private DateTime? bEff;
+
+    private List<HrEmployeeLiteDto> BulkFiltered => bulkEmps.Where(e =>
+        (bulkNode <= 0 || e.HrMainNodeId == bulkNode) &&
+        (string.IsNullOrWhiteSpace(bulkQ) || e.FullName.Contains(bulkQ.Trim()) || e.Code.Contains(bulkQ.Trim()))
+    ).ToList();
+
+    private async Task OpenBulk()
+    {
+        bulkForm = new HrDecreeSaveDto { EffectiveDate = DateTime.Today };
+        bEff = DateTime.Today; bulkApply = false;
+        bulkSel.Clear(); bulkQ = null; bulkNode = 0;
+        showBulk = true;
+        try
+        {
+            bulkNodes = await RuleSvc.ListOrgNodesAsync();
+            await ReloadBulkEmps();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task ReloadBulkEmps()
+    {
+        try { bulkEmps = await Svc.ListEmployeeLiteAsync(bulkActiveOnly); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void ToggleBulk(int id) { if (!bulkSel.Add(id)) bulkSel.Remove(id); }
+    private void SelectAllBulk() { foreach (var e in BulkFiltered) bulkSel.Add(e.Id); }
+
+    private async Task SaveBulk()
+    {
+        if (bulkSel.Count == 0) { Toast.Info("پرسنلی انتخاب نشده است."); return; }
+        bulkForm.EffectiveDate = bEff ?? DateTime.Today;
+        if (bulkApply && !await JS.InvokeAsync<bool>("confirm", $"حکم برای {bulkSel.Count} نفر صادر و بلافاصله اجرا می‌شود. اجرا برگشت‌ناپذیر است. ادامه می‌دهید؟")) return;
+        bulkSaving = true;
+        try
+        {
+            var r = await Svc.SaveDecreesBulkAsync(new HrDecreeBulkDto { EmployeeIds = bulkSel.ToList(), Decree = bulkForm, ApplyAfterCreate = bulkApply });
+            Toast.Success($"{r.Created.Num()} حکم صادر شد" + (bulkApply ? " و اجرا شد." : "."));
+            showBulk = false;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { bulkSaving = false; }
+    }
+
+}

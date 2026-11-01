@@ -1,0 +1,428 @@
+@page "/hr-performance"
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>ارزیابی عملکرد</PageTitle>
+
+@if (!canUse)
+{
+    <div class="alert alert-warning">دسترسی ندارید.</div>
+    return;
+}
+
+<div class="card shadow-sm mb-3" dir="rtl">
+    <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-graph-up-arrow"></i>
+        <strong>ارزیابی عملکرد و KPI</strong>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-lg-5">
+                <div class="card mb-3"><div class="card-body">
+                    <h6>دوره جدید</h6>
+                    <div class="d-flex gap-2 flex-wrap align-items-end">
+                        <div><label class="form-label small">عنوان</label><input class="form-control form-control-sm" @bind="npTitle" /></div>
+                        <div><label class="form-label small">سال</label><input type="number" class="form-control form-control-sm" style="width:80px" @bind="npYear" /></div>
+                        <div><label class="form-label small">از</label><DatePicker @bind-Value="npStart" CssClass="form-control-sm" /></div>
+                        <div><label class="form-label small">تا</label><DatePicker @bind-Value="npEnd" CssClass="form-control-sm" /></div>
+                        <div><label class="form-label small">پاداش (ماه حقوق)</label><input type="number" step="0.5" class="form-control form-control-sm" style="width:80px" @bind="npBonus" /></div>
+                        <div><label class="form-label small">حداقل نمره پاداش</label><input type="number" class="form-control form-control-sm" style="width:80px" @bind="npMin" /></div>
+                        <button class="btn btn-sm btn-primary" @onclick="CreatePeriod" disabled="@busy">ایجاد</button>
+                    </div>
+                </div></div>
+                <div class="card"><div class="card-body">
+                    <h6>دوره‌ها</h6>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-sm align-middle">
+                            <thead><tr><th>عنوان</th><th>سال</th><th>وضعیت</th><th></th></tr></thead>
+                            <tbody>
+                                @foreach (var p in periods)
+                                {
+                                    var x = p;
+                                    <tr class="@(x.Id == periodId ? "table-primary" : "")">
+                                        <td>@x.Title</td>
+                                        <td>@Fa.Digits(x.Year)</td>
+                                        <td><span class="badge @PerCls(x.Status)">@PerFa(x.Status)</span></td>
+                                        <td class="text-nowrap">
+                                            <button class="btn btn-sm btn-outline-primary" @onclick="() => SelectPeriod(x.Id)">انتخاب</button>
+                                            @if (x.Status == "Draft")
+                                            {
+                                                <button class="btn btn-sm btn-outline-success" @onclick='() => PeriodStatus(x.Id, "Open")' disabled="@busy">باز کردن</button>
+                                                <button class="btn btn-sm btn-outline-danger" @onclick="() => DeletePeriod(x.Id)" disabled="@busy">حذف</button>
+                                            }
+                                            @if (x.Status == "Open")
+                                            {
+                                                <button class="btn btn-sm btn-outline-warning" @onclick='() => PeriodStatus(x.Id, "Closed")' disabled="@busy">بستن</button>
+                                            }
+                                            @if (x.Status == "Closed")
+                                            {
+                                                <button class="btn btn-sm btn-outline-secondary" @onclick='() => PeriodStatus(x.Id, "Open")' disabled="@busy">بازگشایی</button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div></div>
+            </div>
+            <div class="col-lg-7">
+                @if (periodId > 0)
+                {
+                    <div class="card mb-3"><div class="card-body">
+                        <h6>شاخص‌ها <span class="text-muted small">(جمع وزن: @Fa.Digits(kpis.Where(k => k.IsActive).Sum(k => k.Weight).ToString("0.##"))٪)</span></h6>
+                        <div class="d-flex gap-2 flex-wrap align-items-end mb-2">
+                            <div><label class="form-label small">کد</label><input class="form-control form-control-sm" style="width:80px" @bind="kCode" /></div>
+                            <div><label class="form-label small">عنوان</label><input class="form-control form-control-sm" @bind="kTitle" /></div>
+                            <div><label class="form-label small">دسته</label><select class="form-select form-select-sm" @bind="kCat"><option value="General">عمومی</option><option value="Behavioral">رفتاری</option><option value="Skill">مهارتی</option><option value="Managerial">مدیریتی</option></select></div>
+                            <div><label class="form-label small">وزن٪</label><input type="number" step="0.5" class="form-control form-control-sm" style="width:75px" @bind="kWeight" /></div>
+                            <div><label class="form-label small">سقف</label><input type="number" class="form-control form-control-sm" style="width:75px" @bind="kMax" /></div>
+                            <button class="btn btn-sm btn-primary" @onclick="SaveKpi" disabled="@busy">@(kId > 0 ? "ویرایش" : "افزودن")</button>
+                            @if (kId > 0){<button class="btn btn-sm btn-outline-secondary" @onclick="ResetKpi">جدید</button>}
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-striped table-sm align-middle">
+                                <thead><tr><th>کد</th><th>عنوان</th><th>دسته</th><th>وزن٪</th><th>سقف</th><th>فعال</th><th></th></tr></thead>
+                                <tbody>
+                                    @foreach (var k in kpis)
+                                    {
+                                        var x = k;
+                                        <tr>
+                                            <td>@x.Code</td>
+                                            <td>@x.Title</td>
+                                            <td>@KpiCatFa(x.Category)</td>
+                                            <td>@Fa.Digits(x.Weight.ToString("0.##"))</td>
+                                            <td>@Fa.Digits(x.MaxScore.ToString("0.##"))</td>
+                                            <td>@(x.IsActive ? "✓" : "—")</td>
+                                            <td class="text-nowrap">
+                                                <button class="btn btn-sm btn-outline-primary" @onclick="() => EditKpi(x)">ویرایش</button>
+                                                <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteKpi(x.Id)" disabled="@busy">حذف</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div></div>
+                    <div class="card mb-3"><div class="card-body">
+                        <h6>نمره‌دهی</h6>
+                        <div class="d-flex gap-2 align-items-end flex-wrap mb-2">
+                            <div><label class="form-label small">پرسنل</label><select class="form-select form-select-sm" @bind="scEmpId"><option value="0">—</option>@foreach (var e in employees){<option value="@e.Id">@e.FirstName @e.LastName</option>}</select></div>
+                            <button class="btn btn-sm btn-outline-primary" @onclick="LoadScores" disabled="@busy">بارگذاری نمرات</button>
+                            <button class="btn btn-sm btn-success" @onclick="SaveScores" disabled="@(busy || scEmpId == 0)">ثبت نمرات</button>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle">
+                                <thead><tr><th>شاخص</th><th>وزن٪</th><th>نمره</th><th>یادداشت</th></tr></thead>
+                                <tbody>
+                                    @foreach (var k in kpis.Where(x => x.IsActive))
+                                    {
+                                        var x = k;
+                                        <tr>
+                                            <td>@x.Title</td>
+                                            <td>@Fa.Digits(x.Weight.ToString("0.##"))</td>
+                                            <td><input type="number" step="0.5" class="form-control form-control-sm" style="width:90px" value="@ScoreOf(x.Id)" @onchange="(e) => SetScore(x.Id, e)" /></td>
+                                            <td><input class="form-control form-control-sm" value="@NoteOf(x.Id)" @onchange="(e) => SetNote(x.Id, e)" /></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div></div>
+                    <div class="card"><div class="card-body">
+                        <h6>کارنامه</h6>
+                        @if (summary != null)
+                        {
+                            <div class="alert alert-light small py-1">نفرات: @Fa.Digits(summary.Employees) | میانگین: @Fa.Digits(summary.AvgScore.ToString("0.##")) | عالی: @Fa.Digits(summary.CountA) | خوب: @Fa.Digits(summary.CountB) | قابل‌قبول: @Fa.Digits(summary.CountC) | ضعیف: @Fa.Digits(summary.CountD) | پاداش قطعی: @Fa.Digits(summary.TotalBonus.ToString("N0"))</div>
+                        }
+                        <div class="table-responsive">
+                            <table class="table table-striped table-sm align-middle">
+                                <thead><tr><th>پرسنل</th><th>نمره</th><th>گرید</th><th>پاداش</th><th>پرداخت در</th><th>وضعیت</th><th></th></tr></thead>
+                                <tbody>
+                                    @foreach (var r in results)
+                                    {
+                                        var x = r;
+                                        <tr>
+                                            <td>@x.EmployeeName <span class="text-muted small">(@Fa.Digits(x.ScoredCount)/@Fa.Digits(x.KpiCount))</span></td>
+                                            <td>@Fa.Digits(x.TotalScore.ToString("0.##"))</td>
+                                            <td><span class="badge @GradeCls(x.Grade)">@GradeFa(x.Grade)</span></td>
+                                            <td>@Fa.Digits(x.BonusAmount.ToString("N0"))</td>
+                                            <td>@(x.PayYear == null ? "—" : Fa.Digits($"{x.PayYear}/{x.PayMonth:D2}"))</td>
+                                            <td><span class="badge @(x.Status == "Final" ? "bg-success" : "bg-warning text-dark")">@(x.Status == "Final" ? "قطعی" : x.Status == "Draft" ? "محاسبه‌شده" : "—")</span></td>
+                                            <td class="text-nowrap">
+                                                <button class="btn btn-sm btn-outline-primary" @onclick="() => Compute(x.EmployeeId)" disabled="@busy">محاسبه</button>
+                                                @if (x.Status != "Final")
+                                                {
+                                                    <button class="btn btn-sm btn-outline-success" @onclick="() => OpenFinalize(x.EmployeeId)" disabled="@busy">قطعی + پاداش</button>
+                                                }
+                                                else
+                                                {
+                                                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => Reopen(x.EmployeeId)" disabled="@busy">برگرداندن</button>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                    @if (results.Count == 0){<tr><td colspan="7" class="text-muted text-center">نمره‌ای ثبت نشده است.</td></tr>}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div></div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<Modal Visible="showFin" Title="قطعی کردن کارنامه و پاداش" OnClose="() => showFin = false">
+    <ChildContent>
+    <div class="d-flex gap-2 align-items-end">
+        <div><label class="form-label small">پرداخت در سال</label><input type="number" class="form-control form-control-sm" style="width:90px" @bind="finYear" /></div>
+        <div><label class="form-label small">ماه</label><input type="number" class="form-control form-control-sm" style="width:70px" @bind="finMonth" /></div>
+        <div><label class="form-label small">یادداشت</label><input class="form-control form-control-sm" @bind="finNote" /></div>
+    </div>
+    <div class="d-flex gap-2 mt-3">
+        <button class="btn btn-sm btn-success" @onclick="DoFinalize" disabled="@busy">قطعی کن</button>
+        <button class="btn btn-sm btn-secondary" @onclick="() => showFin = false">انصراف</button>
+    </div>
+    </ChildContent>
+</Modal>
+
+@code {
+    private bool canUse => Auth.Has("LeaveRequests.Approve") || Auth.IsAdmin;
+    private bool busy;
+    private static string PerFa(string s) => s switch { "Draft" => "پیش‌نویس", "Open" => "باز", "Closed" => "بسته", _ => s };
+    private static string PerCls(string s) => s switch { "Open" => "bg-success", "Closed" => "bg-secondary", _ => "bg-warning text-dark" };
+    private static string GradeFa(string g) => g switch { "A" => "عالی", "B" => "خوب", "C" => "قابل‌قبول", "D" => "نیازمند بهبود", _ => g };
+    private static string GradeCls(string g) => g switch { "A" => "bg-success", "B" => "bg-primary", "C" => "bg-warning text-dark", "D" => "bg-danger", _ => "bg-secondary" };
+    private static string KpiCatFa(string c) => c switch { "Behavioral" => "رفتاری", "Skill" => "مهارتی", "Managerial" => "مدیریتی", _ => "عمومی" };
+
+    private async Task<string?> Err(System.Net.Http.HttpResponseMessage r)
+    {
+        try
+        {
+            var d = await r.Content.ReadFromJsonAsync<Dictionary<string, object>>();
+            if (d != null && d.TryGetValue("message", out var m)) return m?.ToString();
+        }
+        catch { }
+        return $"خطا: {(int)r.StatusCode}";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canUse) return;
+        await LoadPeriods();
+        try { employees = await Http.GetFromJsonAsync<List<EmpDto>>("/api/hr-perf/employees") ?? new(); } catch { }
+    }
+
+    // ---------- دوره ----------
+    private List<PerfPeriodDto> periods = new();
+    private int periodId;
+    private string npTitle = ""; private int npYear = PersianDate.FromGregorian(DateTime.Today).Year;
+    private DateTime? npStart = DateTime.Today; private DateTime? npEnd = DateTime.Today.AddMonths(12);
+    private decimal npBonus = 1; private double npMin = 60;
+    private async Task LoadPeriods()
+    {
+        try { periods = await Http.GetFromJsonAsync<List<PerfPeriodDto>>("/api/hr-perf/periods") ?? new(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task CreatePeriod()
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync("/api/hr-perf/periods", new { title = npTitle, year = npYear, startDate = (npStart ?? DateTime.Today), endDate = (npEnd ?? DateTime.Today), bonusMonthSalary = npBonus, minScoreForBonus = npMin });
+            if (r.IsSuccessStatusCode) { Toast.Success("دوره ساخته شد."); npTitle = ""; await LoadPeriods(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private async Task PeriodStatus(int id, string st)
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync($"/api/hr-perf/periods/{id}/status", new { status = st });
+            if (r.IsSuccessStatusCode) { Toast.Success("ثبت شد."); await LoadPeriods(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private async Task DeletePeriod(int id)
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.DeleteAsync($"/api/hr-perf/periods/{id}");
+            if (r.IsSuccessStatusCode) { Toast.Success("حذف شد."); if (periodId == id) periodId = 0; await LoadPeriods(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private async Task SelectPeriod(int id)
+    {
+        periodId = id; scEmpId = 0; scoreMap.Clear(); noteMap.Clear();
+        await LoadKpis(); await LoadResults();
+    }
+
+    // ---------- شاخص ----------
+    private List<KpiDto> kpis = new();
+    private int kId; private string kCode = ""; private string kTitle = ""; private string kCat = "General";
+    private double kWeight = 10; private double kMax = 100; private bool kActive = true;
+    private async Task LoadKpis()
+    {
+        try { kpis = await Http.GetFromJsonAsync<List<KpiDto>>($"/api/hr-perf/periods/{periodId}/kpis") ?? new(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task SaveKpi()
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync("/api/hr-perf/kpis", new { periodId, id = kId, code = kCode, title = kTitle, weight = kWeight, maxScore = kMax, category = kCat, isActive = kActive });
+            if (r.IsSuccessStatusCode) { Toast.Success("ثبت شد."); ResetKpi(); await LoadKpis(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private void EditKpi(KpiDto k) { kId = k.Id; kCode = k.Code; kTitle = k.Title; kCat = k.Category; kWeight = k.Weight; kMax = k.MaxScore; kActive = k.IsActive; }
+    private void ResetKpi() { kId = 0; kCode = ""; kTitle = ""; kCat = "General"; kWeight = 10; kMax = 100; kActive = true; }
+    private async Task DeleteKpi(int id)
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.DeleteAsync($"/api/hr-perf/kpis/{id}");
+            if (r.IsSuccessStatusCode) { Toast.Success("حذف شد."); await LoadKpis(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+
+    // ---------- نمره‌دهی ----------
+    private List<EmpDto> employees = new();
+    private int scEmpId;
+    private Dictionary<int, double> scoreMap = new();
+    private Dictionary<int, string> noteMap = new();
+    private double ScoreOf(int kpiId) => scoreMap.TryGetValue(kpiId, out var v) ? v : 0;
+    private string NoteOf(int kpiId) => noteMap.TryGetValue(kpiId, out var v) ? v : "";
+    private void SetScore(int kpiId, ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value?.ToString(), out var v)) scoreMap[kpiId] = v;
+    }
+    private void SetNote(int kpiId, ChangeEventArgs e) => noteMap[kpiId] = e.Value?.ToString() ?? "";
+    private async Task LoadScores()
+    {
+        if (scEmpId == 0) return;
+        busy = true;
+        try
+        {
+            var rows = await Http.GetFromJsonAsync<List<ScoreDto>>($"/api/hr-perf/scores?periodId={periodId}&employeeId={scEmpId}") ?? new();
+            scoreMap = rows.ToDictionary(r => r.KpiId, r => r.Score);
+            noteMap = rows.Where(r => r.Note != null).ToDictionary(r => r.KpiId, r => r.Note!);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private async Task SaveScores()
+    {
+        busy = true;
+        try
+        {
+            var items = kpis.Where(k => k.IsActive).Select(k => new { kpiId = k.Id, score = ScoreOf(k.Id), note = NoteOf(k.Id) }).ToList();
+            var r = await Http.PostAsJsonAsync("/api/hr-perf/scores", new { periodId, employeeId = scEmpId, items });
+            if (r.IsSuccessStatusCode) { Toast.Success("نمرات ثبت شد."); await LoadResults(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+
+    // ---------- کارنامه ----------
+    private List<ResultDto> results = new();
+    private SummaryDto? summary;
+    private async Task LoadResults()
+    {
+        try
+        {
+            results = await Http.GetFromJsonAsync<List<ResultDto>>($"/api/hr-perf/periods/{periodId}/results") ?? new();
+            summary = await Http.GetFromJsonAsync<SummaryDto>($"/api/hr-perf/periods/{periodId}/summary");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task Compute(int empId)
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync("/api/hr-perf/results/compute", new { periodId, employeeId = empId });
+            if (r.IsSuccessStatusCode) { Toast.Success("محاسبه شد."); await LoadResults(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private bool showFin; private int finEmpId; private int finYear = PersianDate.FromGregorian(DateTime.Today).Year; private int finMonth = PersianDate.FromGregorian(DateTime.Today).Month; private string? finNote;
+    private void OpenFinalize(int empId) { finEmpId = empId; finNote = null; showFin = true; }
+    private async Task DoFinalize()
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync("/api/hr-perf/results/finalize", new { periodId, employeeId = finEmpId, payYear = finYear, payMonth = finMonth, note = finNote });
+            if (r.IsSuccessStatusCode) { Toast.Success("قطعی شد."); showFin = false; await LoadResults(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+    private async Task Reopen(int empId)
+    {
+        busy = true;
+        try
+        {
+            var r = await Http.PostAsJsonAsync("/api/hr-perf/results/reopen", new { periodId, employeeId = empId });
+            if (r.IsSuccessStatusCode) { Toast.Success("برگردانده شد."); await LoadResults(); }
+            else Toast.Error(await Err(r) ?? "خطا");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+
+    private class PerfPeriodDto
+    {
+        public int Id { get; set; } public string Title { get; set; } = "";
+        public int Year { get; set; } public string Status { get; set; } = "";
+    }
+    private class KpiDto
+    {
+        public int Id { get; set; } public string Code { get; set; } = ""; public string Title { get; set; } = "";
+        public string Category { get; set; } = ""; public double Weight { get; set; }
+        public double MaxScore { get; set; } public bool IsActive { get; set; }
+    }
+    private class EmpDto
+    {
+        public int Id { get; set; } public string FirstName { get; set; } = ""; public string LastName { get; set; } = "";
+    }
+    private class ScoreDto { public int KpiId { get; set; } public double Score { get; set; } public string? Note { get; set; } }
+    private class ResultDto
+    {
+        public int EmployeeId { get; set; } public string EmployeeName { get; set; } = "";
+        public int KpiCount { get; set; } public int ScoredCount { get; set; }
+        public double TotalScore { get; set; } public string Grade { get; set; } = "";
+        public decimal BonusAmount { get; set; } public int? PayYear { get; set; } public int? PayMonth { get; set; }
+        public string Status { get; set; } = "";
+    }
+    private class SummaryDto
+    {
+        public int Employees { get; set; } public double AvgScore { get; set; }
+        public int CountA { get; set; } public int CountB { get; set; }
+        public int CountC { get; set; } public int CountD { get; set; }
+        public decimal TotalBonus { get; set; }
+    }
+}

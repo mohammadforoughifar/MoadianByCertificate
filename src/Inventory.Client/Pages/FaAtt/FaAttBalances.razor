@@ -1,0 +1,209 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/balances"
+@inject IFaAttService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>مانده مرخصی</PageTitle>
+
+<div class="page-head mb-4">
+    <div>
+        <h1><i class="bi bi-piggy-bank"></i> مانده مرخصی</h1>
+        <div class="lead">استحقاق سالانه + انتقال مانده + تبدیل به نقد</div>
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد منابع انسانی است.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white fw-bold"><i class="bi bi-magic"></i> صدور گروهی استحقاق سال</div>
+    <div class="card-body">
+        <div class="row g-2">
+            <div class="col-md-3"><label class="form-label small text-muted">سال</label><input type="number" class="form-control" @bind="initYear" /></div>
+            <div class="col-md-5"><label class="form-label small text-muted">نوع مرخصی</label><select class="form-select" @bind="initType"><option value="">همه انواع فعال</option>@foreach (var t in types){<option value="@t.Id">@t.Name</option>}</select></div>
+            <div class="col-md-4 d-flex align-items-end"><button class="btn btn-primary" @onclick="InitYear">صدور برای همه پرسنل فعال</button></div>
+        </div>
+        <div class="small text-muted mt-1">فقط برای نفراتی که مانده آن سال را ندارند رکورد ساخته می‌شود؛ رکوردهای موجود دست نمی‌خورند.</div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2">
+            <div class="col-md-5"><label class="form-label small text-muted">پرسنل</label><select class="form-select" @bind="fEmp"><option value="">همه</option>@foreach (var e in emps){<option value="@e.Id">@e.FirstName @e.LastName</option>}</select></div>
+            <div class="col-md-2"><label class="form-label small text-muted">سال</label><input type="number" class="form-control" @bind="fYear" /></div>
+            <div class="col-md-3"><label class="form-label small text-muted">نوع</label><select class="form-select" @bind="fType"><option value="">همه</option>@foreach (var t in types){<option value="@t.Id">@t.Name</option>}</select></div>
+            <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary" @onclick="Reload"><i class="bi bi-search"></i> جستجو</button></div>
+        </div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (balances.Count == 0)
+        {
+            <div class="text-center text-muted py-5">مانده‌ای ثبت نشده است.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>پرسنل</th><th>سال</th><th>نوع</th><th>استحقاق</th><th>مصرف</th><th>انتقالی</th><th>نقدشده</th><th>مانده</th><th style="width:150px"></th></tr></thead>
+                <tbody>
+                    @foreach (var b in balances)
+                    {
+                        <tr>
+                            <td><b>@b.EmployeeName</b><div class="small text-muted num">@b.EmployeeCode</div></td>
+                            <td class="num">@FaAttUi.Num(b.Year)</td>
+                            <td>@b.LeaveTypeName</td>
+                            <td class="num">@FaAttUi.Num(b.EntitledDays)</td>
+                            <td class="num">@FaAttUi.Num(b.UsedDays)</td>
+                            <td class="num">@FaAttUi.Num(b.CarriedDays)</td>
+                            <td class="num">@FaAttUi.Num(b.CashedDays)</td>
+                            <td class="num fw-bold @(b.Remaining <= 0 ? "text-danger" : "text-success")">@FaAttUi.Num(b.Remaining)</td>
+                            <td class="text-end">
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-secondary" title="ویرایش استحقاق" @onclick="() => OpenEntitled(b)"><i class="bi bi-pencil"></i></button>
+                                    <button class="btn btn-outline-primary" title="انتقال از سال قبل" @onclick="() => OpenCarry(b)"><i class="bi bi-arrow-left-right"></i></button>
+                                    <button class="btn btn-outline-success" title="تبدیل به نقد" @onclick="() => OpenCash(b)"><i class="bi bi-cash-coin"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showEntitled" Title="ویرایش استحقاق" OnClose="() => showEntitled = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-md-6"><label class="form-label">استحقاق سال (روز)</label><input type="number" step="0.5" class="form-control" @bind="entForm.EntitledDays" /></div>
+        <div class="col-12"><label class="form-label">یادداشت</label><input class="form-control" @bind="entForm.Note" /></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEntitled = false">انصراف</button>
+        <button class="btn btn-success" @onclick="SaveEntitled">ذخیره</button>
+    </div>
+    </Footer>
+</Modal>
+
+<Modal Visible="showCarry" Title="انتقال مانده از سال قبل" OnClose="() => showCarry = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-md-6"><label class="form-label">سال مبدأ</label><input type="number" class="form-control" @bind="carryForm.FromYear" /></div>
+        <div class="col-md-6"><label class="form-label">سقف انتقال (روز)</label><input type="number" step="0.5" class="form-control" @bind="carryForm.MaxDays" /></div>
+    </div>
+    <div class="small text-muted mt-1">طبق ماده ۶۶ قانون کار سقف انتقال ۹ روز است.</div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showCarry = false">انصراف</button>
+        <button class="btn btn-primary" @onclick="SaveCarry">انتقال</button>
+    </div>
+    </Footer>
+</Modal>
+
+<Modal Visible="showCash" Title="تبدیل مانده به نقد" OnClose="() => showCash = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-md-6"><label class="form-label">روز</label><input type="number" step="0.5" class="form-control" @bind="cashForm.Days" /></div>
+        <div class="col-md-6"><label class="form-label">مبلغ (ریال)</label><input type="number" class="form-control" @bind="cashForm.Amount" /></div>
+        <div class="col-12"><label class="form-label">یادداشت</label><input class="form-control" @bind="cashForm.Note" /></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showCash = false">انصراف</button>
+        <button class="btn btn-success" @onclick="SaveCash">ثبت</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faManage => Auth.Has("FaAtt.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaAttLeaveBalanceDto> balances = new();
+    private List<HrEmployeeDto> emps = new();
+    private List<FaAttLeaveTypeDto> types = new();
+    private string? fEmp, fType;
+    private int? fYear = FaAttUi.CurrentYear;
+    private int initYear = FaAttUi.CurrentYear;
+    private string? initType;
+
+    private bool showEntitled, showCarry, showCash;
+    private FaAttLeaveBalanceDto? cur;
+    private FaAttLeaveBalanceSaveDto entForm = new();
+    private FaAttLeaveCarryDto carryForm = new();
+    private FaAttLeaveCashDto cashForm = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        try
+        {
+            emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items;
+            types = await Svc.GetLeaveTypesAsync();
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            int? e = int.TryParse(fEmp, out var x) ? x : null;
+            int? t = int.TryParse(fType, out var y) ? y : null;
+            balances = await Svc.GetBalancesAsync(e, fYear, t);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task InitYear()
+    {
+        int? t = int.TryParse(initType, out var y) ? y : null;
+        if (!await JS.InvokeAsync<bool>("confirm", "استحقاق سال " + initYear + " برای همه پرسنل فعال صادر شود؟")) return;
+        try { var c = await Svc.InitYearBalancesAsync(initYear, t); Toast.Success(c + " رکورد مانده ساخته شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenEntitled(FaAttLeaveBalanceDto b) { cur = b; entForm = new FaAttLeaveBalanceSaveDto { EntitledDays = b.EntitledDays, Note = b.Note }; showEntitled = true; }
+    private async Task SaveEntitled()
+    {
+        if (cur == null) return;
+        try { await Svc.SaveBalanceAsync(cur.EmployeeId, cur.Year, cur.LeaveTypeId, entForm); Toast.Success("ذخیره شد."); showEntitled = false; await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenCarry(FaAttLeaveBalanceDto b) { cur = b; carryForm = new FaAttLeaveCarryDto { FromYear = b.Year - 1, MaxDays = 9 }; showCarry = true; }
+    private async Task SaveCarry()
+    {
+        if (cur == null) return;
+        try { await Svc.CarryOverAsync(cur.EmployeeId, cur.LeaveTypeId, carryForm); Toast.Success("انتقال انجام شد."); showCarry = false; await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenCash(FaAttLeaveBalanceDto b) { cur = b; cashForm = new FaAttLeaveCashDto(); showCash = true; }
+    private async Task SaveCash()
+    {
+        if (cur == null) return;
+        try { await Svc.CashOutAsync(cur.Id, cashForm); Toast.Success("ثبت شد."); showCash = false; await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

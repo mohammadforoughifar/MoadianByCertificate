@@ -1,0 +1,163 @@
+@namespace Inventory.Client.Pages
+@page "/fa-com/tickets/{Id:int}"
+@page "/fa-com/my/{Id:int}"
+@inject IFaComService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+
+<PageTitle>گفتگوی تیکت</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-chat-dots"></i> @TicketTitle</h1>
+            <div class="lead">گفتگو و پاسخ‌گویی</div>
+        </div>
+        <button class="btn btn-outline-secondary" @onclick="Back">بازگشت</button>
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">به این بخش دسترسی ندارید.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+@if (t == null)
+{
+    <div class="alert alert-danger">تیکت یافت نشد.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+            <span class="badge @FaComUi.StatusBadge(t.Status)">@FaComUi.TicketStatus(t.Status)</span>
+            <span class="badge text-bg-light border">@FaComUi.Category(t.Category)</span>
+            <span class="badge @FaComUi.PriorityBadge(t.Priority)">@FaComUi.Priority(t.Priority)</span>
+            <span class="small text-muted ms-auto">@t.EmployeeName — @FaComUi.Dt(t.CreatedAt)</span>
+        </div>
+        <p class="mb-0" style="white-space:pre-wrap">@t.Body</p>
+        @if (t.Status == 3)
+        {
+            <div class="alert alert-secondary mt-2 mb-0 py-2 small">این تیکت بسته شده است @CloseInfo</div>
+        }
+    </div>
+</div>
+
+@foreach (var r in t.Replies)
+{
+    <div class="@BubbleClass(r) mb-2">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+            <strong>@r.UserName</strong>
+            <span class="small opacity-75">@FaComUi.Dt(r.CreatedAt)</span>
+        </div>
+        <div style="white-space:pre-wrap">@r.Body</div>
+    </div>
+}
+
+@if (!mine && faManage)
+{
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-6">
+                    <label class="form-label small text-muted">تغییر وضعیت</label>
+                    <select class="form-select" @bind="statusVal">
+                        @for (int s = 0; s <= 3; s++)
+                        {
+                            <option value="@s">@FaComUi.TicketStatus(s)</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-6"><button class="btn btn-outline-primary" @onclick="ApplyStatus"><i class="bi bi-arrow-repeat"></i> ثبت وضعیت</button></div>
+            </div>
+        </div>
+    </div>
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <label class="form-label">پاسخ شما</label>
+        <textarea class="form-control mb-2" rows="3" @bind="replyBody" placeholder="متن پاسخ..."></textarea>
+        <div class="d-flex justify-content-end">
+            <button class="btn btn-success" @onclick="Send" disabled="@sending">
+                <i class="bi bi-send"></i> ارسال پاسخ
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private bool faRead => Auth.Has("FaCom.Read") || Auth.Has("FaCom.Manage") || Auth.IsAdmin;
+    private bool faManage => Auth.Has("FaCom.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private bool mine;
+    private bool sending;
+    private FaComTicketDto? t;
+    private string replyBody = "";
+    private int statusVal;
+
+    private string TicketTitle => t == null ? "گفتگوی تیکت" : t.Subject;
+    private string BackUrl => mine ? "/fa-com/my" : "/fa-com/tickets";
+    private string CloseInfo => t?.ClosedByName == null ? "" : $"توسط {t.ClosedByName}";
+
+    private static string BubbleClass(FaComReplyDto r)
+        => r.IsHrReply ? "alert alert-success py-2" : "alert alert-secondary py-2";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        mine = Nav.Uri.Contains("/fa-com/my/", StringComparison.OrdinalIgnoreCase) || !faManage;
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            t = mine ? await Svc.GetMyTicketAsync(Id) : await Svc.GetTicketAsync(Id);
+            if (t != null) statusVal = t.Status;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void Back() => Nav.NavigateTo(BackUrl);
+
+    private async Task Send()
+    {
+        if (string.IsNullOrWhiteSpace(replyBody)) { Toast.Error("متن پاسخ خالی است."); return; }
+        sending = true;
+        try
+        {
+            var dto = new FaComReplySaveDto { TicketId = Id, Body = replyBody.Trim() };
+            t = mine ? await Svc.ReplyMyAsync(dto) : await Svc.ReplyHrAsync(dto);
+            statusVal = t.Status;
+            replyBody = "";
+            Toast.Success("پاسخ ارسال شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        sending = false;
+    }
+
+    private async Task ApplyStatus()
+    {
+        try
+        {
+            t = await Svc.SetStatusAsync(Id, statusVal);
+            Toast.Success("وضعیت ثبت شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

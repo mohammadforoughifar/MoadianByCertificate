@@ -1,0 +1,95 @@
+@using Inventory.Shared.Dtos
+@inject ILetterService LetterSvc
+@inject IToastService Toast
+
+@* ============================================================
+   افزودن / ویرایش پیش‌نویس — عنوان + متن نامه
+   ریسپانسیو دو قالبه: دسکتاپ = مودال وسط، موبایل = تمام‌صفحه
+   ============================================================ *@
+
+@if (visible)
+{
+    <div class="ltx" style="animation:none;transform:none">
+        <div class="gov" style="position:fixed;inset:0">
+            <div class="gmodal pnv" @onclick:stopPropagation="true">
+                <div class="gm-h">
+                    <div class="ttl">
+                        <b><i class="bi bi-pencil-square" style="color:var(--p2)"></i> @(editId > 0 ? "ویرایش پیش‌نویس" : "افزودن پیش‌نویس")</b>
+                        <small>عنوان و متن نامه را بنویسید — بعداً می‌توانید آن را ارسال کنید</small>
+                    </div>
+                    <button class="x" @onclick="Close"><i class="bi bi-x-lg"></i></button>
+                </div>
+                <div class="gm-b">
+                    <div class="fcard @(errTitle ? "err" : "")" style="box-shadow:none;margin-bottom:10px">
+                        <label>عنوان نامه <span class="req">*</span></label>
+                        <input class="tin" placeholder="مثلاً: درخواست تجهیزات اداری…" @bind="title" @bind:event="oninput" />
+                    </div>
+                    <div class="fcard" style="box-shadow:none">
+                        <label>متن نامه</label>
+                        <RichTextEditor @ref="_rich" Id="ltxPnvEditor" Placeholder="متن نامه را بنویسید…" @bind-Value="text" Height="260" />
+                    </div>
+                </div>
+                <div class="gm-f">
+                    <button class="lbtn ghost" @onclick="Close">انصراف</button>
+                    <button class="lbtn pri" disabled="@busy" @onclick="Save">
+                        <i class="bi bi-check-lg"></i> ذخیره پیش‌نویس
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private bool visible;
+    private bool busy;
+    private int editId;
+    private string title = "";
+    private string text = "";
+    private bool errTitle;
+    private RichTextEditor? _rich;
+
+    /// <summary>باز کردن برای افزودن پیش‌نویس جدید یا ویرایش موجود</summary>
+    public void Open(PishnevisDto? draft = null)
+    {
+        editId = draft?.PishnevisId ?? 0;
+        title = draft?.Title ?? "";
+        text = draft?.Text ?? "";
+        errTitle = false;
+        visible = true;
+        StateHasChanged();
+        _ = InitEditorAsync();
+    }
+
+    private async Task InitEditorAsync()
+    {
+        await Task.Delay(60);
+        if (_rich != null) await _rich.SetContentAsync(text);
+    }
+
+    private void Close() { visible = false; }
+
+    private async Task Save()
+    {
+        errTitle = string.IsNullOrWhiteSpace(title);
+        if (errTitle) { Toast.Error("عنوان نامه الزامی است."); return; }
+
+        busy = true;
+        try
+        {
+            await LetterSvc.SavePishnevisAsync(new PishnevisDto
+            {
+                PishnevisId = editId,
+                Title = title.Trim(),
+                Text = text
+            });
+            Toast.Success(editId > 0 ? "پیش‌نویس ویرایش شد" : "پیش‌نویس ذخیره شد");
+            visible = false;
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+}

@@ -1,0 +1,1511 @@
+@namespace Inventory.Client.Pages
+@page "/it-requests"
+@using System.Net.Http.Headers
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject LayoutState Layout
+@inject NavigationManager Nav
+@inject RealtimeService Rt
+@implements IDisposable
+
+<PageTitle>درخواست خدمت IT</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>درخواست خدمات IT</h1>
+        <p class="lead">ثبت درخواست پشتیبانی، تخصیص کارشناس و پیگیری وضعیت انجام</p>
+    </div>
+    @if (access.CanCreate)
+    {
+        <button class="btn btn-primary me-auto" @onclick="OpenNew">
+            <i class="bi bi-plus-lg"></i> درخواست جدید
+        </button>
+    }
+</div>
+
+@* ================== حالت شعبه: درخواست‌های ارسال‌شده به سرور مرکزی ================== *@
+@if (remoteMode)
+{
+    <div class="alert @(remoteHasKey ? "alert-info" : "alert-warning") py-2 fs-8 mb-3 d-flex flex-wrap align-items-center gap-2">
+        <i class="bi bi-hdd-network"></i>
+        @if (remoteHasKey)
+        {
+            <span>
+                این نرم‌افزار به شرکت <b>@(string.IsNullOrWhiteSpace(remoteCompany) ? remoteCompanyCode : remoteCompany)</b> وصل است —
+                درخواست‌ها به سرور مرکزی <span class="num" dir="ltr">@remoteUrl</span> ارسال می‌شوند.
+            </span>
+        }
+        else
+        {
+            <span>
+                ارسال به سرور مرکزی پیکربندی نشده است. برای ارسال درخواست، آدرس سرور و <b>کلید API</b> شرکت را وارد کنید
+                (این کلید را مدیر واحد IT صادر می‌کند).
+            </span>
+        }
+        <div class="ms-auto d-flex gap-2">
+            <button class="btn btn-sm btn-outline-primary" disabled="@busy" @onclick="LoadRemote">
+                <i class="bi bi-arrow-clockwise"></i> بروزرسانی وضعیت
+            </button>
+            <a class="btn btn-sm btn-outline-secondary" href="/settings/it-remote">
+                <i class="bi bi-gear"></i> تنظیمات اتصال
+            </a>
+        </div>
+    </div>
+
+    @if (loading)
+    {
+        <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    }
+    else if (remoteReqs.Count == 0)
+    {
+        <div class="itr-empty">
+            <i class="bi bi-inbox"></i>
+            <h5>هنوز درخواستی ارسال نکرده‌اید</h5>
+            <button class="btn btn-primary mt-2" @onclick="OpenNew"><i class="bi bi-plus-lg"></i> ثبت اولین درخواست</button>
+        </div>
+    }
+    else
+    {
+        <div class="row g-3">
+            @foreach (var rr in remoteReqs)
+            {
+                <div class="col-12 col-md-6 col-xl-4">
+                    <div class="itr-card itr-st-@rr.Status.ToLower()">
+                        <div class="itr-card-strip"></div>
+                        <div class="itr-card-body">
+                            <div class="d-flex align-items-start justify-content-between gap-2">
+                                <div class="itr-title">@rr.Title</div>
+                                @if (rr.Status == "Completed")
+                                {
+                                    <span class="badge bg-success-subtle text-success border">تکمیل شده ✔</span>
+                                }
+                                else if (rr.Status == "Rejected")
+                                {
+                                    <span class="badge bg-danger-subtle text-danger border">رد شده ✖</span>
+                                }
+                                else if (rr.Status == "ManagerApproved")
+                                {
+                                    <span class="badge bg-info-subtle text-info border">در انتظار تایید شما</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-warning-subtle text-warning border">در حال بررسی در مرکز</span>
+                                }
+                            </div>
+                            <div class="itr-number num">@(string.IsNullOrWhiteSpace(rr.Number) ? "ارسال‌نشده" : rr.Number)</div>
+                            @if (!string.IsNullOrWhiteSpace(rr.FinalResponse))
+                            {
+                                <div class="itr-desc"><i class="bi bi-chat-left-text text-primary"></i> @rr.FinalResponse</div>
+                            }
+                            @if (rr.NotSent)
+                            {
+                                <div class="alert alert-danger py-1 px-2 fs-8 mt-2 mb-0">
+                                    <i class="bi bi-exclamation-triangle"></i> ارسال نشد:
+                                    @(string.IsNullOrWhiteSpace(rr.LastError) ? "خطای نامشخص" : rr.LastError)
+                                    <button class="btn btn-sm btn-outline-danger ms-2" disabled="@busy" @onclick="() => RemoteRetry(rr)">
+                                        <i class="bi bi-send"></i> تلاش مجدد
+                                    </button>
+                                </div>
+                            }
+                            <div class="itr-foot">
+                                <span class="fs-8 text-muted"><i class="bi bi-calendar3"></i> @rr.CreatedAt.ToFa()</span>
+                                @if (rr.Status == "ManagerApproved")
+                                {
+                                    <button class="btn btn-success btn-sm" disabled="@busy" @onclick="() => RemoteComplete(rr)">
+                                        <i class="bi bi-check2-all"></i> تایید و تکمیل
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+else
+{
+@* ================== تب‌ها / کارتابل‌ها ================== *@
+<div class="itr-tabs mb-3">
+    <button class="itr-tab @(tab == "mine" ? "active" : "")" @onclick='() => SwitchTab("mine")'>
+        <i class="bi bi-person"></i> درخواست‌های من
+        <span class="itr-tab-badge">@myItems.Count</span>
+    </button>
+    @if (access.IsExpert)
+    {
+        <button class="itr-tab @(tab == "expert" ? "active" : "")" @onclick='() => SwitchTab("expert")'>
+            <i class="bi bi-tools"></i> کارتابل کارشناس
+            <span class="itr-tab-badge">@expertItems.Count(r => r.Status == "Assigned")</span>
+        </button>
+    }
+    @if (access.IsManager)
+    {
+        <button class="itr-tab @(tab == "manager" ? "active" : "")" @onclick='() => SwitchTab("manager")'>
+            <i class="bi bi-person-gear"></i> کارتابل مدیر IT
+            <span class="itr-tab-badge">@managerItems.Count(r => r.Status == "New")</span>
+        </button>
+    }
+    @if (access.IsManager)
+    {
+        <a class="itr-tab" href="/settings/it-client-companies" title="مدیریت شرکت‌های راه‌دور">
+            <i class="bi bi-diagram-3"></i> شرکت‌های راه‌دور
+        </a>
+    }
+</div>
+
+@* ================== فیلترهای کارتابل مدیر ================== *@
+@if (tab == "manager" && access.IsManager)
+{
+    <div class="itr-filters mb-3">
+        <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" id="fExt" @bind="mgrOnlyExternal" @bind:after="() => LoadAll()" />
+            <label class="form-check-label" for="fExt">فقط درخواست‌های شرکت‌های راه‌دور</label>
+        </div>
+        <div class="ms-auto d-flex align-items-center gap-2">
+            <select class="form-select form-select-sm w-auto" @bind="mgrCompanyId" @bind:after="() => LoadAll()">
+                <option value="0">همهٔ شرکت‌ها</option>
+                @foreach (var c in clientCompanies)
+                {
+                    <option value="@c.Id">@c.Name (@c.Code)</option>
+                }
+            </select>
+            <div class="input-group input-group-sm w-auto">
+                <input class="form-control" placeholder="جستجو: شماره، موضوع، نام…" @bind="mgrSearch" @bind:event="oninput" @bind:after="() => LoadAll()" />
+            </div>
+        </div>
+    </div>
+}
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else if (!CurrentItems.Any())
+{
+    <div class="itr-empty">
+        <i class="bi bi-inbox"></i>
+        <h5>درخواستی وجود ندارد</h5>
+        @if (tab == "mine" && access.CanCreate)
+        {
+            <button class="btn btn-primary mt-2" @onclick="OpenNew"><i class="bi bi-plus-lg"></i> ثبت اولین درخواست</button>
+        }
+    </div>
+}
+else
+{
+    <div class="row g-3">
+        @foreach (var r in CurrentItems)
+        {
+            <div class="col-12 col-md-6 col-xl-4">
+                <div class="itr-card itr-st-@r.Status.ToLower()" @onclick="() => OpenDetail(r)">
+                    <div class="itr-card-strip"></div>
+                    <div class="itr-card-body">
+                        <div class="d-flex align-items-start justify-content-between gap-2">
+                            <div class="itr-title">
+                                @if (!r.Seen)
+                                {
+                                    <span class="itr-new" title="رویت نشده"><i class="bi bi-circle-fill"></i> جدید</span>
+                                }
+                                @if (r.IsExternal)
+                                {
+                                    <span class="badge bg-primary-subtle text-primary border me-1" title="ارسال‌شده از شرکت راه‌دور">
+                                        <i class="bi bi-building"></i> @r.CompanyName
+                                    </span>
+                                }
+                                @r.Title
+                            </div>
+                            @StatusBadge(r, tab)
+                        </div>
+                        <div class="itr-number num">@r.Number</div>
+                        <div class="itr-meta">
+                            <span class="itr-type">@TypeFa(r.RequestType)</span>
+                            <span class="d-inline-flex align-items-center gap-1">
+                                @if (r.RequesterUserId > 0) { <UserAvatar LoginUserId="r.RequesterUserId" Size="22" CssClass="user-avatar-sm" /> }
+                                else { <i class="bi bi-person"></i> }
+                                @r.RequesterName
+                            </span>
+                            @if (!string.IsNullOrWhiteSpace(r.SystemLabel))
+                            {
+                                <span><i class="bi bi-pc-display"></i> @r.SystemLabel</span>
+                            }
+                        </div>
+                        <div class="itr-foot">
+                            <span class="fs-8 text-muted"><i class="bi bi-calendar3"></i> @r.CreatedAt.ToFa()</span>
+                            <div class="d-flex gap-2 align-items-center">
+                                @if (r.AttachmentCount > 0)
+                                {
+                                    <span class="fs-8 text-muted"><i class="bi bi-paperclip"></i> @r.AttachmentCount</span>
+                                }
+                                @if (tab != "mine" && r.Assignments.Any())
+                                {
+                                    @* بند ۱۱: مدیر می‌بیند چند کارشناس پاسخ داده‌اند *@
+                                    <span class="fs-8 @(r.Assignments.Count(a => a.ReportSubmitted) == r.Assignments.Count ? "text-success fw-700" : "text-warning fw-700")">
+                                        <i class="bi bi-chat-dots"></i> @r.Assignments.Count(a => a.ReportSubmitted)/@r.Assignments.Count گزارش
+                                    </span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    @* ================== صفحه‌بندی ================== *@
+    @if (TotalPages > 1)
+    {
+        <div class="itr-pager mt-3">
+            <button class="itr-page-btn" disabled="@(page <= 1)" @onclick="() => GoPage(page - 1)">
+                <i class="bi bi-chevron-right"></i> قبلی
+            </button>
+            @for (var pn = 1; pn <= TotalPages; pn++)
+            {
+                var p2 = pn;
+                <button class="itr-page-btn num @(page == p2 ? "active" : "")" @onclick="() => GoPage(p2)">@p2</button>
+            }
+            <button class="itr-page-btn" disabled="@(page >= TotalPages)" @onclick="() => GoPage(page + 1)">
+                بعدی <i class="bi bi-chevron-left"></i>
+            </button>
+            <span class="fs-8 text-muted me-2">@AllTabItems.Count() درخواست</span>
+        </div>
+    }
+}
+}
+
+@* ================== مودال درخواست جدید ================== *@
+@if (showNew)
+{
+    <div class="modal fade show d-block" style="background:rgba(15,23,42,.55)">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content itr-modal">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-headset text-primary"></i> درخواست خدمت جدید</h5>
+                    <button type="button" class="btn-close" @onclick="() => showNew = false"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrWhiteSpace(formError))
+                    {
+                        <div class="alert alert-danger py-2">@formError</div>
+                    }
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">نام و نام خانوادگی درخواست‌کننده</label>
+                            <div class="input-group">
+                                <input class="form-control" @bind="newForm.RequesterName" disabled="@(!editName)" />
+                                <button class="btn btn-outline-secondary" type="button" title="ویرایش نام"
+                                        @onclick="() => editName = !editName">
+                                    <i class="bi @(editName ? "bi-lock" : "bi-pencil")"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">نوع درخواست <span class="text-danger">*</span></label>
+                            <select class="form-select" @bind="newForm.RequestType">
+                                <option value="Hardware">سخت‌افزار</option>
+                                <option value="Software">نرم‌افزار</option>
+                                <option value="Network">شبکه و زیرساخت</option>
+                                <option value="Telecom">مخابرات</option>
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">سیستم مربوطه</label>
+                            @* ================== کمبوی سیستم با جستجو ================== *@
+                            <div class="ms-combo">
+                                <div class="ms-combo-control form-control @(sysDropOpen ? "focus" : "")" @ref="_sysComboEl" @onclick="ToggleSysCombo">
+                                    @if (newForm.SystemInfoId is null)
+                                    {
+                                        <span class="text-muted">— بدون سیستم / سایر —</span>
+                                    }
+                                    else
+                                    {
+                                        var sel = systems.FirstOrDefault(s => s.Id == newForm.SystemInfoId);
+                                        <span class="ms-chip">
+                                            @SysLabel(sel)
+                                            <i class="bi bi-x-circle-fill" @onclick:stopPropagation="true"
+                                               @onclick="() => newForm.SystemInfoId = null"></i>
+                                        </span>
+                                    }
+                                    <i class="bi bi-chevron-@(sysDropOpen ? "up" : "down") ms-caret"></i>
+                                </div>
+                                @if (sysDropOpen)
+                                {
+                                    <div class="pop-overlay" @onclick="() => sysDropOpen = false" @onclick:stopPropagation="true"></div>
+                                    <div class="ms-combo-menu shadow" style="@SysMenuStyle" @onclick:stopPropagation="true">
+                                        <div class="p-2 border-bottom">
+                                            <input class="form-control form-control-sm" placeholder="جستجو (نام سیستم، IP، مالک)..."
+                                                   @bind="sysSearch" @bind:event="oninput" @onclick:stopPropagation="true" />
+                                        </div>
+                                        <div class="ms-combo-items">
+                                            <div class="ms-combo-item" @onclick="() => PickSystem(null)">
+                                                <i class="bi bi-dash-circle"></i><span>بدون سیستم / سایر</span>
+                                            </div>
+                                            @foreach (var s in FilteredSystems)
+                                            {
+                                                <div class="ms-combo-item @(newForm.SystemInfoId == s.Id ? "sel" : "")" @onclick="() => PickSystem(s.Id)">
+                                                    <i class="bi bi-pc-display"></i>
+                                                    <span>@s.Label</span>
+                                                    @if (!string.IsNullOrWhiteSpace(s.Ip))
+                                                    {
+                                                        <span class="badge bg-light text-dark border num">@s.Ip</span>
+                                                    }
+                                                    <small class="text-muted ms-auto">@s.UserName @(string.IsNullOrWhiteSpace(s.DepartmentName) ? "" : $"— {s.DepartmentName}")</small>
+                                                </div>
+                                            }
+                                            @if (!FilteredSystems.Any())
+                                            {
+                                                <div class="px-3 py-2 text-muted fs-8">سیستمی پیدا نشد.</div>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">موضوع درخواست <span class="text-danger">*</span></label>
+                            <input class="form-control" @bind="newForm.Title" placeholder="مثلاً: سیستم روشن نمی‌شود" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">شرح درخواست</label>
+                            @* ================== ادیتور متن ================== *@
+                            <div class="rte-toolbar">
+                                <button type="button" title="پررنگ" @onclick='() => RteCmd("bold")'><i class="bi bi-type-bold"></i></button>
+                                <button type="button" title="مورب" @onclick='() => RteCmd("italic")'><i class="bi bi-type-italic"></i></button>
+                                <button type="button" title="زیرخط" @onclick='() => RteCmd("underline")'><i class="bi bi-type-underline"></i></button>
+                                <button type="button" title="لیست" @onclick='() => RteCmd("insertUnorderedList")'><i class="bi bi-list-ul"></i></button>
+                                <button type="button" title="لیست عددی" @onclick='() => RteCmd("insertOrderedList")'><i class="bi bi-list-ol"></i></button>
+                                <button type="button" title="پاک‌کردن قالب" @onclick='() => RteCmd("removeFormat")'><i class="bi bi-eraser"></i></button>
+                            </div>
+                            <div id="rte-desc" class="rte-editor" contenteditable="true"></div>
+                        </div>
+                        @if (remoteMode)
+                        {
+                            @* در حالت راه‌دور، راهِ تماس لازم است چون کاربرِ ما در سرور مرکزی شناخته‌شده نیست *@
+                            <div class="col-12 col-md-6">
+                                <label class="form-label"><i class="bi bi-telephone"></i> شماره تماس</label>
+                                <input class="form-control num" dir="ltr" @bind="newForm.Phone" placeholder="۰۹۱۲…" />
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <label class="form-label"><i class="bi bi-envelope"></i> ایمیل</label>
+                                <input class="form-control num" dir="ltr" @bind="newForm.Email" placeholder="name@company.com" />
+                            </div>
+                        }
+                        <div class="col-12">
+                            <label class="form-label">
+                                <i class="bi bi-paperclip"></i>
+                                @(remoteMode ? "فایل پیوست (اختیاری — هر فایل حداکثر ۱۰ مگابایت)" : "فایل پیوست (اختیاری — بدون محدودیت حجم)")
+                            </label>
+                            <InputFile class="form-control" OnChange="OnNewFileSelected" multiple />
+                            @if (newFiles.Count > 0)
+                            {
+                                <div class="fs-8 text-success mt-1">@newFiles.Count فایل انتخاب شد.</div>
+                            }
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => showNew = false">انصراف</button>
+                    <button class="btn btn-primary px-4" disabled="@busy" @onclick="SubmitNew">
+                        @if (busy) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                        <i class="bi bi-send"></i> ثبت درخواست
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ================== مودال جزئیات / گردش‌کار ================== *@
+@if (detail != null)
+{
+    var isRequesterView = tab == "mine";
+    <div class="modal fade show d-block" style="background:rgba(15,23,42,.55)">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content itr-modal">
+                <div class="modal-header">
+                    <div>
+                        <h5 class="modal-title mb-1">@detail.Title</h5>
+                        <span class="badge bg-dark-subtle text-dark border num me-1">@detail.Number</span>
+                        @StatusBadge(detail, tab) <span class="itr-type">@TypeFa(detail.RequestType)</span>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseDetail"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="itr-info-grid mb-3">
+                        <div><span class="itr-lbl">درخواست‌کننده</span><span class="d-inline-flex align-items-center gap-2">@if (detail.RequesterUserId > 0) { <UserAvatar LoginUserId="detail.RequesterUserId" Size="30" /> }@detail.RequesterName</span></div>
+                        <div><span class="itr-lbl">تاریخ ثبت</span><span class="num">@detail.CreatedAt.ToFa()</span></div>
+                        @if (!string.IsNullOrWhiteSpace(detail.SystemLabel))
+                        {
+                            <div><span class="itr-lbl">سیستم</span><span>@detail.SystemLabel</span></div>
+                        }
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(detail.Description))
+                    {
+                        <div class="itr-block mb-3">
+                            <div class="itr-block-title"><i class="bi bi-card-text"></i> شرح درخواست</div>
+                            <div class="itr-block-body">@((MarkupString)detail.Description)</div>
+                        </div>
+                    }
+
+                    @* ---------- پیوست‌ها ---------- *@
+                    <div class="itr-block mb-3">
+                        <div class="itr-block-title"><i class="bi bi-paperclip"></i> پیوست‌ها (@attachments.Count)</div>
+                        <div class="itr-block-body">
+                            @if (attachments.Count == 0)
+                            {
+                                <span class="fs-8 text-muted">پیوستی ثبت نشده است.</span>
+                            }
+                            @foreach (var a in attachments)
+                            {
+                                <a class="itr-att" href="@($"{apiBase}/api/itrequests/attachments/{a.Id}/download")" target="_blank">
+                                    <i class="bi bi-file-earmark-arrow-down"></i> @a.FileName
+                                    <span class="fs-8 text-muted">(@RoleFa(a.UploaderRole) — @a.UploaderName)</span>
+                                </a>
+                            }
+                            <div class="mt-2">
+                                <InputFile class="form-control form-control-sm" OnChange="e => UploadDetailFile(e)" />
+                            </div>
+                        </div>
+                    </div>
+
+                    @* ================== بخش‌های داخلی واحد IT — درخواست‌دهنده نمی‌بیند (بند ۷) ================== *@
+                    @if (!isRequesterView)
+                    {
+                        @* ---------- اقدام مستقیم مدیر: بستن یا رد ---------- *@
+                        @if (access.IsManager && detail.Status is "New" or "Assigned")
+                        {
+                            <div class="itr-block mb-3" style="border-color:#e9d5ff">
+                                <div class="itr-block-title" style="background:#faf5ff"><i class="bi bi-person-check" style="color:#7c3aed"></i> اقدام مستقیم مدیر</div>
+                                <div class="itr-block-body">
+                                    <textarea class="form-control mb-2" rows="2" placeholder="پاسخ / دلیل..." @bind="managerActionText"></textarea>
+                                    <div class="d-flex gap-2 flex-wrap">
+                                        <button class="btn btn-outline-success btn-sm" disabled="@busy" @onclick="SubmitClose">
+                                            <i class="bi bi-check2-circle"></i> انجام شد — بستن توسط خودم
+                                        </button>
+                                        <button class="btn btn-outline-danger btn-sm" disabled="@busy" @onclick="SubmitReject">
+                                            <i class="bi bi-x-octagon"></i> رد درخواست
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+
+                        @* ---------- ارجاع مدیر ---------- *@
+                        @if (access.IsManager && detail.Status is "New" or "Assigned")
+                        {
+                            <div class="itr-block mb-3 itr-block-manager">
+                                <div class="itr-block-title"><i class="bi bi-person-gear"></i> ارجاع به کارشناس(ها)</div>
+                                <div class="itr-block-body">
+                                    <label class="form-label fs-8">توضیح کلی ارجاع</label>
+                                    <textarea class="form-control mb-2" rows="2" @bind="assignNote"></textarea>
+                                    @foreach (var ex in experts)
+                                    {
+                                        <div class="itr-expert-row @(assignSelected.Contains(ex.Id) ? "sel" : "")">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="ex-@ex.Id"
+                                                       checked="@assignSelected.Contains(ex.Id)"
+                                                       @onchange="e => ToggleExpert(ex.Id, (bool)e.Value!)" />
+                                                <label class="form-check-label fw-600" for="ex-@ex.Id">
+                                                    <i class="bi bi-person-badge text-primary"></i> @ex.Username
+                                                </label>
+                                            </div>
+                                            @if (assignSelected.Contains(ex.Id))
+                                            {
+                                                <input class="form-control form-control-sm mt-1" placeholder="شرح اختصاصی برای این کارشناس (اختیاری)"
+                                                       @bind="assignInstructions[ex.Id]" />
+                                            }
+                                        </div>
+                                    }
+                                    @if (experts.Count == 0)
+                                    {
+                                        <div class="alert alert-warning py-2 fs-8 mb-0">کارشناسی تعریف نشده — به کاربر موردنظر مجوز «کارشناس IT» بدهید.</div>
+                                    }
+                                    <button class="btn btn-warning mt-2" disabled="@busy" @onclick="SubmitAssign">
+                                        <i class="bi bi-send"></i> @(detail.Status == "Assigned" ? "ارجاع مجدد" : "ارجاع")
+                                    </button>
+                                </div>
+                            </div>
+                        }
+
+                        @* ---------- کارشناسان و گزارش‌ها ---------- *@
+                        @if (detail.Assignments.Any())
+                        {
+                            <div class="itr-block mb-3">
+                                <div class="itr-block-title">
+                                    <i class="bi bi-people"></i> کارشناسان و گزارش‌ها
+                                    <span class="badge bg-light text-dark border me-1">@detail.Assignments.Count(a => a.ReportSubmitted)/@detail.Assignments.Count پاسخ</span>
+                                </div>
+                                <div class="itr-block-body">
+                                    @if (!string.IsNullOrWhiteSpace(detail.ManagerNote))
+                                    {
+                                        <div class="fs-8 mb-2"><span class="fw-600">توضیح مدیر:</span> @detail.ManagerNote</div>
+                                    }
+                                    @foreach (var a in detail.Assignments)
+                                    {
+                                        <div class="itr-asg">
+                                            <div class="d-flex justify-content-between align-items-center flex-wrap gap-1">
+                                                <span class="fw-700 d-inline-flex align-items-center gap-1">
+                                                    <UserAvatar LoginUserId="a.ExpertUserId" Size="24" CssClass="user-avatar-sm" />
+                                                    @a.ExpertName
+                                                </span>
+                                                <div class="d-flex gap-1">
+                                                    @if (a.ReportSubmitted)
+                                                    {
+                                                        <span class="badge bg-success-subtle text-success border">گزارش رسیده</span>
+                                                        @if (a.Done == true)
+                                                        {
+                                                            <span class="badge bg-success-subtle text-success border">✅ انجام شد</span>
+                                                        }
+                                                        else if (a.Done == false)
+                                                        {
+                                                            <span class="badge bg-danger-subtle text-danger border">❌ انجام نشد</span>
+                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="badge bg-warning-subtle text-warning border">در انتظار گزارش</span>
+                                                    }
+                                                    @if (a.ManagerDecision == "Approved")
+                                                    {
+                                                        <span class="badge bg-primary-subtle text-primary border">تایید مدیر ✔</span>
+                                                    }
+                                                    else if (a.ManagerDecision == "Rejected")
+                                                    {
+                                                        <span class="badge bg-danger-subtle text-danger border">رد شده</span>
+                                                    }
+                                                </div>
+                                            </div>
+                                            @if (!string.IsNullOrWhiteSpace(a.ManagerInstruction))
+                                            {
+                                                <div class="fs-8 text-muted mt-1">شرح مدیر: @a.ManagerInstruction</div>
+                                            }
+
+                                            @* کارشناس: ثبت گزارش + انجام شد/نشد (بند ۱۰) *@
+                                            @if (access.IsExpert && a.ExpertUserId == access.UserId && detail.Status == "Assigned" && a.ManagerDecision != "Approved")
+                                            {
+                                                <div class="mt-2">
+                                                    <div class="d-flex gap-3 mb-2">
+                                                        <div class="form-check">
+                                                            <input class="form-check-input" type="radio" name="done-@a.Id" id="done-y-@a.Id"
+                                                                   checked="@(myDone == true)" @onchange="() => myDone = true" />
+                                                            <label class="form-check-label text-success fw-600" for="done-y-@a.Id">✅ انجام شد</label>
+                                                        </div>
+                                                        <div class="form-check">
+                                                            <input class="form-check-input" type="radio" name="done-@a.Id" id="done-n-@a.Id"
+                                                                   checked="@(myDone == false)" @onchange="() => myDone = false" />
+                                                            <label class="form-check-label text-danger fw-600" for="done-n-@a.Id">❌ انجام نشد</label>
+                                                        </div>
+                                                    </div>
+                                                    <textarea class="form-control" rows="3" placeholder="شرح اقدامات..."
+                                                              @bind="myReport"></textarea>
+                                                    <button class="btn btn-success btn-sm mt-2" disabled="@busy" @onclick="SubmitReport">
+                                                        <i class="bi bi-check2"></i> ثبت گزارش
+                                                    </button>
+                                                </div>
+                                            }
+                                            else if (!string.IsNullOrWhiteSpace(a.ExpertReport))
+                                            {
+                                                <div class="itr-report mt-2">@a.ExpertReport</div>
+                                            }
+
+                                            @* مدیر: تایید یا رد گزارش هر کارشناس (بند ۱۲) *@
+                                            @if (access.IsManager && a.ReportSubmitted && a.ManagerDecision == null)
+                                            {
+                                                <div class="mt-2 p-2 rounded-3" style="background:#fffbeb;border:1px dashed #fcd34d">
+                                                    <input class="form-control form-control-sm mb-2" placeholder="یادداشت مدیر (اختیاری)"
+                                                           @bind="decideNotes[a.Id]" />
+                                                    <div class="d-flex gap-2">
+                                                        <button class="btn btn-success btn-sm" disabled="@busy" @onclick="() => Decide(a.Id, true)">
+                                                            <i class="bi bi-check2"></i> تایید گزارش
+                                                        </button>
+                                                        <button class="btn btn-outline-danger btn-sm" disabled="@busy" @onclick="() => Decide(a.Id, false)">
+                                                            <i class="bi bi-x-lg"></i> رد (برگشت به کارشناس)
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            }
+                                            @if (!string.IsNullOrWhiteSpace(a.ManagerDecisionNote))
+                                            {
+                                                <div class="fs-8 text-muted mt-1">یادداشت مدیر: @a.ManagerDecisionNote</div>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+
+                        @* ---------- تایید نهایی مدیر (بند ۱۳: فقط وقتی همه تایید شده‌اند) ---------- *@
+                        @if (access.IsManager && detail.Status == "Assigned" && detail.Assignments.Any())
+                        {
+                            var allApproved = detail.Assignments.All(a => a.ManagerDecision == "Approved");
+                            <div class="itr-block mb-3 itr-block-approve">
+                                <div class="itr-block-title"><i class="bi bi-patch-check"></i> پاسخ نهایی به درخواست‌کننده</div>
+                                <div class="itr-block-body">
+                                    @if (!allApproved)
+                                    {
+                                        <div class="alert alert-warning py-2 fs-8">
+                                            <i class="bi bi-hourglass-split"></i>
+                                            تا زمانی که گزارش <b>همه</b> کارشناسان را تایید نکنید، امکان ارسال پاسخ نهایی نیست.
+                                            (@detail.Assignments.Count(a => a.ManagerDecision == "Approved")/@detail.Assignments.Count تایید شده)
+                                        </div>
+                                    }
+                                    <textarea class="form-control mb-2" rows="3" placeholder="پاسخ نهایی که درخواست‌کننده می‌بیند..."
+                                              @bind="approveNote" disabled="@(!allApproved)"></textarea>
+                                    <button class="btn btn-primary" disabled="@(busy || !allApproved)" @onclick="SubmitApprove">
+                                        <i class="bi bi-check2-circle"></i> تایید و ارسال به درخواست‌کننده
+                                    </button>
+                                </div>
+                            </div>
+                        }
+
+                        @* ---------- آرشیو رفت‌وبرگشت‌ها (بند ۱۲) ---------- *@
+                        @if (logs.Any())
+                        {
+                            <div class="itr-block mb-3">
+                                <div class="itr-block-title"><i class="bi bi-clock-history"></i> آرشیو رفت‌وبرگشت‌ها</div>
+                                <div class="itr-block-body p-0">
+                                    <div class="itr-timeline">
+                                        @foreach (var l in logs)
+                                        {
+                                            <div class="itr-tl-item">
+                                                <div class="itr-tl-dot itr-tl-@l.Action.ToLower()"></div>
+                                                <div>
+                                                    <div class="fs-8"><span class="fw-700">@l.ActorName</span> <span class="text-muted">(@RoleFa(l.ActorRole))</span> — @ActionFa(l.Action)</div>
+                                                    @if (!string.IsNullOrWhiteSpace(l.Text))
+                                                    {
+                                                        <div class="fs-8 text-muted">@l.Text</div>
+                                                    }
+                                                    <div class="fs-9 text-muted num">@l.CreatedAt.ToFa()</div>
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        @* ---------- نمای درخواست‌دهنده: فقط وضعیت و پاسخ نهایی ---------- *@
+                        @if (detail.Status == "Assigned")
+                        {
+                            <div class="alert alert-info py-2 fs-8">
+                                <i class="bi bi-gear-wide-connected"></i> درخواست شما در واحد IT در حال بررسی و انجام است.
+                            </div>
+                        }
+                    }
+
+                    @* ---------- پاسخ نهایی ---------- *@
+                    @if (!string.IsNullOrWhiteSpace(detail.FinalResponse))
+                    {
+                        <div class="itr-block mb-3 itr-block-final">
+                            <div class="itr-block-title"><i class="bi bi-chat-left-text"></i> پاسخ نهایی واحد IT</div>
+                            <div class="itr-block-body" style="white-space:pre-line">@detail.FinalResponse</div>
+                        </div>
+                    }
+                    @if (detail.Status == "ManagerApproved" && detail.RequesterUserId == access.UserId)
+                    {
+                        <div class="d-grid">
+                            <button class="btn btn-success btn-lg" disabled="@busy" @onclick="SubmitComplete">
+                                <i class="bi bi-check2-all"></i> تایید و تکمیل درخواست
+                            </button>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .itr-tabs { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .itr-tab { border: 1px solid #e2e8f0; background: #fff; border-radius: 12px; padding: .5rem 1rem; font-size: .88rem; font-weight: 600; color: #475569; display: inline-flex; align-items: center; gap: .45rem; cursor: pointer; transition: all .15s; }
+    .itr-tab:hover { border-color: #93c5fd; color: #2563eb; }
+    .itr-tab.active { background: #2563eb; border-color: #2563eb; color: #fff; box-shadow: 0 4px 12px rgba(37,99,235,.3); }
+    .itr-tab-badge { background: rgba(0,0,0,.08); border-radius: 999px; padding: 0 .5rem; font-size: .75rem; }
+    .itr-tab.active .itr-tab-badge { background: rgba(255,255,255,.25); }
+
+    .itr-card { background: #fff; border: 1px solid #e8edf3; border-radius: 16px; overflow: hidden; cursor: pointer; transition: all .18s ease; height: 100%; display: flex; box-shadow: 0 1px 3px rgba(15,23,42,.05); }
+    .itr-card:hover { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(15,23,42,.12); border-color: #c7d7f5; }
+    /* نوار فیلترهای کارتابل مدیر (فقط درخواست‌های بیرونی / انتخاب شرکت / جستجو) */
+    .itr-filters {
+        display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+        background: #fff; border: 1px solid #e2e8f0; border-radius: .6rem; padding: .5rem .75rem;
+    }
+    .itr-card-strip { width: 5px; flex-shrink: 0; }
+    .itr-st-new .itr-card-strip { background: linear-gradient(#94a3b8, #64748b); }
+    .itr-st-assigned .itr-card-strip { background: linear-gradient(#fbbf24, #f59e0b); }
+    .itr-st-managerapproved .itr-card-strip { background: linear-gradient(#38bdf8, #0ea5e9); }
+    .itr-st-completed .itr-card-strip { background: linear-gradient(#4ade80, #22c55e); }
+    .itr-st-rejected .itr-card-strip { background: linear-gradient(#f87171, #ef4444); }
+    .itr-new { color: #dc3545; font-size: .68rem; font-weight: 800; margin-left: .3rem; animation: itrBlink 1.4s infinite; }
+    .itr-new i { font-size: .45rem; vertical-align: 2px; }
+    @@keyframes itrBlink { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+    .itr-number { font-size: .72rem; color: #64748b; background: #f8fafc; border: 1px dashed #e2e8f0; border-radius: 8px; padding: .1rem .5rem; align-self: flex-start; }
+    .itr-card-body { padding: .9rem 1rem; flex: 1; display: flex; flex-direction: column; gap: .5rem; }
+    .itr-title { font-weight: 700; font-size: .95rem; color: #1e293b; }
+    .itr-meta { display: flex; flex-wrap: wrap; gap: .35rem .9rem; font-size: .78rem; color: #64748b; align-items: center; }
+    .itr-type { background: #f1f5f9; color: #475569; border-radius: 999px; padding: .1rem .6rem; font-size: .72rem; font-weight: 700; }
+    .itr-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: center; padding-top: .35rem; border-top: 1px dashed #eef2f7; }
+    .itr-empty { text-align: center; padding: 3.5rem 1rem; color: #94a3b8; }
+    .itr-empty i { font-size: 3rem; display: block; margin-bottom: .5rem; }
+
+    .itr-modal { border: 0; border-radius: 18px; }
+    .itr-info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .5rem; }
+    .itr-info-grid > div { background: #f8fafc; border-radius: 10px; padding: .5rem .75rem; display: flex; flex-direction: column; }
+    .itr-lbl { font-size: .72rem; color: #94a3b8; }
+    .itr-block { border: 1px solid #e8edf3; border-radius: 14px; overflow: hidden; }
+    .itr-block-title { background: #f8fafc; padding: .5rem .85rem; font-size: .82rem; font-weight: 700; color: #334155; border-bottom: 1px solid #eef2f7; }
+    .itr-block-title i { color: #2563eb; margin-left: .3rem; }
+    .itr-block-body { padding: .75rem .85rem; font-size: .87rem; }
+    .itr-block-manager .itr-block-title i { color: #d97706; }
+    .itr-block-approve .itr-block-title i { color: #059669; }
+    .itr-block-final { border-color: #bae6fd; }
+    .itr-block-final .itr-block-title { background: #f0f9ff; }
+    .itr-att { display: inline-flex; align-items: center; gap: .35rem; background: #eef4ff; color: #2563eb; border-radius: 999px; padding: .2rem .7rem; font-size: .78rem; margin: 0 0 .3rem .3rem; text-decoration: none; }
+    .itr-att:hover { background: #2563eb; color: #fff; }
+    .itr-expert-row { border: 1px dashed #e2e8f0; border-radius: 10px; padding: .5rem .7rem; margin-bottom: .5rem; transition: all .15s; }
+    .itr-expert-row.sel { border-color: #93c5fd; background: #f0f6ff; border-style: solid; }
+    .itr-asg { border: 1px solid #eef2f7; border-radius: 12px; padding: .6rem .8rem; margin-bottom: .6rem; background: #fcfdfe; }
+    .itr-report { background: #f0fdf4; border: 1px solid #dcfce7; border-radius: 10px; padding: .5rem .7rem; font-size: .83rem; white-space: pre-line; }
+
+    /* ===== آرشیو (تایم‌لاین) ===== */
+    .itr-timeline { padding: .75rem 1rem; }
+    .itr-tl-item { display: flex; gap: .7rem; padding-bottom: .8rem; position: relative; }
+    .itr-tl-item:not(:last-child)::before { content: ""; position: absolute; right: 5px; top: 16px; bottom: 0; width: 2px; background: #e2e8f0; }
+    .itr-tl-dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; background: #94a3b8; }
+    .itr-tl-created { background: #64748b; }
+    .itr-tl-assigned { background: #f59e0b; }
+    .itr-tl-report { background: #38bdf8; }
+    .itr-tl-approved { background: #22c55e; }
+    .itr-tl-rejected { background: #ef4444; }
+    .itr-tl-finalized { background: #2563eb; }
+    .itr-tl-completed { background: #16a34a; }
+
+    /* ===== ادیتور ===== */
+    .rte-toolbar { display: flex; gap: .25rem; border: 1px solid #e2e8f0; border-bottom: 0; border-radius: 10px 10px 0 0; padding: .35rem .5rem; background: #f8fafc; }
+    .rte-toolbar button { border: 0; background: transparent; border-radius: 8px; width: 32px; height: 30px; color: #475569; cursor: pointer; }
+    .rte-toolbar button:hover { background: #e2e8f0; color: #2563eb; }
+    .rte-editor { border: 1px solid #e2e8f0; border-radius: 0 0 10px 10px; min-height: 120px; padding: .6rem .8rem; font-size: .9rem; background: #fff; }
+    .rte-editor:focus { outline: 0; border-color: #93c5fd; box-shadow: 0 0 0 .2rem rgba(37,99,235,.1); }
+
+    /* ===== کمبوی جستجودار ===== */
+    .ms-combo { position: relative; }
+    .ms-combo-control { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; min-height: 42px; cursor: pointer; padding-left: 2rem; }
+    .ms-combo-control.focus { border-color: #2563eb; box-shadow: 0 0 0 .2rem rgba(37,99,235,.15); }
+    .ms-caret { position: absolute; left: .75rem; top: 50%; transform: translateY(-50%); color: #94a3b8; pointer-events: none; }
+    .ms-chip { display: inline-flex; align-items: center; gap: .35rem; background: #eef4ff; color: #2563eb; border: 1px solid #dbe7ff; border-radius: 999px; padding: .15rem .6rem; font-size: .8rem; font-weight: 600; }
+    .ms-chip i { cursor: pointer; opacity: .7; }
+    .ms-chip i:hover { opacity: 1; color: #dc3545; }
+    .ms-combo-menu { position: absolute; top: calc(100% + 4px); right: 0; left: 0; z-index: 1060; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; }
+    .ms-combo-items { max-height: 230px; overflow-y: auto; }
+    .ms-combo-item { display: flex; align-items: center; gap: .5rem; padding: .5rem .85rem; cursor: pointer; font-size: .85rem; }
+    .ms-combo-item:hover { background: #f1f5f9; }
+    .ms-combo-item.sel { background: #eef4ff; }
+    .fs-9 { font-size: .7rem; }
+
+    .itr-pager { display: flex; gap: .4rem; align-items: center; justify-content: center; flex-wrap: wrap; }
+    .itr-page-btn { border: 1px solid #e2e8f0; background: #fff; border-radius: 10px; min-width: 36px; height: 34px; padding: 0 .7rem; font-size: .82rem; font-weight: 600; color: #475569; cursor: pointer; transition: all .12s; }
+    .itr-page-btn:hover:not(:disabled) { border-color: #93c5fd; color: #2563eb; }
+    .itr-page-btn.active { background: #2563eb; border-color: #2563eb; color: #fff; }
+    .itr-page-btn:disabled { opacity: .45; cursor: default; }
+
+    @@media (max-width: 575.98px) {
+        .itr-tabs { position: sticky; top: 0; z-index: 5; background: var(--bs-body-bg, #f1f5f9); padding: .4rem 0; }
+        .itr-tab { flex: 1; justify-content: center; padding: .55rem .5rem; font-size: .8rem; }
+        .itr-card:active { transform: scale(.985); }
+        .modal-dialog { margin: .5rem; }
+    }
+</style>
+
+@code {
+    private bool loading = true, busy;
+    private string tab = "mine";
+    private string formError = "";
+    private string apiBase = "";
+
+    private AccessInfo access = new();
+    private List<ReqItem> myItems = new(), expertItems = new(), managerItems = new();
+    private List<SystemOpt> systems = new();
+    private List<ExpertOpt> experts = new();
+
+    private IEnumerable<ReqItem> AllTabItems => tab switch
+    {
+        "expert" => expertItems,
+        "manager" => managerItems,
+        _ => myItems
+    };
+
+    // ================== صفحه‌بندی کارتابل‌ها ==================
+    private const int PageSize = 9;
+    private int page = 1;
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(AllTabItems.Count() / (double)PageSize));
+    private IEnumerable<ReqItem> CurrentItems => AllTabItems.Skip((page - 1) * PageSize).Take(PageSize);
+    private void GoPage(int p) { page = Math.Clamp(p, 1, TotalPages); }
+
+    // فرم جدید
+    private bool showNew, editName, sysDropOpen;
+    private string sysSearch = "";
+    private NewForm newForm = new();
+    private List<Microsoft.AspNetCore.Components.Forms.IBrowserFile> newFiles = new();
+
+    private IEnumerable<SystemOpt> FilteredSystems =>
+        string.IsNullOrWhiteSpace(sysSearch)
+            ? systems
+            : systems.Where(s =>
+                s.Label.Contains(sysSearch.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                (s.Ip ?? "").Contains(sysSearch.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                (s.UserName ?? "").Contains(sysSearch.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                (s.DepartmentName ?? "").Contains(sysSearch.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private string SysLabel(SystemOpt? s) => s == null ? "" :
+        $"{s.Label}{(string.IsNullOrWhiteSpace(s.Ip) ? "" : $" ({s.Ip})")}{(string.IsNullOrWhiteSpace(s.UserName) ? "" : $" — {s.UserName}")}";
+
+    private void PickSystem(int? id) { newForm.SystemInfoId = id; sysDropOpen = false; }
+
+    // ---------- منوی شناور کمبوی سیستم (fixed + پوشش نامرئی — مصون از کارت‌ویو/مودال) ----------
+    private ElementReference _sysComboEl;
+    private double _sysTop, _sysLeft, _sysWidth;
+    private string SysMenuStyle => Popover.FixedStyle(_sysTop, _sysLeft, _sysWidth, 300);
+
+    private async Task ToggleSysCombo()
+    {
+        if (sysDropOpen) { sysDropOpen = false; return; }
+        try
+        {
+            var r = await JS.InvokeAsync<UiRect>("uiRect", _sysComboEl);
+            (_sysTop, _sysLeft, _sysWidth) = Popover.Below(r, 0, 300);
+        }
+        catch (JSException) { }
+        sysDropOpen = true;
+    }
+
+    // جزئیات
+    private ReqItem? detail;
+    private List<AttItem> attachments = new();
+    private List<LogItem> logs = new();
+
+    private string assignNote = "";
+    private HashSet<int> assignSelected = new();
+    private Dictionary<int, string> assignInstructions = new();
+    private string myReport = "";
+    private bool? myDone = true;
+    private string approveNote = "";
+    private Dictionary<int, string> decideNotes = new();
+    private string managerActionText = "";
+
+    // ================== فیلترهای کارتابل مدیر ==================
+    private bool mgrOnlyExternal;
+    private int mgrCompanyId;
+    private string mgrSearch = "";
+    private List<CompanyOpt> clientCompanies = new();
+    public class CompanyOpt { public int Id { get; set; } public string Code { get; set; } = ""; public string Name { get; set; } = ""; }
+
+    // ================== حالت شعبه: ارسال به سرور مرکزی ==================
+    private bool remoteMode;          // این نصب به سرور مرکزی وصل است
+    private bool remoteHasKey;        // و کلید API معتبر دارد
+    private string remoteUrl = "", remoteCompany = "", remoteCompanyCode = "";
+    private List<RemoteReq> remoteReqs = new(); // آینهٔ محلی درخواست‌های ارسالی (از دیتابیس، نه مرورگر)
+
+    public class RemoteReq
+    {
+        public int Id { get; set; }
+        public string? Number { get; set; }
+        public string Title { get; set; } = "";
+        public string? SystemLabel { get; set; }
+        public string RequestType { get; set; } = "Hardware";
+        public string Description { get; set; } = "";
+        public DateTime CreatedAt { get; set; }
+        public string Status { get; set; } = "New";
+        public string? FinalResponse { get; set; }
+        public DateTime? ApprovedAt { get; set; }
+        public DateTime? CompletedAt { get; set; }
+        public string? LastError { get; set; }
+        public bool NotSent { get; set; }
+    }
+
+    public class RemoteConn
+    {
+        public string? ServerUrl { get; set; }
+        public string? CompanyCode { get; set; }
+        public string? CompanyName { get; set; }
+        public bool HasKey { get; set; }
+        public string? KeyHint { get; set; }
+        public bool Enabled { get; set; } = true;
+    }
+
+    public class RemoteSendRes
+    {
+        public int Id { get; set; }
+        public string? Number { get; set; }
+        public bool Sent { get; set; }
+        public bool Duplicate { get; set; }
+        public string? Error { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("درخواست خدمت IT");
+        if (!string.IsNullOrWhiteSpace(Auth.Token))
+            Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Auth.Token);
+        apiBase = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+
+        // ================== اتصال به سرور مرکزی (این نصب، شرکتِ راه‌دور است) ==================
+        try
+        {
+            var c = await Http.GetFromJsonAsync<RemoteConn>("/api/itremote/connection");
+            if (!string.IsNullOrWhiteSpace(c?.ServerUrl))
+            {
+                remoteMode = true;
+                remoteUrl = c!.ServerUrl!.TrimEnd('/');
+                remoteCompany = c.CompanyName ?? "";
+                remoteCompanyCode = c.CompanyCode ?? "";
+                remoteHasKey = c.HasKey && c.Enabled;
+            }
+        }
+        catch { }
+
+        await LoadAccess();
+        if (remoteMode) await LoadRemote();
+        else await LoadAll();
+        loading = false;
+
+        // ================== رفرش خودکار برخط کارتابل‌ها (سرویس مشترک SignalR) ==================
+        Rt.DataChanged += OnRtDataChanged;
+        await Rt.EnsureStartedAsync(apiBase, access.UserId);
+
+        // ================== باز کردن مستقیم درخواست از نوتیفیکیشن (?open=id) ==================
+        await TryOpenFromQuery();
+        Nav.LocationChanged += OnLocChanged;
+    }
+
+    private async void OnLocChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        await TryOpenFromQuery();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task TryOpenFromQuery()
+    {
+        // محافظ مسیر: فقط روی خود صفحهٔ /it-requests به ?open= واکنش نشان بده؛
+        // رویداد LocationChanged حین ناوبری به مقصدهای دیگر هم تریگر می‌شود و
+        // نباید query مسیر خارجی را برای بازکردن درخواست تفسیر کند.
+        var rel = Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Trim('/');
+        if (!rel.Equals("it-requests", StringComparison.OrdinalIgnoreCase)) return;
+        var uri = new Uri(Nav.Uri);
+        var qs = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        if (!int.TryParse(qs["open"], out var openId) || openId <= 0) return;
+
+        // پیدا کردن درخواست در کارتابل‌ها + رفتن به تب درست
+        var inMgr = managerItems.FirstOrDefault(x => x.Id == openId);
+        var inExp = expertItems.FirstOrDefault(x => x.Id == openId);
+        var inMine = myItems.FirstOrDefault(x => x.Id == openId);
+        if (inMgr != null) { tab = "manager"; await OpenDetail(inMgr); }
+        else if (inExp != null) { tab = "expert"; await OpenDetail(inExp); }
+        else if (inMine != null) { tab = "mine"; await OpenDetail(inMine); }
+    }
+
+    private async void OnRtDataChanged(string scope)
+    {
+        if (scope != "itrequests") return;
+        await LoadAll();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocChanged;
+        Rt.DataChanged -= OnRtDataChanged;
+    }
+
+    private async Task LoadAccess()
+    {
+        try { access = await Http.GetFromJsonAsync<AccessInfo>("/api/itrequests/my-access") ?? new(); }
+        catch { access = new(); }
+    }
+
+    private async Task LoadAll()
+    {
+        try { myItems = await Http.GetFromJsonAsync<List<ReqItem>>("/api/itrequests/mine") ?? new(); }
+        catch { myItems = new(); }
+        if (access.IsExpert)
+        {
+            try { expertItems = await Http.GetFromJsonAsync<List<ReqItem>>("/api/itrequests/expert") ?? new(); }
+            catch { expertItems = new(); }
+        }
+        if (access.IsManager)
+        {
+            var url = "/api/itrequests/manager"
+                   + (mgrOnlyExternal ? "?onlyExternal=true" : "?onlyExternal=false")
+                   + $"&companyId={mgrCompanyId}&q2={Uri.EscapeDataString(mgrSearch ?? "")}";
+            try { managerItems = await Http.GetFromJsonAsync<List<ReqItem>>(url) ?? new(); }
+            catch { managerItems = new(); }
+
+            if (clientCompanies.Count == 0)
+            {
+                try { clientCompanies = await Http.GetFromJsonAsync<List<CompanyOpt>>("/api/itrequests/client-companies") ?? new(); }
+                catch { clientCompanies = new(); }
+            }
+        }
+    }
+
+    private void SwitchTab(string t) { tab = t; page = 1; }
+
+    /// <summary>
+    /// فهرست «درخواست‌های من» از دیتابیسِ همین نصب خوانده می‌شود (نه از حافظهٔ مرورگر) تا
+    /// با تعویض دستگاه از بین نرود و همهٔ کاربرانِ این شرکت آن را ببینند؛ سپس وضعیت‌ها
+    /// در یک درخواستِ شبکه از سرور مرکزی به‌روز می‌شود.
+    /// </summary>
+    private async Task LoadRemote()
+    {
+        try
+        {
+            remoteReqs = await Http.GetFromJsonAsync<List<RemoteReq>>("/api/itremote/requests")
+                        ?? new();
+        }
+        catch { remoteReqs = new(); }
+
+        if (!remoteHasKey) return;
+        try
+        {
+            var resp = await Http.PostAsync("/api/itremote/sync", null);
+            if (resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                using var doc = System.Text.Json.JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("updated", out var u) && u.GetInt32() > 0)
+                {
+                    remoteReqs = await Http.GetFromJsonAsync<List<RemoteReq>>("/api/itremote/requests") ?? remoteReqs;
+                    StateHasChanged();
+                }
+            }
+        }
+        catch { /* شبکه در دسترس نیست — وضعیت محلی نمایش داده می‌شود */ }
+    }
+
+    private async Task RemoteRetry(RemoteReq rr)
+    {
+        busy = true;
+        try
+        {
+            var resp = await Http.PostAsync($"/api/itremote/requests/{rr.Id}/retry", null);
+            var body = await resp.Content.ReadAsStringAsync();
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success("ارسال به سرور مرکزی انجام شد.");
+                await LoadRemote();
+            }
+            else Toast.Error(body);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task RemoteComplete(RemoteReq rr)
+    {
+        busy = true;
+        try
+        {
+            var resp = await Http.PostAsync($"/api/itremote/requests/{rr.Id}/complete", null);
+            if (resp.IsSuccessStatusCode) { Toast.Success("درخواست تایید و تکمیل شد. 🎉"); await LoadRemote(); }
+            else Toast.Error(await resp.Content.ReadAsStringAsync());
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    // ================== ادیتور ==================
+    private async Task RteCmd(string cmd)
+    {
+        try { await JS.InvokeVoidAsync("rteExec", cmd); } catch { }
+    }
+
+    // ================== درخواست جدید ==================
+    private async Task OpenNew()
+    {
+        formError = ""; editName = false; sysDropOpen = false; sysSearch = "";
+        newForm = new NewForm { RequesterName = Auth.DisplayName };
+        newFiles.Clear();
+        try { systems = await Http.GetFromJsonAsync<List<SystemOpt>>("/api/itrequests/systems") ?? new(); }
+        catch { systems = new(); }
+        showNew = true;
+        StateHasChanged();
+        await Task.Delay(80);
+        try { await JS.InvokeVoidAsync("rteSetHtml", "rte-desc", ""); } catch { }
+    }
+
+    private void OnNewFileSelected(Microsoft.AspNetCore.Components.Forms.InputFileChangeEventArgs e)
+        => newFiles = e.GetMultipleFiles(int.MaxValue).ToList();
+
+    private async Task SubmitNew()
+    {
+        formError = "";
+        if (string.IsNullOrWhiteSpace(newForm.Title)) { formError = "موضوع درخواست را وارد کنید."; return; }
+
+        busy = true;
+        try
+        {
+            string desc = "";
+            try { desc = await JS.InvokeAsync<string>("rteGetHtml", "rte-desc") ?? ""; } catch { }
+
+            var sel = systems.FirstOrDefault(s => s.Id == newForm.SystemInfoId);
+
+            if (remoteMode)
+            {
+                // ========== ارسال به سرور مرکزی — کاربر ما آنجا «کاربر» تعریف نشده است،
+                // هویتش با کلید پایدارِ خودش (که در همین نصب ذخیره است) منتقل می‌شود. ==========
+                if (!remoteHasKey)
+                {
+                    formError = "کلید API شرکت تنظیم نشده است. از «تنظیمات اتصال» آن را وارد کنید.";
+                    return;
+                }
+
+                var files = new List<AttachPayload>();
+                foreach (var f in newFiles)
+                {
+                    try
+                    {
+                        using var ms = new MemoryStream();
+                        await using (var st = f.OpenReadStream(long.MaxValue)) await st.CopyToAsync(ms);
+                        if (ms.Length is > 0 and <= 10 * 1024 * 1024)
+                            files.Add(new AttachPayload
+                            {
+                                FileName = f.Name,
+                                ContentType = string.IsNullOrWhiteSpace(f.ContentType) ? "application/octet-stream" : f.ContentType,
+                                Base64 = Convert.ToBase64String(ms.ToArray())
+                            });
+                    }
+                    catch { }
+                }
+
+                var resp2 = await Http.PostAsJsonAsync("/api/itremote/requests", new
+                {
+                    systemLabel = SysLabel(sel),
+                    localSystemRef = sel?.Label,
+                    requestType = newForm.RequestType,
+                    title = newForm.Title,
+                    description = desc,
+                    phone = newForm.Phone,
+                    email = newForm.Email,
+                    attachments = files
+                });
+
+                if (!resp2.IsSuccessStatusCode)
+                {
+                    formError = $"ارسال ناموفق ({(int)resp2.StatusCode}): {await resp2.Content.ReadAsStringAsync()}";
+                    return;
+                }
+                var sent = await resp2.Content.ReadFromJsonAsync<RemoteSendRes>();
+                if (sent?.Sent == true)
+                {
+                    Toast.Success(sent.Duplicate
+                        ? "این درخواست قبلاً در سرور مرکزی ثبت شده بود."
+                        : $"درخواست ارسال شد — شماره پیگیری: {sent.Number}");
+                }
+                else
+                {
+                    Toast.Error($"درخواست ثبت شد ولی ارسال نشد: {sent?.Error} — از دکمهٔ «تلاش مجدد» استفاده کنید.");
+                }
+                showNew = false;
+                await LoadRemote();
+                return;
+            }
+
+            var resp = await Http.PostAsJsonAsync("/api/itrequests", new
+            {
+                requesterName = newForm.RequesterName,
+                systemInfoId = newForm.SystemInfoId,
+                systemLabel = SysLabel(sel),
+                requestType = newForm.RequestType,
+                title = newForm.Title,
+                description = desc
+            });
+            if (!resp.IsSuccessStatusCode)
+            {
+                formError = $"خطا در ثبت ({(int)resp.StatusCode}): {await resp.Content.ReadAsStringAsync()}";
+                return;
+            }
+            var created = await resp.Content.ReadFromJsonAsync<CreatedRes>();
+            foreach (var f in newFiles)
+                await UploadFile(created!.Id, f, "Requester");
+
+            Toast.Success("درخواست شما ثبت شد.");
+            showNew = false;
+            await LoadAll();
+        }
+        catch (Exception ex) { formError = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task UploadFile(int reqId, Microsoft.AspNetCore.Components.Forms.IBrowserFile f, string role)
+    {
+        try
+        {
+            using var content = new MultipartFormDataContent();
+            var sc = new StreamContent(f.OpenReadStream(long.MaxValue));
+            sc.Headers.ContentType = new MediaTypeHeaderValue(string.IsNullOrWhiteSpace(f.ContentType) ? "application/octet-stream" : f.ContentType);
+            content.Add(sc, "file", f.Name);
+            await Http.PostAsync($"/api/itrequests/{reqId}/attachments?role={role}", content);
+        }
+        catch (Exception ex) { Toast.Error($"بارگذاری {f.Name} ناموفق: {ex.Message}"); }
+    }
+
+    // ================== جزئیات ==================
+    private async Task OpenDetail(ReqItem r)
+    {
+        detail = r;
+        managerActionText = "";
+        // ثبت رویت — نشانگر «جدید» برداشته می‌شود
+        if (!r.Seen)
+        {
+            r.Seen = true;
+            try { await Http.PostAsync($"/api/itrequests/{r.Id}/seen", null); } catch { }
+        }
+        attachments = new(); logs = new();
+        assignNote = r.ManagerNote ?? "";
+        assignSelected = new HashSet<int>(r.Assignments.Select(a => a.ExpertUserId));
+        assignInstructions = r.Assignments.ToDictionary(a => a.ExpertUserId, a => a.ManagerInstruction ?? "");
+        var mine = r.Assignments.FirstOrDefault(a => a.ExpertUserId == access.UserId);
+        myReport = mine?.ExpertReport ?? "";
+        myDone = mine?.Done ?? true;
+        approveNote = "";
+        decideNotes = r.Assignments.ToDictionary(a => a.Id, a => "");
+
+        try { attachments = await Http.GetFromJsonAsync<List<AttItem>>($"/api/itrequests/{r.Id}/attachments") ?? new(); }
+        catch { }
+        if (tab != "mine")
+        {
+            try { logs = await Http.GetFromJsonAsync<List<LogItem>>($"/api/itrequests/{r.Id}/logs") ?? new(); }
+            catch { }
+        }
+        if (access.IsManager && experts.Count == 0)
+        {
+            try { experts = await Http.GetFromJsonAsync<List<ExpertOpt>>("/api/itrequests/experts") ?? new(); }
+            catch { }
+        }
+    }
+
+    private void CloseDetail() => detail = null;
+
+    private void ToggleExpert(int id, bool on)
+    {
+        if (on) { assignSelected.Add(id); if (!assignInstructions.ContainsKey(id)) assignInstructions[id] = ""; }
+        else assignSelected.Remove(id);
+    }
+
+    private async Task SubmitAssign()
+    {
+        if (detail == null) return;
+        if (assignSelected.Count == 0) { Toast.Error("حداقل یک کارشناس انتخاب کنید."); return; }
+        busy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/itrequests/{detail.Id}/assign", new
+            {
+                managerNote = assignNote,
+                experts = assignSelected.Select(id => new { userId = id, instruction = assignInstructions.GetValueOrDefault(id, "") })
+            });
+            if (resp.IsSuccessStatusCode) { Toast.Success("درخواست ارجاع شد."); CloseDetail(); await LoadAll(); }
+            else Toast.Error(await resp.Content.ReadAsStringAsync());
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SubmitReport()
+    {
+        if (detail == null) return;
+        busy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/itrequests/{detail.Id}/report", new { report = myReport, done = myDone ?? true });
+            if (resp.IsSuccessStatusCode) { Toast.Success("گزارش شما ثبت شد و به مدیر اطلاع داده شد."); CloseDetail(); await LoadAll(); }
+            else Toast.Error(await resp.Content.ReadAsStringAsync());
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task Decide(int asgId, bool approved)
+    {
+        if (detail == null) return;
+        busy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/itrequests/{detail.Id}/assignments/{asgId}/decide",
+                new { approved, note = decideNotes.GetValueOrDefault(asgId, "") });
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success(approved ? "گزارش تایید شد." : "گزارش رد شد و به کارشناس برگشت.");
+                var cur = detail;
+                await LoadAll();
+                var updated = managerItems.FirstOrDefault(x => x.Id == cur.Id) ?? expertItems.FirstOrDefault(x => x.Id == cur.Id);
+                if (updated != null) await OpenDetail(updated); else CloseDetail();
+            }
+            else Toast.Error(await resp.Content.ReadAsStringAsync());
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SubmitApprove()
+    {
+        if (detail == null) return;
+        if (string.IsNullOrWhiteSpace(approveNote)) { Toast.Error("پاسخ نهایی را بنویسید."); return; }
+        busy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/itrequests/{detail.Id}/approve", new { finalResponse = approveNote });
+            if (resp.IsSuccessStatusCode) { Toast.Success("پاسخ نهایی برای درخواست‌کننده ارسال شد."); CloseDetail(); await LoadAll(); }
+            else Toast.Error(await resp.Content.ReadAsStringAsync());
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SubmitClose()
+    {
+        if (detail == null) return;
+        if (string.IsNullOrWhiteSpace(managerActionText)) { Toast.Error("پاسخ را بنویسید."); return; }
+        busy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/itrequests/{detail.Id}/close", new { finalResponse = managerActionText });
+            if (resp.IsSuccessStatusCode) { Toast.Success("درخواست توسط شما بسته و پاسخ ارسال شد."); CloseDetail(); await LoadAll(); }
+            else Toast.Error(await resp.Content.ReadAsStringAsync());
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SubmitReject()
+    {
+        if (detail == null) return;
+        if (string.IsNullOrWhiteSpace(managerActionText)) { Toast.Error("دلیل رد را بنویسید."); return; }
+        busy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/itrequests/{detail.Id}/reject", new { reason = managerActionText });
+            if (resp.IsSuccessStatusCode) { Toast.Success("درخواست رد شد و به درخواست‌کننده اطلاع داده شد."); CloseDetail(); await LoadAll(); }
+            else Toast.Error(await resp.Content.ReadAsStringAsync());
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SubmitComplete()
+    {
+        if (detail == null) return;
+        busy = true;
+        try
+        {
+            var resp = await Http.PostAsync($"/api/itrequests/{detail.Id}/complete", null);
+            if (resp.IsSuccessStatusCode) { Toast.Success("درخواست تکمیل شد. 🎉"); CloseDetail(); await LoadAll(); }
+            else Toast.Error(await resp.Content.ReadAsStringAsync());
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task UploadDetailFile(Microsoft.AspNetCore.Components.Forms.InputFileChangeEventArgs e)
+    {
+        if (detail == null) return;
+        var role = tab == "manager" ? "Manager" : tab == "expert" ? "Expert" : "Requester";
+        foreach (var f in e.GetMultipleFiles(int.MaxValue))
+            await UploadFile(detail.Id, f, role);
+        try { attachments = await Http.GetFromJsonAsync<List<AttItem>>($"/api/itrequests/{detail.Id}/attachments") ?? new(); }
+        catch { }
+        Toast.Success("پیوست بارگذاری شد.");
+    }
+
+    // ================== نمایش ==================
+    private RenderFragment StatusBadge(ReqItem r, string viewTab) => (r.Status, viewTab) switch
+    {
+        ("New", _) => @<span class="badge bg-secondary-subtle text-secondary border">ثبت شده</span>,
+        ("Assigned", "mine") => @<span class="badge bg-warning-subtle text-warning border">در حال بررسی</span>,
+        ("Assigned", _) => @<span class="badge bg-warning-subtle text-warning border">ارجاع شده</span>,
+        ("ManagerApproved", "mine") => @<span class="badge bg-info-subtle text-info border">در انتظار تایید شما</span>,
+        ("ManagerApproved", _) => @<span class="badge bg-info-subtle text-info border">پاسخ ارسال شده</span>,
+        ("Completed", _) => @<span class="badge bg-success-subtle text-success border">تکمیل شده ✔</span>,
+        ("Rejected", _) => @<span class="badge bg-danger-subtle text-danger border">رد شده ✖</span>,
+        _ => @<span class="badge bg-light text-dark">@r.Status</span>
+    };
+
+    private static string TypeFa(string t) => t switch
+    {
+        "Software" => "نرم‌افزار",
+        "Network" => "شبکه و زیرساخت",
+        "Telecom" => "مخابرات",
+        _ => "سخت‌افزار"
+    };
+
+    private static string RoleFa(string r) => r switch
+    {
+        "Manager" => "مدیر",
+        "Expert" => "کارشناس",
+        "System" => "سیستم",
+        _ => "درخواست‌دهنده"
+    };
+
+    private static string ActionFa(string a) => a switch
+    {
+        "Created" => "ثبت درخواست",
+        "Assigned" => "ارجاع",
+        "Report" => "ثبت گزارش",
+        "Approved" => "تایید گزارش",
+        "Rejected" => "رد گزارش",
+        "Finalized" => "پاسخ نهایی",
+        "Completed" => "تکمیل",
+        _ => a
+    };
+
+    // ================== مدل‌ها ==================
+    public class AttachPayload { public string FileName { get; set; } = ""; public string ContentType { get; set; } = "application/octet-stream"; public string Base64 { get; set; } = ""; }
+    public class AccessInfo { public int UserId { get; set; } public bool CanCreate { get; set; } public bool IsExpert { get; set; } public bool IsManager { get; set; } }
+    public class SystemOpt { public int Id { get; set; } public string Label { get; set; } = ""; public string? Ip { get; set; } public string? UserName { get; set; } public string? DepartmentName { get; set; } }
+    public class ExpertOpt { public int Id { get; set; } public string Username { get; set; } = ""; }
+    public class CreatedRes { public int Id { get; set; } }
+    public class CreatedResNum { public int Id { get; set; } public string Number { get; set; } = ""; }
+    public class NewForm
+    {
+        public string RequesterName { get; set; } = "";
+        public int? SystemInfoId { get; set; }
+        public string RequestType { get; set; } = "Hardware";
+        public string Title { get; set; } = "";
+        public string? Phone { get; set; }
+        public string? Email { get; set; }
+    }
+    public class AttItem { public int Id { get; set; } public string FileName { get; set; } = ""; public string ContentType { get; set; } = ""; public string UploaderRole { get; set; } = ""; public string UploaderName { get; set; } = ""; public DateTime UploadedAt { get; set; } public long Size { get; set; } }
+    public class LogItem { public int Id { get; set; } public string ActorName { get; set; } = ""; public string ActorRole { get; set; } = ""; public string Action { get; set; } = ""; public string? Text { get; set; } public DateTime CreatedAt { get; set; } }
+    public class AsgItem { public int Id { get; set; } public int ExpertUserId { get; set; } public string ExpertName { get; set; } = ""; public string? ManagerInstruction { get; set; } public string? ExpertReport { get; set; } public bool ReportSubmitted { get; set; } public bool? Done { get; set; } public string? ManagerDecision { get; set; } public string? ManagerDecisionNote { get; set; } public bool IncludeInFinal { get; set; } public DateTime? RepliedAt { get; set; } }
+    public class ReqItem
+    {
+        public int Id { get; set; }
+        public string Number { get; set; } = "";
+        public bool Seen { get; set; } = true;
+        public string RequesterName { get; set; } = "";
+        public int RequesterUserId { get; set; }
+        public int? SystemInfoId { get; set; }
+        public string? SystemLabel { get; set; }
+        public string RequestType { get; set; } = "Hardware";
+        public string Title { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string Status { get; set; } = "New";
+        public string? ManagerNote { get; set; }
+        public string? FinalResponse { get; set; }
+        // ---------- کانال شرکت‌های راه‌دور ----------
+        public bool IsExternal { get; set; }
+        public int? SourceCompanyId { get; set; }
+        public string? CompanyName { get; set; }
+        public string? CompanyCode { get; set; }
+        public string? RequesterPhone { get; set; }
+        public string? RequesterEmail { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime? AssignedAt { get; set; }
+        public DateTime? ApprovedAt { get; set; }
+        public DateTime? CompletedAt { get; set; }
+        public int AttachmentCount { get; set; }
+        public List<AsgItem> Assignments { get; set; } = new();
+    }
+}

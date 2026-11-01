@@ -1,0 +1,223 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/planner"
+@inject IFaAttService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>برنامه‌ریزی شیفت</PageTitle>
+
+<div class="page-head mb-4">
+    <div>
+        <h1><i class="bi bi-calendar3-range"></i> برنامه‌ریزی شیفت</h1>
+        <div class="lead">شبکه‌ی هفتگی — شیفت را از پالت انتخاب و روی روز پرسنل بزنید</div>
+    </div>
+    <div class="d-flex gap-2 align-items-center ms-auto">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="() => ShiftWeek(-7)"><i class="bi bi-chevron-right"></i> هفته قبل</button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="() => ShiftWeek(0)">این هفته</button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="() => ShiftWeek(7)">هفته بعد <i class="bi bi-chevron-left"></i></button>
+    </div>
+</div>
+
+@if (!canPlan)
+{
+    <div class="alert alert-warning">دسترسی برنامه‌ریزی شیفت برای شما فعال نیست.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+        <span class="fw-bold"><i class="bi bi-palette"></i> شیفت انتخابی:</span>
+        @foreach (var s in shifts)
+        {
+            <button type="button" class="btn btn-sm plan-pal @(selShift == s.Id ? "plan-pal-on" : "")"
+                    style="@ShiftStyle(s.Color)" @onclick="() => selShift = s.Id" title="@($"{s.StartTime:hh\\:mm}–{s.EndTime:hh\\:mm}")">
+                @s.Name
+            </button>
+        }
+        <button type="button" class="btn btn-sm btn-outline-danger @(selShift == 0 ? "active" : "")" @onclick="() => selShift = 0">
+            <i class="bi bi-eraser"></i> پاک‌کردن روز
+        </button>
+        @if (changes.Count > 0)
+        {
+            <span class="badge bg-primary ms-2">@changes.Count.Num() خانه تغییر یافته</span>
+            <div class="ms-auto d-flex gap-2">
+                <button class="btn btn-sm btn-outline-secondary" @onclick="Discard">انصراف از تغییرات</button>
+                <button class="btn btn-sm btn-success" disabled="@saving" @onclick="Save">@(saving ? "…" : "اعمال برنامه")</button>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-bordered table-sm align-middle mb-0 plan-grid">
+                <thead class="table-light">
+                    <tr>
+                        <th style="min-width:180px">پرسنل</th>
+                        @foreach (var d in week)
+                        {
+                            <th class="text-center @(IsFriday(d) ? "plan-friday" : "")">
+                                <div>@DayName(d)</div>
+                                <div class="small text-muted">@d.ToFa()</div>
+                            </th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var e in employees)
+                    {
+                        <tr>
+                            <td class="fw-bold small">@e.FullName</td>
+                            @foreach (var d in week)
+                            {
+                                var key = (e.Id, d);
+                                var cur = CurrentShift(e.Id, d);
+                                var pend = changes.TryGetValue(key, out var ps) ? ps : (int?)null;
+                                var isPending = changes.ContainsKey(key);
+                                var shown = isPending ? ps : cur;
+                                <td class="text-center p-1">
+                                    <button type="button" class="btn btn-sm w-100 plan-cell @(isPending ? "plan-pending" : "")"
+                                            style="@CellStyle(shown)" @onclick="() => Toggle(e.Id, d)" title="@(isPending ? "در انتظار اعمال" : "کلیک = اعمال شیفت انتخابی")">
+                                        @(ShiftLabel(shown))
+                                    </button>
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+    .plan-grid .plan-cell { font-size: .72rem; padding: .25rem .1rem; min-width: 74px; border: 1px solid #dee2e6; color: #212529; }
+    .plan-pending { outline: 2px dashed var(--bs-primary); outline-offset: -2px; }
+    .plan-pal { border: 2px solid transparent; }
+    .plan-pal-on { border-color: #212529 !important; }
+    .plan-friday { background: #fff3cd; }
+</style>
+
+@code {
+    private bool canPlan => Auth.Has("FaAtt.Create") || Auth.Has("FaAtt.Update") || Auth.Has("FaAtt.Manage") || Auth.IsAdmin;
+    private bool loading = true, saving;
+    private DateTime weekStart = StartOfWeek(DateTime.Today);
+    private List<FaAttShiftDto> shifts = new();
+    private List<HrEmployeeLiteDto> employees = new();
+    private List<FaAttShiftAssignDto> assigns = new();
+    private Dictionary<(int Emp, DateTime Day), int> changes = new();
+    private int selShift;
+
+    private List<DateTime> week => Enumerable.Range(0, 7).Select(i => weekStart.AddDays(i)).ToList();
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var s = await Svc.GetShiftsAsync(true);
+            shifts = s;
+            if (selShift == 0 && shifts.Count > 0) selShift = shifts[0].Id;
+            employees = await EmpSvc.ListEmployeeLiteAsync(true);
+            assigns = await Svc.GetAssignsAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void ShiftWeek(int delta)
+    {
+        weekStart = delta == 0 ? StartOfWeek(DateTime.Today) : weekStart.AddDays(delta);
+    }
+
+    private void Toggle(int empId, DateTime day)
+    {
+        var key = (empId, day);
+        if (changes.TryGetValue(key, out var existing))
+        {
+            // دوباره کلیک روی همان حالت = برگشت به وضعیت موجود؛ در غیر این صورت تغییر به انتخاب جدید
+            if (existing == (selShift == 0 ? 0 : selShift)) changes.Remove(key);
+            else changes[key] = selShift;
+        }
+        else changes[key] = selShift;
+    }
+
+    private int? CurrentShift(int empId, DateTime day)
+    {
+        var a = assigns.FirstOrDefault(x => x.EmployeeId == empId && x.FromDate.Date <= day && (x.ToDate == null || x.ToDate.Value.Date >= day));
+        return a?.ShiftId;
+    }
+
+    private string ShiftLabel(int? shiftId)
+    {
+        if (shiftId is not > 0) return "—";
+        var s = shifts.FirstOrDefault(x => x.Id == shiftId);
+        return s?.Code ?? s?.Name ?? "؟";
+    }
+
+    private string CellStyle(int? shiftId)
+    {
+        var s = shifts.FirstOrDefault(x => x.Id == shiftId);
+        if (s is null || string.IsNullOrWhiteSpace(s.Color)) return "background:#f8f9fa;";
+        return $"background:{s.Color};";
+    }
+
+    private static string ShiftStyle(string? color)
+        => string.IsNullOrWhiteSpace(color) ? "background:#eef2ff;" : $"background:{color};";
+
+    private static bool IsFriday(DateTime d) => d.DayOfWeek == DayOfWeek.Friday;
+
+    private static string DayName(DateTime d) => d.DayOfWeek switch
+    {
+        DayOfWeek.Saturday => "شنبه",
+        DayOfWeek.Sunday => "یکشنبه",
+        DayOfWeek.Monday => "دوشنبه",
+        DayOfWeek.Tuesday => "سه‌شنبه",
+        DayOfWeek.Wednesday => "چهارشنبه",
+        DayOfWeek.Thursday => "پنجشنبه",
+        _ => "جمعه"
+    };
+
+    /// <summary>شنبه‌ی هم‌هفته (شروع هفته کاری)</summary>
+    private static DateTime StartOfWeek(DateTime date)
+    {
+        var diff = ((int)date.DayOfWeek - (int)DayOfWeek.Saturday + 7) % 7;
+        return date.Date.AddDays(-diff);
+    }
+
+    private void Discard() => changes.Clear();
+
+    private async Task Save()
+    {
+        if (changes.Count == 0 || saving) return;
+        saving = true;
+        try
+        {
+            var dto = new FaAttShiftPlanSaveDto
+            {
+                Items = changes.Select(kv => new FaAttShiftPlanItemDto
+                {
+                    EmployeeId = kv.Key.Emp,
+                    ShiftId = kv.Value is > 0 ? kv.Value : null,
+                    Date = kv.Key.Day
+                }).ToList()
+            };
+            var r = await Svc.PlanShiftsAsync(dto);
+            Toast.Success($"{r.Applied.Num()} خانه از برنامه‌ی شیفت اعمال شد.");
+            changes.Clear();
+            assigns = await Svc.GetAssignsAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+}

@@ -1,0 +1,149 @@
+@* ================== کمبوی چندانتخابی سرچ‌دار ==================
+   استفاده: <MultiSearchSelect Items="users" Values="selectedIds" ValuesChanged="..." />
+   با تایپ فیلتر می‌شود، انتخاب‌ها به شکل چیپ نمایش داده می‌شوند. *@
+@inject ApiOptions ApiCfg
+@inject IJSRuntime JS
+
+<div class="mss">
+    <div class="mss-chips">
+        @foreach (var id in Values)
+        {
+            var it = Items.FirstOrDefault(x => x.Id == id);
+            <span class="mss-chip">
+                @if (!string.IsNullOrWhiteSpace(it?.AvatarUrl))
+                {
+                    <img class="user-avatar user-avatar-sm" src="@it!.AvatarUrl" alt=""
+                         onerror="this.onerror=null;this.src='@Dflt';" />
+                }
+                <span>@(it?.Name ?? ("#" + id))</span>
+                @if (!Disabled)
+                {
+                    <i class="bi bi-x-circle-fill mss-del" title="حذف" @onclick="() => Remove(id)"></i>
+                }
+            </span>
+        }
+        @if (Values.Count == 0)
+        {
+            <span class="fs-8 text-muted">@EmptyText</span>
+        }
+    </div>
+
+    @if (!Disabled)
+    {
+        <input type="text"
+               class="form-control @CssClass"
+               value="@query"
+               placeholder="@Placeholder"
+               @ref="_input"
+               @onfocus="OnFocus"
+               @oninput="OnInput"
+               @onfocusout="OnBlur" />
+
+        @if (open)
+        {
+            @* پوشش نامرئی تمام‌صفحه — کلیک بیرون منو را می‌بندد؛ منوی fixed هیچ‌گاه زیر کارت‌ها نمی‌رود *@
+            <div class="pop-overlay" @onclick="CloseMenu" @onclick:stopPropagation="true"></div>
+            <div class="ss-menu" style="@MenuStyle" @onclick:stopPropagation="true">
+                @if (Filtered.Count == 0)
+                {
+                    <div class="ss-empty">موردی یافت نشد</div>
+                }
+                else
+                {
+                    @foreach (var it in Filtered.Take(50))
+                    {
+                        <div class="ss-item" @onmousedown="@(() => Add(it))" @onmousedown:preventDefault="true">
+                            @if (!string.IsNullOrWhiteSpace(it.AvatarUrl))
+                            {
+                                <img class="user-avatar user-avatar-sm" src="@it.AvatarUrl" alt=""
+                                     onerror="this.onerror=null;this.src='@Dflt';" />
+                            }
+                            <span class="ss-item-name">@it.Name</span>
+                        </div>
+                    }
+                }
+            </div>
+        }
+    }
+</div>
+
+<style>
+    .mss { position: relative; }
+    .mss-chips { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .35rem; }
+    .mss-chip { display: inline-flex; align-items: center; gap: .35rem; background: #eef4ff; border: 1px solid #dbe7ff; border-radius: 999px; padding: .15rem .6rem; font-size: .78rem; }
+    .mss-del { color: #dc3545; cursor: pointer; opacity: .6; }
+    .mss-del:hover { opacity: 1; }
+</style>
+
+@code {
+    [Parameter] public List<LookupItem> Items { get; set; } = new();
+    [Parameter] public List<int> Values { get; set; } = new();
+    [Parameter] public EventCallback<List<int>> ValuesChanged { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "برای جستجو تایپ کنید…";
+    [Parameter] public string EmptyText { get; set; } = "موردی انتخاب نشده است.";
+    [Parameter] public string CssClass { get; set; } = "";
+    [Parameter] public bool Disabled { get; set; }
+
+    private string query = "";
+    private bool open;
+
+    private ElementReference _input;
+    private double _mTop, _mLeft, _mWidth;
+
+    /// <summary>منو با position:fixed هم‌عرض ورودی زیر آن باز می‌شود (الگوی منوی شناور) —
+    /// مصون از stacking context کارت‌ها و overflow جدول/مودال</summary>
+    private string MenuStyle => Popover.FixedStyle(_mTop, _mLeft, _mWidth);
+
+    private async Task OnFocus()
+    {
+        try
+        {
+            var r = await JS.InvokeAsync<UiRect>("uiRect", _input);
+            (_mTop, _mLeft, _mWidth) = Popover.Below(r);
+        }
+        catch (JSException) { }
+        open = true;
+    }
+
+    private void CloseMenu() => open = false;
+
+    private string Dflt => (ApiCfg?.BaseUrl ?? "").TrimEnd('/') + "/uploads/users/default.jpg";
+
+    private List<LookupItem> Filtered
+    {
+        get
+        {
+            var pool = Items.Where(i => !Values.Contains(i.Id));
+            if (string.IsNullOrWhiteSpace(query)) return pool.ToList();
+            return pool.Where(i => i.Name.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+    }
+
+    private void OnInput(ChangeEventArgs e)
+    {
+        query = e.Value?.ToString() ?? "";
+        open = true;
+    }
+
+    private async Task OnBlur()
+    {
+        await Task.Delay(160);
+        open = false;
+        query = "";
+        StateHasChanged();
+    }
+
+    private async Task Add(LookupItem it)
+    {
+        if (Values.Contains(it.Id)) return;
+        Values.Add(it.Id);
+        query = "";
+        await ValuesChanged.InvokeAsync(Values);
+    }
+
+    private async Task Remove(int id)
+    {
+        Values.Remove(id);
+        await ValuesChanged.InvokeAsync(Values);
+    }
+}

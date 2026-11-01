@@ -1,0 +1,263 @@
+@using Inventory.Shared.Dtos
+@inject IIncomingLetterService IncomingSvc
+@inject ILetterService LetterSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<div class="integrated-incoming-panel" dir="rtl">
+    <style>
+        .iin{--purple:#6941e8;--line:#e8e8ef;background:#fafaff;padding:4px 0 18px}
+        .iin-top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:4px 4px 14px;border-bottom:1px solid var(--line)}
+        .iin-title{font-size:17px;font-weight:800;color:#202033;display:flex;align-items:center;gap:8px}.iin-title i{color:var(--purple)}
+        .iin-sub{font-size:11px;color:#8b8b9d;margin-top:5px}.iin-actions{display:flex;gap:8px;align-items:center}
+        .iin-btn{border:1px solid #ddddea;background:#fff;border-radius:9px;padding:9px 14px;color:#303044;font-size:12px;font-weight:700;cursor:pointer}.iin-btn.active,.iin-btn.primary{background:var(--purple);border-color:var(--purple);color:#fff;box-shadow:0 5px 12px #6941e82c}.iin-btn.incoming-create{background:#16a34a;border-color:#15803d;color:#fff;box-shadow:0 5px 12px #16a34a33}.iin-btn i{margin-left:5px}
+        .iin-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0}.iin-stat{background:#fff;border:1px solid var(--line);border-radius:13px;text-align:center;padding:12px 8px}.iin-stat b{display:block;font-size:23px;color:var(--purple)}.iin-stat span{font-size:11px;color:#8b8b9d}.iin-stat.green b{color:#13a15d}.iin-stat.orange b{color:#d89400}
+        .iin-filter{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--line);border-radius:13px;padding:10px;margin-bottom:12px}.iin-search{flex:1;border:1px solid #e3e3ec;border-radius:9px;padding:10px 13px;outline:none;font-size:12px;text-align:right}.iin-search:focus{border-color:var(--purple)}
+        .iin-row{display:flex;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-radius:13px;margin:9px 0;padding:14px 15px;min-height:88px;transition:.15s}.iin-row:hover{border-color:#b9a9fa;box-shadow:0 5px 16px #3e27730d}.iin-main{flex:1;min-width:0}.iin-r1{display:flex;align-items:center;gap:8px;margin-bottom:9px}.iin-r1 strong{font-size:13px;color:#202033;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.iin-num{color:#10945a;font-weight:800;font-size:11px}.iin-meta{display:flex;flex-wrap:wrap;gap:13px;color:#8b8b9d;font-size:11px}.iin-meta b{color:#555568}.iin-badge{font-size:10px;border-radius:7px;padding:5px 8px;white-space:nowrap}.iin-badge.ok{background:#e8f8ef;color:#16834d}.iin-badge.arc{background:#f0edff;color:#6343cd}.iin-row-actions{display:flex;gap:6px;direction:rtl}.iin-mini{border:1px solid #e5e5ee;background:#fff;border-radius:8px;padding:8px 10px;font-size:11px;color:#343447;cursor:pointer}.iin-mini:hover{background:#f5f2ff;border-color:#cfc2ff}.iin-empty{text-align:center;background:#fff;border:1px solid var(--line);border-radius:13px;padding:45px;color:#999;font-size:13px}.iin-pager{display:flex;align-items:center;justify-content:center;gap:5px;flex-wrap:wrap;margin-top:12px}.iin-pager .iin-mini{min-width:32px;height:32px;padding:0 7px;font-weight:700;color:#5b5b70}.iin-pager .iin-mini:hover:not(:disabled){background:#f5f2ff;border-color:#cfc2ff;color:#4f46e5}.iin-pager .iin-mini.on{background:#4f46e5;border-color:#4f46e5;color:#fff}.iin-pager .iin-mini:disabled{opacity:.4;cursor:default}.iin-pginfo{font-size:11px;color:#64748b;margin-inline-start:8px}
+        @@media(max-width:800px){.iin-top{align-items:flex-start;flex-direction:column}.iin-actions{width:100%;overflow:auto}.iin-stats{grid-template-columns:repeat(2,1fr)}.iin-filter{flex-wrap:wrap}.iin-search{flex-basis:100%}.iin-row{align-items:flex-start;flex-wrap:wrap}.iin-main{flex-basis:calc(100% - 10px)}.iin-row-actions{width:100%;justify-content:flex-start}.iin-mini{flex:1}}
+    </style>
+    <div class="iin">
+        <div class="iin-top">
+            <div><div class="iin-title"><i class="bi bi-inbox-fill"></i> نامه‌های وارده</div><div class="iin-sub">دبیرخانه یکپارچه اتوماسیون اداری</div></div>
+            <div class="iin-actions">
+                @if (selectedIds.Count > 0 && view == "registered")
+                {
+                    <button class="iin-btn primary" @onclick="ArchiveSelected">بایگانی گروهی (@selectedIds.Count.FaDigits())</button>
+                }
+                <button class="iin-btn @(view == "registered" ? "active" : "")" @onclick='() => SetViewFromNavigation("registered")'><i class="bi bi-check2-circle"></i>ثبت‌شده‌ها</button>
+                <button class="iin-btn @(view == "archived" ? "active" : "")" @onclick='() => SetViewFromNavigation("archived")'><i class="bi bi-archive"></i>بایگانی‌شده‌ها</button>
+                @if (CanRegister) { <button class="iin-btn incoming-create" @onclick="OpenCreate"><i class="bi bi-plus-lg"></i>ثبت نامه وارده جدید</button> }
+            </div>
+        </div>
+        <div class="iin-stats">
+            <div class="iin-stat orange"><b>@registeredTotal.FaDigits()</b><span>ثبت و ارسال شده</span></div>
+            <div class="iin-stat green"><b>@archivedTotal.FaDigits()</b><span>بایگانی شده</span></div>
+            <div class="iin-stat"><b>@items.Count.FaDigits()</b><span>نمایش این صفحه</span></div>
+            <div class="iin-stat"><b>@(CanRegister ? "✓" : "—")</b><span>دسترسی ثبت نامه</span></div>
+        </div>
+        <div class="iin-filter">
+            <input class="iin-search" placeholder="جستجو: عنوان، شماره ثبت، فرستنده، کد رهگیری…" @bind="search" @bind:event="oninput" @bind:after="ResetAndReloadAsync" />
+            <button class="iin-btn" @onclick="ReloadAsync"><i class="bi bi-arrow-clockwise"></i>بروزرسانی</button>
+        </div>
+        @if (loading) { <div class="iin-empty"><div class="spinner-border spinner-border-sm text-primary"></div><div>در حال بارگذاری…</div></div> }
+        else if (items.Count == 0) { <div class="iin-empty"><i class="bi bi-inbox fs-3 d-block mb-2"></i>نامه‌ای در این بخش یافت نشد.</div> }
+        else
+        {
+            @foreach (var l in items)
+            {
+                <div class="iin-row">
+                    @if (view == "registered")
+                    {
+                        <input type="checkbox" checked="@selectedIds.Contains(l.LetterId)" @onchange="_ => ToggleSelected(l.LetterId)" aria-label="انتخاب نامه برای بایگانی گروهی" />
+                    }
+                    <div class="iin-main">
+                        <div class="iin-r1"><span class="iin-num">@l.NumberSabt.FaDigits()</span><strong title="@l.Title">@l.Title</strong><span class="iin-badge @(view == "archived" ? "arc" : "ok")">@(view == "archived" ? "بایگانی‌شده" : "ثبت و ارسال شده")</span></div>
+                        <div class="iin-meta"><span><b>فرستنده:</b> @l.Ferestande</span><span><b>تاریخ صدور:</b> @l.Date.ToFaDate()</span><span><b>تاریخ ورود:</b> @l.DateErsal.ToFaDate()</span>@if (!string.IsNullOrWhiteSpace(l.NumberLetterVarede)){<span><b>شماره مبدأ:</b> @l.NumberLetterVarede</span>}</div>
+                    </div>
+                    <div class="iin-row-actions"><button class="iin-mini" @onclick="() => Show(l)"><i class="bi bi-eye"></i> نمایش</button><button class="iin-mini" @onclick="() => OpenFlow(l)"><i class="bi bi-diagram-3"></i> گردش</button><button class="iin-mini" @onclick="() => OpenErja(l)"><i class="bi bi-send"></i> ارجاع</button>@if (CanRegister){<button class="iin-mini" title="ویرایش نامه (حتی پس از رویت گیرندگان)" @onclick="() => OpenEditRow(l)"><i class="bi bi-pencil"></i> ویرایش</button>}<button class="iin-mini" @onclick="() => Archive(l)"><i class="bi bi-archive"></i> بایگانی</button></div>
+                </div>
+            }
+
+            @* ---------- صفحه‌بندی (سمت سرور) — هر تب مستقل ---------- *@
+            @if (PageCount > 1)
+            {
+                <div class="iin-pager">
+                    <button class="iin-mini" disabled="@(Page <= 1)" @onclick="() => GoPage(1)" title="صفحهٔ اول"><i class="bi bi-chevron-double-right"></i></button>
+                    <button class="iin-mini" disabled="@(Page <= 1)" @onclick="() => GoPage(Page - 1)" title="قبلی"><i class="bi bi-chevron-right"></i></button>
+                    @foreach (var p in PageNumbers)
+                    {
+                        var pp = p;
+                        <button class="iin-mini @(pp == Page ? "on" : "")" @onclick="() => GoPage(pp)">@pp.FaDigits()</button>
+                    }
+                    <button class="iin-mini" disabled="@(Page >= PageCount)" @onclick="() => GoPage(Page + 1)" title="بعدی"><i class="bi bi-chevron-left"></i></button>
+                    <button class="iin-mini" disabled="@(Page >= PageCount)" @onclick="() => GoPage(PageCount)" title="صفحهٔ آخر"><i class="bi bi-chevron-double-left"></i></button>
+                    <span class="iin-pginfo">@Total.FaDigits() نامه — صفحهٔ @Page.FaDigits() از @PageCount.FaDigits()</span>
+                </div>
+            }
+        }
+    </div>
+</div>
+<ComposeIncomingModal @ref="compose" OnSaved="ReloadAsync" />
+<IncomingLetterViewModal @ref="viewModal" OnErja="HandleErjaFromView" OnAnswerErja="HandleAnswerFromView" OnEdit="HandleEditFromView" OnGardesh="HandleGardeshFromView" />
+<IncomingErjaSheet @ref="erjaSheet" OnSubmitted="ReloadAsync" />
+<IncomingGardeshModal @ref="flowModal" />
+<BayeganiFolderPickerModal @ref="folderPicker" />
+@code {
+    private string view = "registered", search = "";
+    private readonly HashSet<int> selectedIds = new();
+    private bool loading; private List<IncomingLetterListItemDto> items = new();
+    private int registeredTotal, archivedTotal; private ComposeIncomingModal? compose;
+
+    // ---------- صفحه‌بندی سمت سرور (هر تب صفحهٔ مستقل) ----------
+    private const int PageSize = 12;
+    private int registeredPage = 1, archivedPage = 1;
+    private int Page => view == "archived" ? archivedPage : registeredPage;
+    private int Total => view == "archived" ? archivedTotal : registeredTotal;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(Total / (double)PageSize));
+    private IEnumerable<int> PageNumbers
+    {
+        get
+        {
+            var from = Math.Max(1, Page - 2);
+            var to = Math.Min(PageCount, from + 4);
+            from = Math.Max(1, to - 4);
+            return Enumerable.Range(from, to - from + 1);
+        }
+    }
+    private IncomingLetterViewModal? viewModal; private IncomingGardeshModal? flowModal; private IncomingErjaSheet? erjaSheet; private BayeganiFolderPickerModal? folderPicker;
+    private bool CanRegister => Auth.Has("IncomingLetters.Dabirkhane") || Auth.Has("OutgoingLetters.Dabirkhane") || Auth.Has("Admin");
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+    public async Task OpenCreateFromNavigation()
+    {
+        if (compose is not null) await compose.OpenCreate();
+    }
+    private async Task OpenCreate()
+    {
+        if (compose is not null) await compose.OpenCreate();
+    }
+    public async Task SetViewFromNavigation(string value)
+    {
+        view = value;
+        if (value == "archived") archivedPage = 1; else registeredPage = 1;
+        await ReloadAsync();
+    }
+
+    private async Task ResetAndReloadAsync()
+    {
+        registeredPage = 1;
+        archivedPage = 1;
+        await ReloadAsync();
+    }
+
+    private async Task GoPage(int p)
+    {
+        if (p < 1 || p > PageCount || p == Page) return;
+        if (view == "archived") archivedPage = p; else registeredPage = p;
+        await ReloadAsync();
+    }
+    private async Task Show(IncomingLetterListItemDto l) => await viewModal!.Open(l.LetterId);
+    private async Task OpenFlow(IncomingLetterListItemDto l) => await flowModal!.Open(l.LetterId, l.Title, l.Ferestande, l.NumberSabt, l.DateErsal);
+    private async Task OpenErja(IncomingLetterListItemDto l) => await erjaSheet!.OpenErja(l.LetterId, l.NumberSabt);
+    private void ToggleSelected(int id)
+    {
+        if (!selectedIds.Add(id)) selectedIds.Remove(id);
+    }
+
+    private async Task ArchiveSelected()
+    {
+        if (folderPicker == null || selectedIds.Count == 0) return;
+        try
+        {
+            var folderId = await folderPicker.PickAsync("انتخاب پوشه برای بایگانی گروهی");
+            if (folderId is not { } destination || destination <= 0) return;
+            var selected = items.Where(x => selectedIds.Contains(x.LetterId)).ToList();
+            var erjaIds = selected.Where(x => x.ErjaId.HasValue).Select(x => x.ErjaId!.Value).ToList();
+            var directIds = selected.Where(x => !x.ErjaId.HasValue).Select(x => x.LetterId).ToList();
+            if (erjaIds.Count > 0)
+                await LetterSvc.ArchiveLettersAsync(new ArchiveLettersDto { FolderId = destination, ErjaIds = erjaIds });
+            foreach (var letterId in directIds)
+                await IncomingSvc.ToggleLetterBayeganiAsync(letterId);
+            Toast.Success($"{selected.Count.FaDigits()} نامه بایگانی شد.");
+            selectedIds.Clear();
+            await ReloadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void HandleErjaFromView((int LetterId, int SabtNumber) args) => erjaSheet?.OpenErja(args.LetterId, args.SabtNumber);
+    private void HandleAnswerFromView((int ErjaId, int SabtNumber) args) => erjaSheet?.OpenAnswer(args.ErjaId, args.SabtNumber);
+    private async Task HandleEditFromView(IncomingLetterDetailDto letter)
+    {
+        if (compose is not null) await compose.OpenEdit(letter);
+    }
+
+    /// <summary>
+    /// ویرایش نامه مستقیماً از ردیف فهرست دبیرخانه. جزئیات کامل خوانده می‌شود تا فرم با
+    /// همهٔ فیلدها (و اعتبارسنجی سمت سرور) پر شود؛ اگر مجوز ویرایش نبود، پیام روشن.
+    /// ویرایش پس از رویت گیرندگان هم مجاز است و به بینندگان اعلان می‌رود (سمت سرور).
+    /// </summary>
+    private async Task OpenEditRow(IncomingLetterListItemDto item)
+    {
+        try
+        {
+            var detail = await IncomingSvc.GetDetailAsync(item.LetterId);
+            if (detail is null) { Toast.Error("نامه یافت نشد."); return; }
+            if (!detail.CanEdit && !CanRegister)
+            {
+                Toast.Error("اجازهٔ ویرایش این نامه را ندارید.");
+                return;
+            }
+            if (compose is not null) await compose.OpenEdit(detail);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task HandleGardeshFromView(int letterId)
+    {
+        try
+        {
+            var detail = await IncomingSvc.GetDetailAsync(letterId);
+            if (detail is not null && flowModal is not null)
+                await flowModal.Open(detail.LetterId, detail.Title, detail.Ferestande, detail.NumberSabt, detail.DateErsal);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Archive(IncomingLetterListItemDto l)
+    {
+        try
+        {
+            if (view == "archived")
+            {
+                if (l.ErjaId is { } archivedErja) await LetterSvc.UnarchiveByErjaAsync(archivedErja);
+                else await LetterSvc.UnarchiveByLetterAsync(l.LetterId);
+                Toast.Success("نامه از بایگانی خارج شد.");
+            }
+            else
+            {
+                if (folderPicker == null) return;
+                var folderId = await folderPicker.PickAsync($"بایگانی نامه «{l.Title}»");
+                if (folderId is not { } selectedFolder || selectedFolder <= 0) return;
+                if (l.ErjaId is { } erjaId)
+                    await LetterSvc.ArchiveLettersAsync(new ArchiveLettersDto { FolderId = selectedFolder, ErjaIds = new() { erjaId } });
+                else
+                    await IncomingSvc.ToggleLetterBayeganiAsync(l.LetterId);
+                Toast.Success("نامه بایگانی شد.");
+            }
+            await ReloadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+    private async Task ReloadAsync()
+    {
+        loading = true;
+        try
+        {
+            var term = string.IsNullOrWhiteSpace(search) ? null : search;
+            // فقط تب فعال با صفحهٔ جاری واکشی می‌شود؛ تب دیگر برای شمارندهٔ بالای صفحه با صفحهٔ ۱
+            if (view == "archived")
+            {
+                var a = await IncomingSvc.GetArchiveAsync(term, archivedPage, PageSize);
+                archivedTotal = a.TotalCount;
+                items = a.Items.ToList();
+                var r = await IncomingSvc.GetSentAsync(term, 1, 1);
+                registeredTotal = r.TotalCount;
+            }
+            else
+            {
+                var r = await IncomingSvc.GetSentAsync(term, registeredPage, PageSize);
+                registeredTotal = r.TotalCount;
+                items = r.Items.ToList();
+                var a = await IncomingSvc.GetArchiveAsync(term, 1, 1);
+                archivedTotal = a.TotalCount;
+            }
+            // اگر بعد از تغییر جستجو صفحهٔ جاری از محدوده خارج شد
+            if (Page > PageCount)
+            {
+                if (view == "archived") archivedPage = PageCount; else registeredPage = PageCount;
+                await ReloadAsync();
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+}

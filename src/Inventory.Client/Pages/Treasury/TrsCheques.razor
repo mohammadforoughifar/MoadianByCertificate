@@ -1,0 +1,778 @@
+@page "/trs/cheques"
+@inject ITrsChequeService ChequeSvc
+@inject ITrsAccountService AccountSvc
+@inject IPartyService PartySvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>دفتر چک</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>دفتر چک</h1>
+        <p class="lead">چک‌های دریافتی و پرداختی، واگذاری، وصول و برگشت</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-primary" @onclick="() => OpenForm(null)"><i class="bi bi-plus-lg"></i> ثبت چک</button>
+    </div>
+</div>
+
+<!-- ---------- تب نوع چک ---------- -->
+<div class="mtabs mb-3">
+    <button class="mtab @(kind is null ? "active" : "")" @onclick="() => SetKind(null)">همه</button>
+    <button class="mtab @(kind == ChequeKind.Received ? "active" : "")" @onclick="() => SetKind(ChequeKind.Received)">
+        <i class="bi bi-box-arrow-in-down"></i> دریافتی
+    </button>
+    <button class="mtab @(kind == ChequeKind.Issued ? "active" : "")" @onclick="() => SetKind(ChequeKind.Issued)">
+        <i class="bi bi-box-arrow-up"></i> پرداختی
+    </button>
+</div>
+
+<!-- ---------- فیلترها ---------- -->
+<div class="card mb-3">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-3">
+                <label class="form-label">جستجو</label>
+                <input class="form-control" placeholder="شماره چک، صیاد، بانک یا طرف حساب…"
+                       @bind="search" @bind:event="oninput" @onkeyup="OnSearchKey" />
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">وضعیت</label>
+                <select class="form-select" value="@(status?.ToString() ?? "")" @onchange="OnStatus">
+                    <option value="">همه</option>
+                    <option value="InHand">نزد صندوق</option>
+                    <option value="InCollection">در جریان وصول</option>
+                    <option value="Cleared">وصول شده</option>
+                    <option value="Bounced">برگشتی</option>
+                    <option value="Endorsed">خرج شده</option>
+                    <option value="Cancelled">ابطال شده</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">سررسید از</label>
+                <DatePicker Value="from" ValueChanged="OnFrom" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">سررسید تا</label>
+                <DatePicker Value="to" ValueChanged="OnTo" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-2 d-flex align-items-center">
+                <div class="form-check form-switch mt-3">
+                    <input class="form-check-input" type="checkbox" id="onlyOpen"
+                           checked="@onlyOpen" @onchange="OnOnlyOpen" />
+                    <label class="form-check-label fs-8" for="onlyOpen">فقط باز</label>
+                </div>
+            </div>
+            <div class="col-12 col-md-1 d-grid">
+                <button class="btn btn-outline-secondary" @onclick="Reset" title="پاک کردن فیلترها">
+                    <i class="bi bi-x-circle"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else if (items.Count == 0)
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="bi bi-card-checklist"></i>
+                <h5>چکی یافت نشد</h5>
+                <p class="text-muted">چک‌ها معمولاً از داخل سند دریافت یا پرداخت ثبت می‌شوند.</p>
+                <a class="btn btn-primary" href="/trs/vouchers/new/Receipt"><i class="bi bi-plus-lg"></i> سند دریافت</a>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <!-- ---------- جدول دسکتاپ ---------- -->
+    <div class="card grid-desktop">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>نوع</th>
+                            <th>شماره چک</th>
+                            <th>بانک</th>
+                            <th>طرف حساب</th>
+                            <th class="text-center">مبلغ</th>
+                            <th class="text-center">سررسید</th>
+                            <th class="text-center">وضعیت</th>
+                            <th>نزد</th>
+                            <th style="width:170px"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var c in items)
+                        {
+                            var ch = c;
+                            <tr class="@(ch.IsOverdue ? "table-warning" : "")">
+                                <td>
+                                    <span class="badge @(ch.Kind == ChequeKind.Received ? "badge-soft-success" : "badge-soft-danger")">
+                                        @(ch.Kind == ChequeKind.Received ? "دریافتی" : "پرداختی")
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="num fw-600">@ch.Number.FaDigits()</div>
+                                    @if (!string.IsNullOrWhiteSpace(ch.SayadId))
+                                    {
+                                        <div class="fs-8 text-muted num" dir="ltr" style="text-align:right">@ch.SayadId</div>
+                                    }
+                                </td>
+                                <td class="fs-8">
+                                    @(ch.BankName ?? "—")
+                                    @if (!string.IsNullOrWhiteSpace(ch.BranchName))
+                                    {
+                                        <div class="text-muted">شعبه @ch.BranchName</div>
+                                    }
+                                </td>
+                                <td>@(ch.PartyName ?? ch.OwnerName ?? "—")</td>
+                                <td class="text-center num fw-700">@ch.Amount.Money()</td>
+                                <td class="text-center">
+                                    <div class="num">@ch.DueDate.ToFaDate()</div>
+                                    @if (ch.IsOverdue)
+                                    {
+                                        <div class="fs-8 text-danger num">@Math.Abs(ch.DaysToDue).Num() روز گذشته</div>
+                                    }
+                                    else if (ch.IsDueSoon)
+                                    {
+                                        <div class="fs-8 text-warning num">@ch.DaysToDue.Num() روز مانده</div>
+                                    }
+                                </td>
+                                <td class="text-center"><span class="badge @StatusBadge(ch.Status)">@ch.StatusTitle</span></td>
+                                <td class="fs-8 text-muted">@(ch.TrsAccountName ?? "—")</td>
+                                <td>
+                                    <div class="d-flex gap-1 justify-content-end">
+                                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => OpenDetail(ch)" title="پرونده چک">
+                                            <i class="bi bi-clock-history"></i>
+                                        </button>
+                                        @if (ch.IsOpen || ch.Status == ChequeStatus.Bounced)
+                                        {
+                                            <button class="btn btn-sm btn-outline-success" @onclick="() => OpenAction(ch)" title="عملیات چک">
+                                                <i class="bi bi-lightning-charge"></i> عملیات
+                                            </button>
+                                        }
+                                        @if (ch.Status == ChequeStatus.InHand && ch.TrsVoucherId is null)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(ch)" title="حذف">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ---------- کارت موبایل ---------- -->
+    <div class="cards-mobile">
+        @foreach (var c in items)
+        {
+            var ch = c;
+            <div class="m-card @Stripe(ch.Status)">
+                <div class="m-card-head">
+                    <div class="m-card-icon @(ch.Kind == ChequeKind.Received ? "bg-soft-success" : "bg-soft-danger")">
+                        <i class="bi bi-card-checklist"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <div class="fw-600 num">چک @ch.Number.FaDigits()</div>
+                        <div class="fs-8 text-muted">@(ch.BankName ?? "—")</div>
+                    </div>
+                    <span class="badge @StatusBadge(ch.Status) ms-auto">@ch.StatusTitle</span>
+                </div>
+                <div class="m-card-body">
+                    <div class="m-card-row"><span>طرف حساب</span><span>@(ch.PartyName ?? "—")</span></div>
+                    <div class="m-card-row">
+                        <span>سررسید</span>
+                        <span class="num @(ch.IsOverdue ? "text-danger" : "")">@ch.DueDate.ToFaDate()</span>
+                    </div>
+                    <div class="m-card-money num">@ch.Amount.Money()</div>
+                </div>
+                <div class="m-card-actions">
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => OpenDetail(ch)">
+                        <i class="bi bi-clock-history"></i> پرونده
+                    </button>
+                    @if (ch.IsOpen || ch.Status == ChequeStatus.Bounced)
+                    {
+                        <button class="btn btn-sm btn-outline-success" @onclick="() => OpenAction(ch)">
+                            <i class="bi bi-lightning-charge"></i> عملیات
+                        </button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    <Pager Page="page" PageCount="PageCount" OnPageChanged="OnPage" />
+}
+
+<!-- ===================== فرم ثبت چک ===================== -->
+<Modal Visible="showForm" Title="ثبت چک" Size="lg" OnClose="() => showForm = false">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-md-4">
+            <label class="form-label">نوع چک <span class="text-danger">*</span></label>
+            <select class="form-select" value="@((int)form.Kind)" @onchange="OnFormKind">
+                <option value="0">دریافتی</option>
+                <option value="1">پرداختی (صادره)</option>
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">شماره چک <span class="text-danger">*</span></label>
+            <input class="form-control num" @bind="form.Number" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">شناسه صیاد</label>
+            <input class="form-control num" @bind="form.SayadId" maxlength="16" dir="ltr" />
+        </div>
+
+        <div class="col-md-4">
+            <label class="form-label">مبلغ <span class="text-danger">*</span></label>
+            <input class="form-control num" value="@amountText" @onchange="OnAmount" />
+            <div class="form-text num">@Fa.MoneyWithWords(form.Amount)</div>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">تاریخ صدور</label>
+            <DatePicker Value="form.IssueDate" ValueChanged="d => form.IssueDate = d ?? DateTime.Now" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">سررسید <span class="text-danger">*</span></label>
+            <DatePicker Value="form.DueDate" ValueChanged="d => form.DueDate = d ?? DateTime.Now" />
+        </div>
+
+        <div class="col-md-4">
+            <label class="form-label">بانک</label>
+            <input class="form-control" @bind="form.BankName" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">شعبه</label>
+            <input class="form-control" @bind="form.BranchName" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">شماره حساب</label>
+            <input class="form-control num" @bind="form.AccountNumber" dir="ltr" />
+        </div>
+
+        <div class="col-md-4">
+            <label class="form-label">طرف حساب</label>
+            <SearchSelect Items="parties" Value="@(form.PartyId ?? 0)"
+                          ValueChanged="v => form.PartyId = v > 0 ? v : null" Placeholder="انتخاب…" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">صاحب چک (اگر متفاوت است)</label>
+            <input class="form-control" @bind="form.OwnerName" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">
+                @(form.Kind == ChequeKind.Issued ? "از حساب بانکی ما" : "نزد")
+                @if (form.Kind == ChequeKind.Issued)
+                {
+                    <span class="text-danger">*</span>
+                }
+            </label>
+            <select class="form-select" value="@(form.TrsAccountId ?? 0)"
+                    @onchange="OnFormAccount">
+                <option value="0">— انتخاب —</option>
+                @foreach (var a in accounts)
+                {
+                    <option value="@a.Id">@a.DisplayName</option>
+                }
+            </select>
+        </div>
+
+        <div class="col-12">
+            <label class="form-label">توضیحات</label>
+            <textarea class="form-control" rows="2" @bind="form.Description"></textarea>
+        </div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-outline-secondary" @onclick="() => showForm = false">انصراف</button>
+        <button class="btn btn-primary" @onclick="SaveCheque" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+            <i class="bi bi-save"></i> ذخیره
+        </button>
+    </div>
+    </Footer>
+</Modal>
+
+<!-- ===================== عملیات چک ===================== -->
+<Modal Visible="showAction" Title="@ActionTitle" Size="md" OnClose="() => showAction = false">
+    <ChildContent>
+    @if (current is not null)
+    {
+        <div class="alert alert-light border">
+            <div class="d-flex justify-content-between">
+                <span class="text-muted fs-8">چک شماره</span>
+                <b class="num">@current.Number.FaDigits()</b>
+            </div>
+            <div class="d-flex justify-content-between">
+                <span class="text-muted fs-8">مبلغ</span>
+                <b class="num">@current.Amount.Money()</b>
+            </div>
+            <div class="d-flex justify-content-between">
+                <span class="text-muted fs-8">سررسید</span>
+                <b class="num">@current.DueDate.ToFaDate()</b>
+            </div>
+            <div class="d-flex justify-content-between">
+                <span class="text-muted fs-8">وضعیت فعلی</span>
+                <span class="badge @StatusBadge(current.Status)">@current.StatusTitle</span>
+            </div>
+        </div>
+
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label">عملیات <span class="text-danger">*</span></label>
+                <div class="d-flex flex-wrap gap-2">
+                    @foreach (var t in AllowedActions(current))
+                    {
+                        var target = t;
+                        <button type="button"
+                                class="btn btn-sm @(cmd.Status == target ? "btn-primary" : "btn-outline-primary")"
+                                @onclick="() => cmd.Status = target">
+                            <i class="bi @ActionIcon(target)"></i> @ActionLabel(current.Kind, target)
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <label class="form-label">تاریخ عملیات <span class="text-danger">*</span></label>
+                <DatePicker Value="cmd.Date" ValueChanged="d => cmd.Date = d ?? DateTime.Now" />
+            </div>
+
+            @if (NeedsBank)
+            {
+                <div class="col-md-6">
+                    <label class="form-label">حساب بانکی <span class="text-danger">*</span></label>
+                    <select class="form-select" value="@(cmd.TrsAccountId ?? 0)"
+                            @onchange="OnCmdAccount">
+                        <option value="0">— انتخاب —</option>
+                        @foreach (var a in accounts.Where(x => x.Kind == TreasuryAccountKind.Bank))
+                        {
+                            <option value="@a.Id">@a.DisplayName</option>
+                        }
+                    </select>
+                </div>
+            }
+
+            <div class="col-12">
+                <label class="form-label">توضیحات</label>
+                <input class="form-control" @bind="cmd.Description" />
+            </div>
+
+            <div class="col-12">
+                <div class="alert alert-info mb-0 fs-8">
+                    <i class="bi bi-info-circle"></i> @EffectHint(current.Kind, cmd.Status)
+                </div>
+            </div>
+        </div>
+    }
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-outline-secondary" @onclick="() => showAction = false">انصراف</button>
+        <button class="btn btn-success" @onclick="RunAction" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+            <i class="bi bi-check2"></i> ثبت عملیات
+        </button>
+    </div>
+    </Footer>
+</Modal>
+
+<!-- ===================== پرونده چک ===================== -->
+<Modal Visible="showDetail" Title="پرونده چک" Size="lg" OnClose="() => showDetail = false">
+    <ChildContent>
+    @if (detail is not null)
+    {
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-md-3">
+                <div class="text-muted fs-8">شماره چک</div>
+                <div class="num fw-600">@detail.Number.FaDigits()</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="text-muted fs-8">مبلغ</div>
+                <div class="num fw-600">@detail.Amount.Money()</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="text-muted fs-8">سررسید</div>
+                <div class="num">@detail.DueDate.ToFaDate()</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="text-muted fs-8">وضعیت</div>
+                <span class="badge @StatusBadge(detail.Status)">@detail.StatusTitle</span>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="text-muted fs-8">بانک</div>
+                <div>@(detail.BankName ?? "—")</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="text-muted fs-8">طرف حساب</div>
+                <div>@(detail.PartyName ?? "—")</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="text-muted fs-8">شناسه صیاد</div>
+                <div class="num" dir="ltr" style="text-align:right">@(detail.SayadId ?? "—")</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="text-muted fs-8">سند خزانه</div>
+                @if (detail.TrsVoucherId is > 0)
+                {
+                    <a class="num" href="@($"/trs/vouchers/edit/{detail.TrsVoucherId}")">
+                        شماره @detail.TrsVoucherNumber.GetValueOrDefault().Num()
+                    </a>
+                }
+                else
+                {
+                    <span>—</span>
+                }
+            </div>
+        </div>
+
+        <h6 class="fw-600 mb-2"><i class="bi bi-clock-history text-primary"></i> تاریخچه عملیات</h6>
+
+        @if (detail.Actions.Count == 0)
+        {
+            <div class="empty-state py-3"><i class="bi bi-inbox"></i><h5>عملیاتی ثبت نشده است</h5></div>
+        }
+        else
+        {
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:44px">#</th>
+                        <th>عملیات</th>
+                        <th>تاریخ</th>
+                        <th>بانک</th>
+                        <th>شرح</th>
+                        <th class="text-center">سند حسابداری</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @{ var i = 1; }
+                    @foreach (var a in detail.Actions)
+                    {
+                        <tr>
+                            <td class="num text-muted">@((i++).FaDigits())</td>
+                            <td><span class="badge @StatusBadge(a.Status)">@a.StatusTitle</span></td>
+                            <td class="num">@a.Date.ToFaDate()</td>
+                            <td class="fs-8">@(a.TrsAccountName ?? "—")</td>
+                            <td class="fs-8 text-muted">@a.Description</td>
+                            <td class="text-center">
+                                @if (a.VoucherId is > 0)
+                                {
+                                    <a class="badge badge-soft-primary num" href="@($"/acc/vouchers/edit/{a.VoucherId}")">
+                                        @a.VoucherNumber.GetValueOrDefault().Num()
+                                    </a>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">—</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    }
+    </ChildContent>
+</Modal>
+
+@code {
+    private List<TrsCheque> items = new();
+    private List<TrsAccount> accounts = new();
+    private List<LookupItem> parties = new();
+
+    private ChequeKind? kind;
+    private ChequeStatus? status;
+    private string search = "";
+    private DateTime? from, to;
+    private bool onlyOpen;
+
+    private int page = 1, pageSize = 15, total;
+    private bool loading = true, saving;
+
+    private bool showForm, showAction, showDetail;
+    private TrsCheque form = new();
+    private TrsCheque? current, detail;
+    private TrsChequeCommand cmd = new();
+    private string amountText = "";
+
+    private int PageCount => total == 0 ? 1 : (int)Math.Ceiling(total / (double)pageSize);
+
+    private string ActionTitle => current is null ? "عملیات چک" : $"عملیات چک {current.Number}";
+
+    private bool NeedsBank => cmd.Status == ChequeStatus.InCollection
+                              || (cmd.Status == ChequeStatus.Cleared
+                                  && current?.Kind == ChequeKind.Received);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("دفتر چک");
+        try
+        {
+            accounts = await AccountSvc.GetAllAsync(true);
+            var customers = await PartySvc.GetLookupsAsync(PartyType.Customer, true);
+            var suppliers = await PartySvc.GetLookupsAsync(PartyType.Supplier, true);
+            parties = customers.Concat(suppliers)
+                .GroupBy(p => p.Id).Select(g => g.First())
+                .OrderBy(p => p.Name).ToList();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var res = await ChequeSvc.GetAllAsync(kind, status, null, null, search, from, to, onlyOpen, page, pageSize);
+            items = res.Items;
+            total = res.TotalCount;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task SetKind(ChequeKind? k) { kind = k; page = 1; await Load(); }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key != "Enter") return;
+        page = 1;
+        await Load();
+    }
+
+    private async Task OnStatus(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        status = string.IsNullOrEmpty(raw) ? null : Enum.Parse<ChequeStatus>(raw);
+        page = 1;
+        await Load();
+    }
+
+    private async Task OnFrom(DateTime? d) { from = d; page = 1; await Load(); }
+    private async Task OnTo(DateTime? d) { to = d; page = 1; await Load(); }
+
+    private async Task OnOnlyOpen(ChangeEventArgs e)
+    {
+        onlyOpen = e.Value is bool b && b;
+        page = 1;
+        await Load();
+    }
+
+    private async Task OnPage(int p) { page = p; await Load(); }
+
+    private async Task Reset()
+    {
+        search = ""; status = null; from = null; to = null; onlyOpen = false; page = 1;
+        await Load();
+    }
+
+    // ---------- کمکی فرم (رشته‌ی داخل رشته در Razor مجاز نیست) ----------
+
+    private void OnFormKind(ChangeEventArgs e)
+        => form.Kind = (ChequeKind)int.Parse(e.Value?.ToString() ?? "0");
+
+    private void OnFormAccount(ChangeEventArgs e)
+    {
+        var id = int.Parse(e.Value?.ToString() ?? "0");
+        form.TrsAccountId = id > 0 ? id : null;
+    }
+
+    private void OnCmdAccount(ChangeEventArgs e)
+    {
+        var id = int.Parse(e.Value?.ToString() ?? "0");
+        cmd.TrsAccountId = id > 0 ? id : null;
+    }
+
+    // ---------- فرم ----------
+
+    private void OpenForm(TrsCheque? c)
+    {
+        form = c is null
+            ? new TrsCheque { Kind = ChequeKind.Received, IssueDate = DateTime.Now.Date, DueDate = DateTime.Now.Date }
+            : c;
+        amountText = form.Amount == 0 ? "" : form.Amount.ToString("0.##");
+        showForm = true;
+    }
+
+    private void OnAmount(ChangeEventArgs e)
+    {
+        amountText = e.Value?.ToString() ?? "";
+        form.Amount = Math.Max(0, Fa.ParseDecimal(amountText));
+    }
+
+    private async Task SaveCheque()
+    {
+        saving = true;
+        try
+        {
+            await ChequeSvc.SaveAsync(form);
+            Toast.Success("چک ذخیره شد.");
+            showForm = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    // ---------- عملیات ----------
+
+    private void OpenAction(TrsCheque c)
+    {
+        current = c;
+        var allowed = AllowedActions(c);
+        cmd = new TrsChequeCommand
+        {
+            ChequeId = c.Id,
+            Status = allowed.FirstOrDefault(),
+            Date = DateTime.Now.Date,
+            TrsAccountId = c.TrsAccountId
+        };
+        showAction = true;
+    }
+
+    private async Task RunAction()
+    {
+        if (current is null) return;
+        saving = true;
+        try
+        {
+            await ChequeSvc.RunActionAsync(cmd);
+            Toast.Success("عملیات چک ثبت شد.");
+            showAction = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task OpenDetail(TrsCheque c)
+    {
+        try
+        {
+            detail = await ChequeSvc.GetAsync(c.Id);
+            showDetail = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Delete(TrsCheque c)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"چک شماره {c.Number} حذف شود؟")) return;
+        try
+        {
+            await ChequeSvc.DeleteAsync(c.Id);
+            Toast.Success("چک حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- گذارهای مجاز (آینه‌ی منطق سرور) ----------
+
+    private static List<ChequeStatus> AllowedActions(TrsCheque c) => c.Kind == ChequeKind.Received
+        ? c.Status switch
+        {
+            ChequeStatus.InHand => new List<ChequeStatus>
+            {
+                ChequeStatus.InCollection, ChequeStatus.Cleared, ChequeStatus.Endorsed, ChequeStatus.Cancelled
+            },
+            ChequeStatus.InCollection => new List<ChequeStatus>
+            {
+                ChequeStatus.Cleared, ChequeStatus.Bounced, ChequeStatus.InHand
+            },
+            ChequeStatus.Bounced => new List<ChequeStatus>
+            {
+                ChequeStatus.InCollection, ChequeStatus.Cleared, ChequeStatus.Cancelled
+            },
+            _ => new List<ChequeStatus>()
+        }
+        : c.Status switch
+        {
+            ChequeStatus.InHand => new List<ChequeStatus>
+            {
+                ChequeStatus.Cleared, ChequeStatus.Bounced, ChequeStatus.Cancelled
+            },
+            ChequeStatus.Bounced => new List<ChequeStatus> { ChequeStatus.Cleared, ChequeStatus.Cancelled },
+            _ => new List<ChequeStatus>()
+        };
+
+    private static string ActionLabel(ChequeKind kind, ChequeStatus s) => s switch
+    {
+        ChequeStatus.InCollection => "واگذاری به بانک",
+        ChequeStatus.Cleared => kind == ChequeKind.Received ? "وصول شد" : "پاس شد",
+        ChequeStatus.Bounced => "برگشت خورد",
+        ChequeStatus.Endorsed => "خرج چک",
+        ChequeStatus.Cancelled => "ابطال",
+        _ => "برگشت به صندوق"
+    };
+
+    private static string ActionIcon(ChequeStatus s) => s switch
+    {
+        ChequeStatus.InCollection => "bi-bank",
+        ChequeStatus.Cleared => "bi-check2-circle",
+        ChequeStatus.Bounced => "bi-x-octagon",
+        ChequeStatus.Endorsed => "bi-arrow-left-right",
+        ChequeStatus.Cancelled => "bi-slash-circle",
+        _ => "bi-arrow-counterclockwise"
+    };
+
+    private static string EffectHint(ChequeKind kind, ChequeStatus s)
+    {
+        if (kind == ChequeKind.Received)
+            return s switch
+            {
+                ChequeStatus.InCollection => "اسناد در جریان وصول بدهکار | اسناد دریافتنی بستانکار",
+                ChequeStatus.Cleared => "بانک بدهکار | اسناد در جریان وصول (یا اسناد دریافتنی) بستانکار — پول وارد حساب می‌شود.",
+                ChequeStatus.Bounced => "حساب‌های دریافتنی بدهکار | اسناد در جریان وصول بستانکار — طلب دوباره روی طرف حساب می‌نشیند.",
+                ChequeStatus.Endorsed => "حساب‌های پرداختنی بدهکار | اسناد دریافتنی بستانکار",
+                ChequeStatus.Cancelled => "حساب‌های دریافتنی بدهکار | اسناد دریافتنی بستانکار",
+                _ => "اسناد دریافتنی بدهکار | اسناد در جریان وصول بستانکار"
+            };
+
+        return s switch
+        {
+            ChequeStatus.Cleared => "اسناد پرداختنی بدهکار | بانک بستانکار — پول از حساب خارج می‌شود.",
+            ChequeStatus.Bounced => "اسناد پرداختنی بدهکار | حساب‌های پرداختنی بستانکار — بدهی دوباره برقرار می‌شود.",
+            ChequeStatus.Cancelled => "اسناد پرداختنی بدهکار | حساب‌های پرداختنی بستانکار",
+            _ => "—"
+        };
+    }
+
+    private static string StatusBadge(ChequeStatus s) => s switch
+    {
+        ChequeStatus.InHand => "badge-soft-primary",
+        ChequeStatus.InCollection => "badge-soft-info",
+        ChequeStatus.Cleared => "badge-soft-success",
+        ChequeStatus.Bounced => "badge-soft-danger",
+        ChequeStatus.Endorsed => "badge-soft-warning",
+        _ => "badge-soft-muted"
+    };
+
+    private static string Stripe(ChequeStatus s) => s switch
+    {
+        ChequeStatus.InHand => "st-received",
+        ChequeStatus.InCollection => "st-progress",
+        ChequeStatus.Cleared => "st-ready",
+        ChequeStatus.Bounced => "st-cancelled",
+        _ => "st-delivered"
+    };
+}

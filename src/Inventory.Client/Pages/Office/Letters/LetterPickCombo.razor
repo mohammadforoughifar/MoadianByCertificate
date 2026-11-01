@@ -1,0 +1,220 @@
+@* ============================================================
+   کمبوباکس انتخاب گیرنده — مطابق طرح مصوب:
+   حالت «انفرادی | گروهی»، پنل چندانتخابی، پیل‌های انتخاب‌شده
+   استفاده در فرم ایجاد نامه (گیرنده/ارجاع/هامش) و فرم ارجاع/هامش
+   ============================================================ *@
+
+<div class="fcard @(HasError ? "err" : "")">
+    <label>
+        @Label
+        @if (Required) { <span class="req">*</span> }
+        else { <span class="opt">اختیاری</span> }
+    </label>
+
+    @if (AllowGroups)
+    {
+        <div class="mode">
+            <button type="button" class="@(mode == "user" ? "on" : "")" @onclick="@(() => SetMode("user"))">انفرادی</button>
+            <button type="button" class="@(mode == "group" ? "on" : "")" @onclick="@(() => SetMode("group"))">گروهی</button>
+        </div>
+    }
+
+    <div class="combo @(open ? "open" : "")">
+        <button type="button" class="combo-btn" @onclick="Toggle" @onclick:stopPropagation="true"
+                @onkeydown="OnKeyDown" aria-haspopup="listbox" aria-expanded="@(open ? "true" : "false")">
+            <i class="bi @Icon"></i>
+            <span>@(mode == "user" ? "انتخاب کاربران" : "انتخاب گروه‌ها")</span>
+            @if (Count > 0) { <span class="cnt">@Count.FaDigits()</span> }
+            <i class="bi bi-chevron-down car"></i>
+        </button>
+        @if (open)
+        {
+            @* پوشش نامرئی تمام‌صفحه: هر کلیک بیرون از پنل (هر جای صفحه، حتی روی خودِ شیت
+               ارجاع) پنل را می‌بندد. پیش‌تر بستن فقط با کلیک روی خودِ دکمهٔ کمبو ممکن بود
+               و در شیت ارجاعِ نامهٔ وارده، کلیک بیرون هیچ کاری نمی‌کرد. *@
+            <div class="cpcombo-overlay" @onclick="ClosePanel" @onclick:stopPropagation="true"></div>
+            <div class="cpanel" @onclick:stopPropagation="true">
+                <div class="cpanel-tools">
+                    <input class="cpanel-search" placeholder="جستجو…" @bind="query" @bind:event="oninput"
+                           @onkeydown="OnKeyDown" />
+                    @if (AllowSelectAll && mode == "user" && FilteredUsers.Count > 0)
+                    {
+                        <button type="button" class="select-all" @onclick="SelectAllUsers">
+                            <i class="bi bi-check2-all"></i> انتخاب همه
+                        </button>
+                    }
+                </div>
+                @if (mode == "user")
+                {
+                    @foreach (var u in FilteredUsers)
+                    {
+                        var pos = PositionText(u);
+                        <div class="copt @(SelectedUsers.Contains(u.UserId) ? "on" : "")" @onclick="() => ToggleUser(u.UserId)">
+                            <span class="chk"><i class="bi bi-check"></i></span>
+                            <span class="mini"><i class="bi bi-person-circle"></i></span>
+                            <span>@u.FullName</span>
+                            @if (!string.IsNullOrWhiteSpace(pos))
+                            {
+                                <span class="cpos" title="سمت: @pos"><i class="bi bi-briefcase"></i> @pos</span>
+                            }
+                        </div>
+                    }
+                    @if (FilteredUsers.Count == 0) { <div class="cempty">کاربری یافت نشد</div> }
+                }
+                else
+                {
+                    @foreach (var g in FilteredGroups)
+                    {
+                        <div class="copt @(SelectedGroups.Contains(g.GroupId) ? "on" : "")" @onclick="() => ToggleGroup(g.GroupId)">
+                            <span class="chk"><i class="bi bi-check"></i></span>
+                            <i class="bi bi-people" style="color:var(--bs-primary,#4f46e5)"></i>
+                            <span>@g.NameGroup</span><small>@g.MemberCount.FaDigits() عضو</small>
+                        </div>
+                    }
+                    @if (FilteredGroups.Count == 0) { <div class="cempty">گروهی یافت نشد</div> }
+                }
+            </div>
+        }
+    </div>
+
+    <div class="selpills">
+        @foreach (var uid in SelectedUsers)
+        {
+            var u = Users.FirstOrDefault(x => x.UserId == uid);
+            var pos = u is null ? "" : PositionText(u);
+            <span class="spill">
+                @(u?.FullName ?? uid.ToString())
+                @if (!string.IsNullOrWhiteSpace(pos))
+                {
+                    <small title="سمت: @pos"><i class="bi bi-briefcase"></i> @pos</small>
+                }
+                <i class="bi bi-x-lg" @onclick="() => ToggleUser(uid)"></i>
+            </span>
+        }
+        @foreach (var gid in SelectedGroups)
+        {
+            var g = Groups.FirstOrDefault(x => x.GroupId == gid);
+            <span class="spill gp"><i class="bi bi-people"></i> @(g?.NameGroup ?? gid.ToString()) <i class="bi bi-x-lg" @onclick="() => ToggleGroup(gid)"></i></span>
+        }
+    </div>
+
+    @if (HasError)
+    {
+        <div class="ferr"><i class="bi bi-exclamation-circle"></i> @ErrorText</div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public string Icon { get; set; } = "bi-person-plus";
+    [Parameter] public bool Required { get; set; }
+    [Parameter] public bool AllowGroups { get; set; } = true;
+    /// <summary>خاموش‌کردن «انتخاب همه» برای لیست‌هایی که چند گزینهٔ سمتی برای یک نفر دارند.</summary>
+    [Parameter] public bool AllowSelectAll { get; set; } = true;
+    [Parameter] public List<LetterReciverDto> Users { get; set; } = new();
+    [Parameter] public List<LetterGroupDto> Groups { get; set; } = new();
+    [Parameter] public HashSet<int> SelectedUsers { get; set; } = new();
+    [Parameter] public HashSet<int> SelectedGroups { get; set; } = new();
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public bool HasError { get; set; }
+    [Parameter] public string ErrorText { get; set; } = "انتخاب حداقل یک گیرنده الزامی است";
+
+    private string mode = "user";
+    private bool open;
+    private string query = "";
+
+    private int Count => SelectedUsers.Count + SelectedGroups.Count;
+
+    /// <summary>
+    /// عنوانِ سمت‌های فعالِ کاربر — اگر چند سمت داشته باشد، همه با «، » جدا می‌شوند.
+    /// اگر سمتی تعریف نشده باشد، رشتهٔ خالی برمی‌گردد.
+    /// </summary>
+    private static string PositionText(LetterReciverDto u)
+    {
+        if (u.Positions is { Count: > 0 })
+        {
+            var joined = string.Join("، ", u.Positions.Where(p => !string.IsNullOrWhiteSpace(p)));
+            if (!string.IsNullOrWhiteSpace(joined)) return joined;
+        }
+        return u.SematTitle ?? "";
+    }
+
+    /// <summary>جستجو با نام کاربر و هم با عنوانِ سمت‌های فعالِ او کار می‌کند.</summary>
+    private static bool MatchesUserQuery(LetterReciverDto u, string q)
+    {
+        if (string.IsNullOrWhiteSpace(q)) return true;
+        if (!string.IsNullOrWhiteSpace(u.FullName)
+            && u.FullName.Contains(q, StringComparison.OrdinalIgnoreCase)) return true;
+        if (!string.IsNullOrWhiteSpace(u.SematTitle)
+            && u.SematTitle.Contains(q, StringComparison.OrdinalIgnoreCase)) return true;
+        if (u.Positions is not null
+            && u.Positions.Any(p => !string.IsNullOrWhiteSpace(p)
+                && p.Contains(q, StringComparison.OrdinalIgnoreCase))) return true;
+        return false;
+    }
+
+    private List<LetterReciverDto> FilteredUsers =>
+        Users.Where(u => MatchesUserQuery(u, query.Trim())).Take(30).ToList();
+
+    private List<LetterGroupDto> FilteredGroups =>
+        Groups.Where(g => string.IsNullOrWhiteSpace(query) || g.NameGroup.Contains(query.Trim())).Take(30).ToList();
+
+    /// <summary>بازنشانی کامل (هنگام باز شدن فرم)</summary>
+    public void Reset()
+    {
+        mode = "user"; open = false; query = "";
+        SelectedUsers.Clear(); SelectedGroups.Clear();
+        StateHasChanged();
+    }
+
+    public void Close() { if (open) { open = false; StateHasChanged(); } }
+
+    /// <summary>بستن پنل با کلیک بیرون از آن (پوشش نامرئی).</summary>
+    private void ClosePanel() => Close();
+
+    /// <summary>بستن پنل با کلید Escape — هم روی دکمهٔ کمبو، هم روی کادر جستجو.</summary>
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            // جلوگیری از بسته‌شدن ناخواستهٔ خودِ شیت ارجاع با همان Escape
+            if (open) Close();
+        }
+    }
+
+    private void SetMode(string m)
+    {
+        if (mode == m) return;
+        mode = m;
+        // مطابق طرح مصوب: تعویض حالت، انتخاب‌های قبلی همان بخش را پاک می‌کند
+        SelectedUsers.Clear();
+        SelectedGroups.Clear();
+        query = "";
+        _ = Changed.InvokeAsync();
+    }
+
+    private void Toggle() { open = !open; query = ""; }
+
+    private async Task ToggleUser(int id)
+    {
+        if (!SelectedUsers.Remove(id)) SelectedUsers.Add(id);
+        await Changed.InvokeAsync();
+    }
+
+    private async Task SelectAllUsers()
+    {
+        // با جستجو، همه موارد فیلترشده؛ بدون جستجو، همه کاربران فعال فرم
+        var source = string.IsNullOrWhiteSpace(query)
+            ? Users
+            : FilteredUsers;
+        foreach (var user in source)
+            SelectedUsers.Add(user.UserId);
+        await Changed.InvokeAsync();
+    }
+
+    private async Task ToggleGroup(int id)
+    {
+        if (!SelectedGroups.Remove(id)) SelectedGroups.Add(id);
+        await Changed.InvokeAsync();
+    }
+}

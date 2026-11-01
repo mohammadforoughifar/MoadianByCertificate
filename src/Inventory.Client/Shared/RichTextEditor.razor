@@ -1,0 +1,390 @@
+@using System.Net.Http.Json
+@using Microsoft.AspNetCore.Components.Forms
+@inject IJSRuntime JS
+@inject HttpClient Http
+
+@* ============================================================
+   RichTextEditor — ادیتور متن غنی پیشرفته برای اتوماسیون و سایر ماژول‌ها.
+   • فونت فارسی/لاتین (Shabnam, Sahel, Yekan, Vazirmatn + فونت‌های لاتین سیستم)
+   • اندازه قلم، رنگ متن، هایلایت پس‌زمینه
+   • پررنگ/مورب/زیرخط/خط‌خورده، زیرنویس/بالانویس، تراز، جهت متن (RTL/LTR)
+   • لیست، تورفتگی، لینک، خط افقی، درج جدول، پیوست تصویر و فایل مستقیم
+   ============================================================ *@
+
+<div class="richt @CssClass">
+    <div class="richt-toolbar">
+        <button type="button" title="واگرد" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("undo")'><i class="bi bi-arrow-counterclockwise"></i></button>
+        <button type="button" title="ازنو" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("redo")'><i class="bi bi-arrow-clockwise"></i></button>
+        <span class="richt-sep"></span>
+
+        @* فونت *@
+        <select class="richt-sel" title="فونت" @onchange="OnFont">
+            @foreach (var f in Fonts)
+            {
+                <option value="@f.Value" selected="@(f.Value == _fontSel)">@f.Label</option>
+            }
+        </select>
+
+        @* اندازه قلم *@
+        <select class="richt-sel richt-size" title="اندازه قلم" @onchange="OnSize">
+            @foreach (var s in Sizes)
+            {
+                <option value="@s.Value" selected="@(s.Value == _sizeSel)">@s.Label</option>
+            }
+        </select>
+
+        <span class="richt-sep"></span>
+
+        <button type="button" title="پررنگ" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("bold")'><i class="bi bi-type-bold"></i></button>
+        <button type="button" title="مورب" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("italic")'><i class="bi bi-type-italic"></i></button>
+        <button type="button" title="زیرخط" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("underline")'><i class="bi bi-type-underline"></i></button>
+        <button type="button" title="خط‌خورده" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("strikeThrough")'><i class="bi bi-type-strikethrough"></i></button>
+        <button type="button" title="زیرنویس" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("subscript")'><i class="bi bi-type-subscript"></i></button>
+        <button type="button" title="بالانویس" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("superscript")'><i class="bi bi-type-superscript"></i></button>
+
+        <span class="richt-sep"></span>
+
+        <label class="richt-color" title="رنگ متن"><i class="bi bi-palette"></i><span class="richt-swatch" style="background:@_colorSel"></span>
+            <input type="color" value="@_colorSel" @onchange="OnColor" />
+        </label>
+        <label class="richt-color" title="هایلایت (پس‌زمینه)"><i class="bi bi-highlighter"></i><span class="richt-swatch" style="background:@_hlSel"></span>
+            <input type="color" value="@_hlSel" @onchange="OnHilite" />
+        </label>
+
+        <span class="richt-sep"></span>
+
+        <button type="button" title="راست‌چین" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("justifyRight")'><i class="bi bi-text-right"></i></button>
+        <button type="button" title="وسط‌چین" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("justifyCenter")'><i class="bi bi-text-center"></i></button>
+        <button type="button" title="چپ‌چین" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("justifyLeft")'><i class="bi bi-text-left"></i></button>
+        <button type="button" title="هم‌تراز" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("justifyFull")'><i class="bi bi-text-paragraph"></i></button>
+        <button type="button" title="تغییر جهت (راست‌به‌چپ / چپ‌به‌راست)" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick="ToggleDirection"><i class="bi bi-arrow-left-right"></i></button>
+
+        <span class="richt-sep"></span>
+
+        <button type="button" title="لیست نقطه‌ای" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("insertUnorderedList")'><i class="bi bi-list-ul"></i></button>
+        <button type="button" title="لیست شماره‌ای" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("insertOrderedList")'><i class="bi bi-list-ol"></i></button>
+        <button type="button" title="کاهش تورفتگی" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("outdent")'><i class="bi bi-outdent"></i></button>
+        <button type="button" title="افزایش تورفتگی" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("indent")'><i class="bi bi-indent"></i></button>
+
+        <span class="richt-sep"></span>
+
+        <button type="button" title="درج جدول" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick="InsertTablePrompt"><i class="bi bi-table"></i></button>
+
+        <label class="richt-file-btn" title="پیوست تصویر/فایل درون متن">
+            @if (_uploading) { <span class="spinner-border spinner-border-sm text-primary"></span> }
+            else { <i class="bi bi-paperclip"></i> }
+            <InputFile OnChange="OnFileUpload" style="display:none;" />
+        </label>
+
+        <button type="button" title="درج خط افقی" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("insertHorizontalRule")'><i class="bi bi-hr"></i></button>
+        <button type="button" title="درج لینک" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick="InsertLink"><i class="bi bi-link-45deg"></i></button>
+        <button type="button" title="حذف قالب" @onmousedown="OnToolbarDown" @onmousedown:preventDefault @onclick='() => Cmd("removeFormat")'><i class="bi bi-eraser"></i></button>
+    </div>
+    <div class="richt-body" id="@Id" contenteditable="true" dir="rtl" data-ph="@Placeholder"
+         style="@(string.IsNullOrWhiteSpace(Height) ? "" : $"min-height:{Height}px;max-height:{Height}px;")"
+         @oninput="OnInput" @onmouseup="SaveSelection" @onkeyup="SaveSelection" @onfocus="SaveSelection"></div>
+</div>
+
+<style>
+    .richt { border: 1.5px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: #fff; }
+    .richt-toolbar { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; padding: 6px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; }
+    .richt-toolbar button, .richt-file-btn { width: 29px; height: 29px; border: 0; background: transparent; border-radius: 8px; color: #64748b; cursor: pointer; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; margin: 0; }
+    .richt-toolbar button:hover, .richt-file-btn:hover { background: #e2e8f0; color: #0f172a; }
+    .richt-sep { width: 1px; align-self: stretch; background: #e2e8f0; margin: 3px 3px; }
+    .richt-sel { border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; color: #334155; font-size: 11.5px; height: 29px; padding: 0 6px; max-width: 130px; }
+    .richt-sel:focus { outline: none; border-color: #818cf8; }
+    .richt-sel.richt-size { max-width: 74px; }
+    .richt-color { position: relative; min-width: 30px; width: auto; height: 29px; display: inline-flex; align-items: center; justify-content: center; gap: 2px; padding: 0 4px; border-radius: 8px; cursor: pointer; color: #64748b; }
+    .richt-color:hover { background: #e2e8f0; color: #0f172a; }
+    .richt-color input[type=color] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; border: 0; padding: 0; }
+    .richt-swatch { width: 9px; height: 9px; border-radius: 3px; border: 1px solid rgba(0,0,0,.15); flex-shrink: 0; }
+    .richt-body { min-height: 150px; max-height: 320px; overflow: auto; padding: 12px 14px; font-size: 13px; line-height: 2; outline: 0; color: #0f172a; }
+    .richt-body:empty::before { content: attr(data-ph); color: #94a3b8; }
+    .richt-body a { color: #2563eb; text-decoration: underline; }
+    /* تصاویر (از جمله تصاویرِ منتقل‌شده از ایمیل) نباید از کادر بیرون بزنند */
+    .richt-body img { max-width: 100%; height: auto; border-radius: 6px; }
+    .richt-body table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+    .richt-body table td, .richt-body table th { border: 1px solid #cbd5e1; padding: 8px; min-width: 30px; }
+</style>
+
+@code {
+    /// <summary>
+    /// شناسهٔ عنصر contenteditable. اگر میزبان Id ندهد یک شناسهٔ یکتا ساخته می‌شود؛
+    /// بدون آن، عنصر با id خالی رندر می‌شد و همهٔ فراخوانی‌های JS
+    /// (rteSetHtml/rteGetHtml) روی null می‌افتادند: متن اولیه در ادیتور نمی‌نشست
+    /// (مثل بدنهٔ ایمیل هنگام «تبدیل به نامه وارده») و متن تایپ‌شده هم خوانده
+    /// نمی‌شد، پس مقدار خالی ذخیره می‌شد.
+    /// </summary>
+    [Parameter] public string Id { get; set; } = "";
+
+    protected override void OnInitialized()
+    {
+        if (string.IsNullOrWhiteSpace(Id))
+            Id = $"rte-{Guid.NewGuid():N}";
+    }
+
+    [Parameter] public string Placeholder { get; set; } = "متن را بنویسید…";
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public string? Height { get; set; }
+    [Parameter] public string Module { get; set; } = "office";
+
+    private bool _initialized;
+    private bool _uploading;
+
+    /// <summary>آخرین HTML‌ای که بین ادیتور و پارامتر Value هم‌گام شده است.</summary>
+    private string? _syncedValue;
+    private string _fontSel = "Vazirmatn";
+    private string _sizeSel = "14";
+    private string _colorSel = "#0f172a";
+    private string _hlSel = "#fef08a";
+
+    private static readonly List<(string Value, string Label)> Fonts = new()
+    {
+        ("Vazirmatn", "وزیرمتن"),
+        ("Shabnam", "شبنم"),
+        ("Sahel", "ساحل"),
+        ("Yekan", "یکان (بخ)"),
+        ("Tahoma", "Tahoma"),
+        ("Arial", "Arial"),
+        ("Georgia", "Georgia"),
+        ("Times New Roman", "Times New Roman"),
+        ("Courier New", "Courier New"),
+        ("Calibri", "Calibri"),
+        ("Verdana", "Verdana"),
+    };
+
+    private static readonly List<(string Value, string Label)> Sizes = new()
+    {
+        ("11", "۱۱"), ("12", "۱۲"), ("13", "۱۳"), ("14", "۱۴"), ("15", "۱۵"),
+        ("16", "۱۶"), ("18", "۱۸"), ("20", "۲۰"), ("24", "۲۴"), ("28", "۲۸"), ("32", "۳۲"),
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_initialized)
+        {
+            _initialized = true;
+            var initial = Value ?? "";
+            _syncedValue = initial;
+            if (!string.IsNullOrWhiteSpace(initial))
+            {
+                try
+                {
+                    await JS.InvokeVoidAsync("rteSetHtml", Id, initial);
+                    // اگر عنصر تازه رندر شده باشد ممکن است ست نشده باشد؛ یک بار دیگر
+                    var length = await JS.InvokeAsync<int>("rteHtmlLength", Id);
+                    if (length <= 0)
+                    {
+                        await Task.Delay(60);
+                        await JS.InvokeVoidAsync("rteSetHtml", Id, initial);
+                    }
+                }
+                catch { }
+            }
+            return;
+        }
+
+        // تغییر «بیرونی» مقدار (مثلاً پر شدن فرم از روی ایمیل یا نامهٔ موجود) باید
+        // داخل ادیتور هم منعکس شود؛ چون contenteditable با پارامتر Value به‌طور
+        // خودکار هم‌گام نمی‌شود. هنگام تایپ، _syncedValue با Value یکی است و
+        // محتوا دست‌نخورده می‌ماند (مکان‌نما نمی‌پرد).
+        var current = Value ?? "";
+        if (!string.Equals(current, _syncedValue, StringComparison.Ordinal))
+        {
+            _syncedValue = current;
+            try { await JS.InvokeVoidAsync("rteSetHtml", Id, current); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// تنظیم محتوای HTML ادیتور (مثلاً هنگام باز کردن فرم یا پر کردن از روی ایمیل).
+    /// <para>
+    /// تأیید و تلاش مجدد: قبلاً فقط یک بار innerHTML ست می‌شد و اگر عنصر
+    /// contenteditable هنوز در DOM نبود (اولین رندر، مودال تازه باز شده یا رندر
+    /// دیرهنگام Blazor) محتوا «بی‌صدا» گم می‌شد و کادر خالی می‌ماند؛ نشانه‌اش
+    /// همان «این پیام خالی است» در فرم نامه بود. حالا بعد از هر ست، محتوای واقعی
+    /// از ادیتور بازخوانی می‌شود و در صورت خالی بودن تا ۴ بار تلاش تکرار می‌شود.
+    /// </para>
+    /// </summary>
+    /// <returns>true اگر محتوا داخل ادیتور نشست (یا محتوا خالی بود).</returns>
+    public async Task<bool> SetContentAsync(string html)
+    {
+        var value = html ?? "";
+        _syncedValue = value;
+        if (string.IsNullOrWhiteSpace(value)) return true;
+
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("rteSetHtml", Id, value);
+                var length = await JS.InvokeAsync<int>("rteHtmlLength", Id);
+                if (length > 0) return true;
+            }
+            catch { }
+            // شاید عنصر هنوز رندر نشده است؛ یک تیک صبر و تلاش دوباره
+            await Task.Delay(80 * (attempt + 1));
+            try { StateHasChanged(); } catch { }
+        }
+        return false;
+    }
+
+    /// <summary>خواندن محتوای HTML ادیتور.</summary>
+    public async Task<string> GetContentAsync()
+    {
+        try { return await JS.InvokeAsync<string>("rteGetHtml", Id) ?? ""; }
+        catch { return Value; }
+    }
+
+    /// <summary>پاک کردن ادیتور.</summary>
+    public async Task ClearAsync()
+    {
+        _syncedValue = "";
+        try { await JS.InvokeVoidAsync("rteSetHtml", Id, ""); } catch { }
+        await ValueChanged.InvokeAsync("");
+    }
+
+    private async Task OnInput(Microsoft.AspNetCore.Components.ChangeEventArgs e)
+    {
+        var html = await GetContentAsync();
+        // مقدارِ ادیتور «همگام‌شده» است؛ تا رندر بعدی نباید دوباره داخل ادیتور نوشته شود
+        _syncedValue = html;
+        await ValueChanged.InvokeAsync(html);
+    }
+
+    private async Task SaveSelection()
+    {
+        try { await JS.InvokeVoidAsync("rteSaveSelection", Id); } catch { }
+    }
+
+    private async Task OnToolbarDown(Microsoft.AspNetCore.Components.Web.MouseEventArgs e)
+    {
+        await SaveSelection();
+    }
+
+    private async Task Cmd(string cmd, string? value = null)
+    {
+        try { await JS.InvokeVoidAsync("rteExecId", Id, cmd, value); } catch { }
+        await PushChange();
+    }
+
+    private async Task OnFont(Microsoft.AspNetCore.Components.ChangeEventArgs e)
+    {
+        _fontSel = e.Value?.ToString() ?? "Vazirmatn";
+        try { await JS.InvokeVoidAsync("rteFont", Id, _fontSel); } catch { }
+        StateHasChanged();
+        await PushChange();
+    }
+
+    private async Task OnSize(Microsoft.AspNetCore.Components.ChangeEventArgs e)
+    {
+        _sizeSel = e.Value?.ToString() ?? "14";
+        try { await JS.InvokeVoidAsync("rteSize", Id, _sizeSel + "px"); } catch { }
+        StateHasChanged();
+        await PushChange();
+    }
+
+    private async Task OnColor(Microsoft.AspNetCore.Components.ChangeEventArgs e)
+    {
+        _colorSel = e.Value?.ToString() ?? "#0f172a";
+        try { await JS.InvokeVoidAsync("rteColor", Id, _colorSel); } catch { }
+        StateHasChanged();
+        await PushChange();
+    }
+
+    private async Task OnHilite(Microsoft.AspNetCore.Components.ChangeEventArgs e)
+    {
+        _hlSel = e.Value?.ToString() ?? "#fef08a";
+        try { await JS.InvokeVoidAsync("rteHilite", Id, _hlSel); } catch { }
+        StateHasChanged();
+        await PushChange();
+    }
+
+    private async Task InsertLink()
+    {
+        try { await JS.InvokeVoidAsync("rteLink", Id); } catch { }
+        await PushChange();
+    }
+
+    private async Task ToggleDirection()
+    {
+        try { await JS.InvokeVoidAsync("rteToggleDir", Id); } catch { }
+        await PushChange();
+    }
+
+    private async Task InsertTablePrompt()
+    {
+        try
+        {
+            var rowsStr = await JS.InvokeAsync<string>("prompt", "تعداد سطرها را وارد کنید:", "3");
+            if (string.IsNullOrWhiteSpace(rowsStr)) return;
+            var colsStr = await JS.InvokeAsync<string>("prompt", "تعداد ستون‌ها را وارد کنید:", "3");
+            if (string.IsNullOrWhiteSpace(colsStr)) return;
+
+            if (int.TryParse(rowsStr, out var r) && int.TryParse(colsStr, out var c))
+            {
+                await JS.InvokeVoidAsync("rteTable", Id, r, c);
+                await PushChange();
+            }
+        }
+        catch { }
+    }
+
+    private async Task OnFileUpload(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+        _uploading = true;
+        StateHasChanged();
+        try
+        {
+            using var content = new MultipartFormDataContent();
+            var streamContent = new StreamContent(file.OpenReadStream(long.MaxValue));
+            var ct = file.ContentType ?? "application/octet-stream";
+            streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(ct);
+            content.Add(streamContent, "file", file.Name);
+
+            var res = await Http.PostAsync($"api/files/upload/{Module}", content);
+            if (res.IsSuccessStatusCode)
+            {
+                var resJson = await res.Content.ReadFromJsonAsync<FileUploadResult>();
+                if (resJson != null && !string.IsNullOrWhiteSpace(resJson.Url))
+                {
+                    if (ct.StartsWith("image/"))
+                    {
+                        var imgHtml = $"<img src=\"{resJson.Url}\" alt=\"{file.Name}\" style=\"max-width:100%; height:auto; border-radius:8px; margin:8px 0;\" /><p><br></p>";
+                        await JS.InvokeVoidAsync("rteInsertHtml", Id, imgHtml);
+                    }
+                    else
+                    {
+                        var attHtml = $"<a href=\"{resJson.Url}\" target=\"_blank\" class=\"btn btn-sm btn-outline-primary m-1\" download><i class=\"bi bi-paperclip me-1\"></i>{file.Name}</a>&nbsp;";
+                        await JS.InvokeVoidAsync("rteInsertHtml", Id, attHtml);
+                    }
+                    await PushChange();
+                }
+            }
+        }
+        catch { }
+        finally
+        {
+            _uploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task PushChange()
+    {
+        var html = await GetContentAsync();
+        _syncedValue = html;
+        await ValueChanged.InvokeAsync(html);
+    }
+
+    private class FileUploadResult
+    {
+        public string Url { get; set; } = "";
+        public string FileName { get; set; } = "";
+        public long Size { get; set; }
+    }
+}

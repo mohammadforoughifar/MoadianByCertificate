@@ -1,0 +1,187 @@
+@* ================== ویرایشگر دسترسی نفرات (پوشه یا مدرک) ==================
+   نفر را با کمبوی سرچ‌دار اضافه کنید و سطح دسترسی و اجازه دانلود را تعیین کنید. *@
+
+<div class="border rounded-3 p-2 doc-perm-editor">
+    @* چیدمان عمودی و منظم — این کامپوننت هم در ستون کناری باریک و هم در مودال استفاده می‌شود؛
+       گرید col-md بوت‌استرپ به عرض صفحه نگاه می‌کند نه عرض کارت و در ستون باریک به‌هم می‌ریخت. *@
+    <div class="row g-2 mb-2">
+        <div class="col-12">
+            <label class="form-label fs-8 mb-1">نوع دسترسی</label>
+            <div class="btn-group btn-group-sm w-100" role="group">
+                <button class="btn @(pickRole ? "btn-outline-primary" : "btn-primary")" type="button" @onclick="() => pickRole = false">
+                    <i class="bi bi-person"></i> نفر
+                </button>
+                <button class="btn @(pickRole ? "btn-primary" : "btn-outline-primary")" type="button" @onclick="() => pickRole = true">
+                    <i class="bi bi-people"></i> گروه
+                </button>
+            </div>
+        </div>
+        <div class="col-12">
+            @if (!pickRole)
+            {
+                <label class="form-label fs-8 mb-1">افزودن نفر</label>
+                <SearchSelect Items="AvailableUsers" @bind-Value="pickUserId" Placeholder="جستجوی نام کاربر…" />
+            }
+            else
+            {
+                <label class="form-label fs-8 mb-1">افزودن گروه/نقش <span class="text-muted">(نام‌کاربران/سمت‌های RBAC)</span></label>
+                <SearchSelect Items="AvailableRoles" @bind-Value="pickRoleId" Placeholder="جستجوی نام نقش یا سمت…" />
+            }
+        </div>
+        <div class="col-12 col-sm-6">
+            <label class="form-label fs-8 mb-1">سطح دسترسی</label>
+            <select class="form-select form-select-sm" @bind="pickLevel" @bind:after="PickLevelChanged">
+                <option value="1">مشاهده</option>
+                <option value="2">خواندن</option>
+                <option value="3">نوشتن</option>
+                <option value="4">دسترسی کامل</option>
+            </select>
+        </div>
+        <div class="col-6 col-sm-3 d-flex align-items-end">
+            <div class="form-check form-switch mb-1">
+                <input class="form-check-input" type="checkbox" id="pickDl" @bind="pickDownload" disabled="@(pickLevel < (int)DocAccessLevelDto.Read)" />
+                <label class="form-check-label fs-8" for="pickDl">دانلود</label>
+            </div>
+        </div>
+        <div class="col-6 col-sm-3 d-flex align-items-end">
+            <button class="btn btn-sm btn-primary w-100" type="button" @onclick="Add" title="افزودن">
+                <i class="bi bi-plus-lg"></i> افزودن
+            </button>
+        </div>
+    </div>
+
+    <div class="fs-8 text-muted mb-2">
+        «خواندن» فقط برای مشاهده است؛ ویرایش و ورژن جدید نیازمند «نوشتن» است.
+        دانلود باید جداگانه انتخاب شود. مجوز اختصاصی فرد بر گروه و پوشهٔ والد اولویت دارد.
+    </div>
+
+    @if (Items.Count == 0)
+    {
+        <div class="fs-8 text-muted py-2">هنوز نفر یا گروهی اضافه نشده است.</div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>نفر / گروه</th>
+                        <th style="width:170px">سطح دسترسی</th>
+                        <th style="width:90px" class="text-center">دانلود</th>
+                        <th style="width:50px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var p in Items)
+                    {
+                        <tr>
+                            <td class="fs-8">
+                                @if (p.RoleId > 0)
+                                {
+                                    <span class="badge rounded-pill text-bg-info me-1"><i class="bi bi-people"></i></span>
+                                    <span>@NameOfRole(p.RoleId) <span class="text-muted">(گروه/نقش)</span></span>
+                                }
+                                else
+                                {
+                                    @NameOf(p.UserId)
+                                }
+                            </td>
+                            <td>
+                                <select class="form-select form-select-sm"
+                                        value="@((int)p.Level)"
+                                        @onchange="e => SetLevel(p, e)">
+                                    <option value="1">مشاهده</option>
+                                    <option value="2">خواندن</option>
+                                    <option value="3">نوشتن</option>
+                                    <option value="4">دسترسی کامل</option>
+                                </select>
+                            </td>
+                            <td class="text-center">
+                                <input class="form-check-input" type="checkbox" @bind="p.CanDownload" disabled="@(p.Level < DocAccessLevelDto.Read)" />
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-light" type="button" @onclick="() => Items.Remove(p)">
+                                    <i class="bi bi-x-lg text-danger"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public List<LookupItem> Users { get; set; } = new();
+
+    /// <summary>نقش‌های فعال RBAC — در صورت پاس‌دادن، امکان «دسترسی گروهی» فعال می‌شود.</summary>
+    [Parameter] public List<LookupItem> Roles { get; set; } = new();
+
+    [Parameter] public List<DocPermissionDto> Items { get; set; } = new();
+
+    private bool pickRole;
+    private int pickUserId;
+    private int pickRoleId;
+    private int pickLevel = 2;
+    private bool pickDownload;
+
+    private List<LookupItem> AvailableUsers =>
+        Users.Where(u => !Items.Any(i => i.RoleId == 0 && i.UserId == u.Id)).ToList();
+
+    private List<LookupItem> AvailableRoles =>
+        Roles.Where(r => !Items.Any(i => i.RoleId == r.Id)).ToList();
+
+    private string NameOf(int id) =>
+        Users.FirstOrDefault(u => u.Id == id)?.Name ?? $"#{id}";
+
+    private string NameOfRole(int id) =>
+        Roles.FirstOrDefault(r => r.Id == id)?.Name ?? $"#{id}";
+
+    private static void SetLevel(DocPermissionDto p, ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var v) && Enum.IsDefined(typeof(DocAccessLevelDto), v))
+        {
+            p.Level = (DocAccessLevelDto)v;
+            if (p.Level <= DocAccessLevelDto.Read) p.CanDownload = false;
+        }
+    }
+
+    private void PickLevelChanged()
+    {
+        if (pickLevel <= (int)DocAccessLevelDto.Read) pickDownload = false;
+    }
+
+    private void Add()
+    {
+        if (!pickRole)
+        {
+            if (pickUserId <= 0) return;
+            if (Items.Any(i => i.RoleId == 0 && i.UserId == pickUserId)) return;
+            Items.Add(new DocPermissionDto
+            {
+                UserId = pickUserId,
+                RoleId = 0,
+                UserName = NameOf(pickUserId),
+                Level = (DocAccessLevelDto)pickLevel,
+                CanDownload = pickLevel >= (int)DocAccessLevelDto.Read && pickDownload
+            });
+            pickUserId = 0;
+        }
+        else
+        {
+            if (pickRoleId <= 0) return;
+            if (Items.Any(i => i.RoleId == pickRoleId)) return;
+            Items.Add(new DocPermissionDto
+            {
+                UserId = 0,
+                RoleId = pickRoleId,
+                RoleName = NameOfRole(pickRoleId),
+                Level = (DocAccessLevelDto)pickLevel,
+                CanDownload = pickLevel >= (int)DocAccessLevelDto.Read && pickDownload
+            });
+            pickRoleId = 0;
+        }
+        pickDownload = false;
+    }
+}

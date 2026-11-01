@@ -1,0 +1,264 @@
+@using Inventory.Shared.Security
+@inject IIncomingLetterService IncomingSvc
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+@* ============================================================
+   مدال مشاهده کامل جزئیات نامه وارده
+   ============================================================ *@
+
+@if (visible)
+{
+<div class="ltx" style="animation:none;transform:none">
+    <div class="ov" @onclick="Close"></div>
+    <div class="sheet" style="width:min(860px,96vw)" @onclick:stopPropagation="true">
+        <div class="sheet-h">
+            <b><i class="bi bi-inbox-fill" style="color:var(--p)"></i> جزئیات نامه وارده</b>
+            @if (letter != null)
+            {
+                <span class="dt num">ثبت: # @letter.NumberSabt.FaDigits()</span>
+            }
+            <button class="x" @onclick="Close"><i class="bi bi-x-lg"></i></button>
+        </div>
+
+        <div class="sheet-b">
+            @if (loading)
+            {
+                @* نوار پیشرفت + اسکلت: تا رسیدن جزئیات، کاربر می‌داند درخواست در جریان است *@
+                <LoadProgressBar Value="progress.Value" Text="در حال بارگذاری جزئیات نامه…" />
+                <div style="padding:14px 20px 24px; display:flex; flex-direction:column; gap:12px">
+                    <div style="height:16px; border-radius:6px; background:#eef2f7; width:55%"></div>
+                    <div style="height:14px; border-radius:6px; background:#eef2f7"></div>
+                    <div style="height:14px; border-radius:6px; background:#eef2f7; width:86%"></div>
+                    <div style="height:14px; border-radius:6px; background:#eef2f7; width:70%"></div>
+                </div>
+            }
+            else if (letter == null)
+            {
+                <div class="empty" style="padding:40px"><i class="bi bi-exclamation-triangle"></i> اطلاعات نامه یافت نشد</div>
+            }
+            else
+            {
+                <div style="background:#f8fafc; border-radius:12px; padding:16px; margin-bottom:16px">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px">
+                        <h5 style="margin:0; font-weight:700; color:#0f172a">@letter.Title</h5>
+                        <div style="display:flex; gap:6px">
+                            @if (letter.Mahramanegi > 0)
+                            {
+                                <span class="badge bg-danger">@MahramanegiTitle(letter.Mahramanegi)</span>
+                            }
+                            @if (letter.Foriat > 0)
+                            {
+                                <span class="badge bg-warning text-dark">@ForiatTitle(letter.Foriat)</span>
+                            }
+                            @if (letter.IsBayegani)
+                            {
+                                <span class="badge bg-secondary"><i class="bi bi-archive"></i> بایگانی شده</span>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="row3" style="font-size:13px; color:#334155; gap:12px">
+                        <div><b>فرستنده (مبدأ):</b> @letter.Ferestande</div>
+                        <div><b>شماره نامه مبدأ:</b> @(string.IsNullOrWhiteSpace(letter.NumberLetterVarede) ? "-" : letter.NumberLetterVarede)</div>
+                        <div><b>تاریخ نامه مبدأ:</b> @letter.Date.ToFaDate()</div>
+                        <div><b>شماره اندیکاتور ثبت:</b> <span class="fw-bold text-primary">@letter.NumberSabt.FaDigits()</span></div>
+                        <div><b>تاریخ ورود (ورود به سازمان):</b> @letter.DateErsal.ToFaDate()</div>
+                        <div><b>روش ارسال:</b> @(string.IsNullOrWhiteSpace(letter.TypeErsal) ? "دستی / پیک" : letter.TypeErsal)</div>
+                        @if (!string.IsNullOrWhiteSpace(letter.DeliveryName))
+                        {
+                            <div><b>تحویل‌دهنده/گیرنده:</b> @letter.DeliveryName</div>
+                        }
+                    </div>
+                </div>
+
+                @* ---------- متن / توضیحات نامه ---------- *@
+                <div class="fcard" style="margin-bottom:16px">
+                    <label style="font-weight:600; font-size:13px; color:#475569; margin-bottom:8px">خلاصه متن / توضیحات نامه:</label>
+                    <div class="tin-view" style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:16px; min-height:100px; max-height:300px; overflow-y:auto">
+                        @if (string.IsNullOrWhiteSpace(letter.Description))
+                        {
+                            <span class="text-muted">بدون توضیحات</span>
+                        }
+                        else
+                        {
+                            @safeBody.Get(letter.Description)
+                        }
+                    </div>
+                </div>
+
+                @* ---------- فایل‌های پیوست ---------- *@
+                @if (letter.Attachments.Count > 0)
+                {
+                    <div class="fcard" style="margin-bottom:16px">
+                        <label style="font-weight:600; font-size:13px; color:#475569; margin-bottom:8px"><i class="bi bi-paperclip"></i> پیوست‌های نامه (@letter.Attachments.Count.FaDigits() فایل)</label>
+                        <div style="display:flex; flex-direction:column; gap:8px">
+                            @foreach (var att in letter.Attachments)
+                            {
+                                var downloadUrl = IncomingSvc.AttachmentDownloadUrl(att.AttachmentId);
+                                <div style="display:flex; align-items:center; justify-content:space-between; background:#f1f5f9; padding:8px 14px; border-radius:10px; font-size:13px">
+                                    <div>
+                                        <i class="bi bi-file-earmark-arrow-down" style="color:var(--p); font-size:16px; margin-left:6px"></i>
+                                        <b>@att.FileName</b>
+                                        <small class="text-muted ms-2">(@FmtSize(att.FileSize) · @att.UploadDate.ToFaDate())</small>
+                                    </div>
+                                    <a href="@downloadUrl" target="_blank" download class="btn btn-sm btn-outline-primary" style="border-radius:8px">
+                                        <i class="bi bi-download"></i> دانلود پیوست
+                                    </a>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+
+                @* ---------- تاریخچه ارجاعات ---------- *@
+                @if (letter.ErjaHistory.Count > 0)
+                {
+                    <div class="fcard" style="margin-bottom:16px">
+                        <label style="font-weight:600; font-size:13px; color:#475569; margin-bottom:8px"><i class="bi bi-diagram-3"></i> تاریخچه ارجاعات و هامش‌ها</label>
+                        <div style="display:flex; flex-direction:column; gap:8px">
+                            @foreach (var erja in letter.ErjaHistory)
+                            {
+                                <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:10px 14px; font-size:13px">
+                                    <div style="display:flex; justify-content:space-between; margin-bottom:4px">
+                                        <div>
+                                            <span style="font-weight:600; color:#1e293b">@erja.SenderName</span>
+                                            <i class="bi bi-arrow-left text-muted mx-1"></i>
+                                            <span style="font-weight:600; color:#1e293b">@erja.ReceiverName</span>
+                                        </div>
+                                        <small class="text-muted">@erja.DateErja.ToFaDateTime()</small>
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(erja.MatnErja))
+                                    {
+                                        <div style="color:#475569; margin-top:4px">دستور/متن: <b>@erja.MatnErja</b></div>
+                                    }
+                                    @if (erja.IsRead)
+                                    {
+                                        <div style="font-size:11px; color:#16a34a; margin-top:4px"><i class="bi bi-check2-all"></i> مشاهده شده در تاریخ @erja.DateRead?.ToFaDateTime()</div>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(erja.MatnPasokh))
+                                    {
+                                        <div style="background:#f0fdf4; border-right:3px solid #22c55e; padding:6px 10px; margin-top:6px; border-radius:6px; font-size:12px; color:#14532d">
+                                            <b>پاسخ:</b> @erja.MatnPasokh <small class="text-muted ms-2">(@erja.DatePasokh?.ToFaDateTime())</small>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+
+        <div class="sheet-f" style="justify-content:space-between">
+            <div style="display:flex; gap:8px">
+                <button class="btn-sec" @onclick="Close">بستن</button>
+                @if (letter != null)
+                {
+                    <button class="btn-sec" @onclick="() => OnGardesh.InvokeAsync(letter.LetterId)">
+                        <i class="bi bi-diagram-3"></i> گردش کامل
+                    </button>
+                }
+            </div>
+
+            @if (letter != null)
+            {
+                <div style="display:flex; gap:8px">
+                    @if (letter.CanEdit)
+                    {
+                        <button class="btn-sec" @onclick="() => OnEdit.InvokeAsync(letter)">
+                            <i class="bi bi-pencil"></i> ویرایش
+                        </button>
+                    }
+                    @if (letter.ActiveErjaId.HasValue)
+                    {
+                        <button class="btn-main incoming-green" @onclick="() => OnAnswerErja.InvokeAsync((letter.ActiveErjaId.Value, letter.NumberSabt))">
+                            <i class="bi bi-reply-fill"></i> ثبت پاسخ
+                        </button>
+                    }
+                    <button class="btn-main" @onclick="() => OnErja.InvokeAsync((letter.LetterId, letter.NumberSabt))">
+                        <i class="bi bi-send-fill"></i> ارجاع نامه
+                    </button>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+}
+
+@code {
+    [Parameter] public EventCallback<int> OnGardesh { get; set; }
+    [Parameter] public EventCallback<IncomingLetterDetailDto> OnEdit { get; set; }
+    [Parameter] public EventCallback<(int LetterId, int SabtNumber)> OnErja { get; set; }
+    [Parameter] public EventCallback<(int ErjaId, int SabtNumber)> OnAnswerErja { get; set; }
+
+    private bool visible = false;
+    private bool loading = false;
+    private IncomingLetterDetailDto? letter;
+
+    // پاک‌سازی متن نامه یک‌بار در هر باز شدن انجام می‌شود (نه در هر رندر).
+    private readonly SanitizedLetterBody safeBody = new();
+
+    // نوار پیشرفت بارگذاری جزئیات (درصد تخمینی تا رسیدن پاسخ سرور).
+    private readonly LoadProgress progress;
+
+    public IncomingLetterViewModal()
+    {
+        progress = new LoadProgress(() => InvokeAsync(StateHasChanged));
+    }
+
+    public async Task Open(int letterId)
+    {
+        visible = true;
+        loading = true;
+        letter = null;
+        safeBody.Reset();
+        progress.Start();
+
+        try
+        {
+            letter = await IncomingSvc.GetDetailAsync(letterId);
+        }
+        catch (Exception ex)
+        {
+            progress.Reset();
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            loading = false;
+            StateHasChanged();
+            if (letter != null) await progress.FinishAsync();
+        }
+    }
+
+    private void Close()
+    {
+        visible = false;
+        progress.Reset();
+    }
+
+    private string MahramanegiTitle(int m) => m switch
+    {
+        1 => "محرمانه",
+        2 => "خیلی محرمانه",
+        3 => "سرّی",
+        _ => "عادی"
+    };
+
+    private string ForiatTitle(int f) => f switch
+    {
+        1 => "فوری",
+        2 => "خیلی فوری",
+        3 => "آنی",
+        _ => "عادی"
+    };
+
+    private string FmtSize(long sz) =>
+        sz switch
+        {
+            >= 1024 * 1024 => $"{sz / (1024.0 * 1024.0):0.#} MB",
+            >= 1024 => $"{sz / 1024.0:0.#} KB",
+            _ => $"{sz} B"
+        };
+}

@@ -1,0 +1,297 @@
+@inject ILetterService LetterSvc
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+@* ============================================================
+   فرم واحد ارجاع / هامش — مطابق طرح مصوب:
+   • کاربر ابتدا «نوع اقدام» را انتخاب می‌کند (رادیو: ارجاع | هامش)
+     IsErja / IsHamesh فقط در code-behind تنظیم می‌شود و در UI دیده نمی‌شود
+   • گیرنده: انفرادی | گروهی
+   • عملگر فقط برای ارجاع نمایش داده می‌شود
+   • مهلت پاسخگویی فشرده: سوییچ کوچک + انتخاب تاریخ (بدون تقویم بزرگ)
+   ============================================================ *@
+
+@if (visible)
+{
+<div class="ltx" style="animation:none;transform:none">
+    <div class="ov"></div>
+    <div class="sheet" style="width:min(560px,96vw)" @onclick="() => combo?.Close()">
+        <div class="sheet-h">
+            <b><i class="bi bi-arrow-left-circle" style="color:var(--p2)"></i> @(isErja ? "ارجاع جدید" : "هامش جدید")</b>
+            <span class="dt num"># @letterNumber.FaDigits()</span>
+            <button class="x" @onclick="Close"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="sheet-b">
+
+            <div class="fcard">
+                <label>نوع اقدام</label>
+                <div class="rads">
+                    <div class="rad @(isErja ? "on" : "")" @onclick="() => SetType(true)"><span class="rdot"></span> ارجاع</div>
+                    <div class="rad @(!isErja ? "on" : "")" @onclick="() => SetType(false)"><span class="rdot"></span> هامش</div>
+                </div>
+            </div>
+
+            <LetterPickCombo @ref="combo" Label="گیرنده" Icon="bi-person-plus" Required="true"
+                             Users="users" Groups="groups"
+                             SelectedUsers="selUsers" SelectedGroups="selGroups"
+                             HasError="errRcv" Changed="OnRcvChanged" />
+
+            @if (isErja)
+            {
+                <div class="fcard @(errAmal ? "err" : "")">
+                    <div class="fhd">
+                        <label>عملگر نامه <span class="req">*</span></label>
+                        <button type="button" class="amal-add" title="افزودن عملگر جدید"
+                                @onclick="ToggleNewAmal" @onclick:stopPropagation="true">
+                            <i class="bi bi-plus-lg"></i>
+                        </button>
+                    </div>
+                    <div class="combo @(amalOpen ? "open" : "")">
+                        <button type="button" class="combo-btn" @onclick="() => amalOpen = !amalOpen" @onclick:stopPropagation="true">
+                            <i class="bi bi-lightning-charge"></i>
+                            <span>@(amalgars.FirstOrDefault(a => a.AmalgarId == amalgarId)?.Title ?? "انتخاب عملگر…")</span>
+                            <i class="bi bi-chevron-down car"></i>
+                        </button>
+                        @if (amalOpen)
+                        {
+                            <div class="cpanel" @onclick:stopPropagation="true">
+                                @foreach (var a in amalgars)
+                                {
+                                    var aa = a;
+                                    <div class="copt @(amalgarId == aa.AmalgarId ? "on" : "")" @onclick="() => PickAmal(aa.AmalgarId)">
+                                        <span class="chk"><i class="bi bi-check"></i></span>
+                                        <i class="bi bi-lightning-charge" style="color:var(--p2)"></i>
+                                        <span>@aa.Title</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                    @if (errAmal) { <div class="ferr"><i class="bi bi-exclamation-circle"></i> انتخاب عملگر الزامی است</div> }
+                    @if (newAmalOpen)
+                    {
+                        <div class="amal-new" @onclick:stopPropagation="true">
+                            <input class="tin" placeholder="عنوان عملگر جدید…" maxlength="100"
+                                   @bind="newAmalTitle" @bind:event="oninput" @onkeydown="OnNewAmalKeyAsync" />
+                            <button type="button" class="amal-ok" disabled="@newAmalBusy" @onclick="AddAmalAsync">
+                                @if (newAmalBusy) { <span class="spinner-border spinner-border-sm"></span> }
+                                <i class="bi bi-plus-lg"></i> افزودن
+                            </button>
+                            <button type="button" class="amal-x" title="انصراف" @onclick="ToggleNewAmal"><i class="bi bi-x-lg"></i></button>
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="fcard">
+                <label>متن @(isErja ? "ارجاع" : "هامش") (پاراف)</label>
+                <textarea class="tin" placeholder="متن را بنویسید…" @bind="matn"></textarea>
+            </div>
+
+            <div class="fcard">
+                <div class="dlrow">
+                    <label @onclick="ToggleDeadline">
+                        <span class="msw @(deadlineOn ? "on" : "")"></span>
+                        مهلت پاسخگویی
+                    </label>
+                    @if (deadlineOn)
+                    {
+                        <div class="dpick-wrap">
+                            <DatePicker @bind-Value="deadline" AllowClear="true" CssClass="form-control-sm" Placeholder="انتخاب تاریخ…" />
+                        </div>
+                    }
+                </div>
+            </div>
+
+        </div>
+        <div class="sheet-f">
+            <button class="lbtn grn" disabled="@busy" @onclick="Submit">
+                @if (busy) { <span class="spinner-border spinner-border-sm"></span> }
+                <i class="bi bi-check-lg"></i> @(isErja ? "ثبت ارجاع" : "ثبت هامش")
+            </button>
+            <span class="spacer"></span>
+            <button class="lbtn red" @onclick="Close"><i class="bi bi-x-lg"></i> انصراف</button>
+        </div>
+    </div>
+</div>
+}
+
+@code {
+    [Parameter] public EventCallback OnSubmitted { get; set; }
+
+    private bool visible;
+    private bool busy;
+    private bool allowDuplicateRecipients;
+
+    private int letterId;
+    private int? parentErjaId;
+    private string letterNumber = "";
+
+    // code-behind: نوع اقدام — IsErja / IsHamesh هرگز در UI نمایش داده نمی‌شود
+    private bool isErja = true;
+
+    private List<LetterReciverDto> users = new();
+    private List<LetterGroupDto> groups = new();
+    private List<AmalgarDto> amalgars = new();
+
+    private LetterPickCombo? combo;
+    private HashSet<int> selUsers = new(), selGroups = new();
+
+    private int? amalgarId;
+    private bool amalOpen;
+
+    // افزودن عملگر تازه از داخل فرم (دکمهٔ «+»)
+    private bool newAmalOpen;
+    private bool newAmalBusy;
+    private string newAmalTitle = "";
+    private string matn = "";
+    private bool deadlineOn;
+    private DateTime? deadline;
+
+    private bool errRcv, errAmal;
+
+    public void Open(int letterId, string letterNumber, int? parentErjaId)
+    {
+        this.letterId = letterId;
+        this.letterNumber = letterNumber;
+        this.parentErjaId = parentErjaId;
+        isErja = true;
+        selUsers.Clear(); selGroups.Clear();
+        amalgarId = null; amalOpen = false;
+        newAmalOpen = false; newAmalTitle = "";
+        matn = ""; deadlineOn = false; deadline = null;
+        errRcv = errAmal = false;
+        visible = true;
+        _ = LoadAsync();
+        StateHasChanged();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            if (users.Count == 0) users = await LetterSvc.GetReciversAsync();
+            groups = await LetterSvc.GetGroupsAsync();
+            if (amalgars.Count == 0) amalgars = await LetterSvc.GetAmalgarsAsync();
+            StateHasChanged();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void Close() => visible = false;
+
+    private void SetType(bool erja)
+    {
+        isErja = erja;
+        errAmal = false;
+        amalOpen = false;
+    }
+
+    private void OnRcvChanged()
+    {
+        if (selUsers.Count + selGroups.Count > 0) errRcv = false;
+    }
+
+    private void ToggleNewAmal()
+    {
+        newAmalOpen = !newAmalOpen;
+        newAmalTitle = "";
+        if (newAmalOpen) amalOpen = false;   // پنل انتخاب بسته شود تا فرم دیده شود
+    }
+
+    private async Task OnNewAmalKeyAsync(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" or "NumpadEnter") await AddAmalAsync();
+    }
+
+    /// <summary>ثبت عملگر تازه در سرور و انتخاب فوری آن در همین فرم.</summary>
+    private async Task AddAmalAsync()
+    {
+        var title = (newAmalTitle ?? "").Trim();
+        if (title.Length == 0) { Toast.Error("عنوان عملگر را وارد کنید."); return; }
+        if (title.Length > 100) { Toast.Error("عنوان عملگر حداکثر ۱۰۰ کاراکتر است."); return; }
+        if (newAmalBusy) return;
+
+        newAmalBusy = true;
+        try
+        {
+            var created = await LetterSvc.CreateAmalgarAsync(title);
+            if (created is null || created.AmalgarId <= 0) { Toast.Error("افزودن عملگر انجام نشد."); return; }
+
+            var idx = amalgars.FindIndex(a => a.AmalgarId == created.AmalgarId);
+            if (idx >= 0) amalgars[idx] = created; else amalgars.Add(created);
+
+            amalgarId = created.AmalgarId;
+            errAmal = false;
+            newAmalOpen = false;
+            newAmalTitle = "";
+            amalOpen = false;
+            Toast.Success($"عملگر «{created.Title}» اضافه شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { newAmalBusy = false; }
+    }
+
+    private void PickAmal(int id)
+    {
+        amalgarId = id;
+        errAmal = false;
+        amalOpen = false;
+    }
+
+    private void ToggleDeadline()
+    {
+        deadlineOn = !deadlineOn;
+        if (!deadlineOn) deadline = null;
+    }
+
+    private async Task Submit()
+    {
+        // IsErja / IsHamesh — فقط در code-behind از رادیو ساخته می‌شود
+        bool IsErja = isErja, IsHamesh = !isErja;
+
+        errRcv = selUsers.Count + selGroups.Count == 0;
+        errAmal = IsErja && amalgarId is null;
+        if (deadlineOn && deadline is null) { Toast.Error("تاریخ مهلت را انتخاب کنید."); return; }
+        if (errRcv || errAmal) { Toast.Error("موارد الزامی را تکمیل کنید."); return; }
+
+        busy = true;
+        try
+        {
+            var dto = new AddErjaDto
+            {
+                LetterId = letterId,
+                ParentErjaId = parentErjaId,
+                TextErja = matn,
+                AmalgarId = IsErja ? amalgarId!.Value : 1, // هامش = «جهت اطلاع»
+                DeadlineAnswer = IsErja && deadlineOn ? deadline : null,
+                AllowDuplicateRecipients = allowDuplicateRecipients
+            };
+            if (IsErja)
+            {
+                dto.ReciversGirandegan = selUsers.ToList();
+                dto.GroupsGirandegan = selGroups.ToList();
+            }
+            else // IsHamesh
+            {
+                dto.ReciversHamesh = selUsers.ToList();
+                dto.GroupsHamesh = selGroups.ToList();
+            }
+
+            await LetterSvc.AddErjaAsync(dto);
+            Toast.Success(IsErja ? "ارجاع ثبت شد." : "هامش ثبت شد.");
+            visible = false;
+            await OnSubmitted.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            if (!allowDuplicateRecipients && ex.Message.Contains("قبلاً در گردش"))
+            {
+                allowDuplicateRecipients = await JS.InvokeAsync<bool>("confirm", "برخی گیرندگان قبلاً در گردش این نامه هستند. آیا ارسال تکراری برای آن‌ها انجام شود؟");
+                if (allowDuplicateRecipients) { await Submit(); return; }
+            }
+            Toast.Error(ex.Message);
+        }
+        finally { busy = false; }
+    }
+}

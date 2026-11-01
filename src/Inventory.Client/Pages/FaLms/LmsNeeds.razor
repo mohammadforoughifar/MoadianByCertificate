@@ -1,0 +1,261 @@
+@namespace Inventory.Client.Pages
+@page "/fa-lms/needs"
+@inject IFaLmsService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>نیازسنجی آموزشی</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-clipboard-data"></i> نیازسنجی آموزشی</h1>
+            <div class="lead">ثبت نیاز پرسنل + پیشنهاد خودکار از نمرات ضعیف ارزیابی عملکرد</div>
+        </div>
+        @if (faManage)
+        {
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-primary" @onclick="() => showSuggest = true"><i class="bi bi-magic"></i> پیشنهاد از ارزیابی</button>
+                <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> نیاز جدید</button>
+            </div>
+        }
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد آموزش است.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2">
+            <div class="col-md-2"><label class="form-label small text-muted">سال</label><input type="number" class="form-control" @bind="fYear" /></div>
+            <div class="col-md-3"><label class="form-label small text-muted">وضعیت</label><select class="form-select" @bind="fStatus"><option value="">همه</option><option value="0">جدید</option><option value="1">تأییدشده</option><option value="2">تبدیل به دوره</option><option value="3">ردشده</option></select></div>
+            <div class="col-md-3"><label class="form-label small text-muted">منبع</label><select class="form-select" @bind="fSource"><option value="">همه</option><option value="0">ارزیابی عملکرد</option><option value="1">هدف سازمانی</option><option value="2">مدیر</option><option value="3">خوداظهاری</option></select></div>
+            <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary" @onclick="Reload"><i class="bi bi-search"></i> جستجو</button></div>
+        </div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (needs.Count == 0)
+        {
+            <div class="text-center text-muted py-5">نیازی ثبت نشده است.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>پرسنل</th><th>مهارت</th><th>منبع</th><th>اولویت</th><th>وضعیت</th><th>دوره مرتبط</th><th style="width:190px"></th></tr></thead>
+                <tbody>
+                    @foreach (var n in needs)
+                    {
+                        <tr>
+                            <td><b>@n.EmployeeName</b><div class="small text-muted num">سال @FaLmsUi.Num(n.Year)</div></td>
+                            <td>@n.SkillTitle @if (n.PerfScore != null){<div class="small text-muted">نمره KPI: <span class="num">@FaLmsUi.Num(n.PerfScore.Value)</span> (@n.PerfKpiTitle)</div>}</td>
+                            <td>@FaLmsUi.NeedSource(n.Source)</td>
+                            <td><span class="badge @FaLmsUi.PriorityBadge(n.Priority)">@FaLmsUi.Priority(n.Priority)</span></td>
+                            <td><span class="badge @FaLmsUi.NeedBadge(n.Status)">@FaLmsUi.NeedStatus(n.Status)</span></td>
+                            <td>@(n.LinkedCourseTitle ?? "—")</td>
+                            <td class="text-end">
+                                <div class="btn-group btn-group-sm">
+                                    @if (n.Status == 0)
+                                    {
+                                        <button class="btn btn-outline-success" title="تأیید" @onclick="() => Decide(n, 1)"><i class="bi bi-check-lg"></i></button>
+                                        <button class="btn btn-outline-primary" title="تبدیل به دوره" @onclick="() => OpenConvert(n)"><i class="bi bi-arrow-repeat"></i></button>
+                                        <button class="btn btn-outline-warning" title="رد" @onclick="() => Decide(n, 3)"><i class="bi bi-x-lg"></i></button>
+                                    }
+                                    @if (n.Status is 0 or 3)
+                                    {
+                                        <button class="btn btn-outline-secondary" title="ویرایش" @onclick="() => OpenEdit(n)"><i class="bi bi-pencil"></i></button>
+                                        <button class="btn btn-outline-danger" title="حذف" @onclick="() => Delete(n)"><i class="bi bi-trash"></i></button>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="نیاز آموزشی" OnClose="() => showEdit = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-md-8"><label class="form-label">پرسنل</label><select class="form-select" @bind="form.EmployeeId">@foreach (var e in emps){<option value="@e.Id">@e.FirstName @e.LastName</option>}</select></div>
+        <div class="col-md-4"><label class="form-label">سال</label><input type="number" class="form-control" @bind="form.Year" /></div>
+        <div class="col-md-6"><label class="form-label">منبع</label><select class="form-select" @bind="form.Source"><option value="1">هدف سازمانی</option><option value="2">مدیر</option><option value="3">خوداظهاری</option><option value="0">ارزیابی عملکرد</option></select></div>
+        <div class="col-md-6"><label class="form-label">اولویت</label><select class="form-select" @bind="form.Priority"><option value="0">کم</option><option value="1">متوسط</option><option value="2">زیاد</option></select></div>
+        <div class="col-12"><label class="form-label">عنوان مهارت *</label><input class="form-control" @bind="form.SkillTitle" /></div>
+        <div class="col-12"><label class="form-label">یادداشت</label><textarea class="form-control" rows="2" @bind="form.Note"></textarea></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" @onclick="Save">ذخیره</button>
+    </div>
+    </Footer>
+</Modal>
+
+<Modal Visible="showConvert" Title="تبدیل نیاز به دوره" OnClose="() => showConvert = false">
+    <ChildContent>
+    <label class="form-label">دوره مرتبط</label>
+    <select class="form-select" @bind="convertCourseId">@foreach (var c in courses){<option value="@c.Id">@c.Title (@c.Code)</option>}</select>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showConvert = false">انصراف</button>
+        <button class="btn btn-primary" @onclick="SaveConvert">تبدیل</button>
+    </div>
+    </Footer>
+</Modal>
+
+<Modal Visible="showSuggest" Title="پیشنهاد نیاز از ارزیابی عملکرد" Size="modal-lg" OnClose="() => showSuggest = false">
+    <ChildContent>
+    <div class="row g-2 mb-2">
+        <div class="col-md-5"><label class="form-label">دوره ارزیابی</label><select class="form-select" @bind="sgPeriodId">@foreach (var p in periods){<option value="@p.Id">@p.Title (@FaLmsUi.Num(p.Year))</option>}</select></div>
+        <div class="col-md-3"><label class="form-label">آستانه نمره</label><input type="number" class="form-control" @bind="sgThreshold" /></div>
+        <div class="col-md-2"><label class="form-label">سال نیاز</label><input type="number" class="form-control" @bind="sgYear" /></div>
+        <div class="col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary w-100" @onclick="PreviewWeak">پیش‌نمایش</button></div>
+    </div>
+    @if (weak.Count > 0)
+    {
+        <div class="table-responsive"><table class="table table-sm table-hover align-middle">
+            <thead class="table-light"><tr><th>پرسنل</th><th>شاخص</th><th>نمره</th></tr></thead>
+            <tbody>
+                @foreach (var w in weak)
+                {
+                    <tr><td>@w.EmployeeName</td><td>@w.KpiTitle</td><td class="num">@FaLmsUi.Num(w.Score) از @FaLmsUi.Num(w.MaxScore)</td></tr>
+                }
+            </tbody>
+        </table></div>
+        <div class="alert alert-info small">با تأیید، برای موارد بالا (به‌جز تکراری‌های امسال) نیاز آموزشی با منبع «ارزیابی عملکرد» ساخته می‌شود.</div>
+    }
+    else if (weakLoaded)
+    {
+        <div class="alert alert-success">نمره ضعیفی زیر آستانه یافت نشد.</div>
+    }
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-2">
+        <button class="btn btn-secondary" @onclick="() => showSuggest = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@(weak.Count == 0)" @onclick="ConfirmSuggest">تأیید و ساخت نیازها</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faManage => Auth.Has("FaLms.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaLmsNeedDto> needs = new();
+    private List<HrEmployeeDto> emps = new();
+    private List<FaLmsCourseDto> courses = new();
+    private List<FaLmsPerfPeriodDto> periods = new();
+    private int? fYear = FaLmsUi.CurrentYear;
+    private string? fStatus, fSource;
+
+    private bool showEdit, showConvert, showSuggest;
+    private int? editId;
+    private FaLmsNeedSaveDto form = new();
+    private FaLmsNeedDto? convertNeed;
+    private int convertCourseId;
+    private int sgPeriodId;
+    private double sgThreshold = 60;
+    private int sgYear = FaLmsUi.CurrentYear;
+    private List<FaLmsWeakScoreDto> weak = new();
+    private bool weakLoaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        try
+        {
+            emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items;
+            courses = await Svc.ListCoursesAsync(null, null, null, null);
+            periods = await Svc.PerfPeriodsAsync();
+            sgPeriodId = periods.FirstOrDefault()?.Id ?? 0;
+            convertCourseId = courses.FirstOrDefault()?.Id ?? 0;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            int? st = int.TryParse(fStatus, out var s) ? s : null;
+            int? so = int.TryParse(fSource, out var o) ? o : null;
+            needs = await Svc.ListNeedsAsync(fYear, st, so, null);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenEdit(FaLmsNeedDto? n)
+    {
+        editId = n?.Id;
+        form = n == null
+            ? new FaLmsNeedSaveDto { EmployeeId = emps.FirstOrDefault()?.Id ?? 0, Year = FaLmsUi.CurrentYear, Source = 3 }
+            : new FaLmsNeedSaveDto { EmployeeId = n.EmployeeId, Year = n.Year, Source = n.Source, PerfPeriodId = n.PerfPeriodId, PerfKpiId = n.PerfKpiId, SkillTitle = n.SkillTitle, Priority = n.Priority, LinkedCourseId = n.LinkedCourseId, Note = n.Note };
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        try { await Svc.SaveNeedAsync(editId, form); Toast.Success("ذخیره شد."); showEdit = false; await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Decide(FaLmsNeedDto n, int status)
+    {
+        try { await Svc.DecideNeedAsync(n.Id, status, null); Toast.Success("ثبت شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OpenConvert(FaLmsNeedDto n) { convertNeed = n; showConvert = true; }
+
+    private async Task SaveConvert()
+    {
+        if (convertNeed == null) return;
+        try { await Svc.DecideNeedAsync(convertNeed.Id, 2, convertCourseId); Toast.Success("به دوره تبدیل شد."); showConvert = false; await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Delete(FaLmsNeedDto n)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "نیاز حذف شود؟")) return;
+        try { await Svc.DeleteNeedAsync(n.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task PreviewWeak()
+    {
+        try { weak = await Svc.WeakScoresAsync(sgPeriodId, sgThreshold); weakLoaded = true; }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task ConfirmSuggest()
+    {
+        try
+        {
+            var n = await Svc.SuggestFromPerfAsync(sgPeriodId, sgThreshold, sgYear);
+            Toast.Success(n + " نیاز آموزشی ساخته شد.");
+            showSuggest = false; weak = new(); weakLoaded = false;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

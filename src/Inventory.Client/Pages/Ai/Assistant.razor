@@ -1,0 +1,499 @@
+@page "/ai-assistant"
+@inject AiAssistantService Ai
+@inject IJSRuntime JS
+@inject IToastService Toast
+@implements IDisposable
+
+@* =====================================================================
+   صفحه کامل «هوش مصنوعی فروغ آریا» — گفتگو + تاریخچه + ورودی صوتی
+   ===================================================================== *@
+
+<div class="ai-page">
+    <div class="ai-side">
+        <div class="ai-side-head">
+            <button class="btn btn-primary btn-sm w-100" @onclick="NewChat">
+                <i class="bi bi-plus-lg"></i> گفتگوی جدید
+            </button>
+        </div>
+        <div class="ai-conv-list">
+            @if (loadingConvs)
+            {
+                <div class="text-muted small p-2">در حال بارگذاری...</div>
+            }
+            @foreach (var c in conversations)
+            {
+                <div class="ai-conv @(c.Id == conversationId ? "active" : "")" @onclick="() => OpenConversation(c.Id)">
+                    <i class="bi bi-chat-dots"></i>
+                    <span class="ai-conv-title">@c.Title</span>
+                    <button class="ai-conv-del" title="حذف" @onclick:stopPropagation="true" @onclick="() => DeleteConversation(c.Id)">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            }
+            @if (!loadingConvs && conversations.Count == 0)
+            {
+                <div class="text-muted small p-2">هنوز گفتگویی نداری.</div>
+            }
+        </div>
+        <div class="ai-side-foot">
+            <span class="ai-status @(healthOk ? "on" : "off")"></span>
+            <small class="text-muted">@healthTip</small>
+        </div>
+    </div>
+
+    <div class="ai-main">
+        <div class="ai-main-head">
+            <i class="bi bi-robot"></i>
+            <b>فروغ آریا</b>
+            <span class="text-muted small">— دستیار هوشمند سامانه</span>
+        </div>
+
+        <div class="ai-main-body" id="aiPageBody">
+            @if (messages.Count == 0)
+            {
+                <div class="ai-hello">
+                    <div class="ai-hello-emoji">🤖</div>
+                    <h5>سلام! من فروغ آریام</h5>
+                    <p class="text-muted">مانده مرخصی، فیش حقوقی، نامه‌ها، راهنمای بخش‌ها... هر چی لازم داری بپرس.</p>
+                    <div class="ai-chips">
+                        @foreach (var s in Suggestions)
+                        {
+                            <button class="ai-chip" @onclick="() => Ask(s)">@s</button>
+                        }
+                    </div>
+                </div>
+            }
+            @foreach (var m in messages)
+            {
+                <div class="ai-row @(m.Role == "user" ? "me" : "ai")">
+                    <div class="ai-bubble">
+                        @if (m.Role == "assistant")
+                        {
+                            <AiMessageView Text="@m.Content" />
+                            <div>
+                                <button class="ai-speak" title="خواندن پاسخ با صدا" @onclick="() => ToggleSpeak(m.Content)">
+                                    <i class="bi @(speakingText == m.Content ? "bi-stop-circle-fill" : "bi-volume-up-fill")"></i>
+                                </button>
+                                @if (m.UsedFallback)
+                                {
+                                    <span class="ai-offline-badge">⚡ پاسخ آفلاین</span>
+                                }
+                            </div>
+                            @if (m.Id > 0)
+                            {
+                                <div class="ai-rate">
+                                    <button class="ai-rate-btn @(m.MyRating == 1 ? "on-up" : "")" title="پاسخ خوب بود" disabled="@rateBusy" @onclick="() => Rate(m, 1)">👍</button>
+                                    <button class="ai-rate-btn @(m.MyRating == -1 ? "on-down" : "")" title="پاسخ ضعیف بود" disabled="@rateBusy" @onclick="() => AskDislike(m)">👎</button>
+                                </div>
+                            }
+                            @if (dislikeFor == m.Id && m.Id > 0)
+                            {
+                                <div class="ai-dislike">
+                                    <div class="ai-dislike-title">مشکل چی بود؟</div>
+                                    <div class="ai-dislike-reasons">
+                                        @foreach (var r in DislikeReasons)
+                                        {
+                                            var rr = r;
+                                            <button class="ai-chip @(dislikeReason == rr ? "sel" : "")" @onclick="() => dislikeReason = rr">@rr</button>
+                                        }
+                                    </div>
+                                    <input class="ai-dislike-comment" placeholder="توضیح بیشتر (اختیاری)..." value="@dislikeComment" @oninput="OnDislikeInput" />
+                                    <div class="ai-dislike-actions">
+                                        <button class="btn btn-sm btn-primary" disabled="@rateBusy" @onclick="() => Rate(m, -1)">ثبت</button>
+                                        <button class="btn btn-sm btn-link" disabled="@rateBusy" @onclick="CancelDislike">انصراف</button>
+                                    </div>
+                                </div>
+                            }
+                            @if (m.Attachments.Count > 0)
+                            {
+                                <div style="margin-top:.35rem;display:flex;gap:.35rem;flex-wrap:wrap">
+                                    @foreach (var a in m.Attachments)
+                                    {
+                                        var aa = a;
+                                        <button class="ai-chip" title="@aa.Title" disabled="@dlBusy" @onclick="() => DownloadReport(aa)">
+                                            @if (dlBusy) { <span class="spinner-border spinner-border-sm"></span> }
+                                            <i class="bi bi-file-earmark-excel"></i> دانلود اکسل (@aa.TotalRows سطر)
+                                        </button>
+                                    }
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            @m.Content
+                        }
+                    </div>
+                </div>
+            }
+            @if (busy)
+            {
+                <div class="ai-row ai"><div class="ai-bubble typing"><span></span><span></span><span></span></div></div>
+            }
+            @if (!string.IsNullOrEmpty(error))
+            {
+                <div class="ai-error">@error</div>
+            }
+        </div>
+
+        <div class="ai-main-input">
+            @if (voiceSupported)
+            {
+                <button class="ai-voice @(listening ? "live" : "")" title="گفتار به نوشتار فارسی" @onclick="ToggleVoice" disabled="@busy">
+                    <i class="bi @(listening ? "bi-stop-circle-fill" : "bi-mic-fill")"></i>
+                </button>
+            }
+            <textarea class="ai-text" rows="2" placeholder="پیامت رو بنویس... (Enter برای ارسال، Shift+Enter برای خط جدید)"
+                      value="@draft" @oninput="OnInput" @onkeydown="OnKeyDown" disabled="@busy"></textarea>
+            <button class="btn btn-primary ai-send-btn" @onclick="Send" disabled="@(busy || string.IsNullOrWhiteSpace(draft))">
+                <i class="bi bi-send-fill"></i> ارسال
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .ai-page { display: flex; gap: .8rem; height: calc(100vh - 120px); min-height: 480px; }
+    .ai-side { width: 260px; flex-shrink: 0; background: #fff; border: 1px solid #e2e8f0; border-radius: .9rem; display: flex; flex-direction: column; overflow: hidden; }
+    .ai-side-head { padding: .6rem; border-bottom: 1px solid #eef2f7; }
+    .ai-conv-list { flex: 1; overflow-y: auto; padding: .4rem; display: flex; flex-direction: column; gap: .25rem; }
+    .ai-conv { display: flex; align-items: center; gap: .45rem; padding: .5rem .6rem; border-radius: .6rem; cursor: pointer; font-size: .84rem; color: #334155; }
+    .ai-conv:hover { background: #f1f5f9; }
+    .ai-conv.active { background: #eef2ff; color: #4338ca; font-weight: 600; }
+    .ai-conv-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ai-conv-del { border: none; background: transparent; color: #94a3b8; cursor: pointer; padding: .1rem .3rem; border-radius: .35rem; }
+    .ai-conv-del:hover { color: #dc2626; background: #fef2f2; }
+    .ai-side-foot { padding: .5rem .7rem; border-top: 1px solid #eef2f7; display: flex; align-items: center; gap: .4rem; }
+    .ai-status { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+    .ai-status.on { background: #22c55e; } .ai-status.off { background: #f59e0b; }
+    .ai-main { flex: 1; background: #fff; border: 1px solid #e2e8f0; border-radius: .9rem; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+    .ai-main-head { padding: .65rem 1rem; border-bottom: 1px solid #eef2f7; display: flex; align-items: center; gap: .45rem; background: linear-gradient(135deg, #eef2ff, #faf5ff); }
+    .ai-main-head .bi-robot { color: #6d28d9; font-size: 1.2rem; }
+    .ai-main-body { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: .6rem; background: #f8fafc; }
+    .ai-hello { text-align: center; padding: 2.5rem 1rem; line-height: 2.1; }
+    .ai-hello-emoji { font-size: 3rem; }
+    .ai-chips { display: flex; flex-wrap: wrap; gap: .45rem; justify-content: center; margin-top: .8rem; }
+    .ai-chip { border: 1px solid #c7d2fe; background: #fff; color: #4338ca; border-radius: 999px; padding: .35rem .9rem; font-size: .82rem; cursor: pointer; }
+    .ai-chip:hover { background: #eef2ff; }
+    .ai-row { display: flex; }
+    .ai-row.me { justify-content: flex-start; }
+    .ai-row.ai { justify-content: flex-end; }
+    .ai-bubble { max-width: 78%; padding: .6rem .85rem; border-radius: .9rem; line-height: 2; font-size: .9rem; word-break: break-word; }
+    .ai-row.me .ai-bubble { background: #4f46e5; color: #fff; border-bottom-right-radius: .2rem; }
+    .ai-row.ai .ai-bubble { background: #fff; color: #1e293b; border: 1px solid #e2e8f0; border-bottom-left-radius: .2rem; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+    .ai-bubble.typing span { display: inline-block; width: 8px; height: 8px; margin: 0 2px; border-radius: 50%; background: #94a3b8; animation: aiBlink 1.2s infinite; }
+    .ai-bubble.typing span:nth-child(2) { animation-delay: .2s; } .ai-bubble.typing span:nth-child(3) { animation-delay: .4s; }
+    @@keyframes aiBlink { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
+    .ai-error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; border-radius: .6rem; padding: .5rem .7rem; font-size: .85rem; }
+    .ai-offline-badge { font-size: .7rem; color: #92400e; background: #fef3c7; border-radius: 999px; padding: 0 .55rem; display: inline-block; margin-top: .35rem; }
+    .ai-speak { border: none; background: transparent; color: #64748b; cursor: pointer; padding: .1rem .3rem; border-radius: .4rem; font-size: 1rem; }
+    .ai-speak:hover { color: #4f46e5; background: #eef2ff; }
+    .ai-main-input { display: flex; gap: .5rem; padding: .7rem; border-top: 1px solid #e2e8f0; background: #fff; align-items: flex-end; }
+    .ai-text { flex: 1; border: 1px solid #cbd5e1; border-radius: .7rem; padding: .5rem .7rem; resize: none; }
+    .ai-text:focus { outline: none; border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+    .ai-voice { border: 1px solid #cbd5e1; background: #f8fafc; color: #475569; width: 42px; height: 42px; border-radius: .7rem; cursor: pointer; font-size: 1.1rem; flex-shrink: 0; }
+    .ai-voice.live { background: #ef4444; border-color: #ef4444; color: #fff; animation: aiBlink 1s infinite; }
+    .ai-msg .ai-list { margin: .35rem 0; padding-right: 1.2rem; }
+    .ai-msg .ai-gap { height: .45rem; }
+    .ai-link { color: #4f46e5; font-weight: 600; text-decoration: none; border-bottom: 1px dashed #4f46e5; }
+    .ai-rate { display: flex; gap: .3rem; margin-top: .3rem; }
+    .ai-rate-btn { border: 1px solid #e2e8f0; background: #f8fafc; border-radius: .5rem; padding: .1rem .5rem; cursor: pointer; font-size: .9rem; filter: grayscale(1); opacity: .6; }
+    .ai-rate-btn:hover { opacity: 1; filter: none; background: #eef2ff; }
+    .ai-rate-btn.on-up { filter: none; opacity: 1; border-color: #22c55e; background: #f0fdf4; }
+    .ai-rate-btn.on-down { filter: none; opacity: 1; border-color: #ef4444; background: #fef2f2; }
+    .ai-dislike { margin-top: .4rem; border: 1px dashed #cbd5e1; border-radius: .6rem; padding: .5rem .6rem; background: #f8fafc; }
+    .ai-dislike-title { font-size: .8rem; color: #64748b; margin-bottom: .35rem; }
+    .ai-dislike-reasons { display: flex; gap: .3rem; flex-wrap: wrap; margin-bottom: .4rem; }
+    .ai-dislike-reasons .ai-chip.sel { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+    .ai-dislike-comment { width: 100%; border: 1px solid #cbd5e1; border-radius: .5rem; padding: .3rem .5rem; font-size: .82rem; }
+    .ai-dislike-actions { display: flex; gap: .4rem; margin-top: .4rem; align-items: center; }
+    @@media (max-width: 767.98px) { .ai-page { flex-direction: column; height: auto; } .ai-side { width: 100%; max-height: 220px; } .ai-main-body { min-height: 380px; } }
+</style>
+
+@code {
+    private bool busy;
+    private bool loadingConvs = true;
+    private bool healthOk = true;
+    private string healthTip = "...";
+    private bool voiceSupported;
+    private bool listening;
+    private bool suppressNewline;
+    private string draft = "";
+    private string? error;
+    private string? speakingText;
+    private int? conversationId;
+    private List<AiConversation> conversations = new();
+    private readonly List<AiChatMessage> messages = new();
+    private DotNetObjectReference<Assistant>? dotNetRef;
+
+    private static readonly string[] Suggestions =
+    {
+        "مانده مرخصی‌ام چقدره؟",
+        "فیش حقوقیم چقدره؟",
+        "وضعیت حضور امروزم؟",
+        "نامه خوانده‌نشده دارم؟",
+        "چطور فاکتور فروش ثبت کنم؟",
+        "چطور انبارگردانی کنم؟",
+        "گزارش فروش این ماه به تفکیک مشتری",
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        dotNetRef = DotNetObjectReference.Create(this);
+        _ = LoadHealthAsync();
+        try
+        {
+            conversations = await Ai.GetConversationsAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loadingConvs = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            voiceSupported = await JS.InvokeAsync<bool>("aiVoice.isSupported");
+            StateHasChanged();
+        }
+        catch { }
+    }
+
+    private async Task LoadHealthAsync()
+    {
+        try
+        {
+            var h = await Ai.GetHealthAsync();
+            healthOk = h.Enabled && h.ModelReachable;
+            healthTip = !h.Enabled ? "خاموش" : h.ModelReachable ? $"متصل: {h.ChatModel}" : "حالت آفلاین";
+        }
+        catch { healthOk = false; healthTip = "بدون دسترسی"; }
+        StateHasChanged();
+    }
+
+    private async Task NewChat()
+    {
+        conversationId = null;
+        messages.Clear();
+        error = null;
+        await StopSpeakAsync();
+    }
+
+    private async Task OpenConversation(int id)
+    {
+        if (busy) return;
+        error = null;
+        await StopSpeakAsync();
+        try
+        {
+            var conv = await Ai.GetConversationAsync(id);
+            conversationId = conv.Id;
+            messages.Clear();
+            messages.AddRange(conv.Messages);
+        }
+        catch (Exception ex) { error = ex.Message; }
+    }
+
+    private async Task DeleteConversation(int id)
+    {
+        try
+        {
+            await Ai.DeleteConversationAsync(id);
+            conversations.RemoveAll(c => c.Id == id);
+            if (conversationId == id) NewChat();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Ask(string text)
+    {
+        draft = text;
+        await Send();
+    }
+
+    private void OnInput(ChangeEventArgs e)
+    {
+        if (suppressNewline) { suppressNewline = false; return; }
+        draft = e.Value?.ToString() ?? "";
+    }
+
+    private void OnDislikeInput(ChangeEventArgs e) => dislikeComment = e.Value?.ToString() ?? "";
+
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            suppressNewline = true;
+            _ = Send();
+        }
+    }
+
+    private async Task Send()
+    {
+        var text = (draft ?? "").Trim();
+        if (text.Length == 0 || busy) return;
+        draft = "";
+        error = null;
+        busy = true;
+        await StopSpeakAsync();
+        var wasFirst = messages.Count == 0 && conversationId == null;
+        messages.Add(new AiChatMessage { Role = "user", Content = text });
+        StateHasChanged();
+        await ScrollAsync();
+        try
+        {
+            var result = await Ai.ChatAsync(conversationId, text);
+            conversationId = result.ConversationId;
+            messages.Add(new AiChatMessage { Id = result.MessageId, Role = "assistant", Content = result.Reply, UsedFallback = result.UsedFallback, Attachments = result.Attachments });
+            if (wasFirst)
+            {
+                try { conversations = await Ai.GetConversationsAsync(); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+            StateHasChanged();
+            await ScrollAsync();
+        }
+    }
+
+    private bool dlBusy;
+
+    private bool rateBusy;
+    private int? dislikeFor;
+    private string? dislikeReason;
+    private string dislikeComment = "";
+    private static readonly string[] DislikeReasons = { "اشتباه بود", "ناقص بود", "نامرتبط بود", "دیر جواب داد" };
+
+    private async Task DownloadReport(AiChatAttachment a)
+    {
+        if (dlBusy) return;
+        dlBusy = true; error = null;
+        try
+        {
+            var (data, name, _) = await Ai.DownloadReportExcelAsync(a.ReportId);
+            await JS.InvokeVoidAsync("saveAsFile", name, Convert.ToBase64String(data));
+        }
+        catch (Exception ex) { error = ex.Message; }
+        finally { dlBusy = false; }
+    }
+
+    private void AskDislike(AiChatMessage m)
+    {
+        if (m.Id <= 0 || rateBusy) return;
+        if (m.MyRating == -1) { _ = Rate(m, -1); return; } // رأی دوباره = پس‌گرفتن
+        dislikeFor = dislikeFor == m.Id ? null : m.Id;
+        dislikeReason = null;
+        dislikeComment = "";
+    }
+
+    private void CancelDislike()
+    {
+        dislikeFor = null;
+        dislikeReason = null;
+        dislikeComment = "";
+    }
+
+    private async Task Rate(AiChatMessage m, int rating)
+    {
+        if (m.Id <= 0 || rateBusy) return;
+        rateBusy = true;
+        try
+        {
+            var res = await Ai.SubmitFeedbackAsync(m.Id, rating,
+                rating == -1 ? dislikeReason : null,
+                rating == -1 ? dislikeComment : null);
+            m.MyRating = res.Removed ? null : rating;
+            CancelDislike();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { rateBusy = false; }
+    }
+
+    private async Task ScrollAsync()
+    {
+        try { await JS.InvokeVoidAsync("aiChat.scrollBottom", "aiPageBody"); } catch { }
+    }
+
+    private async Task ToggleSpeak(string text)
+    {
+        try
+        {
+            if (speakingText == text)
+            {
+                await JS.InvokeVoidAsync("aiVoice.stopSpeak");
+                speakingText = null;
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("aiVoice.speak", text);
+                speakingText = text;
+            }
+        }
+        catch { speakingText = null; }
+    }
+
+    private async Task StopSpeakAsync()
+    {
+        speakingText = null;
+        try { await JS.InvokeVoidAsync("aiVoice.stopSpeak"); } catch { }
+    }
+
+    private async Task ToggleVoice()
+    {
+        if (dotNetRef == null) return;
+        try
+        {
+            if (listening)
+            {
+                await JS.InvokeVoidAsync("aiVoice.stop");
+                listening = false;
+            }
+            else
+            {
+                listening = await JS.InvokeAsync<bool>("aiVoice.start", dotNetRef);
+            }
+        }
+        catch { listening = false; }
+    }
+
+    [JSInvokable]
+    public async Task OnVoiceResult(string text)
+    {
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            draft = ((draft ?? "") + " " + text).Trim();
+            StateHasChanged();
+        }
+        await Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public async Task OnVoiceEnd(string err)
+    {
+        listening = false;
+        StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    public void Dispose()
+    {
+        // ابتدا میکروفون و شنونده‌های گفتار جدا می‌شوند؛ وگرنه callback دیررسِ
+        // onend/onresult روی مرجع آزادشده اجرا می‌شود («no tracked object with id»).
+        try { _ = JS.InvokeVoidAsync("aiVoice.detach"); } catch { }
+        try { _ = JS.InvokeVoidAsync("aiVoice.stopSpeak"); } catch { }
+        try { dotNetRef?.Dispose(); } catch { }
+        dotNetRef = null;
+    }
+}

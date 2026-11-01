@@ -1,0 +1,211 @@
+@namespace Inventory.Client.Pages
+@page "/hr-main/company"
+@inject IHrMainService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>اطلاعات شرکت</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1><i class="bi bi-building-fill"></i> اطلاعات شرکت</h1>
+    </div>
+    @if (canUpdate)
+    {
+        <div class="ms-auto d-flex gap-2">
+            <button class="btn btn-primary" disabled="@saving" @onclick="Save">
+                @if (saving)
+                {
+                    <span class="spinner-border spinner-border-sm"></span>
+                }
+                <i class="bi bi-check-lg"></i> ذخیره اطلاعات شرکت
+            </button>
+        </div>
+    }
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به این بخش برای شما فعال نیست.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+    return;
+}
+
+<div class="row g-3">
+    <div class="col-lg-8">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-8">
+                        <label class="form-label">نام شرکت <span class="text-danger">*</span></label>
+                        <input class="form-control" @bind="form.Name" disabled="@(!canUpdate)" placeholder="مثلاً شرکت ..." />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">مدیرعامل / بالاترین مقام</label>
+                        <input class="form-control" @bind="form.ManagerName" disabled="@(!canUpdate)" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">کد اقتصادی</label>
+                        <input class="form-control num" dir="ltr" @bind="form.EconomicCode" disabled="@(!canUpdate)" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">شماره ثبت</label>
+                        <input class="form-control num" dir="ltr" @bind="form.RegistrationNo" disabled="@(!canUpdate)" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">شناسه ملی</label>
+                        <input class="form-control num" dir="ltr" @bind="form.NationalId" disabled="@(!canUpdate)" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">تلفن</label>
+                        <input class="form-control num" dir="ltr" @bind="form.Phone" disabled="@(!canUpdate)" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">ایمیل</label>
+                        <input class="form-control" dir="ltr" @bind="form.Email" disabled="@(!canUpdate)" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">وب‌سایت</label>
+                        <input class="form-control" dir="ltr" @bind="form.Website" disabled="@(!canUpdate)" />
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">آدرس</label>
+                        <textarea class="form-control" rows="2" @bind="form.Address" disabled="@(!canUpdate)"></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white fw-bold"><i class="bi bi-image"></i> لوگوی شرکت</div>
+            <div class="card-body text-center">
+                @if (!string.IsNullOrWhiteSpace(model.LogoPath))
+                {
+                    <img src="@LogoUrl" alt="لوگوی شرکت" class="img-fluid mb-3 hrmain-logo-big" />
+                }
+                else
+                {
+                    <div class="text-muted py-4"><i class="bi bi-building fs-1"></i><div class="small mt-2">لوگویی ثبت نشده است.</div></div>
+                }
+                @if (canUpdate)
+                {
+                    <InputFile class="form-control" OnChange="OnLogoSelected" accept=".png,.jpg,.jpeg,.webp,.svg" />
+                    <div class="small text-muted mt-1 mb-2">png، jpg، webp یا svg — بدون محدودیت حجم</div>
+                    <div class="d-flex gap-2 justify-content-center">
+                        <button class="btn btn-sm btn-primary" disabled="@(logoFile is null || uploading)" @onclick="UploadLogo">
+                            @if (uploading)
+                            {
+                                <span class="spinner-border spinner-border-sm"></span>
+                            }
+                            <i class="bi bi-upload"></i> آپلود لوگو
+                        </button>
+                        @if (!string.IsNullOrWhiteSpace(model.LogoPath))
+                        {
+                            <button class="btn btn-sm btn-outline-danger" disabled="@uploading" @onclick="RemoveLogo">
+                                <i class="bi bi-trash"></i> حذف
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .hrmain-logo-big { max-height: 180px; object-fit: contain; background: #fff; border: 1px solid #e5e7eb; border-radius: .75rem; padding: .5rem; }
+</style>
+
+@code {
+    [Inject] private ApiOptions ApiCfg { get; set; } = default!;
+
+    private bool canRead => Auth.Has("HrMain.Read") || Auth.Has("HrMain.Company") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrMain.Update") || Auth.Has("HrMain.Company") || Auth.IsAdmin;
+
+    private bool loading = true, saving, uploading;
+    private HrMainCompanyDto model = new();
+    private HrMainCompanySaveDto form = new();
+    private IBrowserFile? logoFile;
+    private long logoTick = DateTime.Now.Ticks;
+
+    private string LogoUrl =>
+        $"{(ApiCfg?.BaseUrl ?? "").TrimEnd('/')}/{model.LogoPath}?t={logoTick}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            model = await Svc.GetCompanyAsync();
+            form = new HrMainCompanySaveDto
+            {
+                Name = model.Name, Address = model.Address, EconomicCode = model.EconomicCode,
+                RegistrationNo = model.RegistrationNo, NationalId = model.NationalId,
+                Phone = model.Phone, Email = model.Email, Website = model.Website,
+                ManagerName = model.ManagerName
+            };
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            model = await Svc.SaveCompanyAsync(form);
+            Toast.Success("اطلاعات شرکت ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private void OnLogoSelected(InputFileChangeEventArgs e)
+    {
+        logoFile = e.File;
+    }
+
+    private async Task UploadLogo()
+    {
+        if (logoFile is null) return;
+        uploading = true;
+        try
+        {
+            await using var stream = logoFile.OpenReadStream(long.MaxValue);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            ms.Position = 0;
+            model = await Svc.UploadLogoAsync(ms, logoFile.Name, logoFile.ContentType);
+            logoFile = null;
+            logoTick = DateTime.Now.Ticks;
+            Toast.Success("لوگو آپلود شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { uploading = false; }
+    }
+
+    private async Task RemoveLogo()
+    {
+        try
+        {
+            await Svc.DeleteLogoAsync();
+            model.LogoPath = null;
+            Toast.Success("لوگو حذف شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

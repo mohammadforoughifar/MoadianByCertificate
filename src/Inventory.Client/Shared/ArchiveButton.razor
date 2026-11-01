@@ -1,0 +1,139 @@
+@* ================== کامپوننت «افزودن به بایگانی» جامع ==================
+   استفاده در هر فرم: <ArchiveButton Module="WorkOrders" RefId="123" Title="..." Link="/work-orders?open=123" /> *@
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+@if (Compact)
+{
+    <button class="btn btn-sm btn-light" @onclick="Open" title="بایگانی در پوشه شخصی شما">
+        <i class="bi bi-archive text-warning"></i>
+    </button>
+}
+else
+{
+    <button class="btn btn-outline-secondary btn-sm" @onclick="Open" title="بایگانی در پوشه شخصی شما">
+        <i class="bi bi-archive"></i> بایگانی
+    </button>
+}
+
+@if (show)
+{
+    <div class="modal fade show d-block" style="background:rgba(15,23,42,.55);z-index:1090">
+        <div class="modal-dialog modal-dialog-centered" @onclick:stopPropagation="true">
+            <div class="modal-content" style="border:0;border-radius:16px">
+                <div class="modal-header">
+                    <h6 class="modal-title"><i class="bi bi-archive text-primary"></i> بایگانی در پوشه…</h6>
+                    <button type="button" class="btn-close" @onclick="() => show = false"></button>
+                </div>
+                <div class="modal-body">
+                    @if (folders.Count == 0)
+                    {
+                        <div class="alert alert-info py-2 fs-8">هنوز پوشه‌ای ندارید — از صفحه «بایگانی من» پوشه بسازید یا همین‌جا:</div>
+                    }
+                    <div class="d-flex gap-2 mb-3">
+                        <input class="form-control form-control-sm" placeholder="نام پوشه جدید..." @bind="newFolderName" />
+                        <button class="btn btn-outline-primary btn-sm text-nowrap" @onclick="CreateFolder"><i class="bi bi-folder-plus"></i> ساخت</button>
+                    </div>
+                    <div style="max-height:260px;overflow-y:auto">
+                        @foreach (var f in Roots)
+                        {
+                            @RenderFolder(f, 0)
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer py-2">
+                    <button class="btn btn-link btn-sm text-decoration-none" @onclick='() => { show = false; Nav.NavigateTo("/my-archive"); }'>
+                        <i class="bi bi-gear"></i> مدیریت کامل بایگانی من
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string Module { get; set; } = "";
+    [Parameter] public int RefId { get; set; }
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public string? Link { get; set; }
+
+    /// <summary>حالت فشرده — فقط آیکون (برای داخل گرید)</summary>
+    [Parameter] public bool Compact { get; set; }
+
+    private bool show;
+    private string newFolderName = "";
+    private List<FolderItem> folders = new();
+    private IEnumerable<FolderItem> Roots => folders.Where(f => f.ParentId == null);
+
+    public class FolderItem { public int Id { get; set; } public int? ParentId { get; set; } public string Name { get; set; } = ""; public int ItemCount { get; set; } }
+
+    private RenderFragment RenderFolder(FolderItem f, int depth) => @<div>
+        <div class="d-flex align-items-center gap-2 py-1 px-2 rounded-2 archp-row" style="padding-right:@((depth * 18 + 8))px !important; cursor:pointer"
+             @onclick="() => Pick(f.Id)">
+            <i class="bi bi-folder-fill text-warning"></i>
+            <span class="fs-8 fw-600">@f.Name</span>
+            <span class="fs-9 text-muted">(@f.ItemCount)</span>
+            <i class="bi bi-folder-plus text-primary me-auto archp-sub" title="ساخت زیرپوشه"
+               @onclick:stopPropagation="true" @onclick="() => CreateSubFolder(f.Id)"></i>
+        </div>
+        @foreach (var c in folders.Where(x => x.ParentId == f.Id))
+        {
+            @RenderFolder(c, depth + 1)
+        }
+    </div>;
+
+    private async Task CreateSubFolder(int parentId)
+    {
+        var name = await JS.InvokeAsync<string?>("prompt", "نام زیرپوشه:");
+        if (string.IsNullOrWhiteSpace(name)) return;
+        try
+        {
+            await Http.PostAsJsonAsync("/api/archive/folders", new { name, parentId = (int?)parentId });
+            folders = await Http.GetFromJsonAsync<List<FolderItem>>("/api/archive/folders") ?? new();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Open()
+    {
+        if (!string.IsNullOrWhiteSpace(Auth.Token))
+            Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Auth.Token);
+        try { folders = await Http.GetFromJsonAsync<List<FolderItem>>("/api/archive/folders") ?? new(); } catch { }
+        show = true;
+    }
+
+    private async Task CreateFolder()
+    {
+        if (string.IsNullOrWhiteSpace(newFolderName)) return;
+        try
+        {
+            await Http.PostAsJsonAsync("/api/archive/folders", new { name = newFolderName, parentId = (int?)null });
+            newFolderName = "";
+            folders = await Http.GetFromJsonAsync<List<FolderItem>>("/api/archive/folders") ?? new();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Pick(int folderId)
+    {
+        try
+        {
+            var resp = await Http.PostAsJsonAsync("/api/archive/items", new
+            {
+                folderId, module = Module, refId = RefId, title = Title, link = Link
+            });
+            if (resp.IsSuccessStatusCode) { Toast.Success("در بایگانی شما ذخیره شد. 🗂"); show = false; }
+            else Toast.Error(await resp.Content.ReadAsStringAsync());
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}
+
+<style>
+    .archp-row:hover { background: #f1f5f9; }
+    .archp-sub { opacity: 0; transition: opacity .12s; cursor: pointer; }
+    .archp-row:hover .archp-sub { opacity: 1; }
+</style>

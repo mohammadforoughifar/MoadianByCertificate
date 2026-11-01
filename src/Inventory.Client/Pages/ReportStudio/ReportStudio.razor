@@ -1,0 +1,1237 @@
+@namespace Inventory.Client.Pages
+@page "/report-studio"
+@page "/report-studio/{ReportId:int}"
+@using Inventory.Shared
+@using Inventory.Shared.Dtos
+@inject IAuthState Auth
+@inject IReportStudioClient Api
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>گزارش‌ساز</PageTitle>
+
+@if (!Auth.CanSee("ReportStudio"))
+{
+    <div class="alert alert-warning mt-3">
+        <i class="bi bi-shield-exclamation"></i>
+        شما به «گزارش‌ساز» دسترسی ندارید. برای دریافت دسترسی با مدیر سیستم تماس بگیرید.
+    </div>
+}
+else
+{
+    <div class="page-head rs-head">
+        <div>
+            <h1><i class="bi bi-clipboard-data-fill"></i> گزارش‌ساز</h1>
+            <p class="lead mb-0">جدول‌ها را انتخاب کن، به هم جوین بزن و گزارش را با هر کس یا هر نقشی به اشتراک بگذار.</p>
+        </div>
+        <div class="rs-head-actions">
+            <button class="btn btn-outline-secondary btn-sm" @onclick="NewReport">
+                <i class="bi bi-plus-lg"></i> گزارش جدید
+            </button>
+            @if (canDesign && dirty)
+            {
+                <button class="btn btn-success btn-sm" disabled="@saving" @onclick="SaveAsync">
+                    @if (saving) { <span class="spinner-border spinner-border-sm"></span> }
+                    <i class="bi bi-check2"></i> ذخیره
+                </button>
+            }
+            @if (reportId > 0)
+            {
+                <a class="btn btn-outline-primary btn-sm" href="@Api.ExportUrl(reportId)" target="_blank">
+                    <i class="bi bi-file-earmark-excel"></i> خروجی
+                </a>
+            }
+            <button class="btn btn-primary btn-sm" disabled="@running" @onclick="RunAsync">
+                @if (running) { <span class="spinner-border spinner-border-sm"></span> }
+                <i class="bi bi-play-fill"></i> اجرا
+            </button>
+        </div>
+    </div>
+
+    @if (loading)
+    {
+        <div class="text-center p-5"><div class="spinner-border text-primary"></div></div>
+    }
+    else
+    {
+    <div class="rs-layout">
+
+        @* ==================== ستون راست: گزارش‌های ذخیره‌شده ==================== *@
+        <aside class="rs-side">
+            <div class="rs-panel">
+                <div class="rs-panel-head"><i class="bi bi-folder2-open"></i> گزارش‌های من</div>
+                <div class="rs-panel-body rs-scroll">
+                    @if (myReports.Count == 0)
+                    {
+                        <div class="rs-empty-sm">هنوز گزارشی نساخته‌اید.</div>
+                    }
+                    @foreach (var r in myReports)
+                    {
+                        <div class="rs-report-item @(r.Id == reportId ? "active" : "")" @onclick="() => LoadReportAsync(r.Id)">
+                            <i class="bi @r.Icon"></i>
+                            <div class="rs-report-meta">
+                                <span class="rs-report-name">@r.Name</span>
+                                <span class="rs-report-sub">
+                                    @if (!r.IsMine) { <span class="badge-shared">اشتراکی از @r.OwnerName</span> }
+                                    else { <text>@VisibilityFa(r.Visibility)</text> }
+                                </span>
+                            </div>
+                            @if (r.IsMine)
+                            {
+                                <button class="rs-icon-btn text-danger" title="حذف"
+                                        @onclick:stopPropagation="true" @onclick="() => DeleteAsync(r.Id)">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </aside>
+
+        @* ==================== ستون وسط: طراح ==================== *@
+        <section class="rs-main">
+
+            @* ---------- مشخصات ---------- *@
+            <div class="rs-panel">
+                <div class="rs-panel-head"><i class="bi bi-card-text"></i> مشخصات گزارش</div>
+                <div class="rs-panel-body">
+                    <div class="rs-grid-2">
+                        <label class="rs-field">
+                            <span>نام گزارش</span>
+                            <input class="form-control form-control-sm" @bind="name" @bind:event="oninput"
+                                   @onchange="MarkDirty" placeholder="مثلاً: گردش نامه‌های معوق" />
+                        </label>
+                        <label class="rs-field">
+                            <span>توضیح</span>
+                            <input class="form-control form-control-sm" @bind="description" @bind:event="oninput"
+                                   @onchange="MarkDirty" placeholder="اختیاری" />
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            @* ---------- جدول‌ها و جوین ---------- *@
+            <div class="rs-panel">
+                <div class="rs-panel-head">
+                    <i class="bi bi-diagram-3"></i> جدول‌ها و ارتباط‌ها
+                    <span class="rs-hint-inline">اول جدول اصلی، بعد جدول‌های مرتبط</span>
+                </div>
+                <div class="rs-panel-body">
+                    @if (query.Tables.Count == 0)
+                    {
+                        <div class="rs-empty-sm mb-2">جدول اصلی را انتخاب کنید:</div>
+
+                        @* جست‌وجو در منابع — با زیاد شدنِ ماژول‌ها، پیدا کردنِ منبع سخت می‌شود *@
+                        <div class="rs-src-search">
+                            <i class="bi bi-search"></i>
+                            <input type="text" class="rs-src-input" placeholder="جست‌وجو در منابع داده…"
+                                   @bind="srcQuery" @bind:event="oninput" />
+                            @if (!string.IsNullOrWhiteSpace(srcQuery))
+                            {
+                                <button type="button" class="rs-src-clear" title="پاک کردن"
+                                        @onclick='() => srcQuery = ""'><i class="bi bi-x"></i></button>
+                            }
+                        </div>
+
+                        <div class="rs-cats">
+                            @foreach (var cat in FilteredCatalog)
+                            {
+                                <div class="rs-cat">
+                                    <div class="rs-cat-title">
+                                        <i class="bi @CatIcon(cat.Key)"></i>
+                                        <span>@cat.Key</span>
+                                        <span class="rs-cat-count">@cat.Count()</span>
+                                    </div>
+                                    <div class="rs-chip-wrap">
+                                        @foreach (var t in cat)
+                                        {
+                                            <button class="rs-chip" title="@t.Description"
+                                                    @onclick="() => AddTable(t.Key, null)">
+                                                <i class="bi @t.Icon"></i> @t.Title
+                                            </button>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                            @if (!FilteredCatalog.Any())
+                            {
+                                <div class="rs-empty-sm">منبعی با این عبارت پیدا نشد.</div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="rs-tables">
+                            @for (var i = 0; i < query.Tables.Count; i++)
+                            {
+                                var idx = i;
+                                var qt = query.Tables[idx];
+                                var def = catalog.Tables.FirstOrDefault(t => t.Key == qt.TableKey);
+                                var join = catalog.Joins.FirstOrDefault(j => j.Key == qt.JoinKey);
+                                <div class="rs-table-card">
+                                    <div class="rs-table-head">
+                                        <i class="bi @(def?.Icon ?? "bi-table")"></i>
+                                        <strong>@(def?.Title ?? qt.TableKey)</strong>
+                                        @if (idx == 0) { <span class="rs-badge-main">جدول اصلی</span> }
+                                        <button class="rs-icon-btn text-danger ms-auto" title="حذف"
+                                                @onclick="() => RemoveTable(idx)"><i class="bi bi-x-lg"></i></button>
+                                    </div>
+                                    @if (idx > 0 && join is not null)
+                                    {
+                                        <div class="rs-join-row">
+                                            <i class="bi bi-link-45deg"></i>
+                                            <span>@join.Title</span>
+                                            <select class="form-select form-select-sm rs-join-kind"
+                                                    value="@((int)qt.JoinKind)"
+                                                    @onchange="e => SetJoinKind(idx, e.Value?.ToString())">
+                                                <option value="1">همهٔ سطرهای جدول اصلی (Left)</option>
+                                                <option value="0">فقط سطرهای دارای تطابق (Inner)</option>
+                                            </select>
+                                            @if (join.Multiplies)
+                                            {
+                                                <span class="rs-warn" title="@join.Description">
+                                                    <i class="bi bi-exclamation-triangle"></i> تکرار سطر
+                                                </span>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        @if (AvailableJoins.Any())
+                        {
+                            <div class="rs-add-join">
+                                <span class="rs-add-label">افزودن جدول مرتبط:</span>
+                                @foreach (var j in AvailableJoins)
+                                {
+                                    var target = catalog.Tables.FirstOrDefault(t => t.Key == j.ToTable);
+                                    <button class="rs-chip rs-chip-add" title="@j.Description"
+                                            @onclick="() => AddTable(j.ToTable, j.Key)">
+                                        <i class="bi bi-plus-lg"></i> @(target?.Title ?? j.ToTable)
+                                    </button>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+
+            @* ---------- ستون‌ها ---------- *@
+            @if (query.Tables.Count > 0)
+            {
+                <div class="rs-panel">
+                    <div class="rs-panel-head">
+                        <i class="bi bi-columns-gap"></i> ستون‌های خروجی
+                        <span class="rs-hint-inline">روی نام ستون کلیک کنید تا اضافه شود</span>
+                    </div>
+                    <div class="rs-panel-body">
+                        <div class="rs-field-picker rs-scroll">
+                            @foreach (var tk in query.Tables.Select(t => t.TableKey))
+                            {
+                                var def = catalog.Tables.FirstOrDefault(t => t.Key == tk);
+                                if (def is null) { continue; }
+                                <div class="rs-cat">
+                                    <div class="rs-cat-title"><i class="bi @def.Icon"></i> @def.Title</div>
+                                    <div class="rs-chip-wrap">
+                                        @foreach (var f in def.Fields)
+                                        {
+                                            var fld = f;
+                                            <button class="rs-chip rs-chip-field @(IsUsed(fld.Key) ? "used" : "")"
+                                                    title="@(fld.Hint ?? fld.Title)" @onclick="() => AddColumn(fld)">
+                                                @fld.Title
+                                                @if (fld.Aggregatable) { <i class="bi bi-calculator rs-agg-dot"></i> }
+                                            </button>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+
+                        @if (query.Columns.Count > 0)
+                        {
+                            <div class="rs-col-list">
+                                @for (var i = 0; i < query.Columns.Count; i++)
+                                {
+                                    var ci = i;
+                                    var c = query.Columns[ci];
+                                    var f = FindField(c.FieldKey);
+                                    <div class="rs-col-row">
+                                        <span class="rs-col-name">@(f?.Title ?? c.FieldKey)</span>
+
+                                        <select class="form-select form-select-sm rs-sel"
+                                                value="@((int)c.Agg)"
+                                                @onchange="e => SetAgg(ci, e.Value?.ToString())">
+                                            <option value="0">بدون تجمیع (گروه‌بندی)</option>
+                                            <option value="1">تعداد</option>
+                                            <option value="6">تعداد یکتا</option>
+                                            @if (f is not null && (f.Type == RsFieldType.Number || f.Type == RsFieldType.Money))
+                                            {
+                                                <option value="2">مجموع</option>
+                                                <option value="3">میانگین</option>
+                                            }
+                                            @if (f is not null && (f.Type == RsFieldType.Number || f.Type == RsFieldType.Money || f.Type == RsFieldType.Date))
+                                            {
+                                                <option value="4">کمینه</option>
+                                                <option value="5">بیشینه</option>
+                                            }
+                                        </select>
+
+                                        @if (f?.Type == RsFieldType.Date && c.Agg == RsAgg.None)
+                                        {
+                                            <select class="form-select form-select-sm rs-sel"
+                                                    value="@((int)c.Bucket)"
+                                                    @onchange="e => SetBucket(ci, e.Value?.ToString())">
+                                                <option value="0">تاریخ کامل</option>
+                                                <option value="1">روزانه</option>
+                                                <option value="2">ماهانه</option>
+                                                <option value="3">فصلی</option>
+                                                <option value="4">سالانه</option>
+                                            </select>
+                                        }
+
+                                        <input class="form-control form-control-sm rs-label" placeholder="عنوان دلخواه"
+                                               value="@c.Label" @onchange="e => SetLabel(ci, e.Value?.ToString())" />
+
+                                        <button class="rs-icon-btn" title="مرتب‌سازی"
+                                                @onclick="() => ToggleSort(c.FieldKey)">
+                                            <i class="bi @SortIcon(c.FieldKey)"></i>
+                                        </button>
+                                        <button class="rs-icon-btn text-danger" title="حذف"
+                                                @onclick="() => RemoveColumn(ci)"><i class="bi bi-x-lg"></i></button>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                @* ---------- فیلترها ---------- *@
+                <div class="rs-panel">
+                    <div class="rs-panel-head">
+                        <i class="bi bi-funnel"></i> فیلترها
+                        <button class="btn btn-outline-secondary btn-sm ms-auto" @onclick="AddFilter">
+                            <i class="bi bi-plus-lg"></i> افزودن شرط
+                        </button>
+                    </div>
+                    <div class="rs-panel-body">
+                        @if (query.Filters.Count == 0)
+                        {
+                            <div class="rs-empty-sm">بدون فیلتر — همهٔ سطرها نمایش داده می‌شوند.</div>
+                        }
+                        @for (var i = 0; i < query.Filters.Count; i++)
+                        {
+                            var fi = i;
+                            var fl = query.Filters[fi];
+                            var f = FindField(fl.FieldKey);
+                            <div class="rs-filter-row">
+                                @if (fi > 0)
+                                {
+                                    <select class="form-select form-select-sm rs-andor"
+                                            value="@(fl.OrWithPrevious ? "or" : "and")"
+                                            @onchange="e => SetAndOr(fi, e.Value?.ToString())">
+                                        <option value="and">و</option>
+                                        <option value="or">یا</option>
+                                    </select>
+                                }
+                                else { <span class="rs-andor-fixed">جایی که</span> }
+
+                                <select class="form-select form-select-sm rs-sel-wide"
+                                        value="@fl.FieldKey" @onchange="e => SetFilterField(fi, e.Value?.ToString())">
+                                    <option value="">— ستون —</option>
+                                    @foreach (var tk in query.Tables.Select(t => t.TableKey))
+                                    {
+                                        var def = catalog.Tables.FirstOrDefault(t => t.Key == tk);
+                                        if (def is null) { continue; }
+                                        <optgroup label="@def.Title">
+                                            @foreach (var ff in def.Fields)
+                                            {
+                                                <option value="@ff.Key">@ff.Title</option>
+                                            }
+                                        </optgroup>
+                                    }
+                                </select>
+
+                                <select class="form-select form-select-sm rs-sel"
+                                        value="@((int)fl.Op)" @onchange="e => SetFilterOp(fi, e.Value?.ToString())">
+                                    @foreach (var op in OpsFor(f))
+                                    {
+                                        <option value="@((int)op)">@OpFa(op)</option>
+                                    }
+                                </select>
+
+                                @if (fl.Op != RsOp.IsNull && fl.Op != RsOp.NotNull && !fl.IsPrompt)
+                                {
+                                    @if (fl.Op == RsOp.DateRange)
+                                    {
+                                        <select class="form-select form-select-sm rs-sel"
+                                                value="@fl.Value" @onchange="e => SetFilterValue(fi, e.Value?.ToString())">
+                                            <option value="today">امروز</option>
+                                            <option value="yesterday">دیروز</option>
+                                            <option value="last7">۷ روز اخیر</option>
+                                            <option value="last30">۳۰ روز اخیر</option>
+                                            <option value="last90">۹۰ روز اخیر</option>
+                                            <option value="month">ماه جاری</option>
+                                            <option value="year">سال جاری</option>
+                                        </select>
+                                    }
+                                    else if (f?.Type == RsFieldType.Bool)
+                                    {
+                                        <select class="form-select form-select-sm rs-sel"
+                                                value="@fl.Value" @onchange="e => SetFilterValue(fi, e.Value?.ToString())">
+                                            <option value="1">بله</option>
+                                            <option value="0">خیر</option>
+                                        </select>
+                                    }
+                                    else if (f?.EnumMap is { Count: > 0 })
+                                    {
+                                        <select class="form-select form-select-sm rs-sel"
+                                                value="@fl.Value" @onchange="e => SetFilterValue(fi, e.Value?.ToString())">
+                                            <option value="">— انتخاب —</option>
+                                            @foreach (var kv in f.EnumMap)
+                                            {
+                                                <option value="@kv.Key">@kv.Value</option>
+                                            }
+                                        </select>
+                                    }
+                                    else
+                                    {
+                                        <input class="form-control form-control-sm rs-val" placeholder="مقدار"
+                                               value="@fl.Value" @onchange="e => SetFilterValue(fi, e.Value?.ToString())" />
+                                        @if (fl.Op == RsOp.Between)
+                                        {
+                                            <input class="form-control form-control-sm rs-val" placeholder="تا"
+                                                   value="@fl.Value2" @onchange="e => SetFilterValue2(fi, e.Value?.ToString())" />
+                                        }
+                                    }
+                                }
+
+                                <label class="rs-prompt" title="کاربر هنگام اجرا مقدار را وارد می‌کند">
+                                    <input type="checkbox" checked="@fl.IsPrompt"
+                                           @onchange="e => SetPrompt(fi, (bool)(e.Value ?? false))" />
+                                    <span>پرسشی</span>
+                                </label>
+
+                                <button class="rs-icon-btn text-danger" title="حذف"
+                                        @onclick="() => RemoveFilter(fi)"><i class="bi bi-x-lg"></i></button>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                @* ---------- نمایش و اشتراک ---------- *@
+                <div class="rs-panel">
+                    <div class="rs-panel-head"><i class="bi bi-sliders"></i> نمایش و دسترسی</div>
+                    <div class="rs-panel-body">
+                        <div class="rs-grid-3">
+                            <label class="rs-field">
+                                <span>نوع خروجی</span>
+                                <select class="form-select form-select-sm" value="@((int)query.Output)"
+                                        @onchange="e => SetOutput(e.Value?.ToString())">
+                                    <option value="0">جدول</option>
+                                    <option value="1">نمودار</option>
+                                    <option value="2">عدد شاخص (KPI)</option>
+                                    <option value="3">جدول محوری</option>
+                                </select>
+                            </label>
+
+                            @if (query.Output == RsOutput.Chart)
+                            {
+                                <label class="rs-field">
+                                    <span>نوع نمودار</span>
+                                    <select class="form-select form-select-sm" value="@((int)query.Chart)"
+                                            @onchange="e => SetChart(e.Value?.ToString())">
+                                        <option value="0">میله‌ای</option>
+                                        <option value="2">خطی</option>
+                                        <option value="3">دایره‌ای</option>
+                                        <option value="4">دونات</option>
+                                    </select>
+                                </label>
+                            }
+                            @if (query.Output == RsOutput.Pivot)
+                            {
+                                <label class="rs-field">
+                                    <span>ستون سرستون</span>
+                                    <select class="form-select form-select-sm" value="@query.PivotColumnField"
+                                            @onchange="e => SetPivot(e.Value?.ToString())">
+                                        <option value="">— انتخاب —</option>
+                                        @foreach (var c in query.Columns.Where(x => x.Agg == RsAgg.None))
+                                        {
+                                            <option value="@c.FieldKey">@(FindField(c.FieldKey)?.Title ?? c.FieldKey)</option>
+                                        }
+                                    </select>
+                                </label>
+                            }
+
+                            <label class="rs-field">
+                                <span>حداکثر سطر</span>
+                                <input type="number" class="form-control form-control-sm" min="1" max="5000"
+                                       value="@query.Take" @onchange="e => SetTake(e.Value?.ToString())" />
+                            </label>
+
+                            <label class="rs-field">
+                                <span>چه کسانی ببینند؟</span>
+                                <select class="form-select form-select-sm" value="@((int)visibility)"
+                                        @onchange="e => SetVisibility(e.Value?.ToString())">
+                                    <option value="0">فقط خودم</option>
+                                    <option value="1">کاربران و نقش‌های انتخابی</option>
+                                    <option value="2">همه (با رعایت مجوز ماژول)</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        @if (visibility == RsVisibility.Shared)
+                        {
+                            <div class="rs-share">
+                                <div class="rs-share-col">
+                                    <div class="rs-share-title"><i class="bi bi-people-fill"></i> نقش‌ها</div>
+                                    @foreach (var role in targets.Roles)
+                                    {
+                                        var rr = role;
+                                        var existing = roleShares.FirstOrDefault(x => x.RoleId == rr.RoleId);
+                                        <div class="rs-share-row">
+                                            <label class="rs-share-check">
+                                                <input type="checkbox" checked="@(existing is not null)"
+                                                       @onchange="e => ToggleRole(rr, (bool)(e.Value ?? false))" />
+                                                <span>@rr.RoleName</span>
+                                            </label>
+                                            @if (existing is not null)
+                                            {
+                                                <select class="form-select form-select-sm rs-access"
+                                                        value="@((int)existing.Access)"
+                                                        @onchange="e => SetRoleAccess(rr.RoleId, e.Value?.ToString())">
+                                                    <option value="0">فقط مشاهده</option>
+                                                    <option value="1">مشاهده + خروجی</option>
+                                                    <option value="2">ویرایش</option>
+                                                </select>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+
+                                <div class="rs-share-col">
+                                    <div class="rs-share-title"><i class="bi bi-person-fill"></i> کاربران</div>
+                                    <input class="form-control form-control-sm mb-2" placeholder="جست‌وجوی کاربر…"
+                                           value="@userSearch" @onchange="OnUserSearch" />
+                                    <div class="rs-scroll rs-user-list">
+                                        @foreach (var u in targets.Users)
+                                        {
+                                            var uu = u;
+                                            var existing = userShares.FirstOrDefault(x => x.UserId == uu.UserId);
+                                            <div class="rs-share-row">
+                                                <label class="rs-share-check">
+                                                    <input type="checkbox" checked="@(existing is not null)"
+                                                           @onchange="e => ToggleUser(uu, (bool)(e.Value ?? false))" />
+                                                    <span>@(string.IsNullOrWhiteSpace(uu.FullName) ? uu.UserName : uu.FullName)</span>
+                                                </label>
+                                                @if (existing is not null)
+                                                {
+                                                    <select class="form-select form-select-sm rs-access"
+                                                            value="@((int)existing.Access)"
+                                                            @onchange="e => SetUserAccess(uu.UserId, e.Value?.ToString())">
+                                                        <option value="0">فقط مشاهده</option>
+                                                        <option value="1">مشاهده + خروجی</option>
+                                                        <option value="2">ویرایش</option>
+                                                    </select>
+                                                }
+                                            </div>
+                                        }
+                                        @if (targets.Users.Count == 0)
+                                        {
+                                            <div class="rs-empty-sm">کاربری یافت نشد.</div>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            @* ---------- نتیجه ---------- *@
+            @if (result is not null)
+            {
+                <div class="rs-panel">
+                    <div class="rs-panel-head">
+                        <i class="bi bi-table"></i> نتیجه
+                        @if (result.Ok)
+                        {
+                            <span class="rs-hint-inline">
+                                @Fa.Digits(result.TotalRows.ToString()) سطر — @Fa.Digits(result.ElapsedMs.ToString()) میلی‌ثانیه
+                            </span>
+                        }
+                    </div>
+                    <div class="rs-panel-body">
+                        @if (!result.Ok)
+                        {
+                            <div class="alert alert-danger rs-alert">
+                                <i class="bi bi-exclamation-octagon"></i> @result.Error
+                            </div>
+                        }
+                        else
+                        {
+                            @foreach (var w in result.Warnings)
+                            {
+                                <div class="alert alert-warning rs-alert"><i class="bi bi-info-circle"></i> @w</div>
+                            }
+
+                            @if (result.Output == RsOutput.Kpi)
+                            {
+                                <div class="rs-kpi">
+                                    <div class="rs-kpi-value">@Fa.Digits((result.KpiValue ?? 0).ToString("N0"))</div>
+                                    <div class="rs-kpi-unit">@result.KpiUnit</div>
+                                </div>
+                            }
+                            else if (result.Output == RsOutput.Chart && result.Series.Count > 0)
+                            {
+                                <div class="rs-chart-box">
+                                    <canvas id="@ChartId"></canvas>
+                                </div>
+                            }
+                            else if (result.Rows.Count == 0)
+                            {
+                                <div class="rs-empty-sm">سطری با این شرایط پیدا نشد.</div>
+                            }
+                            else
+                            {
+                                <div class="rs-table-wrap rs-scroll">
+                                    <table class="table table-sm rs-table">
+                                        <thead>
+                                            <tr>
+                                                <th class="rs-rownum">#</th>
+                                                @foreach (var c in result.Columns)
+                                                {
+                                                    <th style="text-align:@c.Align">
+                                                        @c.Title
+                                                        @if (!string.IsNullOrEmpty(c.Unit)) { <small class="rs-unit">(@c.Unit)</small> }
+                                                    </th>
+                                                }
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @for (var ri = 0; ri < result.Rows.Count; ri++)
+                                            {
+                                                var row = result.Rows[ri];
+                                                <tr>
+                                                    <td class="rs-rownum">@Fa.Digits((ri + 1).ToString())</td>
+                                                    @for (var cj = 0; cj < row.Count; cj++)
+                                                    {
+                                                        var align = cj < result.Columns.Count ? result.Columns[cj].Align : "right";
+                                                        <td style="text-align:@align">@row[cj]</td>
+                                                    }
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+            }
+        </section>
+    </div>
+    }
+}
+
+<style>
+    .rs-head { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; direction:rtl; }
+    .rs-head h1 { margin:0; font-size:1.25rem; }
+    .rs-head-actions { margin-right:auto; display:flex; gap:.5rem; flex-wrap:wrap; }
+
+    .rs-layout { display:grid; grid-template-columns:260px 1fr; gap:1rem; direction:rtl; align-items:start; }
+    @@media (max-width: 991px) { .rs-layout { grid-template-columns:1fr; } }
+
+    .rs-panel { background:#fff; border:1px solid #e5eaf0; border-radius:14px; margin-bottom:1rem; overflow:hidden; }
+    .rs-panel-head { display:flex; align-items:center; gap:.5rem; padding:.6rem .9rem; background:#f8fafc;
+                     border-bottom:1px solid #eef2f7; font-weight:700; font-size:.88rem; color:#334155; }
+    .rs-panel-body { padding:.8rem .9rem; }
+    .rs-hint-inline { margin-right:auto; font-size:.75rem; font-weight:400; color:#94a3b8; }
+    .rs-scroll { max-height:280px; overflow-y:auto; }
+
+    .rs-empty-sm { color:#94a3b8; font-size:.82rem; padding:.4rem 0; }
+
+    .rs-report-item { display:flex; align-items:center; gap:.5rem; padding:.5rem .6rem; border-radius:10px;
+                      cursor:pointer; border:1px solid transparent; }
+    .rs-report-item:hover { background:#f1f5f9; }
+    .rs-report-item.active { background:#eff6ff; border-color:#bfdbfe; }
+    .rs-report-meta { display:flex; flex-direction:column; min-width:0; }
+    .rs-report-name { font-size:.85rem; font-weight:600; color:#1e293b; white-space:nowrap;
+                      overflow:hidden; text-overflow:ellipsis; }
+    .rs-report-sub { font-size:.72rem; color:#94a3b8; }
+    .badge-shared { background:#fef3c7; color:#92400e; border-radius:6px; padding:0 .35rem; }
+
+    .rs-grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:.7rem; }
+    .rs-grid-3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:.7rem; }
+    @@media (max-width: 767px) { .rs-grid-2 { grid-template-columns:1fr; } }
+    .rs-field { display:flex; flex-direction:column; gap:.2rem; }
+    .rs-field > span { font-size:.75rem; color:#64748b; }
+
+    .rs-src-search { display:flex; align-items:center; gap:.4rem; border:1px solid #e2e8f0;
+                     border-radius:999px; padding:.25rem .6rem; background:#fff; margin-bottom:.6rem; }
+    .rs-src-search > i { color:#94a3b8; font-size:.8rem; }
+    .rs-src-input { border:none; outline:none; flex:1; font-size:.82rem; background:transparent; color:#334155; }
+    .rs-src-input::placeholder { color:#a8b4c4; }
+    .rs-src-clear { border:none; background:#f1f5f9; color:#64748b; border-radius:50%;
+                    width:18px; height:18px; line-height:1; display:inline-flex;
+                    align-items:center; justify-content:center; cursor:pointer; font-size:.7rem; }
+    .rs-src-clear:hover { background:#e2e8f0; color:#334155; }
+
+    .rs-cats { display:flex; flex-direction:column; gap:.55rem; }
+    .rs-cat { margin-bottom:0; border-right:3px solid #bfdbfe; padding-right:.55rem; }
+    .rs-cat-title { font-size:.76rem; font-weight:700; color:#1d4ed8; margin-bottom:.35rem;
+                    display:flex; align-items:center; gap:.3rem; }
+    .rs-cat-title > i { font-size:.85rem; }
+    .rs-cat-count { background:#dbeafe; color:#1e40af; border-radius:999px;
+                    padding:0 .4rem; font-size:.68rem; font-weight:700; }
+    .rs-chip-wrap { display:flex; flex-wrap:wrap; gap:.35rem; }
+    .rs-chip { border:1px solid #e2e8f0; background:#fff; border-radius:999px; padding:.28rem .7rem;
+               font-size:.8rem; cursor:pointer; color:#334155; display:inline-flex; align-items:center; gap:.3rem; }
+    .rs-chip:hover { border-color:#93c5fd; color:#2563eb; background:#f8fafc; }
+    .rs-chip-field.used { background:#eff6ff; border-color:#bfdbfe; color:#2563eb; }
+    .rs-chip-add { border-style:dashed; }
+    .rs-agg-dot { font-size:.7rem; color:#16a34a; }
+
+    .rs-tables { display:flex; flex-direction:column; gap:.5rem; }
+    .rs-table-card { border:1px solid #e2e8f0; border-radius:10px; padding:.5rem .7rem; background:#fcfdff; }
+    .rs-table-head { display:flex; align-items:center; gap:.45rem; font-size:.86rem; }
+    .rs-badge-main { background:#dcfce7; color:#166534; border-radius:6px; padding:0 .4rem; font-size:.7rem; }
+    .rs-join-row { display:flex; align-items:center; gap:.45rem; margin-top:.4rem; padding-top:.4rem;
+                   border-top:1px dashed #e2e8f0; font-size:.78rem; color:#64748b; flex-wrap:wrap; }
+    .rs-join-kind { max-width:260px; }
+    .rs-warn { color:#b45309; background:#fffbeb; border-radius:6px; padding:0 .4rem; font-size:.72rem; }
+    .rs-add-join { margin-top:.6rem; display:flex; align-items:center; gap:.4rem; flex-wrap:wrap; }
+    .rs-add-label { font-size:.78rem; color:#64748b; }
+
+    .rs-field-picker { border:1px dashed #e2e8f0; border-radius:10px; padding:.6rem; margin-bottom:.7rem; }
+    .rs-col-list { display:flex; flex-direction:column; gap:.4rem; }
+    .rs-col-row { display:flex; align-items:center; gap:.4rem; flex-wrap:wrap;
+                  background:#f8fafc; border:1px solid #eef2f7; border-radius:9px; padding:.35rem .5rem; }
+    .rs-col-name { font-size:.83rem; font-weight:600; min-width:110px; color:#1e293b; }
+    .rs-sel { max-width:190px; }
+    .rs-sel-wide { max-width:230px; }
+    .rs-label { max-width:150px; }
+
+    .rs-filter-row { display:flex; align-items:center; gap:.4rem; flex-wrap:wrap; margin-bottom:.4rem;
+                     background:#f8fafc; border:1px solid #eef2f7; border-radius:9px; padding:.35rem .5rem; }
+    .rs-andor { max-width:70px; }
+    .rs-andor-fixed { font-size:.8rem; color:#64748b; min-width:52px; }
+    .rs-val { max-width:150px; }
+    .rs-prompt { display:inline-flex; align-items:center; gap:.25rem; font-size:.75rem; color:#64748b; cursor:pointer; }
+
+    .rs-share { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-top:.8rem;
+                border-top:1px dashed #e2e8f0; padding-top:.8rem; }
+    @@media (max-width: 767px) { .rs-share { grid-template-columns:1fr; } }
+    .rs-share-title { font-size:.8rem; font-weight:700; color:#334155; margin-bottom:.4rem; }
+    .rs-share-row { display:flex; align-items:center; gap:.4rem; padding:.2rem 0; }
+    .rs-share-check { display:inline-flex; align-items:center; gap:.35rem; font-size:.82rem; cursor:pointer; flex:1; }
+    .rs-access { max-width:150px; }
+    .rs-user-list { max-height:200px; }
+
+    .rs-icon-btn { background:none; border:none; color:#94a3b8; cursor:pointer; padding:.15rem .3rem; }
+    .rs-icon-btn:hover { color:#2563eb; }
+
+    .rs-alert { padding:.5rem .7rem; font-size:.82rem; margin-bottom:.5rem; }
+    .rs-table-wrap { max-height:460px; overflow:auto; }
+    .rs-table { font-size:.82rem; margin:0; }
+    .rs-table thead th { position:sticky; top:0; background:#f8fafc; z-index:1; white-space:nowrap; }
+    .rs-rownum { color:#94a3b8; width:42px; text-align:center; }
+    .rs-unit { color:#94a3b8; font-weight:400; }
+
+    .rs-kpi { text-align:center; padding:1.6rem 0; }
+    .rs-kpi-value { font-size:2.6rem; font-weight:800; color:#2563eb; }
+    .rs-kpi-unit { font-size:.85rem; color:#64748b; }
+
+    .rs-chart-box { height:340px; position:relative; }
+    .rs-series { margin-bottom:.9rem; }
+    .rs-series-name { font-size:.8rem; font-weight:700; color:#334155; margin-bottom:.3rem; }
+    .rs-bar-row { display:flex; align-items:center; gap:.5rem; margin-bottom:.25rem; }
+    .rs-bar-label { font-size:.78rem; min-width:110px; color:#475569; text-align:left; }
+    .rs-bar-track { flex:1; height:16px; background:#f1f5f9; border-radius:8px; overflow:hidden; }
+    .rs-bar-fill { height:100%; background:linear-gradient(90deg,#3b82f6,#2563eb); border-radius:8px; }
+    .rs-bar-val { font-size:.76rem; color:#334155; min-width:70px; }
+</style>
+
+@code {
+    // =====================================================================
+    //  انتخابِ منبع: جست‌وجو و گروه‌بندی بر اساس دسته‌ی ماژول
+    // =====================================================================
+
+    /// <summary>عبارت جست‌وجو در فهرست منابعِ قابل انتخاب.</summary>
+    private string srcQuery = "";
+
+    /// <summary>
+    /// منابعِ کاتالوگ، گروه‌بندی‌شده بر اساس دسته.
+    /// فیلترِ دسترسیِ ماژول سرور انجام شده؛ اینجا فقط جست‌وجوی متنی اعمال می‌شود.
+    /// </summary>
+    private List<IGrouping<string, RsTableDto>> FilteredCatalog
+    {
+        get
+        {
+            var q = (srcQuery ?? "").Trim();
+            var src = catalog.Tables.AsEnumerable();
+            if (q.Length > 0)
+            {
+                src = src.Where(t =>
+                    t.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
+                    || t.Category.Contains(q, StringComparison.OrdinalIgnoreCase)
+                    || t.Module.Contains(q, StringComparison.OrdinalIgnoreCase)
+                    || (t.Description ?? "").Contains(q, StringComparison.OrdinalIgnoreCase));
+            }
+            return src.GroupBy(t => t.Category)
+                      .OrderBy(g => g.Key, StringComparer.Ordinal)
+                      .ToList();
+        }
+    }
+
+    /// <summary>آیکون هر دسته — برای تشخیص سریع‌تر ماژول.</summary>
+    private static string CatIcon(string cat) => cat switch
+    {
+        "اتوماسیون اداری" => "bi-envelope-paper",
+        "فروش و خرید" => "bi-receipt",
+        "اطلاعات پایه" => "bi-database",
+        "انبار و موجودی" => "bi-boxes",
+        "آرشیو اسناد" => "bi-archive",
+        "تعمیرات" => "bi-wrench",
+        "دستور کار" => "bi-list-task",
+        "پروژه‌ها" => "bi-kanban",
+        "مالی و خزانه" => "bi-cash-coin",
+        _ => "bi-grid"
+    };
+
+
+    [Parameter] public int? ReportId { get; set; }
+
+    private RsCatalogDto catalog = new();
+    private RsShareTargetsDto targets = new();
+    private List<RsReportDto> myReports = new();
+    private RsQueryDto query = new();
+    private RsResultDto? result;
+
+    private int reportId;
+    private string name = "";
+    private string? description;
+    private RsVisibility visibility = RsVisibility.Private;
+    private List<RsUserShareDto> userShares = new();
+    private List<RsRoleShareDto> roleShares = new();
+    private string? userSearch;
+
+    private bool loading = true, running, saving, dirty;
+    private readonly string ChartId = "rsChart_" + Guid.NewGuid().ToString("N")[..8];
+    private bool chartPending;
+    private bool canDesign => catalog.CanDesign;
+
+    /// <summary>نمودار باید بعد از رندر شدن canvas ساخته شود.</summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!chartPending) return;
+        chartPending = false;
+
+        if (result is null || !result.Ok || result.Output != RsOutput.Chart || result.Series.Count == 0)
+            return;
+
+        try
+        {
+            var type = result.Chart switch
+            {
+                RsChart.Line => "line",
+                RsChart.Pie => "pie",
+                RsChart.Doughnut => "doughnut",
+                RsChart.Area => "line",
+                _ => "bar"
+            };
+            var labels = result.Series[0].Labels;
+            var datasets = result.Series
+                .Select(x => new { name = x.Name, values = x.Values })
+                .Cast<object>().ToArray();
+
+            await JS.InvokeVoidAsync("appDash.renderChart", ChartId, type, labels, datasets);
+        }
+        catch { /* نبودن Chart.js نباید صفحه را بشکند */ }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await JS.InvokeVoidAsync("appDash.destroyChart", ChartId); } catch { }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.CanSee("ReportStudio")) { loading = false; return; }
+        try
+        {
+            catalog = await Api.GetCatalogAsync() ?? new();
+            targets = await Api.GetShareTargetsAsync() ?? new();
+            myReports = await Api.ListAsync() ?? new();
+        }
+        catch (Exception ex) { Toast.Error("بارگذاری گزارش‌ساز ناموفق بود: " + ex.Message); }
+        loading = false;
+
+        if (ReportId is > 0) await LoadReportAsync(ReportId.Value);
+    }
+
+    // ---------------- جدول‌ها ----------------
+    private IEnumerable<RsJoinPathDto> AvailableJoins
+    {
+        get
+        {
+            var present = query.Tables.Select(t => t.TableKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return catalog.Joins.Where(j => present.Contains(j.FromTable) && !present.Contains(j.ToTable));
+        }
+    }
+
+    private void AddTable(string tableKey, string? joinKey)
+    {
+        if (query.Tables.Any(t => t.TableKey == tableKey)) return;
+        query.Tables.Add(new RsQueryTableDto
+        {
+            TableKey = tableKey,
+            JoinKey = joinKey,
+            JoinKind = RsJoinKind.Left
+        });
+        MarkDirty();
+    }
+
+    private void RemoveTable(int idx)
+    {
+        if (idx < 0 || idx >= query.Tables.Count) return;
+        var removed = query.Tables[idx].TableKey;
+
+        // حذف جدول اصلی = پاک‌کردن کل طراحی (چون بقیه به آن وابسته‌اند)
+        if (idx == 0) { query.Tables.Clear(); query.Columns.Clear(); query.Filters.Clear(); query.Sorts.Clear(); }
+        else
+        {
+            query.Tables.RemoveAt(idx);
+            // جدول‌هایی که از این جدول جوین خورده‌اند هم باید بروند
+            var gone = true;
+            while (gone)
+            {
+                gone = false;
+                var present = query.Tables.Select(t => t.TableKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                for (var i = query.Tables.Count - 1; i > 0; i--)
+                {
+                    var j = catalog.Joins.FirstOrDefault(x => x.Key == query.Tables[i].JoinKey);
+                    if (j is null || !present.Contains(j.FromTable))
+                    {
+                        query.Tables.RemoveAt(i);
+                        gone = true;
+                        break;
+                    }
+                }
+            }
+            var live = query.Tables.Select(t => t.TableKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            query.Columns.RemoveAll(c => !live.Contains(TableOf(c.FieldKey)));
+            query.Filters.RemoveAll(f => !live.Contains(TableOf(f.FieldKey)));
+            query.Sorts.RemoveAll(s => !live.Contains(TableOf(s.FieldKey)));
+        }
+        MarkDirty();
+    }
+
+    private void SetJoinKind(int idx, string? v)
+    {
+        if (idx <= 0 || idx >= query.Tables.Count) return;
+        query.Tables[idx].JoinKind = v == "0" ? RsJoinKind.Inner : RsJoinKind.Left;
+        MarkDirty();
+    }
+
+    private static string TableOf(string fieldKey)
+    {
+        var d = fieldKey.IndexOf('.');
+        return d <= 0 ? "" : fieldKey[..d];
+    }
+
+    // ---------------- ستون‌ها ----------------
+    private RsFieldDto? FindField(string key) =>
+        catalog.Tables.SelectMany(t => t.Fields)
+            .FirstOrDefault(f => f.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
+
+    private bool IsUsed(string key) =>
+        query.Columns.Any(c => c.FieldKey.Equals(key, StringComparison.OrdinalIgnoreCase));
+
+    private void AddColumn(RsFieldDto f)
+    {
+        if (IsUsed(f.Key)) return;
+        query.Columns.Add(new RsColumnDto
+        {
+            FieldKey = f.Key,
+            Order = query.Columns.Count,
+            // سنجه‌ها به‌صورت پیش‌فرض مجموع می‌گیرند تا کاربر تازه‌کار سریع به نتیجه برسد
+            Agg = f.Aggregatable && !f.Groupable ? RsAgg.Sum : RsAgg.None
+        });
+        MarkDirty();
+    }
+
+    private void RemoveColumn(int i)
+    {
+        if (i < 0 || i >= query.Columns.Count) return;
+        var key = query.Columns[i].FieldKey;
+        query.Columns.RemoveAt(i);
+        query.Sorts.RemoveAll(s => s.FieldKey == key);
+        for (var k = 0; k < query.Columns.Count; k++) query.Columns[k].Order = k;
+        MarkDirty();
+    }
+
+    private void SetAgg(int i, string? v)
+    {
+        if (i < 0 || i >= query.Columns.Count) return;
+        query.Columns[i].Agg = int.TryParse(v, out var n) ? (RsAgg)n : RsAgg.None;
+        MarkDirty();
+    }
+
+    private void SetBucket(int i, string? v)
+    {
+        if (i < 0 || i >= query.Columns.Count) return;
+        query.Columns[i].Bucket = int.TryParse(v, out var n) ? (RsDateBucket)n : RsDateBucket.None;
+        MarkDirty();
+    }
+
+    private void SetLabel(int i, string? v)
+    {
+        if (i < 0 || i >= query.Columns.Count) return;
+        query.Columns[i].Label = string.IsNullOrWhiteSpace(v) ? null : v.Trim();
+        MarkDirty();
+    }
+
+    private void ToggleSort(string fieldKey)
+    {
+        var s = query.Sorts.FirstOrDefault(x => x.FieldKey == fieldKey);
+        if (s is null) query.Sorts.Add(new RsSortDto { FieldKey = fieldKey, Desc = false });
+        else if (!s.Desc) s.Desc = true;
+        else query.Sorts.Remove(s);
+        MarkDirty();
+    }
+
+    private string SortIcon(string fieldKey)
+    {
+        var s = query.Sorts.FirstOrDefault(x => x.FieldKey == fieldKey);
+        return s is null ? "bi-arrow-down-up" : s.Desc ? "bi-sort-down" : "bi-sort-up";
+    }
+
+    // ---------------- فیلترها ----------------
+    private void AddFilter() { query.Filters.Add(new RsFilterDto()); MarkDirty(); }
+    private void RemoveFilter(int i) { if (i >= 0 && i < query.Filters.Count) { query.Filters.RemoveAt(i); MarkDirty(); } }
+
+    private void SetFilterField(int i, string? v)
+    {
+        if (i < 0 || i >= query.Filters.Count) return;
+        query.Filters[i].FieldKey = v ?? "";
+        query.Filters[i].Value = null;
+        query.Filters[i].Value2 = null;
+        var f = FindField(v ?? "");
+        query.Filters[i].Op = OpsFor(f).FirstOrDefault();
+        MarkDirty();
+    }
+
+    private void SetFilterOp(int i, string? v)
+    {
+        if (i < 0 || i >= query.Filters.Count) return;
+        query.Filters[i].Op = int.TryParse(v, out var n) ? (RsOp)n : RsOp.Eq;
+        MarkDirty();
+    }
+
+    private void SetFilterValue(int i, string? v)
+    {
+        if (i < 0 || i >= query.Filters.Count) return;
+        query.Filters[i].Value = v; MarkDirty();
+    }
+
+    private void SetFilterValue2(int i, string? v)
+    {
+        if (i < 0 || i >= query.Filters.Count) return;
+        query.Filters[i].Value2 = v; MarkDirty();
+    }
+
+    private void SetAndOr(int i, string? v)
+    {
+        if (i < 0 || i >= query.Filters.Count) return;
+        query.Filters[i].OrWithPrevious = v == "or"; MarkDirty();
+    }
+
+    private void SetPrompt(int i, bool on)
+    {
+        if (i < 0 || i >= query.Filters.Count) return;
+        query.Filters[i].IsPrompt = on; MarkDirty();
+    }
+
+    private static List<RsOp> OpsFor(RsFieldDto? f) => f?.Type switch
+    {
+        RsFieldType.Text => new() { RsOp.Contains, RsOp.Eq, RsOp.Ne, RsOp.StartsWith, RsOp.EndsWith, RsOp.IsNull, RsOp.NotNull },
+        RsFieldType.Number or RsFieldType.Money => new() { RsOp.Eq, RsOp.Ne, RsOp.Gt, RsOp.Gte, RsOp.Lt, RsOp.Lte, RsOp.Between },
+        RsFieldType.Date => new() { RsOp.DateRange, RsOp.Eq, RsOp.Gte, RsOp.Lte, RsOp.Between, RsOp.IsNull, RsOp.NotNull },
+        RsFieldType.Bool => new() { RsOp.Eq, RsOp.Ne },
+        RsFieldType.Enum => new() { RsOp.Eq, RsOp.Ne },
+        _ => new() { RsOp.Eq }
+    };
+
+    private static string OpFa(RsOp op) => op switch
+    {
+        RsOp.Eq => "برابر", RsOp.Ne => "نابرابر",
+        RsOp.Gt => "بزرگ‌تر از", RsOp.Gte => "بزرگ‌تر یا مساوی",
+        RsOp.Lt => "کوچک‌تر از", RsOp.Lte => "کوچک‌تر یا مساوی",
+        RsOp.Contains => "شامل", RsOp.StartsWith => "شروع با", RsOp.EndsWith => "پایان با",
+        RsOp.In => "یکی از", RsOp.Between => "بین",
+        RsOp.IsNull => "خالی", RsOp.NotNull => "پر",
+        RsOp.DateRange => "بازهٔ زمانی",
+        _ => op.ToString()
+    };
+
+    // ---------------- نمایش ----------------
+    private void SetOutput(string? v)
+    {
+        query.Output = int.TryParse(v, out var n) ? (RsOutput)n : RsOutput.Table; MarkDirty();
+    }
+    private void SetChart(string? v)
+    {
+        query.Chart = int.TryParse(v, out var n) ? (RsChart)n : RsChart.Bar; MarkDirty();
+    }
+    private void SetPivot(string? v) { query.PivotColumnField = v; MarkDirty(); }
+    private void SetTake(string? v)
+    {
+        query.Take = int.TryParse(v, out var n) ? Math.Clamp(n, 1, 5000) : 200; MarkDirty();
+    }
+    private void SetVisibility(string? v)
+    {
+        visibility = int.TryParse(v, out var n) ? (RsVisibility)n : RsVisibility.Private; MarkDirty();
+    }
+
+    private static string VisibilityFa(RsVisibility v) => v switch
+    {
+        RsVisibility.Private => "خصوصی",
+        RsVisibility.Shared => "اشتراکی",
+        _ => "عمومی"
+    };
+
+    // ---------------- اشتراک ----------------
+    private void ToggleRole(RsRoleShareDto role, bool on)
+    {
+        var ex = roleShares.FirstOrDefault(x => x.RoleId == role.RoleId);
+        if (on && ex is null)
+            roleShares.Add(new RsRoleShareDto { RoleId = role.RoleId, RoleName = role.RoleName, Access = RsAccess.View });
+        else if (!on && ex is not null) roleShares.Remove(ex);
+        MarkDirty();
+    }
+
+    private void SetRoleAccess(int roleId, string? v)
+    {
+        var ex = roleShares.FirstOrDefault(x => x.RoleId == roleId);
+        if (ex is not null && int.TryParse(v, out var n)) { ex.Access = (RsAccess)n; MarkDirty(); }
+    }
+
+    private void ToggleUser(RsUserShareDto u, bool on)
+    {
+        var ex = userShares.FirstOrDefault(x => x.UserId == u.UserId);
+        if (on && ex is null)
+            userShares.Add(new RsUserShareDto { UserId = u.UserId, UserName = u.UserName, FullName = u.FullName, Access = RsAccess.View });
+        else if (!on && ex is not null) userShares.Remove(ex);
+        MarkDirty();
+    }
+
+    private void SetUserAccess(int userId, string? v)
+    {
+        var ex = userShares.FirstOrDefault(x => x.UserId == userId);
+        if (ex is not null && int.TryParse(v, out var n)) { ex.Access = (RsAccess)n; MarkDirty(); }
+    }
+
+    private async Task OnUserSearch(ChangeEventArgs e)
+    {
+        userSearch = e.Value?.ToString();
+        try { targets = await Api.GetShareTargetsAsync(userSearch) ?? targets; }
+        catch { /* جست‌وجوی ناموفق نباید صفحه را بشکند */ }
+    }
+
+    // ---------------- اجرا و ذخیره ----------------
+    private void MarkDirty() => dirty = true;
+
+    private async Task RunAsync()
+    {
+        running = true;
+        try
+        {
+            result = reportId > 0 && !dirty
+                ? await Api.RunAsync(reportId)
+                : await Api.PreviewAsync(query);
+            chartPending = result is { Ok: true, Output: RsOutput.Chart };
+        }
+        catch (Exception ex)
+        {
+            result = new RsResultDto { Ok = false, Error = "اجرا ناموفق بود: " + ex.Message };
+        }
+        running = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(name)) { Toast.Error("نام گزارش را وارد کنید."); return; }
+        saving = true;
+        try
+        {
+            var dto = new RsReportDto
+            {
+                Id = reportId,
+                Name = name.Trim(),
+                Description = description,
+                Query = query,
+                Visibility = visibility,
+                UserShares = userShares,
+                RoleShares = roleShares
+            };
+
+            if (reportId > 0) await Api.UpdateAsync(reportId, dto);
+            else reportId = await Api.CreateAsync(dto);
+
+            myReports = await Api.ListAsync() ?? new();
+            dirty = false;
+            Toast.Success("گزارش ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error("ذخیره ناموفق بود: " + ex.Message); }
+        saving = false;
+    }
+
+    private async Task LoadReportAsync(int id)
+    {
+        try
+        {
+            var r = await Api.GetAsync(id);
+            if (r is null) { Toast.Error("گزارش پیدا نشد."); return; }
+            reportId = r.Id;
+            name = r.Name;
+            description = r.Description;
+            query = r.Query ?? new RsQueryDto();
+            visibility = r.Visibility;
+            userShares = r.UserShares ?? new();
+            roleShares = r.RoleShares ?? new();
+            dirty = false;
+            result = null;
+            await RunAsync();
+        }
+        catch (Exception ex) { Toast.Error("بارگذاری گزارش ناموفق بود: " + ex.Message); }
+    }
+
+    private void NewReport()
+    {
+        reportId = 0;
+        name = "";
+        description = null;
+        query = new RsQueryDto();
+        visibility = RsVisibility.Private;
+        userShares = new();
+        roleShares = new();
+        result = null;
+        dirty = false;
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        try
+        {
+            await Api.DeleteAsync(id);
+            if (reportId == id) NewReport();
+            myReports = await Api.ListAsync() ?? new();
+            Toast.Success("گزارش حذف شد.");
+        }
+        catch (Exception ex) { Toast.Error("حذف ناموفق بود: " + ex.Message); }
+    }
+}

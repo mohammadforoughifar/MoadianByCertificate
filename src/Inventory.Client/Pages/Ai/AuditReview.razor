@@ -1,0 +1,243 @@
+@page "/ai-audit"
+@inject AiAssistantService Ai
+
+@* =====================================================================
+   حسابرسی دستیار (§۲۵) — فقط مدیر (AiAssistant.Manage)
+   ===================================================================== *@
+
+<div class="fb-page">
+    <div class="fb-head">
+        <h5>📋 حسابرسی فروغ آریا</h5>
+        <span class="text-muted small">ردپای نوبت‌های چت و اقدام‌های تأییدی کاربران</span>
+    </div>
+
+    @if (loading)
+    {
+        <div class="text-muted p-3">در حال بارگذاری...</div>
+    }
+    else if (noAccess)
+    {
+        <div class="alert alert-warning">این صفحه فقط برای مدیر سیستم است. ⛔</div>
+    }
+    else if (error != null)
+    {
+        <div class="alert alert-danger">@error</div>
+    }
+    else if (stats != null)
+    {
+        <div class="fb-cards">
+            <div class="fb-card">
+                <div class="fb-num">@stats.Total</div>
+                <div class="fb-lbl">نوبت چت (@days روز)</div>
+            </div>
+            <div class="fb-card">
+                <div class="fb-num">@(stats.SuccessPct == null ? "—" : stats.SuccessPct + "٪")</div>
+                <div class="fb-lbl">موفقیت</div>
+            </div>
+            <div class="fb-card down">
+                <div class="fb-num">@stats.Failed</div>
+                <div class="fb-lbl">ناموفق</div>
+            </div>
+            <div class="fb-card">
+                <div class="fb-num">@stats.Fallback</div>
+                <div class="fb-lbl">آفلاین</div>
+            </div>
+            <div class="fb-card up">
+                <div class="fb-num">@stats.ActionsExecuted</div>
+                <div class="fb-lbl">✅ اقدام اجرا شده</div>
+            </div>
+            <div class="fb-card down">
+                <div class="fb-num">@stats.ActionsRejected</div>
+                <div class="fb-lbl">🚫 لغو/منقضی</div>
+            </div>
+            <div class="fb-card">
+                <div class="fb-num">@stats.ActionsPending</div>
+                <div class="fb-lbl">⏳ در انتظار تأیید</div>
+            </div>
+        </div>
+
+        <div class="fb-cols">
+            @if (stats.TopTools.Count > 0)
+            {
+                <div class="fb-panel">
+                    <b>پرکاربردترین ابزارها</b>
+                    @foreach (var t in stats.TopTools)
+                    {
+                        <div class="fb-row"><code>@t.Key</code><span class="badge bg-primary">@t.Count</span></div>
+                    }
+                </div>
+            }
+            @if (stats.TopUsers.Count > 0)
+            {
+                <div class="fb-panel">
+                    <b>پرکاربردترین کاربران</b>
+                    @foreach (var u in stats.TopUsers)
+                    {
+                        <div class="fb-row"><span>@u.Key</span><span class="badge bg-info text-dark">@u.Count</span></div>
+                    }
+                </div>
+            }
+        </div>
+
+        @if (stats.RecentActions.Count > 0)
+        {
+            <div class="fb-panel">
+                <b>اقدام‌های تأییدی اخیر</b>
+                @foreach (var a in stats.RecentActions)
+                {
+                    <div class="fb-row">
+                        <span><b>@a.User</b> — @a.Summary</span>
+                        <span>
+                            <span class="badge @(a.Status == "اجرا شده" ? "bg-success" : a.Status == "در انتظار" ? "bg-warning text-dark" : "bg-secondary")">@a.Status</span>
+                            <small class="text-muted">@a.CreatedAt.ToString("MM/dd HH:mm")</small>
+                        </span>
+                    </div>
+                }
+            </div>
+        }
+
+        <div class="fb-filters">
+            <input class="form-control form-control-sm fb-search" placeholder="جستجو در پیام‌ها..." value="@search"
+                   @oninput="OnSearchInput"
+                   @onkeydown="OnSearchKey" />
+            <button class="btn btn-sm @(successFilter == null ? "btn-primary" : "btn-outline-primary")" @onclick="() => SetFilter(null)">همه</button>
+            <button class="btn btn-sm @(successFilter == true ? "btn-success" : "btn-outline-success")" @onclick="() => SetFilter(true)">✅ موفق</button>
+            <button class="btn btn-sm @(successFilter == false ? "btn-danger" : "btn-outline-danger")" @onclick="() => SetFilter(false)">❌ ناموفق</button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => LoadPage(true)">🔍 بگرد</button>
+        </div>
+
+        @if (items.Count == 0)
+        {
+            <div class="text-muted p-2">موردی نیست.</div>
+        }
+        @foreach (var it in items)
+        {
+            <div class="fb-item @(it.Success ? "up" : "down")">
+                <div class="fb-item-head">
+                    <span class="fb-badge">@(it.Success ? "✅" : "❌")</span>
+                    <b>@it.User</b>
+                    <span class="badge bg-light text-dark">@it.Channel</span>
+                    <span class="text-muted small">@it.CreatedAt.ToString("yyyy/MM/dd HH:mm") ⏱ @(it.DurationMs > 1000 ? (it.DurationMs / 1000.0).ToString("0.0") + " ثانیه" : it.DurationMs + " م.ث")</span>
+                    @if (it.UsedFallback)
+                    {
+                        <span class="badge bg-warning text-dark">آفلاین</span>
+                    }
+                </div>
+                <div class="fb-excerpt">@it.Message</div>
+                @if (!string.IsNullOrWhiteSpace(it.Error))
+                {
+                    <div class="fb-comment">⚠️ @it.Error</div>
+                }
+                @if (it.Tools.Count > 0)
+                {
+                    <div class="fb-tools">
+                        @foreach (var t in it.Tools)
+                        {
+                            <code>@t</code>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        @if (hasMore)
+        {
+            <button class="btn btn-outline-primary w-100 mt-2" disabled="@loadingMore" @onclick="LoadMore">
+                @if (loadingMore)
+                {
+                    <span class="spinner-border spinner-border-sm"></span>
+                }
+                نمایش بیشتر
+            </button>
+        }
+    }
+</div>
+
+<style>
+    .fb-page { max-width: 900px; margin: 0 auto; padding: 1rem; display: flex; flex-direction: column; gap: .8rem; }
+    .fb-head h5 { margin: 0; }
+    .fb-cards { display: flex; gap: .6rem; flex-wrap: wrap; }
+    .fb-card { flex: 1; min-width: 120px; background: #fff; border: 1px solid #e2e8f0; border-radius: .8rem; padding: .7rem; text-align: center; }
+    .fb-card.up { border-color: #86efac; background: #f0fdf4; }
+    .fb-card.down { border-color: #fca5a5; background: #fef2f2; }
+    .fb-num { font-size: 1.4rem; font-weight: 700; }
+    .fb-lbl { font-size: .8rem; color: #64748b; }
+    .fb-cols { display: flex; gap: .6rem; flex-wrap: wrap; }
+    .fb-panel { flex: 1; min-width: 240px; background: #fff; border: 1px solid #e2e8f0; border-radius: .8rem; padding: .7rem .9rem; }
+    .fb-panel .fb-row { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .25rem 0; border-top: 1px solid #f1f5f9; font-size: .85rem; }
+    .fb-filters { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+    .fb-search { max-width: 260px; }
+    .fb-item { background: #fff; border: 1px solid #e2e8f0; border-right-width: 4px; border-radius: .7rem; padding: .6rem .8rem; }
+    .fb-item.up { border-right-color: #22c55e; }
+    .fb-item.down { border-right-color: #ef4444; }
+    .fb-item-head { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; font-size: .85rem; }
+    .fb-excerpt { margin-top: .35rem; font-size: .87rem; color: #334155; line-height: 1.9; white-space: pre-wrap; }
+    .fb-comment { margin-top: .3rem; font-size: .85rem; background: #fef2f2; border: 1px solid #fecaca; border-radius: .5rem; padding: .3rem .5rem; }
+    .fb-tools { margin-top: .3rem; display: flex; gap: .3rem; flex-wrap: wrap; }
+    .fb-tools code { font-size: .72rem; background: #f1f5f9; padding: .05rem .4rem; border-radius: .4rem; }
+</style>
+
+@code {
+    private bool loading = true;
+    private bool loadingMore;
+    private bool noAccess;
+    private string? error;
+    private int days = 14;
+    private AiAuditStats? stats;
+    private List<AiAuditTurn> items = new();
+    private bool? successFilter;
+    private string search = "";
+    private int skip;
+    private bool hasMore;
+    private const int PageSize = 20;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            stats = await Ai.GetAuditStatsAsync(days);
+            await LoadPage(true);
+        }
+        catch (Exception ex)
+        {
+            if (ex.Message.Contains("403") || ex.Message.Contains("Forbidden") || ex.Message.Contains("دسترسی"))
+                noAccess = true;
+            else
+                error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task SetFilter(bool? s)
+    {
+        successFilter = s;
+        await LoadPage(true);
+    }
+
+    private void OnSearchInput(ChangeEventArgs e) => search = e.Value?.ToString() ?? "";
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadPage(true);
+    }
+
+    private async Task LoadPage(bool reset)
+    {
+        if (reset) { skip = 0; items.Clear(); }
+        loadingMore = true;
+        error = null;
+        try
+        {
+            var page = await Ai.GetAuditListAsync(successFilter, search, skip, PageSize);
+            items.AddRange(page);
+            skip += page.Count;
+            hasMore = page.Count == PageSize;
+        }
+        catch (Exception ex) { error = ex.Message; }
+        finally { loadingMore = false; }
+    }
+
+    private async Task LoadMore() => await LoadPage(false);
+}

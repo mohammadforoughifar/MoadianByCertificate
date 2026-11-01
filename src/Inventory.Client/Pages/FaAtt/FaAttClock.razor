@@ -1,0 +1,209 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/clock"
+@inject IFaAttService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>وب‌کلاک من</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-fingerprint"></i> وب‌کلاک من</h1>
+    <div class="lead">ثبت ورود و خروج از مرورگر — @TodayFa</div>
+</div>
+
+@if (!canUse)
+{
+    <div class="alert alert-warning">دسترسی وب‌کلاک برای شما فعال نیست.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+}
+else if (my is null)
+{
+    <div class="alert alert-danger">اطلاعات یافت نشد.</div>
+}
+else
+{
+    <div class="row g-3">
+        <div class="col-lg-5">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body py-4">
+                    <div class="hr-avatar-xl mb-2">@HrCoreUi.Initials(First, Last)</div>
+                    <h5 class="fw-bold mb-0">@my.EmployeeName</h5>
+                    <div class="text-muted small mb-3">شیفت: @(my.ShiftName ?? "تخصیص نشده")</div>
+                    @if (my.ShiftStart != null && my.ShiftEnd != null)
+                    {
+                        <div class="num text-muted small mb-3" dir="ltr">@FmtTime(my.ShiftStart.Value) — @FmtTime(my.ShiftEnd.Value)</div>
+                    }
+                    @if (my.Daily != null)
+                    {
+                        <div class="mb-3"><span class="badge @FaAttUi.DayBadge(my.Daily.Status) fs-6">@FaAttUi.DayStatus(my.Daily.Status)</span></div>
+                        <div class="d-flex flex-wrap justify-content-center gap-3 gap-sm-4 mb-3">
+                            <div><div class="small text-muted">ورود</div><div class="num fw-bold" dir="ltr">@FmtClock(my.Daily.FirstIn)</div></div>
+                            <div><div class="small text-muted">خروج</div><div class="num fw-bold" dir="ltr">@FmtClock(my.Daily.LastOut)</div></div>
+                            <div><div class="small text-muted">کارکرد</div><div class="num fw-bold">@FaAttUi.Min(my.Daily.WorkMinutes)</div></div>
+                        </div>
+                    }
+                    <div class="d-grid gap-2 d-sm-flex justify-content-sm-center">
+                        <button class="btn btn-success btn-lg px-4" disabled="@(!canIn || punching)" @onclick="() => Punch(0)">
+                            @if (punching)
+                            {
+                                <span class="spinner-border spinner-border-sm"></span>
+                            }
+                            <i class="bi bi-box-arrow-in-right"></i> ورود
+                        </button>
+                        <button class="btn btn-outline-danger btn-lg px-4" disabled="@(!canOut || punching)" @onclick="() => Punch(1)">
+                            <i class="bi bi-box-arrow-left"></i> خروج
+                        </button>
+                    </div>
+                    <div class="small text-muted mt-3">
+                        <i class="bi bi-geo-alt"></i>
+                        @if (punching && geoWaiting)
+                        {
+                            <span>در حال دریافت موقعیت برای همراه‌کردن تردد…</span>
+                        }
+                        else if (geoState == GeoState.Denied)
+                        {
+                            <span class="text-warning">اجازه‌ی دسترسی به مکان داده نشده — تردد بدون مکان ثبت می‌شود.</span>
+                        }
+                        else
+                        {
+                            <span>با اجازه‌ی دسترسی به مکان، موقعیت شما (GPS) همراه تردد ثبت می‌شود.</span>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white fw-bold"><i class="bi bi-list-ul text-primary ms-1"></i> ترددهای امروز</div>
+                <div class="card-body p-0">
+                    @if (my.Logs.Count == 0)
+                    {
+                        <div class="text-muted text-center py-4 small">امروز ترددی ثبت نشده است.</div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+                            <thead class="table-light"><tr><th>ساعت</th><th>نوع</th><th>مسیر</th><th>مکان</th></tr></thead>
+                            <tbody>
+                                @foreach (var l in my.Logs)
+                                {
+                                    <tr>
+                                        <td class="num fw-bold" dir="ltr">@l.Timestamp.ToString("HH:mm:ss")</td>
+                                        <td>
+                                            @if (l.Type == 0)
+                                            {
+                                                <span class="badge text-bg-success">ورود</span>
+                                            }
+                                            else if (l.Type == 1)
+                                            {
+                                                <span class="badge text-bg-danger">خروج</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge text-bg-secondary">نامشخص</span>
+                                            }
+                                        </td>
+                                        <td>@FaAttUi.LogSource(l.Source)</td>
+                                        <td>
+                                            @if (l.Latitude is not null && l.Longitude is not null)
+                                            {
+                                                <a class="badge text-bg-info text-decoration-none" dir="ltr" target="_blank" rel="noopener"
+                                                   title="مشاهده روی نقشه"
+                                                   href="@($"https://maps.google.com/?q={FmtCoord(l.Latitude.Value)},{FmtCoord(l.Longitude.Value)}")">
+                                                    📍 @FmtCoord(l.Latitude.Value)، @FmtCoord(l.Longitude.Value)
+                                                </a>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">—</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table></div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .hr-avatar-xl { width: 72px; height: 72px; border-radius: 50%; background: linear-gradient(135deg, #14b8a6, #0f766e); color: #fff; font-weight: 800; font-size: 1.4rem; display: inline-flex; align-items: center; justify-content: center; }
+    @@media (max-width: 575px) {
+        .page-head h1 { font-size: 1.25rem; }
+        .page-head .lead { font-size: .85rem; }
+    }
+</style>
+
+@code {
+    private bool canUse => Auth.Has("FaAtt.Read") || Auth.Has("FaAtt.Create") || Auth.IsAdmin;
+    private bool canPunch => Auth.Has("FaAtt.Create") || Auth.IsAdmin;
+
+    private bool loading = true, punching;
+    private FaAttMyTodayDto? my;
+
+    private string TodayFa => PersianDate.ToShortFa(DateTime.Today);
+    private string First => my?.EmployeeName.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+    private string Last => my?.EmployeeName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).FirstOrDefault() ?? "";
+
+    private bool canIn => canPunch && (my?.Logs.LastOrDefault() is null or { Type: 1 });
+    private bool canOut => canPunch && my?.Logs.LastOrDefault() is { Type: 0 };
+
+    private static string FmtTime(TimeSpan t) => t.ToString(@"hh\:mm");
+    private static string FmtClock(DateTime? d) => d == null ? "—" : Fa.Digits(d.Value.ToString("HH:mm"));
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { my = await Svc.GetMyTodayAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Punch(int type)
+    {
+        punching = true;
+        geoWaiting = true;
+        try
+        {
+            // گرفتن موقعیت جغرافیایی (در صورت اجازه‌ی کاربر) برای همراه‌کردن تردد —
+            // attGetPosition در project-interop.js: null یعنی رد/عدم پشتیبانی/تایم‌اوت.
+            double? lat = null, lng = null;
+            try
+            {
+                var pos = await JS.InvokeAsync<GeoPos?>("attGetPosition", 8000);
+                if (pos is not null) { lat = pos.Lat; lng = pos.Lng; }
+                geoState = pos is not null ? GeoState.Granted : GeoState.Denied;
+            }
+            catch
+            {
+                geoState = GeoState.Denied; // بدون مکان ادامه می‌دهیم — ثبت تردد نباید گیر کند
+            }
+
+            await Svc.ClockAsync(new FaAttClockSaveDto { Type = type, Latitude = lat, Longitude = lng });
+            Toast.Success((type == 0 ? "ورود" : "خروج") + " ثبت شد" + (lat is null ? " (بدون مکان)." : " — همراه با موقعیت 📍."));
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { punching = false; geoWaiting = false; }
+    }
+
+    private enum GeoState { Unknown, Granted, Denied }
+    private GeoState geoState = GeoState.Unknown;
+    private bool geoWaiting;
+
+    private sealed record GeoPos(double Lat, double Lng);
+
+    private static string FmtCoord(double v)
+        => v.ToString("0.00000", System.Globalization.CultureInfo.InvariantCulture);
+}

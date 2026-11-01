@@ -1,0 +1,206 @@
+@namespace Inventory.Client.Pages
+@page "/fa-com/tickets"
+@inject IFaComService Svc
+@inject IHrCoreService EmpSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>کارتابل تیکت‌ها</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-ticket-detailed"></i> کارتابل تیکت‌ها</h1>
+            <div class="lead">پاسخ‌گویی واحد منابع انسانی به درخواست‌های پرسنل</div>
+        </div>
+        @if (faManage)
+        {
+            <button class="btn btn-success" @onclick="() => OpenNew()"><i class="bi bi-plus-lg"></i> تیکت جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد منابع انسانی است.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label small text-muted">وضعیت</label>
+                <select class="form-select" @bind="fStatus">
+                    <option value="-1">همه</option>
+                    @for (int s = 0; s <= 3; s++)
+                    {
+                        <option value="@s">@FaComUi.TicketStatus(s)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small text-muted">دسته</label>
+                <select class="form-select" @bind="fCategory">
+                    <option value="-1">همه</option>
+                    @for (int c = 0; c <= 5; c++)
+                    {
+                        <option value="@c">@FaComUi.Category(c)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4"><button class="btn btn-primary w-100" @onclick="Reload"><i class="bi bi-search"></i> جستجو</button></div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>پرسنل</th>
+                        <th>موضوع</th>
+                        <th>دسته</th>
+                        <th>اولویت</th>
+                        <th>وضعیت</th>
+                        <th class="text-center">پاسخ‌ها</th>
+                        <th>تاریخ ثبت</th>
+                        <th style="width:120px">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var t in rows)
+                    {
+                        <tr>
+                            <td><strong>@t.EmployeeName</strong></td>
+                            <td>@t.Subject</td>
+                            <td>@FaComUi.Category(t.Category)</td>
+                            <td><span class="badge @FaComUi.PriorityBadge(t.Priority)">@FaComUi.Priority(t.Priority)</span></td>
+                            <td><span class="badge @FaComUi.StatusBadge(t.Status)">@FaComUi.TicketStatus(t.Status)</span></td>
+                            <td class="text-center">@Fa.Digits(t.RepliesCount.ToString())</td>
+                            <td class="small num">@FaComUi.Dt(t.CreatedAt)</td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button class="btn btn-outline-primary" title="مشاهده و پاسخ" @onclick="() => Go(t.Id)"><i class="bi bi-eye"></i></button>
+                                    <button class="btn btn-outline-danger" title="حذف" @onclick="() => Del(t)"><i class="bi bi-trash"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0)
+                    {
+                        <tr><td colspan="8" class="text-center text-muted py-4">تیکتی یافت نشد.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<Modal Visible="showNew" Title="تیکت جدید (از طرف پرسنل)" Size="modal-lg" OnClose="() => showNew = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-12">
+            <label class="form-label">پرسنل</label>
+            <select class="form-select" @bind="form.EmployeeId">
+                @foreach (var e in emps)
+                {
+                    <option value="@e.Id">@e.FirstName @e.LastName</option>
+                }
+            </select>
+        </div>
+        <div class="col-12"><label class="form-label">موضوع</label><input class="form-control" @bind="form.Subject" /></div>
+        <div class="col-md-6">
+            <label class="form-label">دسته</label>
+            <select class="form-select" @bind="form.Category">
+                @for (int c = 0; c <= 5; c++)
+                {
+                    <option value="@c">@FaComUi.Category(c)</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">اولویت</label>
+            <select class="form-select" @bind="form.Priority">
+                @for (int p = 0; p <= 2; p++)
+                {
+                    <option value="@p">@FaComUi.Priority(p)</option>
+                }
+            </select>
+        </div>
+        <div class="col-12"><label class="form-label">متن</label><textarea class="form-control" rows="4" @bind="form.Body"></textarea></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showNew = false">انصراف</button>
+        <button class="btn btn-success" @onclick="Save"><i class="bi bi-check-lg"></i> ثبت تیکت</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faManage => Auth.Has("FaCom.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaComTicketDto> rows = new();
+    private List<HrEmployeeDto> emps = new();
+
+    private int fStatus = -1;
+    private int fCategory = -1;
+
+    private bool showNew;
+    private FaComTicketSaveDto form = new() { Priority = 1 };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        try { emps = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 500)).Items; }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { rows = await Svc.ListTicketsAsync(fStatus < 0 ? null : fStatus, fCategory < 0 ? null : fCategory); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void Go(int id) => Nav.NavigateTo(FaComUi.TicketUrl(id));
+
+    private void OpenNew()
+    {
+        form = new FaComTicketSaveDto { Priority = 1, EmployeeId = emps.FirstOrDefault()?.Id };
+        showNew = true;
+    }
+
+    private async Task Save()
+    {
+        try
+        {
+            var t = await Svc.CreateTicketAsync(form);
+            showNew = false;
+            Toast.Success("تیکت ثبت شد.");
+            Nav.NavigateTo(FaComUi.TicketUrl(t.Id));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Del(FaComTicketDto t)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"تیکت «{t.Subject}» حذف شود؟")) return;
+        try { await Svc.DeleteTicketAsync(t.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

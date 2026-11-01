@@ -1,0 +1,625 @@
+@namespace Inventory.Client.Pages
+@page "/my-dashboards"
+@using System.Text.Json
+@using Inventory.Shared
+@using Inventory.Shared.Dtos
+@inject IAuthState Auth
+@inject IDashboardClient Api
+@inject IJSRuntime JS
+@inject IToastService Toast
+@inject NavigationManager Nav
+@implements IAsyncDisposable
+
+<PageTitle>داشبورد من</PageTitle>
+
+@if (!Auth.CanSee("MyDashboards"))
+{
+    <div class="alert alert-warning mt-3">
+        <i class="bi bi-shield-exclamation"></i>
+        شما به «داشبورد من» دسترسی ندارید. برای دریافت دسترسی با مدیر سیستم تماس بگیرید.
+    </div>
+}
+else
+{
+    <div class="page-head dash-head">
+        <div>
+            <h1><i class="bi bi-grid-1x2-fill"></i> داشبورد من</h1>
+            <p class="lead mb-0">داشبورد شخصی خودت را با ویجت‌هایی که مجوزشان را داری بچین و ذخیره کن.</p>
+        </div>
+        <div class="dash-head-actions">
+            @if (canDesign)
+            {
+                @if (!editing)
+                {
+                    <button class="btn btn-outline-primary btn-sm" @onclick="NewDashboard">
+                        <i class="bi bi-plus-lg"></i> داشبورد جدید
+                    </button>
+                    <button class="btn btn-primary btn-sm" @onclick="StartEdit">
+                        <i class="bi bi-pencil-square"></i> طراحی داشبورد
+                    </button>
+                }
+                else
+                {
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="CancelEdit">انصراف</button>
+                    <button class="btn btn-success btn-sm" disabled="@saving" @onclick="SaveEdit">
+                        @if (saving) { <span class="spinner-border spinner-border-sm"></span> }
+                        <i class="bi bi-check2"></i> ذخیرهٔ چیدمان
+                    </button>
+                }
+            }
+            <button class="btn btn-outline-secondary btn-sm" @onclick="ReloadAllAsync" title="به‌روزرسانی همهٔ ویجت‌ها">
+                <i class="bi bi-arrow-clockwise"></i>
+            </button>
+        </div>
+    </div>
+
+    @* ================== زبانهٔ داشبوردها ================== *@
+    @if (dashboards.Count > 1 || editing)
+    {
+        <div class="dash-tabs mb-3">
+            @foreach (var d in dashboards)
+            {
+                var dd = d;
+                <button type="button" class="dash-tab @(dd.Id == currentId ? "active" : "")" @onclick="() => SelectDashboard(dd.Id)">
+                    @if (dd.IsDefault) { <i class="bi bi-star-fill dash-default-star" title="داشبورد پیش‌فرض"></i> }
+                    @dd.Name
+                    <span class="dash-tab-badge">@dd.Widgets.Count</span>
+                </button>
+            }
+        </div>
+    }
+
+    @if (loading)
+    {
+        <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    }
+    else if (current is null)
+    {
+        <div class="dash-empty-state">
+            <i class="bi bi-grid-3x3-gap"></i>
+            <h5>هنوز داشبوردی نساخته‌ای</h5>
+            <p>
+                @if (canDesign)
+                {
+                    <span>روی «داشبورد جدید» بزن و بعد از «طراحی داشبورد» ویجت‌های مورد نظرت را اضافه کن.</span>
+                }
+                else
+                {
+                    <span>برای ساخت داشبورد شخصی به مجوز «طراحی داشبورد» نیاز داری.</span>
+                }
+            </p>
+            @if (canDesign)
+            {
+                <button class="btn btn-primary" @onclick="NewDashboard"><i class="bi bi-plus-lg"></i> ساخت اولین داشبورد</button>
+            }
+        </div>
+    }
+    else
+    {
+        @* ================== نوار ابزار حالت ویرایش ================== *@
+        @if (editing)
+        {
+            <div class="dash-editbar mb-3">
+                <div class="dash-editbar-item">
+                    <label>نام داشبورد</label>
+                    <input class="form-control form-control-sm" @bind="editName" style="max-width:220px" />
+                </div>
+                <label class="dash-check">
+                    <input type="checkbox" class="form-check-input" @bind="editIsDefault" />
+                    <span>داشبورد پیش‌فرض من باشد</span>
+                </label>
+                <button class="btn btn-sm btn-primary" @onclick="() => pickerOpen = !pickerOpen">
+                    <i class="bi bi-plus-circle"></i> افزودن ویجت
+                </button>
+                <span class="dash-hint">
+                    <i class="bi bi-info-circle"></i>
+                    کارت‌ها را بکش تا جابه‌جا شوند؛ از گوشهٔ پایین بکش تا اندازه عوض شود.
+                </span>
+            </div>
+        }
+
+        @* ================== پنل انتخاب ویجت ================== *@
+        @if (editing && pickerOpen)
+        {
+            <div class="dash-picker mb-3">
+                <div class="dash-picker-head">
+                    <input class="form-control form-control-sm" placeholder="جستجوی ویجت..." @bind="pickerQuery" @bind:event="oninput" />
+                    <button class="btn btn-sm btn-light" @onclick="() => pickerOpen = false"><i class="bi bi-x-lg"></i></button>
+                </div>
+                <div class="dash-picker-body">
+                    @foreach (var grp in PickerGroups)
+                    {
+                        <div class="dash-picker-cat">
+                            <div class="dash-picker-cat-title">@grp.Key</div>
+                            <div class="dash-picker-items">
+                                @foreach (var w in grp)
+                                {
+                                    var def = w;
+                                    <button type="button" class="dash-pick" title="@def.Description" @onclick="() => AddWidget(def)">
+                                        <i class="bi @def.Icon"></i>
+                                        <span>@def.Title</span>
+                                        <em>@KindName(def.Kind)</em>
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
+                    @if (catalog.Count == 0)
+                    {
+                        <div class="dash-empty">
+                            <i class="bi bi-shield-lock"></i>
+                            هنوز به هیچ ماژول داده‌ای دسترسی نداری؛ ویجت‌ها بر اساس مجوزهای تو فهرست می‌شوند.
+                            برای گرفتن دسترسی با مدیر سیستم تماس بگیر.
+                        </div>
+                    }
+                    else if (!PickerGroups.Any())
+                    {
+                        <div class="dash-empty">ویجتی با این نام پیدا نشد — یا مجوز ماژولش را نداری.</div>
+                    }
+                </div>
+            </div>
+        }
+
+        @* ================== گرید ویجت‌ها ================== *@
+        @if (widgets.Count == 0)
+        {
+            <div class="dash-empty-state">
+                <i class="bi bi-puzzle"></i>
+                <h5>این داشبورد خالی است</h5>
+                <p>
+                    @if (editing)
+                    {
+                        <span>از «افزودن ویجت» اولین ویجت را اضافه کن.</span>
+                    }
+                    else if (canDesign)
+                    {
+                        <span>برای افزودن ویجت، حالت «طراحی داشبورد» را باز کن.</span>
+                    }
+                    else
+                    {
+                        <span>ویجتی در این داشبورد چیده نشده است.</span>
+                    }
+                </p>
+            </div>
+        }
+        else
+        {
+            <div class="dash-grid" id="dashGrid">
+                @foreach (var inst in widgets)
+                {
+                    var w = inst;
+                    var def = Def(w.WidgetKey);
+                    if (def is null) { continue; }
+                    <DashWidgetCard Def="def" Inst="w"
+                                    Data="data.GetValueOrDefault(Key(w))"
+                                    Loading="@pending.Contains(Key(w))"
+                                    Editing="editing"
+                                    OnRemove="() => RemoveWidget(w)"
+                                    OnRefresh="() => LoadOneAsync(w)"
+                                    OnRename="v => RenameWidget(w, v)"
+                                    OnRangeChange="v => ChangeRange(w, v)"
+                                    OnChartTypeChange="v => ChangeChartType(w, v)"
+                                    OnConfigChange="kv => ChangeConfig(w, kv.Key, kv.Value)" />
+                }
+            </div>
+        }
+    }
+}
+
+<style>
+    .dash-head { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; direction:rtl; }
+    .dash-head h1 { margin:0; font-size:1.25rem; }
+    .dash-head-actions { margin-right:auto; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+
+    /* ---------- زبانهٔ داشبوردها ---------- */
+    .dash-tabs { display:flex; gap:.5rem; flex-wrap:wrap; direction:rtl; }
+    .dash-tab { border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:.45rem .9rem;
+                font-size:.86rem; font-weight:600; color:#475569; cursor:pointer; display:inline-flex;
+                align-items:center; gap:.4rem; }
+    .dash-tab:hover { border-color:#93c5fd; color:#2563eb; }
+    .dash-tab.active { background:#2563eb; border-color:#2563eb; color:#fff; }
+    .dash-tab-badge { background:rgba(0,0,0,.08); border-radius:999px; padding:0 .45rem; font-size:.72rem; }
+    .dash-tab.active .dash-tab-badge { background:rgba(255,255,255,.25); }
+    .dash-default-star { font-size:.7rem; color:#f59e0b; }
+    .dash-tab.active .dash-default-star { color:#fde68a; }
+
+    /* ---------- نوار ویرایش ---------- */
+    .dash-editbar { display:flex; align-items:flex-end; gap:1rem; flex-wrap:wrap; background:#f8fafc;
+                    border:1px dashed #cbd5e1; border-radius:12px; padding:.75rem 1rem; direction:rtl; }
+    .dash-editbar-item label { display:block; font-size:.75rem; color:#64748b; margin-bottom:.2rem; }
+    .dash-check { display:inline-flex; align-items:center; gap:.4rem; font-size:.85rem; cursor:pointer; margin-bottom:.35rem; }
+    .dash-hint { font-size:.78rem; color:#64748b; margin-right:auto; }
+
+    /* ---------- پنل انتخاب ویجت ---------- */
+    .dash-picker { background:#fff; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden; direction:rtl; }
+    .dash-picker-head { display:flex; gap:.5rem; padding:.6rem .8rem; background:#f8fafc; border-bottom:1px solid #e2e8f0; }
+    .dash-picker-body { max-height:320px; overflow-y:auto; padding:.6rem .8rem; }
+    .dash-picker-cat + .dash-picker-cat { margin-top:.8rem; }
+    .dash-picker-cat-title { font-size:.78rem; font-weight:700; color:#2563eb; margin-bottom:.4rem; }
+    .dash-picker-items { display:flex; flex-wrap:wrap; gap:.4rem; }
+    .dash-pick { display:inline-flex; align-items:center; gap:.35rem; border:1px solid #e2e8f0; background:#fff;
+                 border-radius:9px; padding:.35rem .65rem; font-size:.8rem; cursor:pointer; color:#334155; }
+    .dash-pick:hover { border-color:#2563eb; color:#2563eb; background:#eff6ff; }
+    .dash-pick em { font-style:normal; font-size:.68rem; color:#94a3b8; }
+
+    /* ---------- گرید ---------- */
+    .dash-grid { display:grid; grid-template-columns:repeat(12, minmax(0,1fr)); gap:.85rem;
+                 grid-auto-rows:92px; grid-auto-flow:row dense; direction:rtl; }
+    .dash-card { position:relative; background:#fff; border:1px solid #e5eaf0; border-radius:14px;
+                 display:flex; flex-direction:column; min-width:0; overflow:hidden;
+                 box-shadow:0 1px 2px rgba(15,23,42,.04); }
+    .dash-card.editing { border-style:dashed; border-color:#93c5fd; }
+    .dash-card.editing .dash-card-head { cursor:grab; }
+    .dash-card.dash-dragging { opacity:.45; }
+    .dash-card.dash-resizing { outline:2px solid #2563eb; }
+    .dash-card.dash-drop-before { box-shadow:-4px 0 0 0 #2563eb; }
+    .dash-card.dash-drop-after  { box-shadow: 4px 0 0 0 #2563eb; }
+
+    .dash-card-head { display:flex; align-items:center; gap:.4rem; padding:.5rem .7rem;
+                      border-bottom:1px solid #f1f5f9; background:#fcfdff; flex-shrink:0; }
+    .dash-grip { color:#cbd5e1; cursor:grab; }
+    .dash-card-title { font-size:.82rem; font-weight:700; color:#334155; white-space:nowrap;
+                       overflow:hidden; text-overflow:ellipsis; flex:1 1 auto; min-width:0; }
+    .dash-card-title i { color:#2563eb; }
+    .dash-card-tools { display:flex; gap:.2rem; flex-shrink:0; }
+    .dash-tool { border:0; background:none; color:#94a3b8; cursor:pointer; padding:.15rem .3rem;
+                 border-radius:6px; font-size:.8rem; text-decoration:none; display:inline-block; }
+    .dash-tool:hover { background:#f1f5f9; color:#2563eb; }
+    .dash-tool-danger:hover { background:#fef2f2; color:#dc2626; }
+
+    .dash-cfg { padding:.55rem .7rem; background:#f8fafc; border-bottom:1px solid #eef2f7;
+                display:grid; gap:.4rem; }
+    .dash-cfg-row { display:flex; align-items:center; gap:.5rem; font-size:.78rem; color:#475569; }
+    .dash-cfg-row > span { flex:0 0 74px; }
+
+    .dash-card-body { flex:1 1 auto; min-height:0; padding:.6rem .7rem; overflow:auto; }
+    .dash-loading, .dash-empty { display:flex; align-items:center; justify-content:center; gap:.4rem;
+                                 height:100%; min-height:60px; color:#94a3b8; font-size:.82rem; text-align:center; }
+
+    /* ---------- KPI ---------- */
+    .dash-kpi { display:flex; flex-direction:column; justify-content:center; height:100%; gap:.15rem; }
+    .dash-kpi-value { font-size:1.45rem; font-weight:800; color:#0f172a; line-height:1.3; }
+    .dash-kpi-unit { font-size:.72rem; font-weight:600; color:#94a3b8; margin-right:.3rem; }
+    .dash-kpi-delta { font-size:.78rem; font-weight:600; display:inline-flex; align-items:center; }
+    .dash-kpi-delta.up { color:#16a34a; }
+    .dash-kpi-delta.down { color:#dc2626; }
+    .dash-kpi-sub { font-size:.74rem; color:#64748b; }
+
+    /* ---------- نمودار ---------- */
+    .dash-chart { position:relative; height:100%; min-height:120px; }
+
+    /* ---------- جدول ---------- */
+    .dash-table-wrap { height:100%; overflow:auto; }
+    .dash-table th { font-size:.72rem; color:#64748b; font-weight:700; white-space:nowrap;
+                     position:sticky; top:0; background:#fff; }
+    .dash-table td { font-size:.78rem; white-space:nowrap; }
+    .dash-table tbody tr { cursor:pointer; }
+    .dash-table tbody tr:hover { background:#f8fafc; }
+    .dash-table tr.tone-danger td:first-child { border-right:3px solid #dc2626; }
+    .dash-table tr.tone-warning td:first-child { border-right:3px solid #f59e0b; }
+    .dash-table tr.tone-success td:first-child { border-right:3px solid #16a34a; }
+
+    /* ---------- دستگیرهٔ تغییر اندازه ---------- */
+    .dash-resize { position:absolute; left:0; bottom:0; width:18px; height:18px; cursor:nwse-resize;
+                   background:linear-gradient(135deg, transparent 50%, #cbd5e1 50%); border-bottom-left-radius:14px; }
+    .dash-resize:hover { background:linear-gradient(135deg, transparent 50%, #2563eb 50%); }
+
+    /* ---------- حالت خالی ---------- */
+    .dash-empty-state { text-align:center; padding:3rem 1rem; color:#64748b; background:#fff;
+                        border:1px dashed #e2e8f0; border-radius:16px; }
+    .dash-empty-state i { font-size:2.4rem; color:#cbd5e1; display:block; margin-bottom:.6rem; }
+    .dash-empty-state h5 { color:#334155; }
+
+    /* ---------- موبایل ---------- */
+    @@media (max-width: 767.98px) {
+        .dash-grid { grid-template-columns:repeat(6, minmax(0,1fr)); grid-auto-rows:84px; }
+        .dash-card { grid-column:span 6 !important; }
+        .dash-hint { display:none; }
+    }
+</style>
+
+@code {
+    private List<UserDashboardDto> dashboards = new();
+    private List<WidgetDefDto> catalog = new();
+    private bool canDesign, loading = true, saving, editing, pickerOpen;
+    private int currentId;
+    private string editName = "";
+    private bool editIsDefault;
+    private string pickerQuery = "";
+
+    /// <summary>ویجت‌های داشبورد جاری — در حالت ویرایش روی کپی کار می‌کنیم.</summary>
+    private List<UserDashWidgetDto> widgets = new();
+    private List<UserDashWidgetDto> backup = new();
+
+    /// <summary>دادهٔ هر ویجت — کلید = شناسهٔ نمونهٔ ویجت (برای ویجت‌های تازه = عدد منفی).</summary>
+    private Dictionary<int, WidgetDataDto> data = new();
+    private HashSet<int> pending = new();
+    private int tempId = -1;
+
+    private DotNetObjectReference<MyDashboards>? selfRef;
+
+    private UserDashboardDto? current => dashboards.FirstOrDefault(d => d.Id == currentId);
+    private static int Key(UserDashWidgetDto w) => w.Id;
+    private WidgetDefDto? Def(string key) => catalog.FirstOrDefault(c => c.Key == key);
+
+    private IEnumerable<IGrouping<string, WidgetDefDto>> PickerGroups =>
+        catalog.Where(w => string.IsNullOrWhiteSpace(pickerQuery)
+                        || w.Title.Contains(pickerQuery, StringComparison.OrdinalIgnoreCase)
+                        || w.Category.Contains(pickerQuery, StringComparison.OrdinalIgnoreCase))
+               .GroupBy(w => w.Category)
+               .OrderBy(g => g.Key);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.CanSee("MyDashboards")) return;
+        await LoadAllAsync();
+    }
+
+    private bool gridBound;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!Auth.CanSee("MyDashboards")) return;
+
+        // گرید «dashGrid» فقط وقتی رندر می‌شود که حداقل یک ویجت وجود داشته باشد،
+        // پس در firstRender معمولاً هنوز در DOM نیست و bind بی‌اثر می‌ماند.
+        // تا وقتی گرید واقعاً بایند نشده، در هر رندر دوباره تلاش می‌کنیم.
+        // اگر همهٔ ویجت‌ها حذف شوند، Blazor خودِ عنصر گرید را از DOM برمی‌دارد؛
+        // عنصر بعدی تازه است و باید دوباره بایند شود.
+        if (widgets.Count == 0) { gridBound = false; return; }
+        if (gridBound) return;
+
+        selfRef ??= DotNetObjectReference.Create(this);
+        try
+        {
+            gridBound = await JS.InvokeAsync<bool>("appDash.bind", "dashGrid", selfRef);
+        }
+        catch { gridBound = false; }
+    }
+
+    private async Task LoadAllAsync()
+    {
+        loading = true;
+        StateHasChanged();
+        // کاتالوگ ویجت‌ها و فهرست داشبوردها دو سرویس مستقل‌اند؛
+        // خرابی یکی (مثلاً نبودِ جدول گزارش‌ها) نباید دیگری را از کار بیندازد.
+        try
+        {
+            var cat = await Api.GetCatalogAsync();
+            catalog = cat.Widgets;
+            canDesign = cat.CanDesign || Auth.IsAdmin;
+        }
+        catch (Exception ex)
+        {
+            catalog = new();
+            canDesign = Auth.IsAdmin;
+            Toast.Error("فهرست ویجت‌ها بارگذاری نشد: " + ex.Message);
+        }
+
+        try
+        {
+            dashboards = await Api.GetDashboardsAsync();
+            var def = dashboards.FirstOrDefault(d => d.IsDefault) ?? dashboards.FirstOrDefault();
+            currentId = def?.Id ?? 0;
+            ExitEdit();
+        }
+        catch (Exception ex) { Toast.Error("داشبوردها بارگذاری نشد: " + ex.Message); }
+        loading = false;
+        StateHasChanged();
+        if (current is not null) await LoadWidgetsAsync(current.Widgets);
+    }
+
+    private void ExitEdit()
+    {
+        editing = false;
+        pickerOpen = false;
+        widgets = current?.Widgets.OrderBy(w => w.SortOrder).ThenBy(w => w.Row).ThenBy(w => w.Col).ToList() ?? new();
+    }
+
+    private async Task SelectDashboard(int id)
+    {
+        currentId = id;
+        ExitEdit();
+        StateHasChanged();
+        if (current is not null) await LoadWidgetsAsync(current.Widgets);
+    }
+
+    // ================== بارگذاری دادهٔ ویجت‌ها ==================
+
+    private async Task LoadWidgetsAsync(IEnumerable<UserDashWidgetDto> list)
+    {
+        var items = list.Where(w => Def(w.WidgetKey) is not null).ToList();
+        foreach (var w in items) pending.Add(Key(w));
+        StateHasChanged();
+
+        var tasks = items.Select(async w =>
+        {
+            var d = await Api.GetDataAsync(w.WidgetKey, w.ChartType ?? Def(w.WidgetKey)!.ChartTypes.FirstOrDefault(),
+                                           w.Range, w.Config);
+            return (Id: Key(w), Data: d);
+        });
+        foreach (var t in await Task.WhenAll(tasks))
+        {
+            if (t.Data is not null) data[t.Id] = t.Data;
+            pending.Remove(t.Id);
+        }
+        StateHasChanged();
+    }
+
+    private async Task LoadOneAsync(UserDashWidgetDto w)
+    {
+        pending.Add(Key(w));
+        StateHasChanged();
+        var def = Def(w.WidgetKey);
+        var d = await Api.GetDataAsync(w.WidgetKey, w.ChartType ?? def?.ChartTypes.FirstOrDefault(), w.Range, w.Config);
+        if (d is not null) data[Key(w)] = d;
+        pending.Remove(Key(w));
+        StateHasChanged();
+    }
+
+    private async Task ReloadAllAsync() => await LoadWidgetsAsync(widgets);
+
+    // ================== ویرایش ==================
+
+    private void StartEdit()
+    {
+        if (current is null) return;
+        backup = current.Widgets.Select(Clone).ToList();
+        widgets = backup.Select(Clone).ToList();
+        editName = current.Name;
+        editIsDefault = current.IsDefault;
+        editing = true;
+    }
+
+    private void CancelEdit()
+    {
+        if (current is not null) current.Widgets = backup;
+        ExitEdit();
+    }
+
+    private static UserDashWidgetDto Clone(UserDashWidgetDto w) => new()
+    {
+        Id = w.Id, WidgetKey = w.WidgetKey, Title = w.Title, Row = w.Row, Col = w.Col,
+        W = w.W, H = w.H, SortOrder = w.SortOrder, ChartType = w.ChartType, Range = w.Range,
+        Config = new Dictionary<string, string>(w.Config)
+    };
+
+    private void AddWidget(WidgetDefDto def)
+    {
+        widgets.Add(new UserDashWidgetDto
+        {
+            Id = tempId--,
+            WidgetKey = def.Key,
+            W = def.DefaultW,
+            H = def.DefaultH,
+            Range = def.HasRange ? DashRange.Month : DashRange.All,
+            ChartType = def.ChartTypes.FirstOrDefault(),
+            Config = def.Options.Where(o => !string.IsNullOrEmpty(o.Default))
+                                .ToDictionary(o => o.Key, o => o.Default)
+        });
+        StateHasChanged();
+        _ = LoadOneAsync(widgets[^1]);
+    }
+
+    private void RemoveWidget(UserDashWidgetDto w)
+    {
+        widgets.Remove(w);
+        data.Remove(Key(w));
+        StateHasChanged();
+    }
+
+    private void RenameWidget(UserDashWidgetDto w, string? v) { w.Title = string.IsNullOrWhiteSpace(v) ? null : v.Trim(); }
+    private void ChangeRange(UserDashWidgetDto w, string? v)
+    {
+        if (int.TryParse(v, out var n)) { w.Range = (DashRange)n; _ = LoadOneAsync(w); }
+    }
+    private void ChangeChartType(UserDashWidgetDto w, string? v)
+    {
+        if (int.TryParse(v, out var n)) { w.ChartType = (DashChartType)n; _ = LoadOneAsync(w); }
+    }
+    private void ChangeConfig(UserDashWidgetDto w, string key, string? v)
+    {
+        w.Config[key] = v ?? "";
+        _ = LoadOneAsync(w);
+    }
+
+    // ================== فراخوانی‌های JS ==================
+
+    [JSInvokable]
+    public void OnReorder(string dragId, string targetId, bool beforeTarget)
+    {
+        if (!int.TryParse(dragId, out var a) || !int.TryParse(targetId, out var b)) return;
+        var moving = widgets.FirstOrDefault(w => w.Id == a);
+        var target = widgets.FirstOrDefault(w => w.Id == b);
+        if (moving is null || target is null || ReferenceEquals(moving, target)) return;
+
+        widgets.Remove(moving);
+        var idx = widgets.IndexOf(target);
+        widgets.Insert(beforeTarget ? idx : idx + 1, moving);
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnResize(string wid, int w, int h)
+    {
+        if (!int.TryParse(wid, out var id)) return;
+        var item = widgets.FirstOrDefault(x => x.Id == id);
+        if (item is null) return;
+        item.W = Math.Clamp(w, 1, 12);
+        item.H = Math.Clamp(h, 1, 8);
+        StateHasChanged();
+    }
+
+    // ================== ذخیره ==================
+
+    private async Task SaveEdit()
+    {
+        if (current is null) return;
+        saving = true;
+        StateHasChanged();
+        try
+        {
+            PackGrid(widgets);
+            current.Name = string.IsNullOrWhiteSpace(editName) ? current.Name : editName.Trim();
+            current.IsDefault = editIsDefault;
+            current.Widgets = widgets.Select(Clone).ToList();
+            await Api.SaveAsync(current);
+            Toast.Success("چیدمان داشبورد ذخیره شد.");
+            editing = false;
+            pickerOpen = false;
+            dashboards = await Api.GetDashboardsAsync();
+            currentId = current.Id;
+            ExitEdit();
+        }
+        catch (Exception ex) { Toast.Error("ذخیره ناموفق: " + ex.Message); }
+        saving = false;
+        StateHasChanged();
+    }
+
+    /// <summary>چیدن ویجت‌ها در گرید ۱۲ ستونی و محاسبهٔ Row/Col از روی ترتیب.</summary>
+    private static void PackGrid(List<UserDashWidgetDto> list)
+    {
+        var row = 0;
+        var col = 0;
+        var rowMaxH = 1;
+        for (var i = 0; i < list.Count; i++)
+        {
+            var w = list[i];
+            w.W = Math.Clamp(w.W, 1, 12);
+            w.H = Math.Clamp(w.H, 1, 8);
+            if (col + w.W > 12) { row += rowMaxH; col = 0; rowMaxH = 1; }
+            w.Row = row;
+            w.Col = col;
+            w.SortOrder = i;
+            col += w.W;
+            rowMaxH = Math.Max(rowMaxH, w.H);
+        }
+    }
+
+    private async Task NewDashboard()
+    {
+        try
+        {
+            await Api.CreateAsync($"داشبورد {Fa.Digits((dashboards.Count + 1).ToString())}");
+            dashboards = await Api.GetDashboardsAsync();
+            var last = dashboards.LastOrDefault();
+            if (last is not null) { currentId = last.Id; ExitEdit(); StartEdit(); pickerOpen = true; }
+            StateHasChanged();
+        }
+        catch (Exception ex) { Toast.Error("ساخت داشبورد ناموفق: " + ex.Message); }
+    }
+
+    private static string KindName(DashWidgetKind k) => k switch
+    {
+        DashWidgetKind.Kpi => "عدد",
+        DashWidgetKind.Chart => "نمودار",
+        DashWidgetKind.Table => "جدول",
+        _ => "فهرست"
+    };
+
+    public ValueTask DisposeAsync()
+    {
+        selfRef?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

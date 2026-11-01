@@ -1,0 +1,144 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/profile-requests"
+@inject IHrTalentService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>درخواست‌های ویرایش پرونده</PageTitle>
+
+<div class="page-head mb-4">
+    <div>
+        <h1><i class="bi bi-person-gear"></i> درخواست‌های ویرایش پرونده</h1>
+        <div class="lead">درخواست‌های پرسنل برای اصلاح اطلاعات تماسِ پرونده</div>
+    </div>
+    <div class="form-check ms-auto mb-2">
+        <input class="form-check-input" type="checkbox" id="onlyPend" @bind="onlyPending" @bind:after="Reload" />
+        <label class="form-check-label" for="onlyPend">فقط در انتظار تأیید</label>
+    </div>
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به این بخش برای شما فعال نیست.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+@if (items.Count == 0)
+{
+    <div class="alert alert-info">درخواستی ثبت نشده است.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>پرسنل</th>
+                        <th>تغییرات درخواستی</th>
+                        <th>دلیل</th>
+                        <th>وضعیت</th>
+                        <th style="width:260px">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in items)
+                    {
+                        <tr>
+                            <td class="num">@r.Id</td>
+                            <td>
+                                <a class="fw-bold text-decoration-none" href="hr-core/employees/@r.EmployeeId">@r.EmployeeName</a>
+                                <div class="small text-muted num">کد @r.EmployeeCode</div>
+                            </td>
+                            <td class="small">
+                                @foreach (var line in (r.Fields ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                                {
+                                    <div>@FieldTitle(line)</div>
+                                }
+                            </td>
+                            <td class="small">@(r.Reason ?? "—")</td>
+                            <td>
+                                <span class="badge @(r.Status == 0 ? "bg-warning text-dark" : r.Status == 1 ? "bg-success" : "bg-secondary")">@r.StatusName</span>
+                                @if (r.Status != 0)
+                                {
+                                    <div class="small text-muted">@r.DecidedBy — @(r.DecidedAt?.ToFa() ?? "")</div>
+                                    if (!string.IsNullOrWhiteSpace(r.DecideNote))
+                                    {
+                                        <div class="small">@r.DecideNote</div>
+                                    }
+                                }
+                            </td>
+                            <td>
+                                @if (r.Status == 0 && canUpdate)
+                                {
+                                    <input class="form-control form-control-sm mb-1" placeholder="یادداشت پاسخ (اختیاری)" @bind="notes[r.Id]" />
+                                    <div class="d-flex gap-1">
+                                        <button class="btn btn-sm btn-success" @onclick="() => Decide(r.Id, true)"><i class="bi bi-check-lg"></i> تأیید و اعمال</button>
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => Decide(r.Id, false)"><i class="bi bi-x-lg"></i> رد</button>
+                                    </div>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool canRead => Auth.Has("HrCore.Read") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrCore.Update") || Auth.IsAdmin;
+    private bool loading = true, onlyPending = true;
+    private List<HrProfileEditRequestDto> items = new();
+    private Dictionary<int, string?> notes = new();
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { items = await Svc.ListProfileRequestsAsync(onlyPending); }
+        catch (Exception ex) { Toast.Error(ex.Message); items = new(); }
+        finally { loading = false; }
+    }
+
+    private async Task Decide(int id, bool approve)
+    {
+        try
+        {
+            await Svc.DecideProfileRequestAsync(id, approve, notes.TryGetValue(id, out var n) ? n : null);
+            Toast.Success(approve ? "درخواست تأیید و روی پرونده اعمال شد." : "درخواست رد شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string FieldTitle(string line)
+    {
+        var ix = line.IndexOf('=');
+        if (ix <= 0) return line;
+        var k = line[..ix].Trim();
+        var v = line[(ix + 1)..].Trim();
+        var title = k switch
+        {
+            "Mobile" => "موبایل",
+            "Email" => "ایمیل",
+            "Address" => "نشانی",
+            "Landline" => "تلفن ثابت",
+            "EmergencyContactName" => "نام تماس اضطراری",
+            "EmergencyContactRelation" => "نسبت تماس اضطراری",
+            "EmergencyContactPhone" => "شماره تماس اضطراری",
+            _ => k
+        };
+        return $"{title}: {v}";
+    }
+}

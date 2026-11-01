@@ -1,0 +1,507 @@
+@page "/inv/attributes"
+@inject IInvAttributeService AttrSvc
+@inject IInvCategoryService CategorySvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>ویژگی‌های کالا</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>ویژگی‌های کالا</h1>
+        <p class="lead">تعریف مشخصه‌های فنی کالا مانند رنگ، سایز، ولتاژ و … برای استفاده در فرم تعریف کالا</p>
+    </div>
+    <button class="btn btn-primary ms-auto" @onclick="OpenNew">
+        <i class="bi bi-plus-lg"></i> ویژگی جدید
+    </button>
+</div>
+
+@* ---------- نوار فیلتر ---------- *@
+<div class="card mb-3">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-4">
+                <label class="form-label">جستجو</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="نام یا کد ویژگی…" value="@search"
+                           @oninput="OnSearch" />
+                </div>
+            </div>
+            <div class="col-6 col-md-4">
+                <label class="form-label">گروه کالا</label>
+                <select class="form-select" value="@(fCategoryId?.ToString() ?? "")" @onchange="OnCategoryFilter">
+                    <option value="">همه گروه‌ها</option>
+                    <option value="0">مشترک (همه گروه‌ها)</option>
+                    @foreach (var c in categories)
+                    {
+                        <option value="@c.Id">@Indent(c.Depth)@c.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-4">
+                <div class="form-check form-switch mt-2">
+                    <input class="form-check-input" type="checkbox" id="chkActiveAttr"
+                           checked="@activeOnly" @onchange="OnActiveOnly" />
+                    <label class="form-check-label" for="chkActiveAttr">فقط ویژگی‌های فعال</label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <div class="empty-state">
+                <i class="bi bi-sliders"></i>
+                <h5>ویژگی‌ای یافت نشد</h5>
+                <p class="text-muted">با دکمه «ویژگی جدید» اولین مشخصه کالا را تعریف کنید.</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th style="width:60px">ترتیب</th>
+                            <th>نام ویژگی</th>
+                            <th>کد</th>
+                            <th>نوع مقدار</th>
+                            <th>واحد</th>
+                            <th>گروه کالا</th>
+                            <th>اجباری</th>
+                            <th>کاربرد</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var a in Filtered)
+                        {
+                            <tr>
+                                <td><span class="badge badge-soft-muted num">@a.SortOrder.Num()</span></td>
+                                <td>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="stat-icon bg-soft-primary" style="width:34px;height:34px;font-size:.95rem">
+                                            <i class="bi @TypeIcon(a.ValueType)"></i>
+                                        </span>
+                                        <div>
+                                            <div class="fw-500">@a.Name</div>
+                                            @if (a.ValueType == AttrValueType.List && a.Options.Count > 0)
+                                            {
+                                                <div class="text-muted" style="font-size:.74rem">
+                                                    @string.Join("، ", a.Options.Take(4).Select(o => o.Title))@(a.Options.Count > 4 ? " …" : "")
+                                                </div>
+                                            }
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="num text-muted">@(string.IsNullOrWhiteSpace(a.Code) ? "—" : a.Code)</td>
+                                <td><span class="badge badge-soft-info">@TypeTitle(a.ValueType)</span></td>
+                                <td class="text-muted">@(string.IsNullOrWhiteSpace(a.Unit) ? "—" : a.Unit)</td>
+                                <td class="text-muted">@(a.CategoryId is null ? "مشترک" : (a.CategoryName ?? "—"))</td>
+                                <td>
+                                    @if (a.IsRequired)
+                                    {
+                                        <span class="badge badge-soft-danger">اجباری</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td><span class="badge badge-soft-primary num">@a.UsageCount.Num()</span></td>
+                                <td>
+                                    @if (a.IsActive)
+                                    {
+                                        <span class="badge badge-soft-success">فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-muted">غیرفعال</span>
+                                    }
+                                </td>
+                                <td class="text-end text-nowrap">
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(a)"><i class="bi bi-pencil text-primary"></i></button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(a)"><i class="bi bi-trash text-danger"></i></button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var a in Filtered)
+                {
+                    <div class="m-card @(a.IsActive ? "st-ready" : "st-delivered")">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi @TypeIcon(a.ValueType)"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-700 text-truncate">@a.Name</span>
+                                    @if (a.IsRequired)
+                                    {
+                                        <span class="badge badge-soft-danger fs-8">اجباری</span>
+                                    }
+                                    @if (!a.IsActive)
+                                    {
+                                        <span class="badge badge-soft-muted fs-8">غیرفعال</span>
+                                    }
+                                </div>
+                                <div class="fs-8 text-muted text-truncate">
+                                    @TypeTitle(a.ValueType)@(string.IsNullOrWhiteSpace(a.Unit) ? "" : $" — {a.Unit}")
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">کاربرد</div>
+                                <div class="num fw-800 text-primary">@a.UsageCount.Num()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-row"><span><i class="bi bi-diagram-3 text-muted"></i> گروه کالا</span><b>@(a.CategoryId is null ? "مشترک" : (a.CategoryName ?? "—"))</b></div>
+                            <div class="m-card-row"><span><i class="bi bi-upc text-muted"></i> کد</span><b class="num">@(string.IsNullOrWhiteSpace(a.Code) ? "—" : a.Code)</b></div>
+                            @if (a.ValueType == AttrValueType.List && a.Options.Count > 0)
+                            {
+                                <div class="m-card-row"><span><i class="bi bi-list-ul text-muted"></i> گزینه‌ها</span><b class="text-truncate">@string.Join("، ", a.Options.Take(3).Select(o => o.Title))</b></div>
+                            }
+                        </div>
+                        <div class="m-card-actions">
+                            <button class="btn btn-light text-primary" @onclick="() => OpenEdit(a)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            <button class="btn btn-light text-danger" @onclick="() => Delete(a)"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@* ================= مودال افزودن/ویرایش ویژگی ================= *@
+<Modal Visible="showModal" Title="@(editing.Id == 0 ? "ویژگی جدید" : "ویرایش ویژگی")" Size="modal-lg" OnClose="Close">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label">نام ویژگی <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="editing.Name" @bind:event="oninput" placeholder="مثلاً: رنگ" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">کد</label>
+                <input class="form-control" @bind="editing.Code" dir="ltr" placeholder="COLOR" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">ترتیب نمایش</label>
+                <input type="number" class="form-control" @bind="editing.SortOrder" />
+            </div>
+
+            <div class="col-12 col-md-4">
+                <label class="form-label">نوع مقدار</label>
+                <select class="form-select" value="@((int)editing.ValueType)" @onchange="OnTypeChanged">
+                    @foreach (var t in Types)
+                    {
+                        <option value="@((int)t)">@TypeTitle(t)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-12 col-md-4">
+                <label class="form-label">واحد نمایش</label>
+                <input class="form-control" @bind="editing.Unit" placeholder="میلی‌متر، وات، …" />
+            </div>
+            <div class="col-12 col-md-4">
+                <label class="form-label">گروه کالا</label>
+                <select class="form-select" value="@(editing.CategoryId?.ToString() ?? "")" @onchange="OnEditCategory">
+                    <option value="">مشترک — برای همه گروه‌ها</option>
+                    @foreach (var c in categories)
+                    {
+                        <option value="@c.Id">@Indent(c.Depth)@c.Name</option>
+                    }
+                </select>
+            </div>
+
+            <div class="col-12">
+                <div class="p-2 border rounded bg-light mb-2">
+                    <label class="form-label d-block fw-500 mb-1">الزام ویژگی (آیا تکمیل آن اجباری است؟)</label>
+                    <div class="d-flex align-items-center gap-4">
+                        <div class="form-check form-check-inline mb-0">
+                            <input class="form-check-input cursor-pointer" type="radio" name="attrDefReq" id="attrDefReqYes"
+                                   checked="@editing.IsRequired" @onchange="() => editing.IsRequired = true" />
+                            <label class="form-check-label cursor-pointer text-danger fw-500" for="attrDefReqYes">دارد (الزامی)</label>
+                        </div>
+                        <div class="form-check form-check-inline mb-0">
+                            <input class="form-check-input cursor-pointer" type="radio" name="attrDefReq" id="attrDefReqNo"
+                                   checked="@(!editing.IsRequired)" @onchange="() => editing.IsRequired = false" />
+                            <label class="form-check-label cursor-pointer text-muted" for="attrDefReqNo">ندارد (اختیاری)</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="d-flex flex-wrap gap-4 mt-2">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="attrList" @bind="editing.ShowInList" />
+                        <label class="form-check-label" for="attrList">نمایش در فهرست کالاها</label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="attrAct" @bind="editing.IsActive" />
+                        <label class="form-check-label" for="attrAct">فعال</label>
+                    </div>
+                </div>
+            </div>
+
+            @if (editing.ValueType == AttrValueType.List)
+            {
+                <div class="col-12">
+                    <div class="attr-box">
+                        <div class="d-flex align-items-center mb-2">
+                            <span class="fw-600"><i class="bi bi-list-ul text-primary"></i> گزینه‌های مجاز</span>
+                            <button class="btn btn-sm btn-outline-primary ms-auto" @onclick="AddOption">
+                                <i class="bi bi-plus-lg"></i> افزودن گزینه
+                            </button>
+                        </div>
+                        @if (editing.Options.Count == 0)
+                        {
+                            <div class="attr-empty">هنوز گزینه‌ای تعریف نشده است.</div>
+                        }
+                        else
+                        {
+                            <div class="row g-2">
+                                @for (var i = 0; i < editing.Options.Count; i++)
+                                {
+                                    var idx = i;
+                                    var op = editing.Options[idx];
+                                    <div class="col-12 col-md-6">
+                                        <div class="input-group">
+                                            <span class="input-group-text num">@((idx + 1).Num())</span>
+                                            <input class="form-control" @bind="op.Title" placeholder="عنوان گزینه" />
+                                            <button class="btn btn-light" title="حذف" @onclick="() => editing.Options.RemoveAt(idx)">
+                                                <i class="bi bi-x-lg text-danger"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            <div class="col-12">
+                <label class="form-label">توضیحات</label>
+                <textarea class="form-control" rows="2" @bind="editing.Description"></textarea>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="Close">انصراف</button>
+        <button class="btn btn-primary" data-hotkey="f1" disabled="@saving" @onclick="Save">
+            @if (saving)
+            {
+                <span class="spinner-border spinner-border-sm ms-1"></span>
+            }
+            <i class="bi bi-check-lg"></i> ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<InvAttribute> items = new();
+    private List<InvCategory> categories = new();
+    private bool loading = true, saving, showModal, activeOnly;
+    private string search = "";
+    private int? fCategoryId;
+    private InvAttribute editing = new();
+
+    private static readonly AttrValueType[] Types =
+    {
+        AttrValueType.Text, AttrValueType.Number, AttrValueType.Boolean,
+        AttrValueType.Date, AttrValueType.List
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("ویژگی‌های کالا");
+        categories = await CategorySvc.GetFlatAsync();
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            items = await AttrSvc.GetAllAsync(activeOnly);
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private List<InvAttribute> Filtered
+    {
+        get
+        {
+            IEnumerable<InvAttribute> q = items;
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var s = search.Trim();
+                q = q.Where(a => a.Name.Contains(s, StringComparison.OrdinalIgnoreCase)
+                              || (a.Code ?? "").Contains(s, StringComparison.OrdinalIgnoreCase));
+            }
+            if (fCategoryId is not null)
+                q = fCategoryId == 0 ? q.Where(a => a.CategoryId is null) : q.Where(a => a.CategoryId == fCategoryId);
+            return q.OrderBy(a => a.SortOrder).ThenBy(a => a.Name).ToList();
+        }
+    }
+
+    private void OnSearch(ChangeEventArgs e) => search = e.Value?.ToString() ?? "";
+
+    private void OnCategoryFilter(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        fCategoryId = string.IsNullOrEmpty(raw) ? null : int.Parse(raw);
+    }
+
+    private async Task OnActiveOnly(ChangeEventArgs e)
+    {
+        activeOnly = e.Value is bool b && b;
+        await Load();
+    }
+
+    private void OnEditCategory(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        editing.CategoryId = string.IsNullOrEmpty(raw) ? null : int.Parse(raw);
+    }
+
+    private void OnTypeChanged(ChangeEventArgs e)
+    {
+        editing.ValueType = (AttrValueType)int.Parse(e.Value?.ToString() ?? "0");
+        if (editing.ValueType != AttrValueType.List)
+            editing.Options.Clear();
+    }
+
+    private void AddOption()
+        => editing.Options.Add(new InvAttributeOption { SortOrder = editing.Options.Count + 1 });
+
+    private void OpenNew()
+    {
+        editing = new InvAttribute
+        {
+            IsActive = true,
+            CategoryId = fCategoryId is > 0 ? fCategoryId : null,
+            SortOrder = (items.Count == 0 ? 0 : items.Max(a => a.SortOrder)) + 1
+        };
+        showModal = true;
+    }
+
+    private void OpenEdit(InvAttribute a)
+    {
+        editing = new InvAttribute
+        {
+            Id = a.Id,
+            Name = a.Name,
+            Code = a.Code,
+            ValueType = a.ValueType,
+            Unit = a.Unit,
+            CategoryId = a.CategoryId,
+            CategoryName = a.CategoryName,
+            IsRequired = a.IsRequired,
+            ShowInList = a.ShowInList,
+            SortOrder = a.SortOrder,
+            IsActive = a.IsActive,
+            Description = a.Description,
+            Options = a.Options.Select(o => new InvAttributeOption
+            {
+                Id = o.Id, AttributeId = o.AttributeId, Title = o.Title, SortOrder = o.SortOrder
+            }).ToList()
+        };
+        showModal = true;
+    }
+
+    private void Close() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(editing.Name))
+        {
+            Toast.Error("نام ویژگی الزامی است.");
+            return;
+        }
+        if (editing.ValueType == AttrValueType.List)
+        {
+            editing.Options = editing.Options.Where(o => !string.IsNullOrWhiteSpace(o.Title)).ToList();
+            if (editing.Options.Count == 0)
+            {
+                Toast.Error("برای ویژگی فهرستی حداقل یک گزینه تعریف کنید.");
+                return;
+            }
+            for (var i = 0; i < editing.Options.Count; i++)
+                editing.Options[i].SortOrder = i + 1;
+        }
+
+        saving = true;
+        try
+        {
+            await AttrSvc.SaveAsync(editing);
+            Toast.Success("ویژگی ذخیره شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task Delete(InvAttribute a)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"ویژگی «{a.Name}» حذف شود؟"))
+            return;
+        try
+        {
+            await AttrSvc.DeleteAsync(a.Id);
+            Toast.Success("ویژگی حذف شد.");
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+    }
+
+    private static string Indent(int depth) => depth <= 0 ? "" : string.Concat(Enumerable.Repeat("— ", depth));
+
+    private static string TypeTitle(AttrValueType t) => t switch
+    {
+        AttrValueType.Text => "متنی",
+        AttrValueType.Number => "عددی",
+        AttrValueType.Boolean => "بله / خیر",
+        AttrValueType.Date => "تاریخ",
+        _ => "انتخاب از فهرست"
+    };
+
+    private static string TypeIcon(AttrValueType t) => t switch
+    {
+        AttrValueType.Text => "bi-fonts",
+        AttrValueType.Number => "bi-123",
+        AttrValueType.Boolean => "bi-toggle-on",
+        AttrValueType.Date => "bi-calendar3",
+        _ => "bi-list-ul"
+    };
+}

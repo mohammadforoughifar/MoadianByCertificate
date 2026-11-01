@@ -1,0 +1,224 @@
+@page "/fac/reports/summary"
+@inject IFacReportService ReportSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>گزارش فروش و خرید</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>گزارش فروش و خرید</h1>
+        <p class="lead">تجمیع فاکتورهای قطعی بر اساس ماه، روز، طرف حساب یا کالا</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-outline-secondary" @onclick="Print"><i class="bi bi-printer"></i> چاپ</button>
+    </div>
+</div>
+
+<div class="card mb-3 d-print-none">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-6 col-md-3">
+                <label class="form-label">نوع فاکتور</label>
+                <select class="form-select" value="@((int)kind)" @onchange="OnKind">
+                    <option value="1">فروش</option>
+                    <option value="0">خرید</option>
+                    <option value="3">برگشت از فروش</option>
+                    <option value="2">برگشت از خرید</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">تجمیع بر اساس</label>
+                <select class="form-select" value="@groupBy" @onchange="OnGroup">
+                    <option value="month">ماه</option>
+                    <option value="day">روز</option>
+                    <option value="party">طرف حساب</option>
+                    <option value="product">کالا</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">از تاریخ</label>
+                <DatePicker Value="from" ValueChanged="OnFrom" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">تا تاریخ</label>
+                <DatePicker Value="to" ValueChanged="OnTo" AllowClear="true" />
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else if (result is null || result.Rows.Count == 0)
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="bi bi-table"></i>
+                <h5>در این بازه فاکتور قطعی‌شده‌ای وجود ندارد</h5>
+                <p class="text-muted">فقط فاکتورهای «قطعی» در گزارش‌ها منظور می‌شوند.</p>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-primary"><i class="bi bi-receipt text-primary"></i></div>
+                <div><div class="stat-label">تعداد فاکتور</div><div class="stat-value num">@result.TotalCount.Num()</div></div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-info"><i class="bi bi-box-seam text-info"></i></div>
+                <div><div class="stat-label">مقدار کل</div><div class="stat-value num">@result.TotalQuantity.Num()</div></div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-warning"><i class="bi bi-percent text-warning"></i></div>
+                <div><div class="stat-label">جمع مالیات</div><div class="stat-value num">@result.TotalVat.Money()</div></div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-success"><i class="bi bi-cash-stack text-success"></i></div>
+                <div><div class="stat-label">جمع کل</div><div class="stat-value num text-success">@result.TotalNet.Money()</div></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-table text-primary"></i>
+            <span class="card-title">@KindTitle(result.Kind) — تجمیع بر اساس @GroupTitle(result.GroupBy)</span>
+            <span class="badge badge-soft-primary ms-auto num">@result.Rows.Count.Num() ردیف</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:44px">#</th>
+                            <th>@GroupTitle(result.GroupBy)</th>
+                            <th class="text-center">تعداد</th>
+                            <th class="text-center">مقدار</th>
+                            <th class="text-center">مأخذ مالیات</th>
+                            <th class="text-center">مالیات</th>
+                            <th class="text-center">جمع کل</th>
+                            <th class="text-center" style="width:18%">سهم</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{ var row = 1; var max = result.Rows.Max(r => r.Net); }
+                        @foreach (var r in result.Rows)
+                        {
+                            <tr>
+                                <td class="num text-muted">@((row++).FaDigits())</td>
+                                <td class="num">@r.Title.FaDigits()</td>
+                                <td class="text-center num">@r.Count.Num()</td>
+                                <td class="text-center num">@r.Quantity.Num()</td>
+                                <td class="text-center num">@r.Taxable.Money()</td>
+                                <td class="text-center num text-muted">@r.Vat.Money()</td>
+                                <td class="text-center num fw-600">@r.Net.Money()</td>
+                                <td>
+                                    <div class="progress" style="height:8px">
+                                        <div class="progress-bar bg-primary" style="@BarStyle(r.Net, max)"></div>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot class="table-light">
+                        <tr>
+                            <th colspan="2" class="text-end">جمع کل</th>
+                            <th class="text-center num">@result.TotalCount.Num()</th>
+                            <th class="text-center num">@result.TotalQuantity.Num()</th>
+                            <th class="text-center num">@result.TotalTaxable.Money()</th>
+                            <th class="text-center num">@result.TotalVat.Money()</th>
+                            <th class="text-center num">@result.TotalNet.Money()</th>
+                            <th></th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private FacSummaryResult? result;
+    private InvoiceKind kind = InvoiceKind.Sale;
+    private string groupBy = "month";
+    private DateTime? from, to;
+    private bool loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("گزارش فروش و خرید");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try { result = await ReportSvc.GetSummaryAsync(kind, groupBy, from, to); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnKind(ChangeEventArgs e)
+    {
+        kind = (InvoiceKind)int.Parse(e.Value?.ToString() ?? "1");
+        await Load();
+    }
+
+    private async Task OnGroup(ChangeEventArgs e)
+    {
+        groupBy = e.Value?.ToString() ?? "month";
+        await Load();
+    }
+
+    private async Task OnFrom(DateTime? d)
+    {
+        from = d;
+        await Load();
+    }
+
+    private async Task OnTo(DateTime? d)
+    {
+        to = d;
+        await Load();
+    }
+
+    /// <summary>عرض نوار سهم هر ردیف (با فرهنگ ثابت تا نقطه اعشار درست باشد).</summary>
+    private static string BarStyle(decimal value, decimal max)
+    {
+        var pct = max == 0 ? 0 : (double)(value / max) * 100;
+        return $"width:{pct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%";
+    }
+
+    private static string KindTitle(InvoiceKind k) => k switch
+    {
+        InvoiceKind.Purchase => "فاکتورهای خرید",
+        InvoiceKind.Sale => "فاکتورهای فروش",
+        InvoiceKind.PurchaseReturn => "برگشت از خرید",
+        _ => "برگشت از فروش"
+    };
+
+    private static string GroupTitle(string g) => g switch
+    {
+        "day" => "روز",
+        "party" => "طرف حساب",
+        "product" => "کالا",
+        _ => "ماه"
+    };
+
+    private async Task Print() => await JS.InvokeVoidAsync("window.print");
+}

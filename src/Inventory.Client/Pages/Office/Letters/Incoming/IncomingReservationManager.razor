@@ -1,0 +1,144 @@
+@inject IIncomingLetterService IncomingSvc
+@inject IToastService Toast
+
+@* ============================================================
+   مدیریت شماره‌های رزرو شده نامه وارده (دبیرخانه / اندیکاتور)
+   ============================================================ *@
+
+@if (visible)
+{
+<div class="ltx" style="animation:none;transform:none">
+    <div class="ov"></div>
+    <div class="sheet" style="width:min(640px,96vw)">
+        <div class="sheet-h">
+            <b><i class="bi bi-hash" style="color:var(--p)"></i> رزرو شماره اندیکاتور (نامه وارده)</b>
+            <button class="x" @onclick="Close"><i class="bi bi-x-lg"></i></button>
+        </div>
+
+        <div class="sheet-b">
+            <div style="display:flex; gap:12px; align-items:flex-end; background:#f8fafc; padding:12px; border-radius:12px; margin-bottom:16px">
+                <div style="flex:1">
+                    <label style="font-weight:600; font-size:13px; color:#475569">تعداد شماره جهت رزرو</label>
+                    <input type="number" class="tin" @bind="countToReserve" min="1" max="20" />
+                </div>
+                <button class="btn-main" disabled="@reserving" @onclick="ReserveAsync" style="height:38px; display:inline-flex; align-items:center; gap:6px">
+                    @if (reserving)
+                    {
+                        <span class="spinner-border spinner-border-sm"></span> <span>در حال رزرو…</span>
+                    }
+                    else
+                    {
+                        <i class="bi bi-plus-lg"></i> <span>رزرو شماره</span>
+                    }
+                </button>
+            </div>
+
+            <div style="font-weight:600; font-size:13px; margin-bottom:8px">لیست شماره‌های رزرو شده فعلی:</div>
+
+            @if (loading)
+            {
+                <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+            }
+            else if (reservations.Count == 0)
+            {
+                <div class="empty" style="padding:24px"><i class="bi bi-inbox"></i> هنوز هیچ شماره‌ای رزرو نشده است.</div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>شماره ثبت (اندیکاتور)</th>
+                                <th>کاربر رزرو کننده</th>
+                                <th>تاریخ رزرو</th>
+                                <th>وضعیت</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in reservations)
+                            {
+                                <tr>
+                                    <td><b style="color:var(--p)">@r.NumberSabt.FaDigits()</b></td>
+                                    <td>@r.UserName</td>
+                                    <td>@r.DateReservation.ToFaDateTime()</td>
+                                    <td>
+                                        @if (r.IsUsed)
+                                        {
+                                            <span class="badge bg-secondary">استفاده شده</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-success">آماده استفاده</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+
+        <div class="sheet-f">
+            <button class="btn-sec" @onclick="Close">بستن</button>
+        </div>
+    </div>
+</div>
+}
+
+@code {
+    private bool visible = false;
+    private bool loading = false;
+    private bool reserving = false;
+    private int countToReserve = 1;
+    private List<LetterNumberReservationDto> reservations = new();
+
+    public async Task Open()
+    {
+        visible = true;
+        countToReserve = 1;
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        loading = true;
+        try
+        {
+            reservations = await IncomingSvc.GetReservationsAsync(3);
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ReserveAsync()
+    {
+        if (countToReserve < 1) countToReserve = 1;
+        reserving = true;
+        try
+        {
+            var added = await IncomingSvc.ReserveNumberAsync(3, countToReserve);
+            Toast.Success($"{added.Count.FaDigits()} شماره با موفقیت رزرو شد.");
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            reserving = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Close() => visible = false;
+}

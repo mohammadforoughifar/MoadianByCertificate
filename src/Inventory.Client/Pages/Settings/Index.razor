@@ -1,0 +1,790 @@
+@page "/settings"
+@inject ISettingsService SettingsSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject IAuthState Auth
+
+<PageTitle>تنظیمات</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>تنظیمات</h1>
+        <p class="lead">روش قیمت‌گذاری خروج انبار و کنترل موجودی</p>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-calculator text-primary"></i>
+        <span class="card-title">روش قیمت‌گذاری خروج انبار (محاسبه سود فروش)</span>
+    </div>
+    <div class="card-body">
+        @if (loading)
+        {
+            <div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else
+        {
+            <div class="row g-3">
+                <div class="col-12">
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="radio" name="costing" id="mAvg"
+                               checked="@(model.CostingMethod == "Average")"
+                               @onchange="@(() => model.CostingMethod = "Average")" />
+                        <label class="form-check-label" for="mAvg">
+                            <span class="fw-500">میانگین موزون (Average)</span>
+                            <div class="fs-8 text-muted">بهای تمام‌شده = میانگین قیمت خریدهای قبلی — روش پیش‌فرض و متداول</div>
+                        </label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="radio" name="costing" id="mFifo"
+                               checked="@(model.CostingMethod == "FIFO")"
+                               @onchange="@(() => model.CostingMethod = "FIFO")" />
+                        <label class="form-check-label" for="mFifo">
+                            <span class="fw-500">اولین صادره از اولین وارده (FIFO)</span>
+                            <div class="fs-8 text-muted">فروش از قدیمی‌ترین خریدها قیمت می‌گیرد</div>
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="costing" id="mLifo"
+                               checked="@(model.CostingMethod == "LIFO")"
+                               @onchange="@(() => model.CostingMethod = "LIFO")" />
+                        <label class="form-check-label" for="mLifo">
+                            <span class="fw-500">اولین صادره از آخرین وارده (LIFO)</span>
+                            <div class="fs-8 text-muted">فروش از جدیدترین خریدها قیمت می‌گیرد</div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-header">
+        <i class="bi bi-shield-exclamation text-primary"></i>
+        <span class="card-title">کنترل موجودی</span>
+    </div>
+    <div class="card-body">
+        @if (!loading)
+        {
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="radio" name="negStock" id="negNo"
+                       checked="@(!model.AllowNegativeStock)"
+                       @onchange="@(() => model.AllowNegativeStock = false)" />
+                <label class="form-check-label" for="negNo">
+                    <span class="fw-500">موجودی منفی غیرمجاز (پیشنهادی)</span>
+                    <div class="fs-8 text-muted">فروش بیش از موجودی و حذف/ویرایش سند خریدی که موجودی را منفی کند، رد می‌شود</div>
+                </label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="negStock" id="negYes"
+                       checked="@model.AllowNegativeStock"
+                       @onchange="@(() => model.AllowNegativeStock = true)" />
+                <label class="form-check-label" for="negYes">
+                    <span class="fw-500">موجودی منفی مجاز</span>
+                    <div class="fs-8 text-muted">هیچ محدودیتی روی منفی شدن موجودی اعمال نمی‌شود</div>
+                </label>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-header">
+        <i class="bi bi-box-seam text-primary"></i>
+        <span class="card-title">مدیریت حجم و ابعاد کالا</span>
+    </div>
+    <div class="card-body">
+        @if (!loading)
+        {
+            <p class="fs-8 text-muted mb-3">
+                واحدهای پیش‌فرض برای وزن و ابعاد کالاها — در فرم تعریف کالا و اسناد انبار استفاده می‌شود.
+            </p>
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">واحد وزن</label>
+                    <select class="form-select" @bind="model.WeightUnit">
+                        <option value="kg">کیلوگرم (kg)</option>
+                        <option value="g">گرم (g)</option>
+                        <option value="ton">تن (ton)</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">واحد طول/عرض/ارتفاع</label>
+                    <select class="form-select" @bind="model.DimensionUnit">
+                        <option value="cm">سانتی‌متر (cm)</option>
+                        <option value="mm">میلی‌متر (mm)</option>
+                        <option value="m">متر (m)</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">واحد حجم</label>
+                    <select class="form-select" @bind="model.VolumeUnit">
+                        <option value="ltr">لیتر (ltr)</option>
+                        <option value="ml">میلی‌لیتر (ml)</option>
+                        <option value="m3">متر مکعب (m³)</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">وزن پیش‌فرض محموله (kg)</label>
+                    <input type="number" step="any" class="form-control num" @bind="model.DefaultShipmentWeight" dir="ltr" />
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-header">
+        <i class="bi bi-chat-dots text-primary"></i>
+        <span class="card-title">پیام‌رسان‌ها (بله و ایتا)</span>
+    </div>
+    <div class="card-body">
+        @if (!loading)
+        {
+            <p class="fs-8 text-muted mb-3">
+                با تنظیم توکن‌ها، اعلان‌های هر کاربر علاوه بر نرم‌افزار، در <b>بله</b> و <b>ایتا</b> هم برای خودش ارسال می‌شود.
+                هر کاربر از پنجره‌ی «اعلان‌ها» (زنگ بالای صفحه) اتصال حساب خود را انجام می‌دهد و می‌تواند پیام آزمایشی بگیرد.
+            </p>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">توکن ربات بله</label>
+                    <input class="form-control num" dir="ltr" placeholder="123456789:abc..." @bind="model.BaleBotToken" />
+                    <div class="fs-9 text-muted mt-1">
+                        در بله با ربات <b>@@botfather</b> <span dir="ltr">(ble.ir/botfather)</span> ربات بسازید و توکن را اینجا بگذارید.
+                        کاربران با استارت ربات و ارسال شماره‌شان (دکمه‌ی «ارسال شماره من») به‌صورت خودکار متصل می‌شوند.
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">توکن برنامه ایتا <span dir="ltr" class="fs-9">(developer.eitaa.com)</span></label>
+                    <input class="form-control num" dir="ltr" placeholder="5768337691:AAG..." @bind="model.EitaaToken" />
+                    <div class="fs-9 text-muted mt-1">
+                        برنامه را در <span dir="ltr">eitaayar.ir ← برنامه‌ها</span> بسازید و «آدرس مقصد» آن را روی
+                        <span dir="ltr">https://آدرس-سرور/eitaa-app</span> قرار دهید. کاربران با «کد اتصال» حساب ایتای خود را وصل می‌کنند.
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">شماره معرف سامانه (در امضای پیام‌ها)</label>
+                    <input class="form-control num" dir="ltr" @bind="model.MessengerSenderNumber" />
+                    <div class="fs-9 text-muted mt-1">این شماره در انتهای هر پیام ارسالی به بله/ایتا نمایش داده می‌شود.</div>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@* ================== HTTPS و اعلان اندروید ================== *@
+<div class="card mt-3" id="https">
+    <div class="card-header">
+        <i class="bi bi-shield-lock text-primary"></i>
+        <span class="card-title">HTTPS و اعلان اندروید</span>
+        @if (https?.secureNow == true)
+        {
+            <span class="badge bg-success-subtle text-success ms-2">اکنون روی HTTPS هستید</span>
+        }
+        else if (https != null)
+        {
+            <span class="badge bg-warning-subtle text-warning ms-2">اکنون روی HTTP هستید</span>
+        }
+    </div>
+    <div class="card-body">
+        @if (!loading)
+        {
+            <div class="alert @(https?.secureNow == true ? "alert-success" : "alert-warning") py-2 fs-8">
+                @if (https?.secureNow == true)
+                {
+                    @("این نشانی امن است؛ اعلان سیستمی (مثل اعلان اندروید) روی این دستگاه قابل فعال‌سازی است.")
+                }
+                else
+                {
+                    <span>
+                        <b>چرا اعلان سیستمی فعال نمی‌شود؟</b> مرورگرها اعلان سیستمی و کارکرد پس‌زمینه را فقط روی
+                        <b>HTTPS</b> اجازه می‌دهند؛ روی <span dir="ltr">http://</span> این امکان وجود ندارد (محدودیت خود Chrome/Edge، نه نرم‌افزار).
+                        راه‌حل: گواهی داخلی سامانه را یک‌بار روی هر دستگاه نصب کنید و نرم‌افزار را با آدرس <span dir="ltr">https://</span> باز کنید.
+                        (اعلان‌های بله و ایتا و صدای درون‌برنامه‌ای روی HTTP هم کار می‌کنند.)
+                    </span>
+                }
+            </div>
+
+            <div class="row g-3">
+                <div class="col-lg-6">
+                    <div class="border rounded-3 p-3 h-100">
+                        <div class="fw-700 mb-2"><i class="bi bi-key"></i> گواهی داخلی سامانه</div>
+                        @if (https == null)
+                        {
+                            <div class="fs-8 text-muted">وضعیت HTTPS دریافت نشد.</div>
+                        }
+                        else if (https.enabled)
+                        {
+                            <div class="fs-8 mb-2">وضعیت: <b class="text-success">فعال</b> — پورت <span dir="ltr">@https.port@(https.extraPorts.Count > 0 ? ", " + string.Join(", ", https.extraPorts) : "")</span>@(https.redirectHttp ? " — هدایت خودکار http→https روشن" : "")</div>
+                            @if (https.publicCertificate?.loaded == true)
+                            {
+                                <div class="fs-8 mb-2 p-2 rounded" style="background:rgba(25,135,84,.08)">
+                                    <i class="bi bi-patch-check-fill text-success"></i>
+                                    گواهی معتبر دامنه (بدون نیاز به نصب روی گوشی):
+                                    <span dir="ltr">@string.Join("  ", https.publicCertificate.urls)</span>
+                                    <span class="text-muted">— اعتبار تا <span dir="ltr">@https.publicCertificate.expiresAt?.ToString("yyyy-MM-dd")</span> (تمدید خودکار)</span>
+                                </div>
+                            }
+                            else if (!string.IsNullOrEmpty(https.publicCertificate?.error))
+                            {
+                                <div class="fs-9 text-danger mb-2">@https.publicCertificate.error</div>
+                            }
+                            <div class="fs-8 mb-2">نشانی‌های امن داخلی (با گواهی سامانه):</div>
+                            <ul class="fs-8 mb-2 ps-3" dir="ltr">
+                                @foreach (var u in https.urls)
+                                {
+                                    <li>@u</li>
+                                }
+                            </ul>
+                            <div class="d-flex flex-wrap gap-2 mb-2">
+                                <button type="button" class="btn btn-sm btn-primary" @onclick="OpenHttpsSetup">
+                                    <i class="bi bi-download"></i> دانلود گواهی و راهنمای نصب
+                                </button>
+                                <button type="button" class="btn btn-sm btn-light" @onclick="CopyHttpsDeviceUrl" title="نشانی‌ای که در گوشی وارد می‌کنید">
+                                    <i class="bi bi-clipboard"></i> کپی نشانی امن
+                                </button>
+                            </div>
+                            <div class="fs-9 text-muted">
+                                نصب گواهی: اندروید ← تنظیمات ← امنیت ← رمزگذاری و اعتبارنامه‌ها ← نصب گواهی ← «گواهی CA»؛
+                                ویندوز ← دوبار کلیک روی فایل ← «مراجع صدور گواهی ریشهٔ مورد اعتماد»؛
+                                iPhone ← نصب پروفایل + فعال‌سازی در Certificate Trust Settings.
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="fs-8 mb-2">وضعیت: <b class="text-warning">غیرفعال</b></div>
+                            @if (https.messages.Count > 0)
+                            {
+                                <ul class="fs-9 text-muted ps-3 mb-2">
+                                    @foreach (var m in https.messages) { <li>@m</li> }
+                                </ul>
+                            }
+                            <div class="fs-9 text-muted">
+                                مدیر می‌تواند با <span dir="ltr">Https:Enabled=true</span> در appsettings (یا «بازسازی گواهی») آن را فعال کند.
+                            </div>
+                        }
+                    </div>
+                </div>
+                <div class="col-lg-6">
+                    <div class="border rounded-3 p-3 h-100">
+                        <div class="fw-700 mb-2"><i class="bi bi-person-gear"></i> مدیر سامانه</div>
+                        @if (!Auth.IsAdmin)
+                        {
+                            <div class="alert alert-light border py-2 small mb-0">مدیریت گواهی HTTPS فقط برای مدیر سامانه است.</div>
+                        }
+                        else
+                        {
+                            <div class="fs-8 mb-2">اثر انگشت گواهی (SHA-256):</div>
+                            <div class="input-group input-group-sm mb-2" dir="ltr">
+                                <input class="form-control" readonly value="@(https?.caFingerprint ?? "")" />
+                                <button class="btn btn-outline-secondary" @onclick="() => CopyText(https?.caFingerprint)" title="کپی"><i class="bi bi-clipboard"></i></button>
+                            </div>
+                            @if (https?.serverExpiresAt != null)
+                            {
+                                <div class="fs-9 text-muted mb-2">انقضای گواهی سرور: <span dir="ltr">@https.serverExpiresAt.Value.ToString("yyyy-MM-dd")</span></div>
+                            }
+                            <div class="d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-sm btn-outline-primary" @onclick="RegenHttpsServerAsync" disabled="@httpsBusy">
+                                    <i class="bi bi-arrow-repeat"></i> بازسازی گواهی سرور
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="LoadHttpsAsync" disabled="@httpsBusy">به‌روزرسانی وضعیت</button>
+                                <button type="button" class="btn btn-sm btn-outline-dark" @onclick="ExportPfxAsync" disabled="@httpsBusy">
+                                    <i class="bi bi-file-earmark-lock"></i> گواهی برای IIS
+                                </button>
+                            </div>
+                            <div class="fs-9 text-muted mt-2">
+                                «بازسازی گواهی سرور» پس از تغییر آی‌پی سرور یا اضافه‌شدن کارت شبکه لازم است (نصب‌های قبلی معتبر می‌مانند)؛
+                                برای اعمال روی شنوندهٔ HTTPS، سرویس را یک‌بار ری‌استارت کنید.
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@* ================== مدت نمایش اعلان‌ها و پیام‌ها (سراسری — مدیر سامانه) ================== *@
+<div class="card mt-3">
+    <div class="card-header">
+        <i class="bi bi-stopwatch text-primary"></i>
+        <span class="card-title">مدت نمایش اعلان‌ها و پیام‌ها</span>
+    </div>
+    <div class="card-body">
+        @if (loading)
+        {
+            <div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else
+        {
+            <p class="fs-8 text-muted mb-3">
+                این تنظیم <b>سراسری</b> است: مقداری که اینجا انتخاب می‌کنید روی <b>همهٔ کاربران سامانه</b> و همهٔ دستگاه‌ها اعمال می‌شود.
+                گزینهٔ «تا بستن دستی» یعنی پیام تا وقتی کاربر خودش آن را نبندد باقی می‌ماند. برای اعمال، دکمهٔ <b>«ذخیره تنظیمات»</b> پایین صفحه را بزنید.
+            </p>
+
+            <div class="mb-3">
+                <label class="form-label fw-700">اعلان زندهٔ بالای صفحه <span class="text-muted fw-normal">(اکنون: @NotificationTiming.Label(model.NotifyBannerMs))</span></label>
+                <div class="d-flex flex-wrap gap-1">
+                    @foreach (var ms in NotificationTiming.BannerOptions)
+                    {
+                        <button type="button" class="btn btn-sm @(model.NotifyBannerMs == ms ? "btn-primary" : "btn-outline-secondary")"
+                                @onclick="() => model.NotifyBannerMs = ms">@NotificationTiming.Label(ms)</button>
+                    }
+                </div>
+            </div>
+
+            <div class="mb-1">
+                <label class="form-label fw-700">پیام کوتاه (موفق/خطا/اطلاع) <span class="text-muted fw-normal">(اکنون: @NotificationTiming.Label(model.NotifyToastMs))</span></label>
+                <div class="d-flex flex-wrap gap-1">
+                    @foreach (var ms in NotificationTiming.ToastOptions)
+                    {
+                        <button type="button" class="btn btn-sm @(model.NotifyToastMs == ms ? "btn-primary" : "btn-outline-secondary")"
+                                @onclick="() => model.NotifyToastMs = ms">@NotificationTiming.Label(ms)</button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@* ================== اعلان گوشی و مرورگر (Web Push) ================== *@
+<div class="card mt-3">
+    <div class="card-header">
+        <i class="bi bi-phone-vibrate text-primary"></i>
+        <span class="card-title">اعلان گوشی و مرورگر (مثل اعلان اندروید)</span>
+    </div>
+    <div class="card-body">
+        @if (!loading)
+        {
+            <p class="fs-8 text-muted mb-3">
+                برخلاف پیام‌رسان‌ها که در بله/ایتا می‌آیند، این بخش اعلان را <b>مستقیم مثل اعلان اندروید</b> روی همان دستگاهی که
+                نرم‌افزار را باز کرده‌اید نشان می‌دهد: در نوار اعلان گوشی یا گوشه‌ی دسکتاپ — <b>چه نرم‌افزار باز باشد و چه بسته</b>.
+                با کلیک روی اعلان، خودِ نرم‌افزار باز و روی همان صفحه باز می‌شود. روی <b>HTTPS</b> کار می‌کند:
+                <b>Chrome/Edge</b> در اندروید و ویندوز و <b>Firefox</b> در دسکتاپ؛ در iPhone باید نرم‌افزار در Safari به «صفحه‌ی اصلی» اضافه شود (iOS 16.4+).
+                <br />
+                <b>مدت نمایش اعلان‌ها و پیام‌ها</b> (اعلان زندهٔ بالای صفحه و پیام‌های کوتاه) به‌صورت سراسری از کارت
+                «مدت نمایش اعلان‌ها و پیام‌ها» در همین صفحه (بالاتر) توسط مدیر سامانه تنظیم می‌شود؛
+                پیش‌فرض اعلان زنده <b>۲ دقیقه</b> و پیام کوتاه <b>۲۰ ثانیه</b> است و می‌توانید «تا بستن دستی» هم انتخاب کنید.
+            </p>
+
+            @if (pushBusy && !pushSupportChecked)
+            {
+                <div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span></div>
+            }
+            else
+            {
+                <div class="row g-3">
+                    <div class="col-lg-6">
+                        <div class="border rounded-3 p-3 h-100">
+                            <div class="fw-700 mb-2"><i class="bi bi-display"></i> این دستگاه</div>
+                            <div class="alert @(pushEnabled ? "alert-success" : pushSupported ? "alert-warning" : "alert-secondary") py-2 small">
+                                @pushStatusText
+                            </div>
+                            <div class="d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-sm @(pushEnabled ? "btn-outline-danger" : "btn-primary")" @onclick="TogglePush" disabled="@pushBusy">
+                                    @if (pushBusy) { <span class="spinner-border spinner-border-sm"></span> }
+                                    else if (pushEnabled) { <i class="bi bi-bell-slash"></i> @("غیرفعال‌سازی اعلان این دستگاه") }
+                                    else { <i class="bi bi-bell"></i> @("فعال‌سازی اعلان این دستگاه") }
+                                </button>
+                                @if (pushEnabled)
+                                {
+                                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="TestPush" disabled="@pushBusy">
+                                        <i class="bi bi-send"></i> ارسال آزمایشی
+                                    </button>
+                                }
+                                <button type="button" class="btn btn-sm btn-light" @onclick="InitPushStateAsync" disabled="@pushBusy">بررسی وضعیت</button>
+                            </div>
+                            <div class="fs-9 text-muted mt-2">
+                                اعلان برای هر کاربر و هر دستگاه جداگانه است؛ اگر روی چند دستگاه کار می‌کنید، روی هرکدام یک‌بار فعال کنید.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="border rounded-3 p-3 h-100">
+                            <div class="fw-700 mb-2"><i class="bi bi-key"></i> کلید اعلان سرور (مدیر سامانه)</div>
+                            @if (!Auth.IsAdmin)
+                            {
+                                <div class="alert alert-light border py-2 small mb-0">
+                                    تنظیم کلید اعلان فقط برای مدیر سامانه است. اگر اعلان فعال نمی‌شود، به مدیر اطلاع دهید.
+                                </div>
+                            }
+                            else if (overviewBusy)
+                            {
+                                <div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span></div>
+                            }
+                            else
+                            {
+                                <div class="alert @(overview?.configured == true ? "alert-success" : "alert-warning") py-2 small">
+                                    @if (overview?.configured == true)
+                                    {
+                                        @(overview.source == "settings"
+                                            ? "کلید اعلان فعال است و از داخل همین نرم‌افزار ساخته شده است."
+                                            : "کلید اعلان از فایل/متغیرهای محیطی سرور خوانده می‌شود و فعال است.")
+                                    }
+                                    else
+                                    {
+                                        @("کلید اعلان هنوز تنظیم نشده؛ با دکمه‌ی زیر بسازید تا اعلان گوشی برای همه‌ی کاربران فعال شود.")
+                                    }
+                                </div>
+                                <div class="d-flex flex-wrap gap-3 fs-8 mb-2">
+                                    <span><b>@(overview?.devices ?? 0)</b> دستگاه ثبت‌شده</span>
+                                    <span class="text-muted">|</span>
+                                    <span><b>@(overview?.users ?? 0)</b> کاربر</span>
+                                    <span class="text-muted">|</span>
+                                    <span>در صف: <b>@(overview?.pending ?? 0)</b></span>
+                                    @if ((overview?.failed ?? 0) > 0)
+                                    {
+                                        <span class="text-danger">ناموفق: <b>@overview!.failed</b></span>
+                                    }
+                                </div>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button type="button" class="btn btn-sm btn-primary" @onclick="GenerateVapidAsync" disabled="@overviewBusy">
+                                        <i class="bi bi-magic"></i> @(overview?.configured == true ? "ساخت کلید جدید" : "ساخت و فعال‌سازی کلید اعلان")
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-light" @onclick="LoadOverviewAsync" disabled="@overviewBusy">به‌روزرسانی وضعیت</button>
+                                    @if (overview?.source == "settings")
+                                    {
+                                        <button type="button" class="btn btn-sm btn-outline-danger" @onclick="ResetVapidAsync" disabled="@overviewBusy"
+                                                title="حذف کلیدهای ساخته‌شده در نرم‌افزار و بازگشت به کلیدهای فایل سرور">
+                                            <i class="bi bi-arrow-counterclockwise"></i> حذف کلیدهای نرم‌افزار
+                                        </button>
+                                    }
+                                </div>
+                                @if (overview?.configured == true)
+                                {
+                                    <div class="fs-9 text-muted mt-2">
+                                        با ساخت کلید جدید، اشتراک دستگاه‌های فعلی باطل می‌شود و هر کاربر باید یک‌بار اعلان را دوباره فعال کند
+                                        (کلیدها در <span dir="ltr">App_Data/push-vapid.json</span> سرور ذخیره می‌شوند و نیازی به ویرایش فایل تنظیمات یا ری‌استارت نیست).
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-header">
+        <i class="bi bi-envelope-paper text-primary"></i>
+        <span class="card-title">ساختار شماره نامه (اتوماسیون اداری)</span>
+    </div>
+    <div class="card-body">
+        <p class="fs-8 text-muted mb-3">تعیین فرمت شماره اندیکاتور برای هر سه نوع نامه — داخلی، صادره و وارده — با اجزای «واحد | شماره | سال». جزء «واحد» از نام اختصاصی سازمان (Organization.NameUniq) خوانده می‌شود.</p>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="/settings/letter-structure" class="btn btn-outline-primary">
+                <i class="bi bi-diagram-2"></i> مدیریت ساختار شماره نامه
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-header">
+        <i class="bi bi-shield-lock text-primary"></i>
+        <span class="card-title">نقش‌ها و دسترسی‌ها</span>
+    </div>
+    <div class="card-body">
+        <p class="fs-8 text-muted mb-3">تعریف نقش‌ها و تعیین دسترسی‌ها (پرمیشن‌ها) — اختصاص نقش به هر کاربر از فرم «کاربران» (سیستم ← کاربران) انجام می‌شود.</p>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="/settings/roles" class="btn btn-outline-primary">
+                <i class="bi bi-shield-lock"></i> مدیریت نقش‌ها و دسترسی‌ها
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-header">
+        <i class="bi bi-hdd-network text-primary"></i>
+        <span class="card-title">درخواست خدمات IT بین شرکت‌ها (کانال راه‌دور)</span>
+    </div>
+    <div class="card-body">
+        <p class="fs-8 text-muted mb-3">
+            نسخهٔ نرم‌افزارِ نصب‌شده در شرکت‌های دیگر درخواست‌های کاربرانش را به سرور مرکزی می‌فرستد؛
+            آن کاربران در این سرور «کاربر» تعریف نمی‌شوند و با کلید API شرکت و کلید پایدار شخصی شناخته می‌شوند.
+        </p>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="/settings/it-client-companies" class="btn btn-outline-primary">
+                <i class="bi bi-diagram-3"></i> مدیریت شرکت‌های راه‌دور و صدور کلید (سمت مرکز)
+            </a>
+            <a href="/settings/it-remote" class="btn btn-outline-primary">
+                <i class="bi bi-gear"></i> اتصال این نرم‌افزار به سرور مرکزی (سمت شرکت)
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="d-flex justify-content-end mt-3">
+    <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+        @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+        <i class="bi bi-check2"></i> ذخیره تنظیمات
+    </button>
+</div>
+
+@code {
+    private AppSettings model = new();
+    private bool loading = true, saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("تنظیمات");
+        try { model = await SettingsSvc.GetAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+        await InitPushStateAsync();
+        await LoadHttpsAsync();
+        if (Auth.IsAdmin) await LoadOverviewAsync();
+    }
+
+    // ================== اعلان گوشی و مرورگر (Web Push) ==================
+    private string ApiRoot => Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+    private bool pushBusy, pushEnabled, pushSupportChecked, pushSupported;
+    private string pushStatusText = "وضعیت اعلان این دستگاه بررسی نشده است.";
+    private PushStateResult? pushState;
+    private bool overviewBusy;
+    private PushOverview? overview;
+
+    private class PushStateResult { public bool supported { get; set; } public bool enabled { get; set; } public string? message { get; set; } }
+    private class PushOverview
+    {
+        public bool configured { get; set; } public string? source { get; set; } public string? publicKey { get; set; }
+        public int devices { get; set; } public int users { get; set; } public int pending { get; set; } public int failed { get; set; }
+    }
+    private class VapidResult
+    {
+        public string? publicKey { get; set; } public string? privateKey { get; set; } public string? subject { get; set; }
+        public bool applied { get; set; } public string? source { get; set; } public int cleared { get; set; } public string? message { get; set; }
+        public bool configured { get; set; }
+    }
+
+    private async Task InitPushStateAsync()
+    {
+        if (pushBusy) return;
+        pushBusy = true;
+        try
+        {
+            pushState = await JS.InvokeAsync<PushStateResult>("appPush.state", ApiRoot, Auth.Token, Auth.UserId);
+            pushSupportChecked = true;
+            pushSupported = pushState?.supported ?? false;
+            pushEnabled = pushState?.enabled ?? false;
+            pushStatusText = pushState?.message ?? "وضعیت اعلان مشخص نیست.";
+        }
+        catch { pushSupportChecked = true; pushSupported = false; pushEnabled = false; pushStatusText = "بررسی وضعیت اعلان ناموفق بود؛ صفحه را تازه کنید."; }
+        finally { pushBusy = false; }
+    }
+
+    private async Task TogglePush()
+    {
+        if (pushBusy) return;
+        pushBusy = true;
+        try
+        {
+            var action = pushEnabled ? "appPush.disable" : "appPush.enable";
+            pushState = await JS.InvokeAsync<PushStateResult>(action, ApiRoot, Auth.Token, Auth.UserId);
+            pushSupportChecked = true;
+            pushSupported = pushState?.supported ?? false;
+            pushEnabled = pushState?.enabled ?? false;
+            pushStatusText = pushState?.message ?? "وضعیت اعلان مشخص نیست.";
+            Toast.Success(pushEnabled ? "اعلان این دستگاه فعال شد." : "اعلان این دستگاه خاموش شد.");
+            if (Auth.IsAdmin) await LoadOverviewAsync();
+        }
+        catch { Toast.Error("تنظیم اعلان ناموفق بود؛ صفحه را تازه کنید."); }
+        finally { pushBusy = false; }
+    }
+
+    private async Task TestPush()
+    {
+        if (pushBusy) return;
+        pushBusy = true;
+        try
+        {
+            var result = await JS.InvokeAsync<PushStateResult>("appPush.test", ApiRoot, Auth.Token);
+            pushStatusText = result?.message ?? "درخواست آزمایش ثبت شد؛ چند لحظه بعد اعلان را ببینید.";
+            Toast.Success(pushStatusText);
+        }
+        catch { Toast.Error("ارسال آزمایشی انجام نشد؛ ۳۰ ثانیه صبر کنید و دوباره تلاش کنید."); }
+        finally { pushBusy = false; }
+    }
+
+    private async Task LoadOverviewAsync()
+    {
+        if (overviewBusy) return;
+        overviewBusy = true;
+        try
+        {
+            SetAuthHeader();
+            using var resp = await Http.PostAsJsonAsync($"{ApiRoot}/api/notifications/push-overview", new { });
+            overview = resp.IsSuccessStatusCode ? await resp.Content.ReadFromJsonAsync<PushOverview>() : null;
+        }
+        catch { overview = null; }
+        finally { overviewBusy = false; }
+    }
+
+    private async Task GenerateVapidAsync()
+    {
+        if (overviewBusy) return;
+        overviewBusy = true;
+        try
+        {
+            SetAuthHeader();
+            using var resp = await Http.PostAsJsonAsync($"{ApiRoot}/api/notifications/push-vapid-generate", new { });
+            var r = resp.IsSuccessStatusCode ? await resp.Content.ReadFromJsonAsync<VapidResult>() : null;
+            if (r == null) { Toast.Error("ساخت کلید اعلان انجام نشد؛ دسترسی مدیر را بررسی کنید."); return; }
+            Toast.Success(r.message ?? "کلید اعلان ساخته و فعال شد.");
+            if (r.cleared > 0) Toast.Info($"{r.cleared} اشتراک دستگاه قبلی باطل شد؛ کاربران باید اعلان را دوباره فعال کنند.");
+            await LoadOverviewAsync();
+            await InitPushStateAsync(); // با تغییر کلید، اشتراک این دستگاه هم باید بازسازی شود
+        }
+        catch { Toast.Error("ساخت کلید اعلان انجام نشد."); }
+        finally { overviewBusy = false; }
+    }
+
+    private async Task ResetVapidAsync()
+    {
+        if (overviewBusy) return;
+        overviewBusy = true;
+        try
+        {
+            SetAuthHeader();
+            using var resp = await Http.PostAsJsonAsync($"{ApiRoot}/api/notifications/push-vapid-reset", new { });
+            var r = resp.IsSuccessStatusCode ? await resp.Content.ReadFromJsonAsync<VapidResult>() : null;
+            if (r == null) { Toast.Error("حذف کلید اعلان انجام نشد."); return; }
+            Toast.Success(r.message ?? "کلیدهای نرم‌افزار حذف شد.");
+            await LoadOverviewAsync();
+            await InitPushStateAsync();
+        }
+        catch { Toast.Error("حذف کلید اعلان انجام نشد."); }
+        finally { overviewBusy = false; }
+    }
+
+    // ================== HTTPS و اعلان اندروید ==================
+    private HttpsStatus? https;
+    private bool httpsBusy;
+
+    private class HttpsStatus
+    {
+        public bool enabled { get; set; }
+        public int port { get; set; }
+        public bool secureNow { get; set; }
+        public string? currentOrigin { get; set; }
+        public List<string> urls { get; set; } = new();
+        public string? caUrl { get; set; }
+        public string? setupUrl { get; set; }
+        public string? caFingerprint { get; set; }
+        public string? serverFingerprint { get; set; }
+        public DateTime? serverExpiresAt { get; set; }
+        public DateTime? caExpiresAt { get; set; }
+        public bool hasCaFile { get; set; }
+        public string? dataDir { get; set; }
+        public List<int> extraPorts { get; set; } = new();
+        public bool redirectHttp { get; set; }
+        public HttpsPublicCert? publicCertificate { get; set; }
+        public List<string> messages { get; set; } = new();
+    }
+
+    private class HttpsPublicCert
+    {
+        public bool loaded { get; set; }
+        public List<string> names { get; set; } = new();
+        public List<string> urls { get; set; } = new();
+        public DateTime? expiresAt { get; set; }
+        public string? error { get; set; }
+    }
+
+    private class HttpsAction { public bool enabled { get; set; } public string? message { get; set; } public List<string> hosts { get; set; } = new(); }
+    private class PfxResult { public string? fileName { get; set; } public string? password { get; set; } public string? base64 { get; set; } public string? message { get; set; } }
+
+    private async Task LoadHttpsAsync()
+    {
+        try
+        {
+            SetAuthHeader();
+            https = await Http.GetFromJsonAsync<HttpsStatus>($"{ApiRoot}/api/system/https/status");
+        }
+        catch { https = null; }
+        StateHasChanged();
+    }
+
+    /// <summary>صفحهٔ راهنمای نصب گواهی را در تب جدید باز می‌کند (از روی همان HTTP هم کار می‌کند).</summary>
+    private async Task OpenHttpsSetup()
+    {
+        var url = https?.setupUrl ?? $"{ApiRoot}/https-setup";
+        try { await JS.InvokeVoidAsync("open", url, "_blank"); Toast.Info("دانلود گواهی و راهنمای نصب باز شد."); }
+        catch { Toast.Info($"این نشانی را در مرورگر باز کنید: {url}"); }
+    }
+
+    private async Task CopyHttpsDeviceUrl()
+    {
+        var url = https?.urls?.FirstOrDefault() ?? "";
+        if (string.IsNullOrWhiteSpace(url)) { Toast.Error("نشانی امنی موجود نیست؛ ابتدا گواهی را بسازید."); return; }
+        await CopyText(url);
+    }
+
+    private async Task RegenHttpsServerAsync()
+    {
+        if (httpsBusy) return;
+        httpsBusy = true;
+        try
+        {
+            SetAuthHeader();
+            using var resp = await Http.PostAsJsonAsync($"{ApiRoot}/api/system/https/regenerate", new { newCa = false });
+            var r = resp.IsSuccessStatusCode ? await resp.Content.ReadFromJsonAsync<HttpsAction>() : null;
+            Toast.Success(r?.message ?? "گواهی سرور بازسازی شد؛ برای اعمال، سرویس را ری‌استارت کنید.");
+            await LoadHttpsAsync();
+        }
+        catch { Toast.Error("بازسازی گواهی انجام نشد؛ دسترسی مدیر را بررسی کنید."); }
+        finally { httpsBusy = false; }
+    }
+
+    private async Task ExportPfxAsync()
+    {
+        if (httpsBusy) return;
+        httpsBusy = true;
+        try
+        {
+            SetAuthHeader();
+            using var resp = await Http.PostAsJsonAsync($"{ApiRoot}/api/system/https/pfx", new { });
+            var r = resp.IsSuccessStatusCode ? await resp.Content.ReadFromJsonAsync<PfxResult>() : null;
+            if (r?.base64 == null) { Toast.Error("فایل گواهی موجود نیست؛ ابتدا گواهی را بسازید."); return; }
+            var saved = await JS.InvokeAsync<bool>("appSaveBase64File", r.base64, r.fileName ?? "totall-server.pfx", "application/x-pkcs12");
+            Toast.Success(saved ? $"فایل ذخیره شد. رمز فایل: {r.password}" : "ذخیرهٔ فایل انجام نشد.");
+        }
+        catch { Toast.Error("خروجی گرفتن گواهی انجام نشد."); }
+        finally { httpsBusy = false; }
+    }
+
+    /// <summary>کپی متن در کلیپ‌بورد (برای اثر انگشت گواهی و نشانی‌ها).</summary>
+    private async Task CopyText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+        try { await JS.InvokeVoidAsync("navigator.clipboard.writeText", text); Toast.Success("کپی شد."); }
+        catch { Toast.Error("کپی نشد — به‌صورت دستی انتخاب و کپی کنید."); }
+    }
+
+    private void SetAuthHeader()
+    {
+        if (string.IsNullOrWhiteSpace(Auth.Token)) return;
+        Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Auth.Token);
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            model = await SettingsSvc.SaveAsync(model);
+            // اعمال فوری مدت نمایش سراسری در همین نشست (بدون نیاز به ورود مجدد)
+            NotificationTiming.LoadServer(model.NotifyBannerMs, model.NotifyToastMs);
+            Toast.Success("تنظیمات ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+}

@@ -1,0 +1,336 @@
+@namespace Inventory.Client.Pages.BonHr
+@page "/bon-hr/organization-settings"
+@inject BonHrApi Api
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject LayoutState Layout
+
+<PageTitle>تقویم و ساعات کاری</PageTitle>
+<BonHrGuard Section="OrgSettings">
+<BonHrShell Title="تقویم و ساعات کاری" Sub="تعطیلات و برنامه واحدها">
+    <Actions>
+        <button class="btn btn-light" type="button" @onclick="ExportSettingsAsync">خروجی تنظیمات</button>
+        <button class="btn btn-primary" type="button" @onclick="() => _showHoliday = true">ثبت تعطیلی</button>
+    </Actions>
+</BonHrShell>
+
+@using System.Text
+
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="fw-800"><i class="bi bi-calendar3 text-primary"></i> @_calendar.MonthName @BonFa.N(_year)</span>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary" type="button" @onclick="() => ShiftYear(-1)" title="سال قبل"><i class="bi bi-chevron-right"></i></button>
+                        <button class="btn btn-outline-secondary" type="button" @onclick="() => ShiftMonth(-1)" title="ماه قبل">‹</button>
+                        <button class="btn btn-outline-secondary" type="button" @onclick="() => ShiftMonth(1)" title="ماه بعد">›</button>
+                        <button class="btn btn-outline-secondary" type="button" @onclick="() => ShiftYear(1)" title="سال بعد"><i class="bi bi-chevron-left"></i></button>
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-outline-primary" type="button" @onclick="GenerateFridaysAsync">
+                    <i class="bi bi-calendar-plus"></i> افزودن جمعه‌های سال @BonFa.N(_year)
+                </button>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="wc-week-header"><span>ش</span><span>ی</span><span>د</span><span>س</span><span>چ</span><span>پ</span><span>ج</span></div>
+            <div class="wc-days mt-1">
+                @for (var blank = 0; blank < _calendar.LeadingBlanks; blank++)
+                {
+                    <span></span>
+                }
+                @foreach (var cell in _calendar.Cells)
+                {
+                    var day = cell;
+                    var css = "wc-day"
+                        + (day.IsFriday || (day.IsHoliday && day.Type == "friday") ? " d-rest" : "")
+                        + (day.IsHoliday && day.Type != "friday" ? " d-official" : "")
+                        + (day.Date == PersianCalendarUtil.TodayKey() ? " d-today" : "")
+                        + (day.Date == _selectedDate ? " d-sel" : "");
+                    <button type="button" class="@css" title="@day.Title" @onclick="() => SelectDay(day)">
+                        <span>@BonFa.N(day.Day)</span>
+                        @if (day.IsHoliday)
+                        {
+                            <small>@day.Title</small>
+                        }
+                    </button>
+                }
+            </div>
+            <div class="wc-legend mt-3">
+                <span><span class="wc-dot wc-dot-work"></span> روز کاری</span>
+                <span><span class="wc-dot wc-dot-rest"></span> جمعه / مشابه جمعه</span>
+                <span><span class="wc-dot wc-dot-official"></span> تعطیل رسمی/شرکتی</span>
+                <span><span class="wc-dot wc-dot-today"></span> امروز</span>
+            </div>
+        </div>
+    </div>
+
+        <Modal Size="modal-lg" Visible="_showHoliday" Title="@(string.IsNullOrEmpty(_selectedDate) ? "ثبت روز تعطیل" : BonFa.N(_selectedDate))" OnClose="() => _showHoliday = false">
+            <ChildContent>
+                <label class="form-label">تاریخ</label>
+                <BonHrDate @bind-Value="_selectedDate" />
+                <label class="form-label mt-2">عنوان تعطیلی</label>
+                <input class="form-control" placeholder="مثلاً تعطیلی رسمی یا تعطیلی شرکت" @bind="_holidayTitle" />
+                <label class="form-label mt-2">نوع روز</label>
+                <select class="form-select" @bind="_holidayType">
+                    <option value="friday">مشابه جمعه — ضریب اضافه‌کاری ۱٫۸</option>
+                    <option value="other">سایر روزهای تعطیل</option>
+                </select>
+                <p class="small mt-2">@_holidayMessage</p>
+            </ChildContent>
+            <Footer>
+                <button class="btn btn-light" type="button" @onclick="() => _showHoliday = false">انصراف</button>
+                <button class="btn btn-outline-danger" type="button" @onclick="RemoveHolidayAsync">حذف</button>
+                <button class="btn btn-primary" type="button" @onclick="SaveHolidayAsync">ثبت روز تعطیل</button>
+            </Footer>
+        </Modal>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <p class="text-muted small mb-0">الزام حضور واحدها</p>
+                <h3 class="h5 mb-0">ساعت کاری و سیاست تأخیر/تعجیل</h3>
+            </div>
+            <div style="min-width:220px">
+                <label class="form-label mb-1">واحد سازمانی</label>
+                <select class="form-select" value="@_selectedUnit" @onchange="OnUnitChanged">
+                    @foreach (var unit in _units)
+                    {
+                        <option value="@unit">@unit</option>
+                    }
+                </select>
+            </div>
+        </div>
+        <div class="card-body">
+        <form @onsubmit="SaveScheduleAsync" @onsubmit:preventDefault="true">
+            <div class="fw-800 mb-2">ساعت موظفی</div>
+            <div class="row g-3 mb-3">
+                <div class="col-md-6"><label class="form-label">شروع کار</label><input class="form-control" type="time" required value="@_schedule.WorkStart" @onchange="e => _schedule.WorkStart = Text(e)" /></div>
+                <div class="col-md-6"><label class="form-label">پایان کار</label><input class="form-control" type="time" required value="@_schedule.WorkEnd" @onchange="e => _schedule.WorkEnd = Text(e)" /></div>
+            </div>
+            <div class="fw-800 mb-2">بازه ارفاقی (دقیقه)</div>
+            <div class="row g-3 mb-3">
+                <div class="col-md-3"><label class="form-label">ورود دیرتر</label><input class="form-control" type="number" min="0" max="180" required @bind="_schedule.EntryGrace" /></div>
+                <div class="col-md-3"><label class="form-label">ورود زودتر</label><input class="form-control" type="number" min="0" max="180" required @bind="_schedule.EarlyEntryGrace" /></div>
+                <div class="col-md-3"><label class="form-label">خروج زودتر</label><input class="form-control" type="number" min="0" max="180" required @bind="_schedule.ExitGrace" /></div>
+                <div class="col-md-3"><label class="form-label">خروج دیرتر</label><input class="form-control" type="number" min="0" max="180" required @bind="_schedule.LateExitGrace" /></div>
+            </div>
+            <div class="fw-800 mb-2">حد مجاز بدون برگه مرخصی (دقیقه)</div>
+            <div class="row g-3 mb-3">
+                <div class="col-md-6"><label class="form-label">حداکثر تأخیر ورود</label><input class="form-control" type="number" min="0" max="480" required @bind="_schedule.MaxLateWithoutLeave" /></div>
+                <div class="col-md-6"><label class="form-label">حداکثر تعجیل خروج</label><input class="form-control" type="number" min="0" max="480" required @bind="_schedule.MaxEarlyWithoutLeave" /></div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">اقدام سیستم برای زمان غیرارفاقیِ بدون برگه</label>
+                <select class="form-select" @bind="_schedule.AbsenceStrategy">
+                    <option value="leaveThenDeduction">ابتدا کسر از مانده مرخصی؛ در صورت ناکافی بودن، کسرکار</option>
+                    <option value="deductionOnly">مستقیماً کسرکار</option>
+                    <option value="leaveOnly">فقط کسر از مانده مرخصی</option>
+                    <option value="review">ارسال برای بررسی مدیر اداری</option>
+                </select>
+            </div>
+            <div class="alert alert-light border small mb-3">
+                ساعت موظفی واحد «@_selectedUnit» از <b>@BonFa.N(_schedule.WorkStart)</b> تا <b>@BonFa.N(_schedule.WorkEnd)</b> است؛
+                ورود تا <b>@BonFa.N(_schedule.EntryGrace)</b> دقیقه دیرتر و خروج تا <b>@BonFa.N(_schedule.ExitGrace)</b> دقیقه زودتر بدون کسرکار پذیرفته می‌شود.
+                ورود زودتر تا <b>@BonFa.N(_schedule.EarlyEntryGrace)</b> دقیقه و خروج دیرتر تا <b>@BonFa.N(_schedule.LateExitGrace)</b> دقیقه اضافه‌کاری محاسبه نمی‌شود.
+                تأخیر بیش از <b>@BonFa.N(_schedule.MaxLateWithoutLeave)</b> دقیقه یا تعجیل بیش از
+                <b>@BonFa.N(_schedule.MaxEarlyWithoutLeave)</b> دقیقه بدون برگه مرخصی، مطابق سیاست «@StrategyLabel(_schedule.AbsenceStrategy)» اعمال می‌شود.
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+                <button class="btn btn-primary" type="submit">ذخیره تنظیمات واحد</button>
+                <button class="btn btn-light" type="button" @onclick="CopyToAllAsync">اعمال همین تنظیمات برای همه واحدها</button>
+            </div>
+            @if (!string.IsNullOrEmpty(_scheduleMessage))
+            {
+                <p class="small mt-2 mb-0">@_scheduleMessage</p>
+            }
+        </form>
+        </div>
+    </div>
+
+
+</BonHrGuard>
+@code {
+    private CalendarMonthDto _calendar = new();
+    private List<Holiday> _holidays = new();
+    private List<UnitSchedule> _schedules = new();
+    private List<string> _units = new();
+
+    private UnitSchedule _schedule = new();
+    private int _year = PersianCalendarUtil.Today().Jy;
+    private int _month = PersianCalendarUtil.Today().Jm;
+
+    private string _selectedDate = "";
+    private string _holidayTitle = "";
+    private string _holidayType = "friday";
+    private string _holidayMessage = "";
+    private string _selectedUnit = "";
+    private string _scheduleMessage = "";
+    private bool _showHoliday;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var departments = await Api.ListAsync<Department>("api/organization/departments");
+        _units = departments.Select(d => d.Name).ToList();
+        _schedules = await Api.ListAsync<UnitSchedule>("api/organization/schedules");
+
+        _selectedUnit = _units.FirstOrDefault() ?? "";
+        LoadSchedule();
+        await LoadCalendarAsync();
+    }
+
+    private static string Text(ChangeEventArgs args) => args.Value?.ToString() ?? "";
+
+    private static string StrategyLabel(string strategy) => strategy switch
+    {
+        "deductionOnly" => "مستقیماً کسرکار",
+        "leaveOnly" => "فقط کسر از مانده مرخصی",
+        "review" => "ارسال برای بررسی مدیر اداری",
+        _ => "ابتدا کسر از مانده مرخصی، سپس کسرکار"
+    };
+
+    private async Task LoadCalendarAsync()
+    {
+        _calendar = await Api.GetAsync<CalendarMonthDto>($"api/organization/calendar?year={_year}&month={_month}") ?? new CalendarMonthDto();
+        _holidays = await Api.ListAsync<Holiday>($"api/organization/holidays?year={_year}");
+    }
+
+    private async void ShiftMonth(int delta)
+    {
+        _month += delta;
+        if (_month > 12) { _month = 1; _year++; }
+        if (_month < 1) { _month = 12; _year--; }
+        await LoadCalendarAsync();
+        StateHasChanged();
+    }
+
+    private async void ShiftYear(int delta)
+    {
+        _year += delta;
+        await LoadCalendarAsync();
+        StateHasChanged();
+    }
+
+    private void SelectDay(CalendarCellDto cell)
+    {
+        _selectedDate = cell.Date;
+        _holidayTitle = cell.IsHoliday ? cell.Title : "";
+        _holidayType = cell.IsHoliday && !string.IsNullOrEmpty(cell.Type) ? cell.Type : "friday";
+        _holidayMessage = "";
+        _showHoliday = true;
+    }
+
+    private async Task SaveHolidayAsync()
+    {
+        if (string.IsNullOrEmpty(_selectedDate)) { _holidayMessage = "ابتدا یک روز را از تقویم انتخاب کنید."; return; }
+
+        var existing = _holidays.FirstOrDefault(h => h.Date == _selectedDate);
+        if (existing != null) await Api.DeleteAsync($"api/organization/holidays/{existing.Id}");
+
+        var ok = await Api.SendAsync(HttpMethod.Post, "api/organization/holidays", new Holiday
+        {
+            Date = _selectedDate,
+            Title = string.IsNullOrWhiteSpace(_holidayTitle) ? "تعطیل" : _holidayTitle.Trim(),
+            Type = _holidayType
+        });
+
+        _holidayMessage = ok ? "روز تعطیل ثبت شد." : "ثبت انجام نشد.";
+        if (ok) { _showHoliday = false; await LoadCalendarAsync(); }
+    }
+
+    private async Task RemoveHolidayAsync()
+    {
+        var existing = _holidays.FirstOrDefault(h => h.Date == _selectedDate);
+        if (existing == null) { _holidayMessage = "برای این روز تعطیلی ثبت نشده است."; return; }
+
+        var ok = await Api.SendAsync(HttpMethod.Delete, $"api/organization/holidays/{existing.Id}");
+        _holidayMessage = ok ? "تعطیلی حذف شد." : "حذف انجام نشد.";
+        if (ok)
+        {
+            _holidayTitle = "";
+            await LoadCalendarAsync();
+        }
+    }
+
+    private async Task GenerateFridaysAsync()
+    {
+        var ok = await Api.SendAsync(HttpMethod.Post, $"api/organization/holidays/generate-fridays?year={_year}");
+        if (ok) await LoadCalendarAsync();
+    }
+
+    private void LoadSchedule()
+    {
+        var found = _schedules.FirstOrDefault(s => s.Unit == _selectedUnit);
+        _schedule = found == null
+            ? new UnitSchedule { Unit = _selectedUnit }
+            : new UnitSchedule
+            {
+                Id = found.Id, Unit = found.Unit,
+                WorkStart = found.WorkStart, WorkEnd = found.WorkEnd,
+                EntryGrace = found.EntryGrace, EarlyEntryGrace = found.EarlyEntryGrace,
+                ExitGrace = found.ExitGrace, LateExitGrace = found.LateExitGrace,
+                MaxLateWithoutLeave = found.MaxLateWithoutLeave,
+                MaxEarlyWithoutLeave = found.MaxEarlyWithoutLeave,
+                AbsenceStrategy = found.AbsenceStrategy
+            };
+    }
+
+    private void OnUnitChanged(ChangeEventArgs args)
+    {
+        _selectedUnit = Text(args);
+        _scheduleMessage = "";
+        LoadSchedule();
+    }
+
+    private async Task SaveScheduleAsync()
+    {
+        _schedule.Unit = _selectedUnit;
+        var ok = await Api.SendAsync(HttpMethod.Put, "api/organization/schedules", _schedule);
+        _scheduleMessage = ok ? "ساعات کاری واحد ذخیره شد." : "ذخیره انجام نشد.";
+        if (ok) _schedules = await Api.ListAsync<UnitSchedule>("api/organization/schedules");
+    }
+
+    private async Task CopyToAllAsync()
+    {
+        var applied = 0;
+        foreach (var unit in _units)
+        {
+            var copy = new UnitSchedule
+            {
+                Unit = unit,
+                WorkStart = _schedule.WorkStart, WorkEnd = _schedule.WorkEnd,
+                EntryGrace = _schedule.EntryGrace, EarlyEntryGrace = _schedule.EarlyEntryGrace,
+                ExitGrace = _schedule.ExitGrace, LateExitGrace = _schedule.LateExitGrace,
+                MaxLateWithoutLeave = _schedule.MaxLateWithoutLeave,
+                MaxEarlyWithoutLeave = _schedule.MaxEarlyWithoutLeave,
+                AbsenceStrategy = _schedule.AbsenceStrategy
+            };
+            if (await Api.PutAsync<BonHrApiMessage>("api/organization/schedules", copy) != null) applied++;
+        }
+
+        _schedules = await Api.ListAsync<UnitSchedule>("api/organization/schedules");
+        _scheduleMessage = $"تنظیمات برای {applied} واحد اعمال شد.";
+        Toast.Success(_scheduleMessage);
+    }
+
+    private async Task ExportSettingsAsync()
+    {
+        var csv = new StringBuilder();
+        csv.AppendLine("واحد,شروع کار,پایان کار,ارفاق ورود,ارفاق ورود زودتر,ارفاق خروج,ارفاق خروج دیرتر,حداکثر تأخیر,حداکثر تعجیل,استراتژی");
+        foreach (var s in _schedules)
+            csv.AppendLine($"{s.Unit},{s.WorkStart},{s.WorkEnd},{s.EntryGrace},{s.EarlyEntryGrace},{s.ExitGrace},{s.LateExitGrace},{s.MaxLateWithoutLeave},{s.MaxEarlyWithoutLeave},{StrategyLabel(s.AbsenceStrategy)}");
+
+        csv.AppendLine();
+        csv.AppendLine($"تعطیلات سال {_year}");
+        csv.AppendLine("تاریخ,عنوان,نوع");
+        foreach (var h in _holidays)
+            csv.AppendLine($"{h.Date},{h.Title},{(h.Type == "friday" ? "مشابه جمعه" : "سایر")}");
+
+        var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(csv.ToString())).ToArray();
+        await JS.InvokeVoidAsync("saveAsFile", $"organization-settings-{_year}.csv", Convert.ToBase64String(bytes));
+        Toast.Success("خروجی تنظیمات آماده شد.");
+    }
+}

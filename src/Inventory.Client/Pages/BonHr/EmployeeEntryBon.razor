@@ -1,0 +1,388 @@
+@namespace Inventory.Client.Pages.BonHr
+@page "/bon-hr/employee-entry"
+@inject BonHrApi Api
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject LayoutState Layout
+
+<PageTitle>ورود اطلاعات پرسنل</PageTitle>
+<BonHrGuard Section="EmployeeEntry">
+<BonHrShell Title="ورود اطلاعات پرسنل" Sub="ثبت و ویرایش پرونده پرسنلی">
+    <Actions>
+        <button class="btn btn-primary" type="button" @onclick="OpenForm">
+            <i class="bi bi-plus-lg"></i> @(_editingId.HasValue ? "ویرایش پرونده" : "پرسنل جدید")
+        </button>
+        <button class="btn btn-light" type="button" @onclick="() => _showImport = true">ورود گروهی</button>
+    </Actions>
+</BonHrShell>
+
+
+    <Modal Size="modal-xl" Visible="_showForm" Title="@(_editingId.HasValue ? "ویرایش پرونده پرسنلی" : "ثبت پرسنل جدید")" OnClose="CloseForm">
+        <ChildContent>
+        <form id="bon-emp-form" class="employee-form" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+            <ul class="nav nav-pills flex-wrap gap-1 mb-3" role="tablist">
+                <li class="nav-item"><button type="button" class="nav-link @(_tab == "identity" ? "active" : "")" @onclick='() => _tab = "identity"'>اطلاعات هویتی</button></li>
+                <li class="nav-item"><button type="button" class="nav-link @(_tab == "compensation" ? "active" : "")" @onclick='() => _tab = "compensation"'>حقوق و کارمزد</button></li>
+                <li class="nav-item"><button type="button" class="nav-link @(_tab == "banking" ? "active" : "")" @onclick='() => _tab = "banking"'>اطلاعات بانکی</button></li>
+            </ul>
+
+            <div class="row g-3 @(_tab == "identity" ? "" : "d-none")">
+                <label class="photo-field">
+                    عکس پرسنلی
+                    <InputFile OnChange="OnPhotoSelected" accept="image/*" />
+                    @if (!string.IsNullOrEmpty(_model.Photo))
+                    {
+                        <img class="photo-preview" src="@_model.Photo" alt="پیش‌نمایش عکس" />
+                    }
+                </label>
+                <label class="form-label">نام <input class="form-control" maxlength="40" required @bind="_model.First" /></label>
+                <label class="form-label">نام خانوادگی <input class="form-control" maxlength="60" required @bind="_model.Last" /></label>
+                <label class="form-label">کد پرسنلی <input class="form-control" inputmode="numeric" maxlength="20" required @bind="_model.Code" /></label>
+                <label class="form-label">کد ملی <input class="form-control" inputmode="numeric" maxlength="10" required @bind="_model.Nid" /></label>
+                <label class="form-label">کد بیمه‌شده اصلی <input class="form-control" maxlength="30" placeholder="کد بیمه تأمین اجتماعی" @bind="_model.PrimaryInsuredCode" /></label>
+                <label class="form-label">
+                    واحد سازمانی
+                    <select class="form-select" value="@_model.Unit" @onchange="OnUnitChanged" required>
+                        <option value="">— انتخاب کنید —</option>
+                        @foreach (var department in _departments)
+                        {
+                            <option value="@department.Name">@department.Name</option>
+                        }
+                    </select>
+                </label>
+                <label class="form-label">
+                    ایستگاه کاری
+                    <select class="form-select" @bind="_model.WorkStation" required>
+                        <option value="">— انتخاب کنید —</option>
+                        @foreach (var station in Stations)
+                        {
+                            <option value="@station">@station</option>
+                        }
+                    </select>
+                </label>
+                <label class="form-label">
+                    سطح سازمانی
+                    <select class="form-select" @bind="_model.ResponsibilityLevel" required>
+                        @foreach (var level in _levels)
+                        {
+                            <option value="@level">@level</option>
+                        }
+                    </select>
+                </label>
+                <label class="form-label">عنوان شغلی / سمت <input class="form-control" maxlength="80" placeholder="مثلاً اپراتور خط" @bind="_model.PositionTitle" /></label>
+                <label class="form-label">
+                    وضعیت تأهل
+                    <select class="form-select" value="@_model.Married" @onchange="OnMarriedChanged">
+                        <option value="مجرد">مجرد</option>
+                        <option value="متاهل">متأهل</option>
+                    </select>
+                </label>
+                <label class="form-label">
+                    تعداد فرزند واجد شرایط حق اولاد
+                    <input class="form-control" type="number" min="0" max="20" value="@_model.Children" @onchange="OnChildrenChanged" required />
+                    <small>تعداد فرزندانی که شرایط قانونی دریافت حق اولاد را دارند.</small>
+                </label>
+                <label class="form-label">تعداد اعضای خانواده تحت پوشش بیمه تکمیلی <input class="form-control" type="number" min="0" max="30" @bind="_model.SupplementaryFamilyCount" /></label>
+                <label class="form-label">سهم ماهانه پرسنل از بیمه تکمیلی (ریال) <BonHrRial @bind-Value="_model.SupplementaryEmployeeShare" /></label>
+                <label class="form-label">سهم ماهانه کارخانه از بیمه تکمیلی (ریال) <BonHrRial @bind-Value="_model.SupplementaryEmployerShare" /></label>
+                <label class="form-label">حقوق پایه (ریال) <BonHrRial @bind-Value="_model.Salary" Placeholder="مثلاً 450,000,000" /></label>
+                <label class="form-label">تاریخ جذب <BonHrDate @bind-Value="_model.Hire" /></label>
+                <label class="form-label">
+                    نوع قرارداد
+                    <select class="form-select" @bind="_model.ContractType">
+                        <option>دائم</option><option>مدت معین</option><option>آزمایشی</option><option>پروژه‌ای</option>
+                    </select>
+                </label>
+                <label class="form-label">تاریخ خاتمه قرارداد <BonHrDate @bind-Value="_model.ContractEnd" /></label>
+
+                <fieldset class="wide-field contract-files">
+                    <legend>پیوست سه قرارداد ماهانه</legend>
+                    @for (var i = 0; i < 3; i++)
+                    {
+                        var index = i;
+                        <div>
+                            <label class="form-label">
+                                فایل قرارداد @BonFa.N(index + 1)
+                                <InputFile OnChange="e => OnContractSelected(index, e)" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" />
+                            </label>
+                            <label class="form-label">ماه مربوط <input class="form-control" placeholder="مثلاً فروردین ۱۴۰۵" value="@_contracts[index].Month" @onchange="e => SetContractMonth(index, e)" /></label>
+                            <small class="text-muted">@_contracts[index].Name</small>
+                        </div>
+                    }
+                </fieldset>
+            </div>
+
+            <div class="row g-3 @(_tab == "compensation" ? "" : "d-none")">
+                <label class="form-label">حقوق پایه (ریال) <BonHrRial @bind-Value="_model.Salary" /></label>
+                <label class="statutory-field">
+                    پایه سنوات روزانه قانونی
+                    <input class="form-control" readonly value="@BonFa.Rial(_rules?.SeniorityDaily ?? 0)" />
+                    <small>فقط نمایشی؛ از الزامات سال فعال خوانده می‌شود.</small>
+                </label>
+                <label class="statutory-field">
+                    حق مسکن ماهانه
+                    <input class="form-control" readonly value="@BonFa.Rial(_rules?.HousingMonthly ?? 0)" />
+                    <small>مبلغ قانونی سال فعال</small>
+                </label>
+                <label class="statutory-field">
+                    بن خواربار / اقلام مصرفی
+                    <input class="form-control" readonly value="@BonFa.Rial(_rules?.FoodMonthly ?? 0)" />
+                    <small>مبلغ قانونی سال فعال</small>
+                </label>
+                <label class="statutory-field">
+                    حق تأهل ماهانه
+                    <input class="form-control" readonly value="@BonFa.Rial(MarriageAmount)" />
+                    <small>براساس وضعیت تأهل پرونده</small>
+                </label>
+                <label class="statutory-field">
+                    حق اولاد هر فرزند واجد شرایط
+                    <input class="form-control" readonly value="@BonFa.Rial(ChildPerChild)" />
+                    <small>سه برابر حداقل مزد روزانه در سال @BonFa.N(_rules?.Year ?? 0)</small>
+                </label>
+                <label class="statutory-field">
+                    جمع حق اولاد این پرسنل
+                    <input class="form-control" readonly value="@BonFa.Rial(ChildPerChild * _model.Children)" />
+                    <small>براساس تعداد فرزند واجد شرایط</small>
+                </label>
+                <label class="statutory-field">
+                    نرخ بیمه سهم کارگر
+                    <input class="form-control" readonly value="@BonFa.Percent(_rules?.WorkerInsuranceRate ?? 0)" />
+                    <small>درصد قانونی سال فعال</small>
+                </label>
+                <label class="statutory-field">
+                    معافیت ماهانه مالیات حقوق
+                    <input class="form-control" readonly value="@BonFa.Rial(_rules?.TaxMonthlyExemption ?? 0)" />
+                    <small>مبلغ قانونی سال فعال</small>
+                </label>
+                <label class="form-label">حق جذب <BonHrRial @bind-Value="_model.AttractionPay" /></label>
+                <label class="form-label">حق سرپرستی <BonHrRial @bind-Value="_model.SupervisorPay" /></label>
+                <label class="form-label">کارانه <BonHrRial @bind-Value="_model.PerformancePay" /></label>
+                <label class="form-label">مزایای توافقی <BonHrRial @bind-Value="_model.AgreedBenefits" /></label>
+            </div>
+
+            <div class="row g-3 @(_tab == "banking" ? "" : "d-none")">
+                <label class="form-label">نام بانک <input class="form-control" maxlength="50" @bind="_model.BankName" /></label>
+                <label class="form-label">شماره حساب <input class="form-control" inputmode="numeric" @bind="_model.AccountNumber" /></label>
+                <label class="form-label">شماره شبا <input class="form-control" dir="ltr" placeholder="IR000000000000000000000000" @bind="_model.Iban" /></label>
+                <label class="form-label">شماره کارت <input class="form-control" inputmode="numeric" @bind="_model.CardNumber" /></label>
+                <label class="form-label">شعبه بانک <input class="form-control" @bind="_model.BankBranch" /></label>
+                <label class="form-label">کد شعبه <input class="form-control" inputmode="numeric" @bind="_model.BranchCode" /></label>
+            </div>
+
+            <p class="form-message @(_ok ? "success-text" : "error-text")" role="status">@_message</p>
+        </form>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-light" type="button" @onclick="CloseForm">انصراف (Esc)</button>
+            <button class="btn btn-primary" type="submit" form="bon-emp-form" disabled="@_busy">ذخیره</button>
+        </Footer>
+    </Modal>
+
+    <Modal Size="modal-lg" Visible="_showImport" Title="ورود گروهی پرسنل" OnClose="() => _showImport = false">
+        <ChildContent>
+        <article class="import-panel">
+            <h3>ورود گروهی پرسنل</h3>
+            <p class="text-muted">فایل CSV با ستون‌های کد، نام، نام خانوادگی، کد ملی، واحد، حقوق پایه و تاریخ جذب.</p>
+            <InputFile class="form-control" OnChange="OnImportSelected" accept=".csv" />
+            <label style="margin-top:12px">
+                <input class="form-control" type="checkbox" @bind="_overwrite" /> بازنویسی پرونده‌های موجود
+            </label>
+            <button class="btn btn-light" type="button" @onclick="ImportAsync" disabled="@(_importRows.Count == 0)">
+                ثبت @BonFa.N(_importRows.Count) ردیف
+            </button>
+            @if (_importResult != null)
+            {
+                <p class="form-message success-text">
+                    ثبت جدید: @BonFa.N(_importResult.Inserted) — به‌روزرسانی: @BonFa.N(_importResult.Updated) — نادیده: @BonFa.N(_importResult.Skipped)
+                </p>
+            }
+        </article>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-light" type="button" @onclick="() => _showImport = false">بستن</button>
+        </Footer>
+    </Modal>
+
+
+</BonHrGuard>
+@code {
+    [SupplyParameterFromQuery(Name = "id")] public int? EmployeeId { get; set; }
+
+    private Employee _model = new();
+    private StatutoryRules? _rules;
+    private List<Department> _departments = new();
+    private List<string> _levels = new();
+    private readonly List<EmployeeContract> _contracts = new() { new(), new(), new() };
+    private List<Employee> _importRows = new();
+    private ImportEmployeesResult? _importResult;
+
+    private string _tab = "identity";
+    private bool _showForm = true;
+    private bool _showImport;
+    private string _message = "";
+    private bool _ok, _busy, _overwrite = true;
+    private int? _editingId;
+
+    private IEnumerable<string> Stations =>
+        _departments.FirstOrDefault(d => d.Name == _model.Unit)?.Stations.Select(s => s.Name) ?? Enumerable.Empty<string>();
+
+    private decimal MarriageAmount =>
+        BonFa.IsMarried(_model.Married) ? _rules?.MarriageMonthly ?? 0 : 0;
+
+    private decimal ChildPerChild =>
+        (_rules?.MinimumDailyWage ?? 0) * (_rules?.ChildMultiplier ?? 0);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _departments = await Api.ListAsync<Department>("api/organization/departments");
+        _levels = await Api.ListAsync<string>("api/organization/levels");
+        if (_levels.Count == 0)
+            _levels = new List<string> { "مدیر ارشد", "مدیر واحد", "سرپرست", "مسئول / کارشناس", "اپراتور / کارمند" };
+        _rules = await Api.GetAsync<StatutoryRules>($"api/statutory-rules/{PersianCalendarUtil.Today().Jy}");
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (EmployeeId.HasValue && EmployeeId != _editingId)
+        {
+            var employee = await Api.GetAsync<Employee>($"api/employees/{EmployeeId.Value}");
+            if (employee != null)
+            {
+                _model = employee;
+                _editingId = employee.Id;
+                var loaded = employee.Contracts ?? new List<EmployeeContract>();
+                // _contracts همیشه باید ۳ ردیف داشته باشد (رابط کاربری ۳ قرارداد نشان می‌دهد)
+                while (_contracts.Count < 3) _contracts.Add(new EmployeeContract());
+                for (var i = 0; i < 3; i++)
+                    _contracts[i] = i < loaded.Count ? loaded[i] : new EmployeeContract();
+            }
+        }
+    }
+
+    private void OnUnitChanged(ChangeEventArgs args)
+    {
+        _model.Unit = args.Value?.ToString() ?? "";
+        _model.WorkStation = "";
+    }
+
+    private void SetContractMonth(int index, ChangeEventArgs args) =>
+        _contracts[index].Month = args.Value?.ToString() ?? "";
+
+    private void OnMarriedChanged(ChangeEventArgs args) => _model.Married = args.Value?.ToString() ?? "مجرد";
+
+    private void OnChildrenChanged(ChangeEventArgs args) =>
+        _model.Children = int.TryParse(BonFa.ToLatin(args.Value?.ToString() ?? "0"), out var n) ? n : 0;
+
+    private async Task OnPhotoSelected(InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (file == null) return;
+        using var stream = file.OpenReadStream(long.MaxValue);
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory);
+        _model.Photo = $"data:{file.ContentType};base64,{Convert.ToBase64String(memory.ToArray())}";
+    }
+
+    private async Task OnContractSelected(int index, InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (file == null) return;
+        using var stream = file.OpenReadStream(long.MaxValue);
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory);
+
+        var content = new MultipartFormDataContent();
+        var part = new ByteArrayContent(memory.ToArray());
+        part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            string.IsNullOrEmpty(file.ContentType) ? "application/octet-stream" : file.ContentType);
+        content.Add(part, "file", file.Name);
+
+        var stored = await Api.PostFormAsync<StoredFile>("api/files", content);
+        if (stored != null)
+        {
+            _contracts[index].Name = file.Name;
+            _contracts[index].FileId = stored.Uid;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        _model.Contracts = _contracts.Where(c => !string.IsNullOrEmpty(c.Name) || !string.IsNullOrEmpty(c.Month))
+            .Select(c => new EmployeeContract { Name = c.Name, Month = c.Month, FileId = c.FileId }).ToList();
+
+        bool ok;
+        if (_editingId.HasValue)
+            ok = await Api.SendAsync(HttpMethod.Put, $"api/employees/{_editingId.Value}", _model);
+        else
+        {
+            var response = await Api.PostAsync<BonHrIdResponse>("api/employees", _model);
+            ok = response != null;
+            if (response != null) _editingId = response.Id;
+        }
+
+        _busy = false;
+        _ok = ok;
+        _message = ok ? "اطلاعات پرسنل با موفقیت ذخیره شد." : "ذخیره‌سازی انجام نشد.";
+        if (ok) { Toast.Success(_message); _showForm = false; }
+    }
+
+    private void OpenForm() => _showForm = true;
+    private void CloseForm() { _showForm = false; }
+
+    private void ResetForm()
+    {
+        _model = new Employee();
+        _editingId = null;
+        _message = "";
+        while (_contracts.Count < 3) _contracts.Add(new EmployeeContract());
+        for (var i = 0; i < 3; i++) _contracts[i] = new EmployeeContract();
+        Nav.NavigateTo("/bon-hr/employee-entry");
+    }
+
+    private async Task OnImportSelected(InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (file == null) return;
+        using var reader = new StreamReader(file.OpenReadStream(long.MaxValue), System.Text.Encoding.UTF8);
+        var text = await reader.ReadToEndAsync();
+        _importRows = ParseCsv(text);
+        _message = $"{BonFa.N(_importRows.Count)} ردیف خوانده شد.";
+        _ok = true;
+    }
+
+    private static List<Employee> ParseCsv(string text)
+    {
+        var rows = new List<Employee>();
+        var lines = text.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var line in lines.Skip(1))
+        {
+            var cells = line.Split(',');
+            if (cells.Length < 4) continue;
+            rows.Add(new Employee
+            {
+                Code = BonFa.ToLatin(cells[0].Trim()),
+                First = cells.ElementAtOrDefault(1)?.Trim() ?? "",
+                Last = cells.ElementAtOrDefault(2)?.Trim() ?? "",
+                Nid = BonFa.ToLatin(cells.ElementAtOrDefault(3)?.Trim() ?? ""),
+                Unit = cells.ElementAtOrDefault(4)?.Trim() ?? "",
+                Salary = BonFa.ParseRial(cells.ElementAtOrDefault(5) ?? "0"),
+                Hire = BonFa.ToLatin(cells.ElementAtOrDefault(6)?.Trim() ?? "")
+            });
+        }
+        return rows;
+    }
+
+    private async Task ImportAsync()
+    {
+        _importResult = await Api.PostAsync<ImportEmployeesResult>("api/employees/import",
+            new ImportEmployeesRequest(_importRows, _overwrite));
+        if (_importResult != null)
+        {
+            Toast.Success($"ورود گروهی انجام شد؛ {_importResult.Inserted} ثبت جدید.");
+            _importRows = new();
+        }
+    }
+}

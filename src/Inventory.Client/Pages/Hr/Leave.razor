@@ -1,0 +1,650 @@
+@namespace Inventory.Client.Pages
+@page "/leave"
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject RealtimeService Rt
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>کارتابل من — مرخصی و ماموریت</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-calendar2-check"></i> مرخصی و ماموریت</h1>
+    <div class="lead">کارتابل شما — فقط درخواست‌های خودتان نمایش داده می‌شود</div>
+</div>
+
+@* ================== بنر پنل مدیریت ================== *@
+@if (IsManager)
+{
+    <div class="hr-admin-banner mb-4">
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <div class="hr-admin-icon"><i class="bi bi-people-fill"></i></div>
+            <div class="flex-grow-1">
+                <b>پنل مدیریت منابع انسانی</b>
+                <div class="small">تایید درخواست‌های همه‌ی نیروها و گزارش ماهانه — در پنل مجزای مدیریت</div>
+            </div>
+            <button class="btn hr-admin-btn rounded-pill px-4 fw-800" @onclick="GoAdmin">
+                <i class="bi bi-shield-lock-fill me-1"></i> ورود به پنل مدیریت
+                @if (PendingAllCount > 0)
+                {
+                    <span class="hr-admin-badge">@Fa.Digits(PendingAllCount)</span>
+                }
+            </button>
+        </div>
+    </div>
+}
+
+<div class="row g-3 mb-4">
+    @* ================== موجودی این ماه ================== *@
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm h-100 lv-bal-card">
+            <div class="card-body text-center">
+                <div class="lv-bal-month fw-800">@if (balance != null) { <span>@balance.MonthName @Fa.Digits(balance.Year)</span> }</div>
+                @if (balance == null)
+                {
+                    <div class="text-muted small">در حال بارگذاری…</div>
+                }
+                else
+                {
+                    <div class="lv-ring-wrap">
+                        <svg viewBox="0 0 120 120" class="lv-ring">
+                            <circle cx="60" cy="60" r="52" fill="none" stroke="#eef0f7" stroke-width="12"></circle>
+                            <circle cx="60" cy="60" r="52" fill="none" stroke="@RingColor" stroke-width="12"
+                                    stroke-dasharray="@(RingPct * 3.267) 999" stroke-linecap="round"
+                                    transform="rotate(-90 60 60)"></circle>
+                            <text x="60" y="56" text-anchor="middle" font-size="22" font-weight="900" fill="#1c2130">@D0(balance.RemainingWithPending)</text>
+                            <text x="60" y="76" text-anchor="middle" font-size="11" fill="#8a90a5">روز باقیمانده</text>
+                        </svg>
+                    </div>
+                    <div class="lv-bal-legend d-flex justify-content-center gap-2 flex-wrap mt-2">
+                        <span class="lv-leg"><span class="lv-dot" style="background:#2ec47e"></span> مصرف: @D0(balance.Used)</span>
+                        <span class="lv-leg"><span class="lv-dot" style="background:#f4a23c"></span> انتظار: @D0(balance.Pending)</span>
+                        <span class="lv-leg"><span class="lv-dot" style="background:#8e5cff"></span> سقف: ۲ روز</span>
+                    </div>
+                    @if (balance.MissionDays > 0)
+                    {
+                        <div class="lv-mission-badge mt-2"><i class="bi bi-plane-fill"></i> ماموریت این ماه: @D0(balance.MissionDays) روز (شمارش نمی‌شود)</div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+
+    @* ================== موجودی سالانه ================== *@
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm h-100 lv-bal-card-year">
+            <div class="card-body">
+                @if (balance == null)
+                {
+                    <div class="text-center text-muted small py-4">در حال بارگذاری…</div>
+                }
+                else
+                {
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <div class="fw-800 text-primary"><i class="bi bi-calendar3"></i> موجودی سالانه @Fa.Digits(balance.Year)</div>
+                            <div class="small text-muted">۲ روز در ماه × ۱۲ ماه = ۲۴ روز در سال</div>
+                        </div>
+                        <div class="text-end">
+                            <div class="display-6 fw-900 @(balance.YearlyRemainingWithPending < 5 ? "text-danger" : "text-success")" style="font-size:2rem">@D0(balance.YearlyRemainingWithPending)</div>
+                            <div class="small text-muted">روز باقیمانده</div>
+                        </div>
+                    </div>
+                    <div class="lv-yearbar">
+                        <div class="lv-yearbar-fill" style="width: @(Math.Min(100, balance.YearlyUsed / (double)balance.YearlyQuota * 100))%"></div>
+                        <div class="lv-yearbar-pend" style="width: @(Math.Min(100 - balance.YearlyUsed / (double)balance.YearlyQuota * 100, balance.YearlyPending / (double)balance.YearlyQuota * 100))%"></div>
+                    </div>
+                    <div class="d-flex justify-content-between mt-2 small">
+                        <span><i class="bi bi-check-circle text-success"></i> مصرف‌شده: <b>@D0(balance.YearlyUsed)</b> روز</span>
+                        <span><i class="bi bi-hourglass-split text-warning"></i> در انتظار: <b>@D0(balance.YearlyPending)</b></span>
+                        <span><i class="bi bi-piggy-bank text-primary"></i> کل: <b>@Fa.Digits(24)</b></span>
+                    </div>
+                    <div class="small text-muted mt-2">
+                        <i class="bi bi-info-circle"></i>
+                        مانده مرخصی تا پایان سال جمع می‌شود و در سال جدید صفر می‌شود.
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    @* ================== فرم ثبت درخواست ================== *@
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm lv-form-card h-100">
+            <div class="card-header bg-white fw-800"><i class="bi bi-plus-circle text-primary"></i> ثبت درخواست جدید</div>
+            <div class="card-body">
+                @if (!string.IsNullOrEmpty(formError))
+                {
+                    <div class="alert alert-danger py-2 d-flex align-items-center gap-2 small">
+                        <i class="bi bi-exclamation-triangle-fill"></i> @formError
+                    </div>
+                }
+
+                <div class="lv-types mb-3">
+                    <div class="lv-type @(formType == "Daily" ? "active" : "")" @onclick='() => SwitchType("Daily")'>
+                        <i class="bi bi-calendar2-check-fill"></i>
+                        <b>روزانه</b>
+                    </div>
+                    <div class="lv-type @(formType == "Hourly" ? "active" : "")" @onclick='() => SwitchType("Hourly")'>
+                        <i class="bi bi-clock-history"></i>
+                        <b>مرخصی ساعتی</b>
+                    </div>
+                    <div class="lv-type @(formType == "HourlyMission" ? "active" : "")" @onclick='() => SwitchType("HourlyMission")'>
+                        <i class="bi bi-clipboard2-check-fill"></i>
+                        <b>ماموریت ساعتی</b>
+                    </div>
+                    <div class="lv-type @(formType == "Mission" ? "active" : "")" @onclick='() => SwitchType("Mission")'>
+                        <i class="bi bi-plane-fill"></i>
+                        <b>ماموریت</b>
+                    </div>
+                </div>
+
+                <div class="row g-2">
+                    <div class="col-12 col-sm-6">
+                        <label class="form-label small fw-800">شروع</label>
+                        <DatePicker Value="formStart" ValueChanged="v => formStart = v" CssClass="form-control-sm" DayClasses="calDayClasses" DayTitles="calDayTitles" />
+                    </div>
+                    @if (formType != "Hourly" && formType != "HourlyMission")
+                    {
+                        <div class="col-12 col-sm-6">
+                            <label class="form-label small fw-800">پایان</label>
+                            <DatePicker Value="formEnd" ValueChanged="v => formEnd = v" CssClass="form-control-sm" DayClasses="calDayClasses" DayTitles="calDayTitles" />
+                        </div>
+                    }
+                    @if (formType == "Hourly" || formType == "HourlyMission")
+                    {
+                        <div class="col-12 col-sm-6">
+                            <label class="form-label small fw-800">ساعت شروع <span class="text-danger">*</span></label>
+                            <TimeTextInput @bind-Value="formStartTime" Default="08:00" />
+                        </div>
+                        <div class="col-12 col-sm-6">
+                            <label class="form-label small fw-800">ساعت پایان <span class="text-danger">*</span></label>
+                            <TimeTextInput @bind-Value="formEndTime" Default="09:00" />
+                        </div>
+                    }
+                    @if (formType == "Mission" || formType == "HourlyMission")
+                    {
+                        <div class="col-12">
+                            <label class="form-label small fw-800">مقصد <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-sm" @bind="formDestination" placeholder="مثلاً: تهران" />
+                        </div>
+                    }
+                    @if (formType == "Daily" || formType == "Mission")
+                    {
+                        @if (formStart.HasValue && formEnd.HasValue)
+                        {
+                            <div class="col-12 text-center">
+                                <div class="lv-days-chip">
+                                    <i class="bi bi-calendar-event"></i>
+                                    <b>@Fa.Digits((long)((formEnd.Value.Date - formStart.Value.Date).TotalDays + 1))</b> روز
+                                </div>
+                            </div>
+                        }
+                    }
+                    @if (formType == "Hourly" || formType == "HourlyMission")
+                    {
+                        @if (TryParseHours(out var h))
+                        {
+                            <div class="col-12 text-center">
+                                <div class="lv-days-chip">
+                                    <i class="bi bi-clock"></i>
+                                    <b>@D0(h)</b> ساعت
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+
+                <div class="mt-2">
+                    <textarea class="form-control form-control-sm" rows="2" @bind="formReason" placeholder="@FormPlaceholder"></textarea>
+                </div>
+
+                <div class="d-flex justify-content-end mt-2">
+                    <button class="btn lv-submit rounded-pill px-4 fw-800" @onclick="SubmitRequest" disabled="@formBusy">
+                        @if (formBusy) { <span class="spinner-border spinner-border-sm me-1"></span> <text>در حال ثبت…</text> }
+                        else { <i class="bi bi-send-fill me-1"></i> <text>ارسال</text> }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@* ================== جدول ۱۲ ماه سال ================== *@
+@if (balance?.Months?.Count > 0)
+{
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white fw-800"><i class="bi bi-bar-chart-steps text-primary"></i> وضعیت مرخصی ماه‌های سال @Fa.Digits(balance.Year)</div>
+        <div class="card-body">
+            <div class="row g-2 lv-months">
+                @foreach (var m in balance.Months)
+                {
+                    var usedPct = Math.Min(100, m.Used / m.Quota * 100);
+                    var over = m.Used > m.Quota;
+                    <div class="col-6 col-sm-4 col-md-3 col-lg-2">
+                        <div class="lv-month-card @(m.Month == balance.Month ? "current" : "")">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <b>@m.MonthName</b>
+                                @if (over) { <span class="badge bg-danger">اضافه</span> }
+                            </div>
+                            <div class="lv-mini-bar mt-2">
+                                <div class="lv-mini-fill @(over?"bg-danger":"bg-success")" style="width:@usedPct%"></div>
+                            </div>
+                            <div class="d-flex justify-content-between mt-1 small">
+                                <span class="text-muted">مصرف</span>
+                                <b>@D0(m.Used) / @Fa.Digits(2)</b>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@* ================== درخواست‌های من ================== *@
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <b><i class="bi bi-person-lines-fill text-primary"></i> درخواست‌های من</b>
+        @if (mine.Count > 0)
+        {
+            <span class="small text-muted">@Fa.Digits(mine.Count) درخواست</span>
+        }
+    </div>
+    <div class="card-body p-0">
+        @if (loading)
+        { <div class="text-center py-5"><div class="spinner-border text-primary"></div></div> }
+        else if (mine.Count == 0)
+        {
+            <div class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>هنوز درخواستی ثبت نکرده‌اید.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle lv-table mb-0">
+                    <thead class="lv-thead">
+                        <tr><th>شماره</th><th>نوع</th><th>بازه</th><th>میزان</th><th>دلیل/مقصد</th><th>وضعیت</th><th>بررسی</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in mine)
+                        {
+                            <tr>
+                                <td class="lv-num" dir="ltr">@r.Number</td>
+                                <td>
+                                    @TypeBadge(r.Type)
+                                    @if (r.AdminCreated)
+                                    {
+                                        <div class="small mt-1"><span class="badge lv-badge-admin" title="این درخواست توسط مدیر به‌جای شما ثبت و تایید شده"><i class="bi bi-shield-check"></i> توسط مدیر</span></div>
+                                    }
+                                </td>
+                                <td class="lv-date">
+                                    @if (r.Type is "Hourly" or "HourlyMission")
+                                    {
+                                        <span>@PersianDate.ToShort(r.StartDate)</span>
+                                        @if (r.StartTime.HasValue && r.EndTime.HasValue)
+                                        {
+                                            <div dir="ltr" class="lv-time-range">@r.StartTime.HHMM() ← @r.EndTime.HHMM()</div>
+                                        }
+                                    }
+                                    else { <span>@PersianDate.ToShort(r.StartDate) ← @PersianDate.ToShort(r.EndDate)</span> }
+                                </td>
+                                <td class="fw-800">@AmountText(r)</td>
+                                <td class="lv-reason">@(r.Type is "Mission" or "HourlyMission" ? (r.Destination ?? "—") : (r.Reason ?? "—"))</td>
+                                <td>@StatusBadge(r.Status)</td>
+                                <td class="small text-muted">
+                                    @if (r.ApprovedAt.HasValue) { <span>@r.ApprovedByName — @PersianDate.ToShort(r.ApprovedAt.Value)</span> } else { <span>—</span> }
+                                    @if (!string.IsNullOrWhiteSpace(r.ApproveNote) && r.Status == "Rejected") { <div class="text-danger small">«@r.ApproveNote»</div> }
+                                </td>
+                                <td>
+                                    @if (r.Status == "Pending")
+                                    {
+                                        <button class="btn btn-sm btn-outline-danger lv-cancel" title="انصراف" @onclick="() => CancelRequest(r.Id)"><i class="bi bi-x-lg"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+.lv-badge-admin { background:#ede9fe; color:#6d28d9; font-weight:800; border:1px solid #ddd6fe; font-size:.7rem; }
+
+.hr-admin-banner { background: linear-gradient(135deg, #1c2130, #2a3150); color: #fff; border-radius: 16px; padding: .9rem 1.2rem; box-shadow: 0 8px 20px rgba(28,33,48,.18); }
+.hr-admin-icon { width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(135deg, #8e5cff, #4f8cff); display:flex; align-items:center; justify-content:center; font-size:1.25rem; }
+.hr-admin-btn { background:#fff; color:#1c2130; border:none; }
+.hr-admin-btn:hover { background:#efeaff; color:#5b21b6; }
+.hr-admin-badge { background:#e0245e; color:#fff; font-size:.7rem; border-radius:999px; padding:.15rem .55rem; font-weight:800; margin-inline-start:.4rem; }
+.lv-bal-card { background:linear-gradient(160deg,#ffffff 60%,#f4f0ff 100%); border-radius:18px; border:1px solid #e8e2fb; align-self:start; }
+.lv-bal-card-year { border-radius:18px; border:1px solid #cfe3fb; background:linear-gradient(160deg,#f0f7ff 60%,#ffffff); }
+.lv-bal-month { color:#5f688a; margin-bottom:.6rem; }
+.lv-ring-wrap { display:inline-block; }
+.lv-ring { width:140px; height:140px; filter:drop-shadow(0 4px 10px rgba(142,92,255,.18)); }
+.lv-bal-legend { font-size:.75rem; color:#5f688a; }
+.lv-leg { display:inline-flex; align-items:center; gap:.35rem; font-weight:700; font-size:.85rem; }
+.lv-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+.lv-mission-badge { display:inline-flex; align-items:center; gap:.4rem; background:#eef6ff; border:1px solid #cfe4fb; color:#1d5fc2; font-size:.78rem; font-weight:700; border-radius:999px; padding:.3rem .8rem; }
+.lv-yearbar { height:14px; background:#eef0f7; border-radius:999px; overflow:hidden; display:flex; }
+.lv-yearbar-fill { background:linear-gradient(90deg,#2ec47e,#25a86b); height:100%; }
+.lv-yearbar-pend { background:#f4a23c; height:100%; }
+.lv-form-card { border-radius:18px; border:1px solid #e8e2fb; }
+.lv-types { display:grid; grid-template-columns:repeat(4,1fr); gap:.5rem; }
+.lv-type { border:2px solid #e5e0f5; border-radius:12px; padding:.6rem .4rem; text-align:center; cursor:pointer; transition:all .15s ease; background:#fbfaff; }
+.lv-type i { font-size:1.3rem; color:#8e5cff; }
+.lv-type b { font-size:.85rem; color:#1c2130; display:block; margin-top:.2rem; }
+.lv-type:hover { border-color:#b9a5f5; transform:translateY(-2px); box-shadow:0 6px 14px rgba(142,92,255,.15); }
+.lv-type.active { background:linear-gradient(135deg,#8e5cff,#4f8cff); border-color:transparent; box-shadow:0 8px 20px rgba(120,90,255,.35); }
+.lv-type.active i, .lv-type.active b { color:#fff; }
+.lv-days-chip { display:inline-flex; align-items:center; gap:.4rem; background:#efeaff; border:1px solid #ded2ff; color:#5b21b6; border-radius:999px; padding:.3rem .9rem; font-size:.85rem; font-weight:800; }
+.lv-submit { background:linear-gradient(135deg,#8e5cff,#4f8cff); border:none; color:#fff; box-shadow:0 6px 16px rgba(120,90,255,.3); }
+.lv-submit:hover:not(:disabled) { filter:brightness(1.07); color:#fff; }
+.lv-submit:disabled { opacity:.6; }
+.lv-months .lv-month-card { border:1px solid #e8e2fb; border-radius:12px; padding:.6rem .7rem; background:#fbfaff; transition:all .15s; }
+.lv-months .lv-month-card:hover { border-color:#b9a5f5; transform:translateY(-1px); }
+.lv-months .lv-month-card.current { border-color:#8e5cff; background:linear-gradient(160deg,#f4f0ff,#fff); box-shadow:0 4px 10px rgba(142,92,255,.15); }
+.lv-mini-bar { height:6px; background:#eef0f7; border-radius:999px; overflow:hidden; }
+.lv-mini-fill { height:100%; border-radius:999px; transition:width .3s; }
+.lv-table { font-size:.88rem; }
+.lv-thead th { font-size:.78rem; color:#5f688a; background:#f8f7fd; border-bottom:2px solid #e8e2fb; white-space:nowrap; }
+.lv-num { font-weight:800; color:#5b21b6; font-size:.8rem; white-space:nowrap; }
+.lv-date { white-space:nowrap; font-weight:700; }
+.lv-reason { max-width:220px; font-size:.82rem; color:#5f688a; }
+.lv-cancel { width:32px; height:30px; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:8px; }
+.lv-badge-daily { background:#e3efff; color:#1d5fc2; font-weight:800; border:1px solid #c8dfff; }
+.lv-badge-hourly { background:#fff6e6; color:#b06a00; font-weight:800; border:1px solid #f3d9a8; }
+.lv-badge-mission { background:#eef6ff; color:#0e8577; font-weight:800; border:1px solid #c4e5e0; }
+.lv-badge-hourlymission { background:#e8f7f5; color:#0b6e63; font-weight:800; border:1px solid #bfe3de; }
+.lv-time-range { font-size:.8rem; font-weight:800; color:#5b21b6; }
+.lv-st-approved { background:#e6f9ef; color:#0e8a55; font-weight:800; border:1px solid #b9e8cf; }
+.lv-st-rejected { background:#fdecef; color:#b21b4c; font-weight:800; border:1px solid #f3b9c8; }
+.lv-st-pending { background:#fff6e6; color:#b06a00; font-weight:800; border:1px solid #f3d9a8; }
+@@media (max-width:575.98px) { .lv-types { grid-template-columns:repeat(2,1fr); } }
+</style>
+
+@code {
+    private bool IsManager => Auth.Has("LeaveRequests.Approve") || Auth.Has("LeaveRequests.Report");
+    private void GoAdmin() => Nav.NavigateTo("/hr-admin");
+
+    private bool loading = true;
+    private BalanceInfo? balance;
+    private List<LeaveItem> mine = new();
+    private (int jy, int jm) _now;
+
+    private string formType = "Daily";
+    private DateTime? formStart;
+    private DateTime? formEnd;
+    private string? formStartTime;
+    private string? formEndTime;
+    private string? formDestination;
+    private string? formReason;
+    private string formError = "";
+    private bool formBusy;
+    private int PendingAllCount { get; set; }
+
+    private void SwitchType(string t)
+    {
+        formType = t;
+        formError = "";
+        if (t is "Hourly" or "HourlyMission")
+        {
+            formStartTime ??= "08:00";
+            formEndTime ??= "09:00";
+        }
+    }
+
+    private bool TryParseHours(out double hours)
+    {
+        hours = 0;
+        if (formType is not ("Hourly" or "HourlyMission")) return false;
+        if (!TimeSpan.TryParse(formStartTime, out var s) || !TimeSpan.TryParse(formEndTime, out var e)) return false;
+        var h = (e - s).TotalHours;
+        if (h <= 0 || h > 8) return false;
+        hours = Math.Round(h, 2);
+        return true;
+    }
+
+    private double RingPct
+    {
+        get
+        {
+            if (balance == null) return 0;
+            var usedPct = Math.Min(100, balance.Used / balance.Quota * 100);
+            var pendPct = Math.Min(100 - usedPct, balance.Pending / balance.Quota * 100);
+            return usedPct + pendPct;
+        }
+    }
+
+    private string RingColor
+    {
+        get
+        {
+            if (balance == null) return "#8e5cff";
+            var rem = balance.RemainingWithPending;
+            return rem < 0 ? "#e0245e" : rem < 0.5 ? "#f4a23c" : "#2ec47e";
+        }
+    }
+
+    private string apiBase = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(Auth.Token))
+            Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Auth.Token);
+        apiBase = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+
+        (_now.jy, _now.jm, _) = PersianDate.FromGregorian(DateTime.Now);
+        formStart = DateTime.Today; formEnd = DateTime.Today;
+        await LoadBalance();
+        await LoadMine();
+        await BuildCalendarStatusAsync();
+        if (IsManager) await LoadPendingAll();
+        loading = false;
+
+        Rt.DataChanged += OnRtDataChanged;
+        await Rt.EnsureStartedAsync(apiBase, Auth.UserId);
+    }
+
+    private async void OnRtDataChanged(string scope)
+    {
+        if (scope != "leaverequests") return;
+        await InvokeAsync(async () =>
+        {
+            await LoadBalance(); await LoadMine();
+            await BuildCalendarStatusAsync();
+            if (IsManager) await LoadPendingAll();
+            StateHasChanged();
+        });
+    }
+
+    // ---------- وضعیت ماه روی تقویم (تعطیلات رسمی + مرخصی‌های خود کاربر) ----------
+    private Dictionary<string, string> calDayClasses = new();
+    private Dictionary<string, string> calDayTitles = new();
+
+    public class HolPubItem { public int Id { get; set; } public DateTime HolidayDate { get; set; } public string Name { get; set; } = ""; public bool IsOfficial { get; set; } }
+
+    private async Task BuildCalendarStatusAsync()
+    {
+        var classes = new Dictionary<string, string>();
+        var titles = new Dictionary<string, string>();
+        try
+        {
+            // تعطیلات رسمی سال (سبز/قرمز روی تقویم)
+            var hols = await Http.GetFromJsonAsync<List<HolPubItem>>($"/api/Attendance/official-holidays?jy={_now.jy}") ?? new();
+            foreach (var h in hols)
+            {
+                var k = h.HolidayDate.ToString("yyyy-MM-dd");
+                classes[k] = "dp-hol";
+                titles[k] = "تعطیل رسمی: " + h.Name;
+            }
+        }
+        catch { }
+
+        // مرخصی‌های خود کاربر (حلقه‌ی نارنجی)
+        foreach (var r in mine.Where(x => x.Status is "Approved" or "Pending"))
+        {
+            var label = r.Status == "Approved" ? "مرخصی شما (تاییدشده)" : "مرخصی شما (در انتظار تایید)";
+            if (r.Type is "Daily" or "Mission")
+            {
+                for (var d = r.StartDate.Date; d <= r.EndDate.Date; d = d.AddDays(1))
+                {
+                    var k = d.ToString("yyyy-MM-dd");
+                    if (classes.ContainsKey(k)) { titles[k] = titles.TryGetValue(k, out var t) ? t + " — " + label : label; continue; }
+                    classes[k] = "dp-leave";
+                    titles[k] = label;
+                }
+            }
+            else
+            {
+                var k = r.StartDate.Date.ToString("yyyy-MM-dd");
+                if (!classes.ContainsKey(k)) { classes[k] = "dp-leave"; titles[k] = label + $" ({r.StartTime?.HHMM()}-{r.EndTime?.HHMM()})"; }
+            }
+        }
+        calDayClasses = classes;
+        calDayTitles = titles;
+    }
+
+    public void Dispose() { Rt.DataChanged -= OnRtDataChanged; }
+
+    // ---------- مدل‌ها ----------
+    public class LeaveItem
+    {
+        public int Id { get; set; } public string Number { get; set; } = ""; public string Type { get; set; } = "";
+        public int RequesterUserId { get; set; } public string RequesterName { get; set; } = "";
+        public DateTime StartDate { get; set; } public DateTime EndDate { get; set; }
+        public TimeSpan? StartTime { get; set; } public TimeSpan? EndTime { get; set; }
+        public double Days { get; set; } public double Hours { get; set; }
+        public string? Destination { get; set; } public string? Reason { get; set; }
+        public string Status { get; set; } = ""; public string? ApprovedByName { get; set; }
+        public DateTime? ApprovedAt { get; set; } public string? ApproveNote { get; set; }
+        public bool AdminCreated { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    public class MonthUsage
+    {
+        public int Month { get; set; } public string MonthName { get; set; } = "";
+        public double Quota { get; set; } public double Used { get; set; } public double Pending { get; set; }
+    }
+
+    public class BalanceInfo
+    {
+        public int Year { get; set; } public int Month { get; set; } public string MonthName { get; set; } = "";
+        public double Quota { get; set; } = 2; public double Used { get; set; } public double Pending { get; set; }
+        public double Remaining { get; set; } public double RemainingWithPending { get; set; }
+        public double MissionDays { get; set; } public int RequestCount { get; set; }
+        public int YearlyQuota { get; set; } = 24;
+        public double YearlyUsed { get; set; } public double YearlyPending { get; set; }
+        public double YearlyRemaining { get; set; } public double YearlyRemainingWithPending { get; set; }
+        public double YearlyUsedByMonth { get; set; } public double YearlyEarnedToMonth { get; set; }
+        public List<MonthUsage> Months { get; set; } = new();
+    }
+
+    private async Task LoadBalance()
+    {
+        try { balance = await Http.GetFromJsonAsync<BalanceInfo>($"/api/LeaveRequests/balance/{_now.jy}/{_now.jm}"); }
+        catch { balance = null; }
+    }
+
+    private async Task LoadMine()
+    { try { mine = await Http.GetFromJsonAsync<List<LeaveItem>>("/api/LeaveRequests/mine") ?? new(); } catch { mine = new(); } }
+
+    private async Task LoadPendingAll()
+    {
+        try { var s = await Http.GetFromJsonAsync<StatsInfo>("/api/LeaveRequests/stats"); PendingAllCount = s?.Pending ?? 0; }
+        catch { PendingAllCount = 0; }
+    }
+    private class StatsInfo { public int Pending { get; set; } }
+
+    private async Task SubmitRequest()
+    {
+        formError = "";
+        if (formStart == null) { formError = "تاریخ شروع را انتخاب کنید."; return; }
+        if (formType is "Daily" or "Mission" && formEnd == null) { formError = "تاریخ پایان را انتخاب کنید."; return; }
+        if (formType is "Hourly" or "HourlyMission" && !TryParseHours(out _))
+        { formError = "ساعت شروع و پایان را درست وارد کنید (ساعت پایان باید بعد از شروع و حداکثر ۸ ساعت باشد)."; return; }
+        if (formType is "Mission" or "HourlyMission" && string.IsNullOrWhiteSpace(formDestination)) { formError = "مقصد ماموریت را وارد کنید."; return; }
+
+        formBusy = true;
+        try
+        {
+            var isHourly = formType is "Hourly" or "HourlyMission";
+            var resp = await Http.PostAsJsonAsync("/api/LeaveRequests", new
+            {
+                Type = formType,
+                StartDate = formStart.Value.Date,
+                EndDate = (isHourly ? formStart.Value.Date : formEnd!.Value.Date),
+                StartTime = isHourly ? formStartTime : null,
+                EndTime = isHourly ? formEndTime : null,
+                Days = 0, Hours = 0,
+                Destination = formType is "Mission" or "HourlyMission" ? formDestination : null,
+                Reason = formReason
+            });
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success("درخواست با موفقیت ثبت شد.");
+                formStart = DateTime.Today; formEnd = DateTime.Today;
+                formStartTime = null; formEndTime = null; formDestination = null; formReason = "";
+                await LoadBalance(); await LoadMine();
+                if (IsManager) await LoadPendingAll();
+            }
+            else formError = await ExtractError(resp);
+        }
+        catch (Exception ex) { formError = ex.Message; }
+        formBusy = false;
+    }
+
+    private async Task CancelRequest(int id)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", "آیا از انصراف این درخواست مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/LeaveRequests/{id}");
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success("درخواست انصراف شد.");
+                await LoadBalance(); await LoadMine();
+                if (IsManager) await LoadPendingAll();
+            }
+            else Toast.Error(await ExtractError(resp));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task<string> ExtractError(HttpResponseMessage resp)
+    {
+        try
+        {
+            var body = await resp.Content.ReadAsStringAsync();
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("message", out var m)) return m.GetString() ?? "";
+        }
+        catch { }
+        return $"سرور درخواست را نپذیرفت (کد {(int)resp.StatusCode}).";
+    }
+
+    private Microsoft.AspNetCore.Components.MarkupString TypeBadge(string type) => type switch
+    {
+        "Hourly" => new("<span class=\"badge lv-badge-hourly\"><i class=\"bi bi-clock\"></i> مرخصی ساعتی</span>"),
+        "HourlyMission" => new("<span class=\"badge lv-badge-hourlymission\"><i class=\"bi bi-clipboard2-check\"></i> ماموریت ساعتی</span>"),
+        "Mission" => new("<span class=\"badge lv-badge-mission\"><i class=\"bi bi-plane\"></i> ماموریت</span>"),
+        _ => new("<span class=\"badge lv-badge-daily\"><i class=\"bi bi-calendar2-check\"></i> روزانه</span>")
+    };
+
+    private Microsoft.AspNetCore.Components.MarkupString StatusBadge(string status) => status switch
+    {
+        "Approved" => new("<span class=\"badge lv-st-approved\"><i class=\"bi bi-check-circle\"></i> تاییدشده</span>"),
+        "Rejected" => new("<span class=\"badge lv-st-rejected\"><i class=\"bi bi-x-circle\"></i> ردشده</span>"),
+        _ => new("<span class=\"badge lv-st-pending\"><i class=\"bi bi-hourglass-split\"></i> در انتظار</span>")
+    };
+
+    private string FormPlaceholder => formType is "Mission" or "HourlyMission" ? "شرح کار و ضرورت مأموریت…" : "مثلاً: مرخصی استحقاقی، مشکلات شخصی…";
+    private static string D0(double v) => v == (long)v ? Fa.Digits((long)v) : Fa.Digits((decimal)Math.Round(v, 2));
+    private string AmountText(LeaveItem r) =>
+        r.Type is "Hourly" or "HourlyMission" ? $"{D0(r.Hours)} ساعت" : $"{D0(r.Days)} روز";
+}

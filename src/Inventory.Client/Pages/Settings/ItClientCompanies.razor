@@ -1,0 +1,316 @@
+@namespace Inventory.Client.Pages
+@page "/settings/it-client-companies"
+@using System.Net.Http.Headers
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject LayoutState Layout
+
+<PageTitle>شرکت‌های راه‌دور — واحد IT</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>شرکت‌های راه‌دور</h1>
+        <p class="lead">صدور و مدیریت کلید API شرکت‌هایی که نسخهٔ نرم‌افزار را روی سرور خودشان اجرا می‌کنند</p>
+    </div>
+    <button class="btn btn-primary me-auto" disabled="@busy" @onclick="NewCompany">
+        <i class="bi bi-plus-lg"></i> شرکت جدید
+    </button>
+</div>
+
+<div class="alert alert-light border d-flex gap-2 fs-8">
+    <i class="bi bi-shield-lock text-primary"></i>
+    <div>
+        کاربران شرکت‌های راه‌دور در این سرور <b>کاربر تعریف نمی‌شوند</b>؛ دسترسی آن‌ها با کلید API شرکت
+        (فقط <b>هش</b> آن ذخیره می‌شود) و هویت شخصی‌شان با کلید پایداری که نرم‌افزارِ خودشان می‌سازد کنترل می‌شود.
+        <b>کلید فقط یک‌بار</b> هنگام صدور یا تعویض نمایش داده می‌شود — همان موقع آن را به شرکت تحویل دهید.
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else if (items.Count == 0)
+{
+    <div class="itr-empty" style="border:1px dashed #cbd5e1;border-radius:.75rem;padding:2.5rem;text-align:center;">
+        <i class="bi bi-diagram-3" style="font-size:2rem;color:#94a3b8"></i>
+        <h5 class="mt-2">هنوز شرکتی ثبت نشده است</h5>
+        <p class="text-muted fs-8">برای اینکه یک شرکت بتواند درخواست بفرستد، کد و کلید API آن را اینجا صادر کنید.</p>
+        <button class="btn btn-primary" @onclick="NewCompany"><i class="bi bi-plus-lg"></i> افزودن اولین شرکت</button>
+    </div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>شرکت</th>
+                    <th>کد</th>
+                    <th>کلید</th>
+                    <th>وضعیت</th>
+                    <th class="text-center">درخواست‌ها</th>
+                    <th class="text-center">باز</th>
+                    <th>آخرین ارتباط</th>
+                    <th>سقف ساعتی</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var c in items)
+                {
+                    <tr>
+                        <td>
+                            <b>@c.Name</b>
+                            @if (!string.IsNullOrWhiteSpace(c.Note))
+                            {
+                                <div class="fs-8 text-muted">@c.Note</div>
+                            }
+                        </td>
+                        <td class="num" dir="ltr">@c.Code</td>
+                        <td class="num fs-8" dir="ltr">@(c.ApiKeyHint ?? "—")</td>
+                        <td>
+                            @if (c.IsActive)
+                            { <span class="badge bg-success-subtle text-success border">فعال</span> }
+                            else
+                            { <span class="badge bg-secondary-subtle text-secondary border">غیرفعال</span> }
+                        </td>
+                        <td class="text-center">@c.RequestCount</td>
+                        <td class="text-center">
+                            @if (c.OpenCount > 0)
+                            {
+                                <span class="badge bg-warning-subtle text-warning border">@c.OpenCount</span>
+                            }
+                            else
+                            {
+                                <span>0</span>
+                            }
+                        </td>
+                        <td class="fs-8 text-muted">@(c.LastSeenAt?.ToFa() ?? "—")</td>
+                        <td class="text-center fs-8">@(c.HourlyLimit > 0 ? c.HourlyLimit.ToString() : "بدون سقف")</td>
+                        <td class="text-end text-nowrap">
+                            <button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(c)"><i class="bi bi-pencil"></i></button>
+                            <button class="btn btn-sm btn-outline-warning" title="تعویض کلید" @onclick="() => Rotate(c)"><i class="bi bi-key"></i></button>
+                            <button class="btn btn-sm btn-outline-danger" title="حذف" @onclick="() => Delete(c)"><i class="bi bi-trash"></i></button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@* ================== فرم شرکت ================== *@
+@if (edit != null)
+{
+    <div class="modal fade show d-block" style="background:rgba(15,23,42,.55)">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(edit.Id > 0 ? "ویرایش شرکت" : "شرکت جدید")</h5>
+                    <button class="btn-close" @onclick="() => edit = null"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">نام شرکت <span class="text-danger">*</span></label>
+                        <input class="form-control" @bind="edit.Name" placeholder="مثلاً: شرکت پترو صنعت" />
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">کد شرکت <span class="text-danger">*</span></label>
+                            <input class="form-control num" dir="ltr" @bind="edit.Code" placeholder="PETRO" />
+                            <div class="form-text">فقط حروف انگلیسی بزرگ، عدد، «-» و «_» — نرم‌افزار شرکت همین را در هدر می‌فرستد.</div>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">تلفن</label>
+                            <input class="form-control num" dir="ltr" @bind="edit.Phone" />
+                        </div>
+                    </div>
+                    <div class="row g-3 mt-0">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">سقف درخواست ساعتی</label>
+                            <input class="form-control num" type="number" min="0" @bind="edit.HourlyLimit" />
+                            <div class="form-text">صفر یعنی بدون سقف.</div>
+                        </div>
+                        <div class="col-12 col-md-6 d-flex align-items-end">
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="act" @bind="edit.IsActive" />
+                                <label class="form-check-label" for="act">شرکت فعال باشد</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <label class="form-label">یادداشت</label>
+                        <textarea class="form-control" rows="2" @bind="edit.Note"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => edit = null">انصراف</button>
+                    <button class="btn btn-primary" disabled="@busy" @onclick="Save">
+                        @if (busy) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                        <i class="bi bi-check2"></i> ذخیره
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ================== نمایش کلید (فقط یک‌بار) ================== *@
+@if (issuedKey != null)
+{
+    <div class="modal fade show d-block" style="background:rgba(15,23,42,.7)">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title text-warning"><i class="bi bi-key"></i> کلید API صادر شد</h5>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning py-2 fs-8">
+                        <b>این کلید فقط همین یک‌بار نمایش داده می‌شود.</b> آن را کپی کنید و به شرکت تحویل دهید؛
+                        در نرم‌افزارشان در «تنظیمات ← اتصال به واحد IT مرکزی» وارد می‌شود.
+                    </div>
+                    <div class="input-group">
+                        <input class="form-control num" dir="ltr" readonly value="@issuedKey" @ref="keyBox" />
+                        <button class="btn btn-outline-secondary" @onclick="CopyKey"><i class="bi bi-clipboard"></i></button>
+                    </div>
+                    <div class="fs-8 text-muted mt-2">
+                        سرور مرکزی فقط <b>هش</b> این کلید را نگه می‌دارد؛ اگر گم شود، از همین صفحه «تعویض کلید» بزنید.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" @onclick="() => issuedKey = null">متوجه شدم</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+
+    private bool loading = true, busy;
+    private List<CompanyItem> items = new();
+    private CompanyItem? edit;
+    private string? issuedKey;
+    private ElementReference keyBox;
+
+    public class CompanyItem
+    {
+        public int Id { get; set; }
+        public string Code { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string? Phone { get; set; }
+        public bool IsActive { get; set; } = true;
+        public int HourlyLimit { get; set; } = 60;
+        public string? Note { get; set; }
+        public string? ApiKeyHint { get; set; }
+        public DateTime? LastSeenAt { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime? KeyRotatedAt { get; set; }
+        public int RequestCount { get; set; }
+        public int OpenCount { get; set; }
+    }
+
+    public class SaveRes { public string? ApiKey { get; set; } }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("شرکت‌های راه‌دور");
+        if (!string.IsNullOrWhiteSpace(Auth.Token))
+            Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Auth.Token);
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try { items = await Http.GetFromJsonAsync<List<CompanyItem>>("/api/itrequests/client-companies") ?? new(); }
+        catch { items = new(); }
+        loading = false;
+    }
+
+    private void NewCompany() =>
+        edit = new CompanyItem { Id = 0, HourlyLimit = 60, IsActive = true };
+
+    private void Edit(CompanyItem c) => edit = new CompanyItem
+    {
+        Id = c.Id, Code = c.Code, Name = c.Name, Phone = c.Phone,
+        IsActive = c.IsActive, HourlyLimit = c.HourlyLimit, Note = c.Note
+    };
+
+    private async Task Save()
+    {
+        if (edit == null) return;
+        if (string.IsNullOrWhiteSpace(edit.Name)) { Toast.Error("نام شرکت را وارد کنید."); return; }
+        if (string.IsNullOrWhiteSpace(edit.Code)) { Toast.Error("کد شرکت را وارد کنید."); return; }
+
+        busy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync("/api/itrequests/client-companies", edit);
+            var body = await resp.Content.ReadAsStringAsync();
+            if (!resp.IsSuccessStatusCode) { Toast.Error(ExtractMessage(body) ?? body); return; }
+            var res = await resp.Content.ReadFromJsonAsync<SaveRes>();
+            edit = null;
+            await Load();
+            if (!string.IsNullOrWhiteSpace(res?.ApiKey)) issuedKey = res!.ApiKey;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task Rotate(CompanyItem c)
+    {
+        if (!await Confirm($"کلید API شرکت «{c.Name}» تعویض شود؟ کلید قبلی بلافاصله از کار می‌افتد و باید در نرم‌افزار شرکت دوباره وارد شود."))
+            return;
+        try
+        {
+            var resp = await Http.PostAsync($"/api/itrequests/client-companies/{c.Id}/rotate-key", null);
+            var body = await resp.Content.ReadAsStringAsync();
+            if (!resp.IsSuccessStatusCode) { Toast.Error(ExtractMessage(body) ?? body); return; }
+            var res = await resp.Content.ReadFromJsonAsync<SaveRes>();
+            if (!string.IsNullOrWhiteSpace(res?.ApiKey)) issuedKey = res!.ApiKey;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Delete(CompanyItem c)
+    {
+        if (!await Confirm($"شرکت «{c.Name}» حذف شود؟ اگر درخواستی داشته باشد، حذف نمی‌شود و باید غیرفعال گردد."))
+            return;
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/itrequests/client-companies/{c.Id}");
+            var body = await resp.Content.ReadAsStringAsync();
+            if (resp.IsSuccessStatusCode) { Toast.Success("شرکت حذف شد."); await Load(); }
+            else Toast.Error(ExtractMessage(body) ?? body);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string? ExtractMessage(string json)
+    {
+        try
+        {
+            using var d = System.Text.Json.JsonDocument.Parse(json);
+            return d.RootElement.TryGetProperty("message", out var m) ? m.GetString() : null;
+        }
+        catch { return null; }
+    }
+
+    private async Task<bool> Confirm(string msg)
+    {
+        // از confirm ساده‌ی مرورگر استفاده می‌شود تا به مودال جدید نیاز نباشد
+        return await JS.InvokeAsync<bool>("confirm", msg);
+    }
+
+    private async Task CopyKey()
+    {
+        try { await JS.InvokeVoidAsync("navigator.clipboard.writeText", issuedKey ?? ""); Toast.Success("کلید کپی شد."); }
+        catch { Toast.Error("کپی ناموفق بود."); }
+    }
+}

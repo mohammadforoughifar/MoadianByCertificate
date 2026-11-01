@@ -1,0 +1,125 @@
+@using Inventory.Shared.Dtos
+@inject IOutgoingLetterService OutgoingSvc
+@inject IToastService Toast
+
+@* ============================================================
+   افزودن / ویرایش پیش‌نویس نامهٔ صادره — عنوان + گیرندهٔ بیرونی + متن
+   مستقل از فرم کامل «ارسال نامه»؛ فقط برای نگه‌داشتن پیش‌نویس است و
+   هنگام «ادامهٔ پیش‌نویس» در فرم ارسال باز می‌شود.
+   ============================================================ *@
+
+@if (visible)
+{
+    <div class="ltx" style="animation:none;transform:none">
+        <div class="gov" style="position:fixed;inset:0">
+            <div class="gmodal pnv" @onclick:stopPropagation="true">
+                <div class="gm-h">
+                    <div class="ttl">
+                        <b><i class="bi bi-pencil-square" style="color:var(--p2)"></i> @(editId > 0 ? "ویرایش پیش‌نویس صادره" : "افزودن پیش‌نویس صادره")</b>
+                        <small>عنوان و متن نامه را بنویسید — بعداً می‌توانید آن را در فرم ارسال ادامه دهید</small>
+                    </div>
+                    <button class="x" @onclick="Close"><i class="bi bi-x-lg"></i></button>
+                </div>
+                <div class="gm-b">
+                    <div class="fcard @(errTitle ? "err" : "")" style="box-shadow:none;margin-bottom:10px">
+                        <label>عنوان نامه <span class="req">*</span></label>
+                        <input class="tin" placeholder="مثلاً: صورتجلسهٔ همکاری — نسخهٔ اولیه…" @bind="title" @bind:event="oninput" />
+                        @if (errTitle) { <div class="ferr"><i class="bi bi-exclamation-triangle"></i> عنوان نامه الزامی است.</div> }
+                    </div>
+
+                    <div class="fcard" style="box-shadow:none;margin-bottom:10px">
+                        <label>سازمان گیرنده (اختیاری)</label>
+                        <input class="tin" placeholder="نام سازمان یا شرکت مقصد…" @bind="receiverOrg" @bind:event="oninput" />
+                    </div>
+
+                    <div class="fcard" style="box-shadow:none">
+                        <label>متن نامه</label>
+                        <RichTextEditor @ref="_rich" Id="ltxOutPnvEditor" Placeholder="متن نامه را بنویسید…" @bind-Value="text" Height="260" />
+                    </div>
+                </div>
+                <div class="gm-f">
+                    <button class="lbtn ghost" @onclick="Close">انصراف</button>
+                    <button class="lbtn pri" disabled="@busy" @onclick="Save">
+                        <i class="bi bi-check-lg"></i> ذخیره پیش‌نویس
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private bool visible;
+    private bool busy;
+    private int editId;
+    private string title = "";
+    private string text = "";
+    private string receiverOrg = "";
+    private bool errTitle;
+    private RichTextEditor? _rich;
+
+    /// <summary>باز کردن برای افزودن پیش‌نویس جدید یا ویرایش پیش‌نویس موجود</summary>
+    public void Open(OutgoingPishnevisDto? draft = null)
+    {
+        editId = draft?.PishnevisId ?? 0;
+        title = draft?.Title ?? "";
+        text = draft?.Text ?? "";
+        receiverOrg = draft?.ReceiverOrganization ?? "";
+        errTitle = false;
+        busy = false;
+        visible = true;
+        StateHasChanged();
+        _ = SetEditorSoonAsync();
+    }
+
+    public void Close()
+    {
+        visible = false;
+        title = "";
+        text = "";
+        receiverOrg = "";
+        editId = 0;
+        errTitle = false;
+    }
+
+    /// <summary>ادیتور متن پس از رندر کامل مودال مقداردهی می‌شود.</summary>
+    private async Task SetEditorSoonAsync()
+    {
+        try
+        {
+            await Task.Delay(60);
+            if (_rich != null && !string.IsNullOrEmpty(text))
+                await _rich.SetContentAsync(text);
+        }
+        catch { }
+    }
+
+    private async Task Save()
+    {
+        if (busy) return;
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            errTitle = true;
+            return;
+        }
+        errTitle = false;
+        busy = true;
+        try
+        {
+            await OutgoingSvc.SavePishnevisAsync(new OutgoingPishnevisDto
+            {
+                PishnevisId = editId,
+                Title = title.Trim(),
+                Text = text ?? "",
+                ReceiverOrganization = string.IsNullOrWhiteSpace(receiverOrg) ? null : receiverOrg.Trim()
+            });
+            Toast.Success(editId > 0 ? "پیش‌نویس ویرایش شد." : "پیش‌نویس ذخیره شد.");
+            Close();
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+}

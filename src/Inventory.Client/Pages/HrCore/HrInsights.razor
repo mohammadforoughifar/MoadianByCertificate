@@ -1,0 +1,104 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/insights"
+@inject IHrCoreService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>داشبورد مدیر</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-speedometer2"></i> داشبورد یکپارچه مدیر</h1>
+            <div class="lead">نرخ غیبت، ترک‌خدمت، هزینه سرانه و روندها — سال <span class="num">@year.Num()</span></div>
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+            <button class="btn btn-outline-secondary" @onclick="() => ChangeYear(-1)"><i class="bi bi-chevron-right"></i></button>
+            <strong class="num px-2">@year.Num()</strong>
+            <button class="btn btn-outline-secondary" @onclick="() => ChangeYear(1)"><i class="bi bi-chevron-left"></i></button>
+        </div>
+    </div>
+</div>
+
+@if (!canManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص مدیر منابع انسانی است.</div>
+    return;
+}
+
+@if (loading || dto == null)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+    return;
+}
+
+<div class="row g-3 mb-3">
+    <div class="col-6 col-lg-3"><div class="card border-0 shadow-sm text-center py-3"><div class="fs-3 fw-bold num">@dto.ActiveEmployees.Num()</div><div class="text-muted small">نفرات فعال</div></div></div>
+    <div class="col-6 col-lg-3"><div class="card border-0 shadow-sm text-center py-3"><div class="fs-3 fw-bold text-danger num">@dto.AbsenceRate٪</div><div class="text-muted small">نرخ غیبت (@dto.AvgLeaveDaysPerEmp روز سرانه)</div></div></div>
+    <div class="col-6 col-lg-3"><div class="card border-0 shadow-sm text-center py-3"><div class="fs-3 fw-bold text-warning num">@dto.TurnoverRate٪</div><div class="text-muted small">ترک‌خدمت (@dto.ExitsThisYear.Num() خروج / @dto.HiresThisYear.Num() ورود)</div></div></div>
+    <div class="col-6 col-lg-3"><div class="card border-0 shadow-sm text-center py-3"><div class="fs-5 fw-bold num">@HrCoreUi.Money(dto.AvgCostPerHead)</div><div class="text-muted small">هزینه سرانه (@(dto.LastRunLabel ?? "—"))</div></div></div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-white fw-bold"><i class="bi bi-clock-history text-primary"></i> روند اضافه‌کاری ماهانه (ساعت)</div>
+            <div class="card-body"><HrBars Points="dto.OvertimeTrend" /></div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-white fw-bold"><i class="bi bi-calendar2-week text-success"></i> روند مرخصی ماهانه (روز)</div>
+            <div class="card-body"><HrBars Points="dto.LeaveTrend" /></div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-white fw-bold"><i class="bi bi-cash-stack text-warning"></i> روند حقوق ناخالص (میلیون ریال)</div>
+            <div class="card-body"><HrBars Points="dto.PayrollTrend" Scale="1000000" /></div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3">
+    <div class="col-lg-6">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-white fw-bold"><i class="bi bi-pie-chart"></i> مرخصی به‌تفکیک نوع (روز)</div>
+            <div class="card-body"><HrNameBars Points="dto.LeaveByType" /></div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-white fw-bold"><i class="bi bi-diagram-3"></i> نفرات به‌تفکیک واحد</div>
+            <div class="card-body"><HrNameBars Points="dto.HeadcountByUnit" /></div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool canManage => Auth.Has("HrCore.Manage") || Auth.IsAdmin;
+
+    private bool loading = true;
+    private int year = new System.Globalization.PersianCalendar().GetYear(DateTime.Today);
+    private HrManagerDashboardDto? dto;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canManage) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { dto = await Svc.GetManagerDashboardAsync(year); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private async Task ChangeYear(int d)
+    {
+        year += d;
+        await Reload();
+    }
+}

@@ -1,0 +1,217 @@
+@namespace Inventory.Client.Pages
+@page "/warehouses"
+@inject IWarehouseService WarehouseSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>انبارها</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>انبارها</h1>
+        <p class="lead">تعریف انبارها و مراکز نگهداری کالا</p>
+    </div>
+    <button class="btn btn-primary ms-auto" @onclick="OpenNew">
+        <i class="bi bi-plus-lg"></i> انبار جدید
+    </button>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-building"></i><h5>انباری تعریف نشده است</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>نام انبار</th>
+                            <th>آدرس</th>
+                            <th>تلفن</th>
+                            <th>اقلام موجود</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var w in Paged)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="stat-icon bg-soft-primary" style="width:38px;height:38px;font-size:1.05rem"><i class="bi bi-building"></i></span>
+                                        <span class="fw-500">@w.Name</span>
+                                    </div>
+                                </td>
+                                <td class="text-muted">@(w.Address ?? "—")</td>
+                                <td>@(w.Phone ?? "—")</td>
+                                <td><span class="badge badge-soft-primary num">@w.ItemCount.Num()</span></td>
+                                <td>
+                                    @if (w.IsActive)
+                                    {
+                                        <span class="badge badge-soft-success">فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-muted">غیرفعال</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(w)"><i class="bi bi-pencil text-primary"></i></button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(w)"><i class="bi bi-trash text-danger"></i></button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var w in Paged)
+                {
+                    <div class="m-card @(w.IsActive ? "st-ready" : "st-delivered")">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi bi-building"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-700 text-truncate">@w.Name</span>
+                                    @if (!w.IsActive)
+                                    {
+                                        <span class="badge badge-soft-muted fs-8">غیرفعال</span>
+                                    }
+                                </div>
+                                <div class="fs-8 text-muted text-truncate">@(w.Address ?? "بدون آدرس")@(string.IsNullOrWhiteSpace(w.Phone) ? "" : $" — {w.Phone}")</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">اقلام</div>
+                                <div class="num fw-800 text-primary">@w.ItemCount.Num()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-actions">
+                            <button class="btn btn-light text-primary" @onclick="() => OpenEdit(w)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            <button class="btn btn-light text-danger" @onclick="() => Delete(w)"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="ChangePage" />
+        }
+    </div>
+</div>
+
+<Modal Visible="showModal" Title="@(editing ? "ویرایش انبار" : "انبار جدید")" OnClose="CloseModal">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-12">
+            <label class="form-label">نام انبار <span class="text-danger">*</span></label>
+            <input class="form-control" @bind="form.Name" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">آدرس</label>
+            <input class="form-control" @bind="form.Address" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">تلفن</label>
+            <input class="form-control" @bind="form.Phone" data-digits="tel" dir="ltr" inputmode="tel" />
+        </div>
+        <div class="col-12">
+            <label class="form-label">یادداشت</label>
+            <textarea class="form-control" rows="2" @bind="form.Note"></textarea>
+        </div>
+        <div class="col-12">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="whActive" @bind="form.IsActive" />
+                <label class="form-check-label" for="whActive">انبار فعال باشد</label>
+            </div>
+        </div>
+    </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseModal">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<Warehouse> items = new();
+
+    // ---------- صفحه‌بندی ----------
+    private int page = 1;
+    private const int PageSize = 12;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+    private List<Warehouse> Paged => items;
+    private int total, loadVersion;
+    private async Task ChangePage(int value) { page = value; await Load(); }
+    private async Task SearchChanged() { page = 1; await Load(); }
+    private bool loading = true;
+    private Warehouse form = new();
+    private bool showModal, saving;
+    private bool editing => form.Id != 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("انبارها");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        var version = ++loadVersion;
+        loading = true;
+        try
+        {
+            var result = await WarehouseSvc.GetPagedAsync((page - 1) * PageSize, PageSize);
+            if (version != loadVersion) return;
+            items = result.Items;
+            total = result.TotalCount;
+            if (page > PageCount) { page = PageCount; await Load(); }
+        }
+        catch (Exception ex) { if (version == loadVersion) Toast.Error(ex.Message); }
+        finally { if (version == loadVersion) loading = false; }
+    }
+
+    private void OpenNew() { form = new Warehouse { IsActive = true }; showModal = true; }
+    private void OpenEdit(Warehouse w) { form = new Warehouse { Id = w.Id, Name = w.Name, Address = w.Address, Phone = w.Phone, Note = w.Note, IsActive = w.IsActive }; showModal = true; }
+    private void CloseModal() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name)) { Toast.Error("نام انبار را وارد کنید."); return; }
+        saving = true;
+        try
+        {
+            await WarehouseSvc.SaveAsync(form);
+            Toast.Success(editing ? "انبار ویرایش شد." : "انبار ثبت شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(Warehouse w)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف «{w.Name}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await WarehouseSvc.DeleteAsync(w.Id);
+            Toast.Success("انبار حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

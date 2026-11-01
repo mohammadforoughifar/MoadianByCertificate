@@ -1,0 +1,63 @@
+@inject IDocArchiveService Svc
+@implements IDisposable
+<div class="card my-3">
+    <div class="card-header">مقایسه محتوای فایل‌ها</div>
+    <div class="card-body">
+        <div class="row g-2">
+            <div class="col-md-5"><label class="form-label" for="compare-left">فایل نسخه قدیمی</label><select id="compare-left" class="form-select" @bind="leftId" @bind:after="Clear"><option value="0">انتخاب فایل</option>@foreach(var file in leftFiles){<option value="@file.Id">@file.Name</option>}</select></div>
+            <div class="col-md-5"><label class="form-label" for="compare-right">فایل نسخه جدید</label><select id="compare-right" class="form-select" @bind="rightId" @bind:after="Clear"><option value="0">انتخاب فایل</option>@foreach(var file in rightFiles){<option value="@file.Id">@file.Name</option>}</select></div>
+            <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100" disabled="@(busy || leftId==0 || rightId==0)" @onclick="Compare">مقایسه</button></div>
+        </div>
+        @if(error != null){<div class="alert alert-warning mt-3 mb-0">@error</div>}
+        @if(needsPassword){<div class="d-flex gap-2 mt-2"><input type="password" class="form-control" aria-label="تأیید رمز برای مقایسه" @bind="password" autocomplete="current-password" /><button class="btn btn-outline-primary" disabled="@busy" @onclick="Confirm">تأیید رمز</button></div>}
+        @if(busy){<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span></div>}
+        @if(result != null)
+        {
+            @if(result.Notice != null){<div class="small text-muted mt-3">@result.Notice</div>}
+            @if(result.Truncated){<div class="alert alert-warning mt-2">مقایسه کامل نیست؛ محدودیت حجم اعمال شده است.</div>}
+            <div class="d-flex flex-wrap gap-3 align-items-center my-3">
+                <label><input type="checkbox" @bind="onlyDifferences" @bind:after="ResetPage" /> فقط تفاوت‌ها</label>
+                <span>@result.Rows.Count(r=>r.Kind != "same").Num() تفاوت</span>
+            </div>
+            <div class="table-responsive" style="max-height:480px;overflow:auto">
+                <table class="table table-sm table-bordered"><thead><tr><th>خط / سلول</th><th>قدیمی — @result.LeftName</th><th>جدید — @result.RightName</th></tr></thead><tbody>
+                    @foreach(var row in VisibleRows.Skip((page-1)*100).Take(100))
+                    {
+                        <tr><td class="small">@row.Field</td><td class="@(row.Kind is "removed" or "changed" ? "table-danger" : "")" style="white-space:pre-wrap;min-width:180px;overflow-wrap:anywhere">@row.Left</td><td class="@(row.Kind is "added" or "changed" ? "table-success" : "")" style="white-space:pre-wrap;min-width:180px;overflow-wrap:anywhere">@row.Right</td></tr>
+                    }
+                </tbody></table>
+            </div>
+            @if(!VisibleRows.Any()){<div class="text-muted py-2">در بخش مقایسه‌شده تفاوتی یافت نشد.</div>}
+            @if(VisibleRows.Count()>100){<div class="d-flex gap-2 align-items-center"><button class="btn btn-sm btn-light" disabled="@(page<=1)" @onclick="()=>page--">قبلی</button><span>@(page.Num())</span><button class="btn btn-sm btn-light" disabled="@(page*100>=VisibleRows.Count())" @onclick="()=>page++">بعدی</button></div>}
+        }
+    </div>
+</div>
+@code{
+    [Parameter]public int DocumentId{get;set;}
+    [Parameter]public int FromVersionId{get;set;}
+    [Parameter]public int ToVersionId{get;set;}
+    private (int,int,int) loaded;
+    private int leftId,rightId,generation,page=1;
+    private bool busy,needsPassword,onlyDifferences=true;
+    private string? error;
+    private string password="";
+    private List<LookupItem> leftFiles=new(),rightFiles=new();
+    private DocContentCompareDto? result;
+    private IEnumerable<DocVersionDiffRow> VisibleRows => result?.Rows.Where(r=>!onlyDifferences || r.Kind!="same") ?? Enumerable.Empty<DocVersionDiffRow>();
+    protected override async Task OnParametersSetAsync(){
+        var key=(DocumentId,FromVersionId,ToVersionId);if(key==loaded)return;loaded=key;
+        Clear();leftId=rightId=0;leftFiles=new();rightFiles=new();var gen=generation;
+        if(FromVersionId==0 || ToVersionId==0 || FromVersionId==ToVersionId)return;
+        try{var left=await Svc.GetCompareFilesAsync(DocumentId,FromVersionId);var right=await Svc.GetCompareFilesAsync(DocumentId,ToVersionId);if(gen!=generation)return;
+            leftFiles=left;rightFiles=right;leftId=left.FirstOrDefault()?.Id??0;rightId=right.FirstOrDefault(r=>string.Equals(r.Name,left.FirstOrDefault()?.Name,StringComparison.OrdinalIgnoreCase))?.Id??right.FirstOrDefault()?.Id??0;
+        }catch(Exception ex){if(gen==generation)error=ex.Message;}
+    }
+    private void ResetPage()=>page=1;
+    private void Clear(){generation++;result=null;error=null;needsPassword=false;password="";busy=false;page=1;}
+    private async Task Compare(){var gen=++generation;var id=DocumentId;busy=true;error=null;result=null;
+        try{var data=await Svc.CompareContentAsync(id,new(){LeftAttachmentId=leftId,RightAttachmentId=rightId});if(gen==generation){result=data;needsPassword=false;page=1;}}
+        catch(Exception ex){if(gen==generation){error=ex.Message;needsPassword=ex.Message.Contains("تأیید رمز");}}
+        finally{if(gen==generation)busy=false;}}
+    private async Task Confirm(){var gen=generation;var id=DocumentId;busy=true;try{await Svc.ConfirmDownloadAsync(id,password);password="";if(gen==generation)await Compare();}catch(Exception ex){if(gen==generation)error=ex.Message;}finally{if(id==DocumentId)busy=false;password="";}}
+    public void Dispose(){generation++;password="";}
+}

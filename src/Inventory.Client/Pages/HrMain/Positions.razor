@@ -1,0 +1,292 @@
+@namespace Inventory.Client.Pages
+@page "/hr-main/positions"
+@inject IHrMainService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>پست‌های سازمانی</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1><i class="bi bi-person-badge-fill"></i> پست‌های سازمانی</h1>
+    </div>
+    @if (canCreate)
+    {
+        <div class="ms-auto d-flex gap-2">
+            <button class="btn btn-primary" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> پست جدید</button>
+        </div>
+    }
+</div>
+
+@if (!canRead)
+{
+    <div class="alert alert-warning">دسترسی به این بخش برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-6">
+                <label class="form-label small text-muted">گره سازمانی</label>
+                <select class="form-select" @bind="fNode" @bind:after="Reload">
+                    <option value="0">همه گره‌ها</option>
+                    @foreach (var n in nodes)
+                    {
+                        <option value="@n.Id">@(new string('—', n.Level)) @n.Name (@HrMainUi.OrgLevel(n.Level))</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small text-muted">جستجو (عنوان / کد / گرید)</label>
+                <input class="form-control" @bind="q" @bind:event="oninput" placeholder="تایپ کنید…" />
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-inbox"></i><h5>موردی یافت نشد</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr><th>عنوان پست</th><th>کد</th><th>گره سازمانی</th><th>گرید</th><th>تعداد مصوب</th><th>ظرفیت خالی</th><th>شرح وظایف</th><th>وضعیت</th><th style="width:140px"></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in Filtered)
+                        {
+                            <tr class="@(!p.IsActive ? "opacity-50" : "")">
+                                <td class="fw-bold">@p.Title</td>
+                                <td class="num">@(p.Code ?? "—")</td>
+                                <td>@(p.OrgNodeName ?? "—")</td>
+                                <td>@(p.Grade ?? "—")</td>
+                                <td class="num">@p.HeadCount.Num()</td>
+                                <td class="num">
+                                    @if (p.VacantCount > 0)
+                                    {
+                                        <span class="badge text-bg-warning" title="@p.AssignedCount.Num() نفر از @p.HeadCount.Num() نفر منصوب شده">@p.VacantCount.Num() نفر خالی</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-light border text-muted">تکمیل</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (string.IsNullOrWhiteSpace(p.JobDescription))
+                                    {
+                                        <span class="text-muted small">—</span>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-sm btn-link p-0" @onclick="() => OpenView(p)">مشاهده شرح وظایف</button>
+                                    }
+                                </td>
+                                <td>
+                                    @if (p.IsActive)
+                                    {
+                                        <span class="badge text-bg-success">فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-secondary">غیرفعال</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                        <button class="btn btn-sm btn-light" title="شرح وظایف" @onclick="() => OpenView(p)"><i class="bi bi-eye text-primary"></i></button>
+                                        @if (canUpdate)
+                                        {
+                                            <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(p)"><i class="bi bi-pencil text-primary"></i></button>
+                                        }
+                                        @if (canDelete)
+                                        {
+                                            <button class="btn btn-sm btn-light" title="حذف" @onclick="() => AskDelete(p)"><i class="bi bi-trash text-danger"></i></button>
+                                        }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showView" Title="@ViewTitle" Size="modal-lg" OnClose="() => showView = false">
+    <ChildContent>
+        @if (viewItem is not null)
+        {
+            <div class="mb-2">
+                <span class="badge rounded-pill text-bg-light border">@(viewItem.OrgNodeName ?? "بدون گره")</span>
+                @if (!string.IsNullOrWhiteSpace(viewItem.Grade))
+                {
+                    <span class="badge rounded-pill text-bg-light border">@viewItem.Grade</span>
+                }
+                <span class="badge rounded-pill text-bg-light border num">تعداد مصوب: @viewItem.HeadCount.Num()</span>
+            </div>
+            <h6 class="fw-bold mt-3">شرح وظایف</h6>
+            <p class="mb-0" style="white-space:pre-line">@(string.IsNullOrWhiteSpace(viewItem.JobDescription) ? "—" : viewItem.JobDescription)</p>
+            <h6 class="fw-bold mt-3">شرایط احراز</h6>
+            <p class="mb-0" style="white-space:pre-line">@(string.IsNullOrWhiteSpace(viewItem.Requirements) ? "—" : viewItem.Requirements)</p>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showView = false">بستن</button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showEdit" Title="@(editId == null ? "پست جدید" : "ویرایش پست")" Size="modal-xl" OnClose="() => showEdit = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-6"><label class="form-label">عنوان پست <span class="text-danger">*</span></label><input class="form-control" @bind="form.Title" /></div>
+            <div class="col-md-6">
+                <label class="form-label">گره سازمانی</label>
+                <select class="form-select" @bind="form.OrgNodeId">
+                    <option value="">—</option>
+                    @foreach (var n in nodes)
+                    {
+                        <option value="@n.Id">@(new string('—', n.Level)) @n.Name (@HrMainUi.OrgLevel(n.Level))</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4"><label class="form-label">کد پست</label><input class="form-control num" @bind="form.Code" /></div>
+            <div class="col-md-4"><label class="form-label">گرید / رتبه شغلی</label><input class="form-control" @bind="form.Grade" placeholder="مثلاً کارشناس ارشد" /></div>
+            <div class="col-md-2"><label class="form-label">تعداد مصوب</label><input class="form-control num" type="number" min="1" @bind="form.HeadCount" /></div>
+            <div class="col-md-2 d-flex align-items-end">
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="pact" @bind="form.IsActive" /><label class="form-check-label" for="pact">فعال</label></div>
+            </div>
+            <div class="col-12"><label class="form-label">شرح وظایف (Job Description)</label><textarea class="form-control" rows="4" @bind="form.JobDescription" placeholder="وظایف و مسئولیت‌های این پست را بنویسید…"></textarea></div>
+            <div class="col-12"><label class="form-label">شرایط احراز (تحصیلات، سابقه، مهارت‌ها)</label><textarea class="form-control" rows="3" @bind="form.Requirements"></textarea></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@saving" @onclick="Save">
+            @if (saving)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showDelete" Title="حذف پست سازمانی" OnClose="() => showDelete = false">
+    <ChildContent>
+        <p>پست «<b>@delItem?.Title</b>» حذف شود؟</p>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="() => showDelete = false">انصراف</button>
+        <button class="btn btn-danger" disabled="@deleting" @onclick="DoDelete">
+            @if (deleting)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            حذف
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private bool canRead => Auth.Has("HrMain.Read") || Auth.Has("HrMain.Positions") || Auth.IsAdmin;
+    private bool canCreate => Auth.Has("HrMain.Create") || Auth.Has("HrMain.Positions") || Auth.IsAdmin;
+    private bool canUpdate => Auth.Has("HrMain.Update") || Auth.Has("HrMain.Positions") || Auth.IsAdmin;
+    private bool canDelete => Auth.Has("HrMain.Delete") || Auth.Has("HrMain.Positions") || Auth.IsAdmin;
+
+    private bool loading = true, saving, deleting;
+    private List<HrMainPositionDto> items = new();
+    private List<HrMainOrgNodeDto> nodes = new();
+    private int fNode;
+    private string? q;
+
+    private List<HrMainPositionDto> Filtered => string.IsNullOrWhiteSpace(q)
+        ? items
+        : items.Where(p => p.Title.Contains(q.Trim()) || (p.Code ?? "").Contains(q.Trim()) || (p.Grade ?? "").Contains(q.Trim())).ToList();
+
+    private bool showEdit, showDelete, showView;
+    private int? editId;
+    private HrMainPositionSaveDto form = new();
+    private HrMainPositionDto? delItem;
+    private HrMainPositionDto? viewItem;
+
+    private string ViewTitle => $"شرح وظایف: {viewItem?.Title}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canRead) { loading = false; return; }
+        try { nodes = await Svc.ListOrgNodesAsync(); } catch { }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { items = await Svc.ListPositionsAsync(fNode == 0 ? null : fNode); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenView(HrMainPositionDto p)
+    {
+        viewItem = p;
+        showView = true;
+    }
+
+    private void OpenEdit(HrMainPositionDto? p)
+    {
+        editId = p?.Id;
+        form = p is null
+            ? new HrMainPositionSaveDto { OrgNodeId = fNode == 0 ? null : fNode }
+            : new HrMainPositionSaveDto
+            {
+                Code = p.Code, Title = p.Title, OrgNodeId = p.OrgNodeId, Grade = p.Grade,
+                JobDescription = p.JobDescription, Requirements = p.Requirements,
+                HeadCount = p.HeadCount, IsActive = p.IsActive
+            };
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            await Svc.SavePositionAsync(editId, form);
+            showEdit = false;
+            Toast.Success("ذخیره شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private void AskDelete(HrMainPositionDto p)
+    {
+        delItem = p;
+        showDelete = true;
+    }
+
+    private async Task DoDelete()
+    {
+        if (delItem is null) return;
+        deleting = true;
+        try
+        {
+            await Svc.DeletePositionAsync(delItem.Id);
+            showDelete = false;
+            Toast.Success("حذف شد.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { deleting = false; }
+    }
+}

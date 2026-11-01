@@ -1,0 +1,729 @@
+@page "/inv/docs/new"
+@page "/inv/docs/edit/{Id:int}"
+@inject IInvDocService DocSvc
+@inject IInvDocTypeService DocTypeSvc
+@inject IInvWarehouseService WarehouseSvc
+@inject IInvProductService ProductSvc
+@inject IPartyService PartySvc
+@inject NavigationManager Nav
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>@(Id is null ? "سند جدید انبار" : "ویرایش سند انبار")</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>
+            @(Id is null ? "ثبت سند انبار" : $"سند {doc.Number}")
+            @if (Id is not null)
+            {
+                <span class="badge @StatusBadge(doc.Status)">@doc.StatusTitle</span>
+            }
+        </h1>
+        <p class="lead">
+            @if (SelectedType is not null)
+            {
+                <span class="badge @NatureBadge(SelectedType.Nature)">@SelectedType.NatureTitle</span>
+                <span class="ms-1">@SelectedType.Name</span>
+            }
+            else
+            {
+                <span>نوع سند را انتخاب کنید تا ماهیت اثر آن بر موجودی مشخص شود</span>
+            }
+        </p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-light" href="/inv/docs"><i class="bi bi-arrow-right"></i> بازگشت</a>
+        @if (ReadOnly)
+        {
+            @if (doc.Status == InvDocStatus.Confirmed)
+            {
+                <button class="btn btn-outline-warning" @onclick="Unconfirm"><i class="bi bi-arrow-counterclockwise"></i> برگشت از قطعی</button>
+            }
+        }
+        else
+        {
+            <button class="btn btn-outline-primary" disabled="@saving" @onclick="() => Save(false)">
+                <i class="bi bi-save"></i> ذخیره پیش‌نویس
+            </button>
+            <button class="btn btn-primary" data-hotkey="f2" title="کلید میانبر: F2" disabled="@saving" @onclick="() => Save(true)">
+                @if (saving)
+                {
+                    <span class="spinner-border spinner-border-sm ms-1"></span>
+                }
+                <i class="bi bi-check2-circle"></i> ذخیره و قطعی کردن (F2)
+            </button>
+        }
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else
+{
+    @* ================= سربرگ سند ================= *@
+    <div class="card mb-3">
+        <div class="card-header"><span><i class="bi bi-card-heading text-primary"></i> مشخصات سند</span></div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-12 col-md-4">
+                    <label class="form-label">نوع سند <span class="text-danger">*</span></label>
+                    <select class="form-select" value="@doc.DocTypeId" disabled="@(ReadOnly || doc.Lines.Any(l => l.ProductId > 0) && Id is not null)"
+                            @onchange="OnDocTypeChanged">
+                        <option value="0">— انتخاب کنید —</option>
+                        @foreach (var g in docTypes.GroupBy(t => t.Nature).OrderBy(g => g.Key))
+                        {
+                            <optgroup label="@NatureGroup(g.Key)">
+                                @foreach (var t in g.OrderBy(t => t.SortOrder))
+                                {
+                                    <option value="@t.Id">@t.Name</option>
+                                }
+                            </optgroup>
+                        }
+                    </select>
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label">شماره سند</label>
+                    <input class="form-control num" dir="ltr" @bind="doc.Number" disabled="@ReadOnly"
+                           placeholder="خودکار" />
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="form-label">تاریخ سند <span class="text-danger">*</span></label>
+                    <DatePicker Value="doc.Date" ValueChanged="d => doc.Date = d ?? DateTime.Now" />
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label">شماره عطف / مرجع</label>
+                    <input class="form-control num" dir="ltr" @bind="doc.RefNumber" disabled="@ReadOnly"
+                           placeholder="شماره فاکتور، بارنامه…" />
+                </div>
+
+                <div class="col-12 col-md-4">
+                    <label class="form-label">@(IsTransfer ? "انبار مبدأ" : "انبار") <span class="text-danger">*</span></label>
+                    <select class="form-select" value="@doc.WarehouseId" disabled="@ReadOnly" @onchange="OnWarehouseChanged">
+                        <option value="0">— انتخاب کنید —</option>
+                        @foreach (var w in warehouses)
+                        {
+                            <option value="@w.Id">@w.Name</option>
+                        }
+                    </select>
+                </div>
+
+                @if (IsTransfer)
+                {
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">انبار مقصد <span class="text-danger">*</span></label>
+                        <select class="form-select" value="@(doc.CounterWarehouseId ?? 0)" disabled="@ReadOnly" @onchange="OnCounterWarehouseChanged">
+                            <option value="0">— انتخاب کنید —</option>
+                            @foreach (var w in warehouses.Where(w => w.Id != doc.WarehouseId))
+                            {
+                                <option value="@w.Id">@w.Name</option>
+                            }
+                        </select>
+                    </div>
+                }
+                else
+                {
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">
+                            طرف حساب
+                            @if (SelectedType?.RequiresParty == true)
+                            {
+                                <span class="text-danger">*</span>
+                            }
+                        </label>
+                        <SearchSelect Items="parties" Value="doc.PartyId ?? 0" ValueChanged="OnPartyChanged"
+                                      Placeholder="@(PartyKind == PartyType.Supplier ? "انتخاب تأمین‌کننده…" : "انتخاب مشتری…")" />
+                    </div>
+                }
+
+                <div class="col-12 col-md-4">
+                    <label class="form-label">شرح سند</label>
+                    <input class="form-control" @bind="doc.Description" disabled="@ReadOnly" />
+                </div>
+            </div>
+
+            @if (SelectedType is not null)
+            {
+                <div class="alert @NatureAlert(SelectedType.Nature) py-2 mt-3 mb-0" style="font-size:.82rem">
+                    <i class="bi @NatureIcon(SelectedType.Nature)"></i>
+                    @NatureEffect(SelectedType)
+                </div>
+            }
+        </div>
+    </div>
+
+    @* ================= اقلام سند ================= *@
+    <div class="card mb-3">
+        <div class="card-header">
+            <span><i class="bi bi-list-ol text-primary"></i> اقلام سند</span>
+            @if (!ReadOnly)
+            {
+                <button id="btn-add-line" class="btn btn-sm btn-outline-primary ms-auto" data-hotkey="f1" title="افزودن ردیف جدید (F1)" @onclick="AddLine">
+                    <i class="bi bi-plus-lg"></i> افزودن ردیف (F1)
+                </button>
+            }
+        </div>
+        <div class="card-body">
+            @if (doc.Lines.Count == 0)
+            {
+                <div class="empty-state py-4">
+                    <i class="bi bi-box-seam"></i>
+                    <h5>هنوز کالایی به سند اضافه نشده است</h5>
+                    @if (!ReadOnly)
+                    {
+                        <button id="btn-add-line-empty" class="btn btn-primary btn-sm mt-2" data-hotkey="f1" title="افزودن اولین ردیف (F1)" @onclick="AddLine"><i class="bi bi-plus-lg"></i> افزودن اولین ردیف (F1)</button>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="doc-grid table-responsive">
+                    <table class="table align-middle">
+                        <thead>
+                            <tr>
+                                <th style="width:44px">ردیف</th>
+                                <th style="min-width:220px">کالا</th>
+                                <th style="width:80px">واحد</th>
+                                <th style="width:110px">موجودی فعلی</th>
+                                <th style="width:110px">مقدار</th>
+                                <th style="width:130px">مبلغ واحد (فی)</th>
+                                <th style="width:150px">تخفیف (درصد یا ریال)</th>
+                                <th style="width:150px">مبلغ کل</th>
+                                @if (NeedsBatch)
+                                {
+                                    <th style="width:120px">سری ساخت</th>
+                                }
+                                @if (NeedsExpiry)
+                                {
+                                    <th style="width:150px">تاریخ انقضا</th>
+                                }
+                                <th style="min-width:150px">شرح</th>
+                                @if (!ReadOnly)
+                                {
+                                    <th style="width:44px"></th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (var i = 0; i < doc.Lines.Count; i++)
+                            {
+                                var idx = i;
+                                var l = doc.Lines[idx];
+                                <tr>
+                                    <td><span class="row-no num">@((idx + 1).Num())</span></td>
+                                    <td>
+                                        @if (ReadOnly)
+                                        {
+                                            <div class="fw-500">@l.ProductName</div>
+                                            <div class="text-muted num" style="font-size:.72rem">@l.ProductCode</div>
+                                        }
+                                        else
+                                        {
+                                            <SearchSelect Items="products" Value="l.ProductId"
+                                                          ValueChanged="pid => OnProductChanged(l, pid)"
+                                                          Placeholder="جستجوی کالا…" />
+                                        }
+                                    </td>
+                                    <td class="text-muted">@(string.IsNullOrWhiteSpace(l.Unit) ? "—" : l.Unit)</td>
+                                    <td>
+                                        @if (l.ProductId > 0)
+                                        {
+                                            <span class="badge @(l.CurrentStock <= 0 ? "badge-soft-danger" : "badge-soft-muted") num">@l.CurrentStock.Num()</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        <input class="form-control text-start num" dir="ltr" inputmode="decimal" disabled="@ReadOnly"
+                                               value="@(l.Quantity == 0 ? "" : Fa.Money(l.Quantity))"
+                                               @onchange="e => SetQty(l, e)" />
+                                    </td>
+                                    <td>
+                                        <input class="form-control text-start num" dir="ltr" inputmode="numeric" disabled="@ReadOnly"
+                                               value="@GetPriceText(l)"
+                                               @oninput="e => SetPriceInput(l, e)"
+                                               @onchange="e => SetPrice(l, e)" />
+                                    </td>
+                                    <td>
+                                        <input class="form-control text-start num" dir="ltr" inputmode="decimal" disabled="@ReadOnly"
+                                               value="@(l.DiscountInput > 0 ? Fa.Money(l.DiscountInput) : (l.Discount > 0 ? Fa.Money(l.Discount) : ""))"
+                                               placeholder="تا ۱۰۰=٪ ، بیشتر=ریال"
+                                               @onchange="e => SetDiscount(l, e)" />
+                                        @if (l.DiscountInput > 0 && l.DiscountInput <= 100)
+                                        {
+                                            <div class="fs-8 text-success num mt-1 fw-500">
+                                                @l.Discount.Money() ریال (@l.DiscountInput.Num()٪)
+                                            </div>
+                                        }
+                                        else if (l.Discount > 0)
+                                        {
+                                            <div class="fs-8 text-muted num mt-1">
+                                                مبلغ ریالی: @l.Discount.Money()
+                                            </div>
+                                        }
+                                    </td>
+                                    <td class="num fw-600">
+                                        <div>@l.Amount.Money()</div>
+                                        @if (l.IsVatIncluded && l.VatRate > 0)
+                                        {
+                                            <div class="fs-8 text-muted fw-normal">
+                                                +@l.VatAmount.Money() <span class="badge badge-soft-info fs-9">ارزش افزوده @l.VatRate.Num()٪</span>
+                                            </div>
+                                        }
+                                    </td>
+                                    @if (NeedsBatch)
+                                    {
+                                        <td><input class="form-control num" dir="ltr" disabled="@ReadOnly" @bind="l.BatchNo" /></td>
+                                    }
+                                    @if (NeedsExpiry)
+                                    {
+                                        <td><DatePicker Value="l.ExpiryDate" ValueChanged="d => l.ExpiryDate = d" AllowClear="true" /></td>
+                                    }
+                                    <td><input class="form-control" disabled="@ReadOnly" @bind="l.Description" /></td>
+                                    @if (!ReadOnly)
+                                    {
+                                        <td class="text-center">
+                                            <button class="btn btn-sm btn-light" title="حذف ردیف" @onclick="() => RemoveLine(idx)">
+                                                <i class="bi bi-x-lg text-danger"></i>
+                                            </button>
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot>
+                            <tr class="table-light border-top border-2">
+                                <td colspan="4" class="fw-700 text-end">ته‌جمع:</td>
+                                <td class="fw-700 num text-start">@doc.Lines.Sum(l => l.Quantity).Num()</td>
+                                <td class="fw-700 text-muted fs-8">جمع کالا</td>
+                                <td class="fw-700 num text-start text-success">
+                                    <div>@doc.Lines.Sum(l => l.Discount).Money()</div>
+                                    <div class="fs-8 text-muted fw-normal">جمع تخفیف</div>
+                                </td>
+                                <td class="fw-700 num text-start text-primary fs-6">
+                                    <div>@doc.Lines.Sum(l => l.Amount).Money()</div>
+                                    <div class="fs-8 text-muted fw-normal">مبلغ کل (ریال)</div>
+                                </td>
+                                <td colspan="@(1 + (NeedsBatch ? 1 : 0) + (NeedsExpiry ? 1 : 0) + (!ReadOnly ? 1 : 0))"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                @* ---------- جمع سند ---------- *@
+                <div class="doc-total-bar mt-3">
+                    <div>
+                        <div class="lbl">تعداد اقلام</div>
+                        <div class="val num">@doc.Lines.Count.Num()</div>
+                    </div>
+                    <div>
+                        <div class="lbl">جمع کالا (تعداد)</div>
+                        <div class="val num">@doc.Lines.Sum(l => l.Quantity).Num()</div>
+                    </div>
+                    <div>
+                        <div class="lbl">جمع تخفیف</div>
+                        <div class="val num text-success">@doc.Lines.Sum(l => l.Discount).Money() <small class="fs-8 text-muted">ریال</small></div>
+                    </div>
+                    @if (doc.Lines.Any(l => l.VatAmount > 0))
+                    {
+                        <div>
+                            <div class="lbl">جمع ارزش افزوده</div>
+                            <div class="val num text-info">@doc.Lines.Sum(l => l.VatAmount).Money() <small class="fs-8 text-muted">ریال</small></div>
+                        </div>
+                    }
+                    <div class="ms-auto text-start">
+                        <div class="lbl">مبلغ کل سند (ریال)</div>
+                        <div class="val num text-primary fs-5">@doc.Lines.Sum(l => l.Amount).Money()</div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (doc.Id > 0)
+    {
+        <div class="card">
+            <div class="card-body py-2 d-flex flex-wrap gap-4 text-muted" style="font-size:.8rem">
+                <span><i class="bi bi-person"></i> ثبت‌کننده: @(doc.CreatedBy ?? "—")</span>
+                <span><i class="bi bi-clock"></i> تاریخ ثبت: @doc.CreatedAt.ToFaDateTime()</span>
+                @if (doc.ConfirmedAt is not null)
+                {
+                    <span><i class="bi bi-check2-circle text-success"></i> قطعی توسط: @(doc.ConfirmedBy ?? "—") — @doc.ConfirmedAt.Value.ToFaDateTime()</span>
+                }
+            </div>
+        </div>
+    }
+
+}
+
+@code {
+    [Parameter] public int? Id { get; set; }
+    [SupplyParameterFromQuery(Name = "docTypeId")] public int? QueryDocTypeId { get; set; }
+
+    private InvDoc doc = new();
+    private List<InvDocType> docTypes = new();
+    private List<LookupItem> warehouses = new();
+    private List<LookupItem> products = new();
+    private List<LookupItem> parties = new();
+
+    private bool loading = true, saving;
+
+    private InvDocType? SelectedType => docTypes.FirstOrDefault(t => t.Id == doc.DocTypeId);
+    private bool IsTransfer => SelectedType?.IsTransfer == true;
+    private bool ReadOnly => doc.Status != InvDocStatus.Draft && doc.Id > 0;
+    private bool NeedsBatch => doc.Lines.Any(l => !string.IsNullOrWhiteSpace(l.BatchNo)) || batchProducts;
+    private bool NeedsExpiry => doc.Lines.Any(l => l.ExpiryDate is not null) || expiryProducts;
+    private bool batchProducts, expiryProducts;
+
+    private PartyType PartyKind => SelectedType?.Nature == StockNature.Decrease ? PartyType.Customer : PartyType.Supplier;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle(Id is null ? "سند جدید انبار" : "ویرایش سند انبار");
+        try
+        {
+            docTypes = await DocTypeSvc.GetAllAsync(true);
+            warehouses = await WarehouseSvc.GetLookupsAsync();
+            products = await ProductSvc.GetLookupsAsync();
+
+            if (Id is not null)
+            {
+                doc = await DocSvc.GetAsync(Id.Value);
+                foreach (var line in doc.Lines)
+                {
+                    if (line.UnitPrice > 0)
+                        line.UnitPriceText = Fa.FormatTyping(line.UnitPrice.ToString("0"));
+                }
+            }
+            else
+            {
+                doc = new InvDoc
+                {
+                    Date = DateTime.Now,
+                    Status = InvDocStatus.Draft,
+                    DocTypeId = QueryDocTypeId ?? docTypes.FirstOrDefault()?.Id ?? 0,
+                    WarehouseId = warehouses.FirstOrDefault()?.Id ?? 0
+                };
+                await AddLine();
+            }
+
+            await LoadParties();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task LoadParties()
+    {
+        try
+        {
+            parties = await PartySvc.GetLookupsAsync(PartyKind, true);
+        }
+        catch
+        {
+            parties = new();
+        }
+    }
+
+    // ---------- سربرگ ----------
+    private async Task OnDocTypeChanged(ChangeEventArgs e)
+    {
+        doc.DocTypeId = int.Parse(e.Value?.ToString() ?? "0");
+        var t = SelectedType;
+        if (t is not null)
+        {
+            doc.Nature = t.Nature;
+            doc.IsTransfer = t.IsTransfer;
+            if (!t.IsTransfer) doc.CounterWarehouseId = null;
+        }
+        await LoadParties();
+        await RefreshStocks();
+    }
+
+    private async Task OnWarehouseChanged(ChangeEventArgs e)
+    {
+        doc.WarehouseId = int.Parse(e.Value?.ToString() ?? "0");
+        await RefreshStocks();
+    }
+
+    private void OnCounterWarehouseChanged(ChangeEventArgs e)
+    {
+        var v = int.Parse(e.Value?.ToString() ?? "0");
+        doc.CounterWarehouseId = v == 0 ? null : v;
+    }
+
+    private void OnPartyChanged(int id)
+    {
+        doc.PartyId = id == 0 ? null : id;
+        doc.PartyName = parties.FirstOrDefault(p => p.Id == id)?.Name;
+    }
+
+    // ---------- ردیف‌ها ----------
+    private string GetPriceText(InvDocLine l)
+    {
+        if (l.UnitPriceText is not null)
+            return l.UnitPriceText;
+        return l.UnitPrice > 0 ? Fa.FormatTyping(l.UnitPrice.ToString("0")) : "";
+    }
+
+    private async Task AddLine()
+    {
+        doc.Lines.Add(new InvDocLine { RowNo = doc.Lines.Count + 1 });
+        StateHasChanged();
+        try
+        {
+            await JS.InvokeVoidAsync("focusLastProductInput");
+        }
+        catch { }
+    }
+
+    private void RemoveLine(int idx)
+    {
+        if (idx >= 0 && idx < doc.Lines.Count)
+        {
+            doc.Lines.RemoveAt(idx);
+            for (var i = 0; i < doc.Lines.Count; i++)
+                doc.Lines[i].RowNo = i + 1;
+        }
+    }
+
+    private async Task OnProductChanged(InvDocLine line, int productId)
+    {
+        line.ProductId = productId;
+        if (productId <= 0)
+        {
+            line.ProductName = "";
+            line.ProductCode = "";
+            line.Unit = "";
+            line.CurrentStock = 0;
+            line.UnitPrice = 0;
+            line.UnitPriceText = "";
+            RecalculateLineDiscount(line);
+            return;
+        }
+        try
+        {
+            var p = await ProductSvc.GetAsync(productId);
+            line.ProductName = p.Name;
+            line.ProductCode = p.Code;
+            line.Unit = p.Unit;
+            line.CurrentStock = p.TotalStock;
+            line.IsVatIncluded = p.IsVatIncluded;
+            line.VatRate = p.VatRate;
+            if (line.UnitPrice == 0)
+            {
+                line.UnitPrice = SelectedType?.Nature == StockNature.Decrease ? p.SalePrice : p.PurchasePrice;
+                line.UnitPriceText = line.UnitPrice > 0 ? Fa.FormatTyping(line.UnitPrice.ToString("0")) : "";
+            }
+            RecalculateLineDiscount(line);
+            if (p.TrackBatch || p.TrackSerial) batchProducts = true;
+            if (p.TrackExpiry) expiryProducts = true;
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+    }
+
+    private async Task RefreshStocks()
+    {
+        foreach (var l in doc.Lines.Where(l => l.ProductId > 0).ToList())
+        {
+            try
+            {
+                var p = await ProductSvc.GetAsync(l.ProductId);
+                l.CurrentStock = p.TotalStock;
+            }
+            catch { }
+        }
+    }
+
+    private static void SetQty(InvDocLine l, ChangeEventArgs e)
+    {
+        l.Quantity = Fa.ParseDecimal(e.Value?.ToString());
+        RecalculateLineDiscount(l);
+    }
+
+    private void SetPriceInput(InvDocLine l, ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString() ?? "";
+        l.UnitPriceText = Fa.FormatTyping(raw);
+        l.UnitPrice = Fa.ParseDecimal(l.UnitPriceText);
+        RecalculateLineDiscount(l);
+    }
+
+    private void SetPrice(InvDocLine l, ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString() ?? "";
+        l.UnitPrice = Fa.ParseDecimal(raw);
+        l.UnitPriceText = l.UnitPrice > 0 ? Fa.FormatTyping(l.UnitPrice.ToString("0")) : "";
+        RecalculateLineDiscount(l);
+    }
+
+    private static void SetDiscount(InvDocLine l, ChangeEventArgs e)
+    {
+        l.DiscountInput = Fa.ParseDecimal(e.Value?.ToString());
+        RecalculateLineDiscount(l);
+    }
+
+    private static void RecalculateLineDiscount(InvDocLine l)
+    {
+        var gross = l.Quantity * l.UnitPrice;
+        if (l.DiscountInput <= 0)
+        {
+            l.Discount = 0;
+        }
+        else if (l.DiscountInput <= 100)
+        {
+            // درصد تخفیف: اگر عدد تا ۱۰۰ باشد یعنی باید به صورت درصد محاسبه بشه
+            l.Discount = Math.Round(gross * (l.DiscountInput / 100m), 0);
+        }
+        else
+        {
+            // تخفیف ریالی: اگر بیشتر از ۱۰۰ شد باید به ریال تخفیف محاسبه بشه
+            l.Discount = l.DiscountInput;
+        }
+    }
+
+    // ---------- ذخیره ----------
+    private async Task Save(bool confirm)
+    {
+        var t = SelectedType;
+        if (t is null)
+        {
+            Toast.Error("نوع سند را انتخاب کنید.");
+            return;
+        }
+        if (doc.WarehouseId <= 0)
+        {
+            Toast.Error("انتخاب انبار الزامی است.");
+            return;
+        }
+        if (t.IsTransfer && (doc.CounterWarehouseId is null or 0))
+        {
+            Toast.Error("برای سند انتقال، انبار مقصد را انتخاب کنید.");
+            return;
+        }
+        if (t.RequiresParty && (doc.PartyId is null or 0))
+        {
+            Toast.Error("ثبت طرف حساب برای این نوع سند اجباری است.");
+            return;
+        }
+
+        doc.Lines = doc.Lines.Where(l => l.ProductId > 0).ToList();
+        if (doc.Lines.Count == 0)
+        {
+            Toast.Error("حداقل یک قلم کالا به سند اضافه کنید.");
+            return;
+        }
+        if (doc.Lines.Any(l => l.Quantity <= 0))
+        {
+            Toast.Error("مقدار همه ردیف‌ها باید بزرگ‌تر از صفر باشد.");
+            return;
+        }
+        if (t.RequiresPrice && doc.Lines.Any(l => l.UnitPrice <= 0))
+        {
+            Toast.Error("ثبت مبلغ واحد برای این نوع سند اجباری است.");
+            return;
+        }
+        for (var i = 0; i < doc.Lines.Count; i++)
+            doc.Lines[i].RowNo = i + 1;
+
+        doc.Nature = t.Nature;
+        doc.IsTransfer = t.IsTransfer;
+
+        saving = true;
+        try
+        {
+            var saved = await DocSvc.SaveAsync(doc);
+            if (confirm)
+            {
+                saved = await DocSvc.ConfirmAsync(saved.Id);
+                Toast.Success($"سند {saved.Number} قطعی شد.");
+            }
+            else
+            {
+                Toast.Success($"سند {saved.Number} ذخیره شد.");
+            }
+            doc = saved;
+            Nav.NavigateTo($"/inv/docs/edit/{saved.Id}");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            saving = false;
+            if (doc.Lines.Count == 0) await AddLine();
+        }
+    }
+
+    private async Task Unconfirm()
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "سند به حالت پیش‌نویس برگردد؟ اثر آن بر موجودی حذف می‌شود."))
+            return;
+        try
+        {
+            doc = await DocSvc.UnconfirmAsync(doc.Id);
+            Toast.Success("سند به پیش‌نویس برگشت.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+    }
+
+    // ---------- کمکی‌های نمایش ----------
+    private static string NatureGroup(StockNature n) => n switch
+    {
+        StockNature.Increase => "رسیدها — افزایشی",
+        StockNature.Decrease => "حواله‌ها — کاهشی",
+        _ => "انتقال و اسناد خنثی"
+    };
+
+    private static string NatureIcon(StockNature n) => n switch
+    {
+        StockNature.Increase => "bi-box-arrow-in-down",
+        StockNature.Decrease => "bi-box-arrow-up",
+        _ => "bi-arrow-left-right"
+    };
+
+    private static string NatureBadge(StockNature n) => n switch
+    {
+        StockNature.Increase => "badge-nature-inc",
+        StockNature.Decrease => "badge-nature-dec",
+        _ => "badge-nature-neu"
+    };
+
+    private static string NatureAlert(StockNature n) => n switch
+    {
+        StockNature.Increase => "alert-success",
+        StockNature.Decrease => "alert-danger",
+        _ => "alert-info"
+    };
+
+    private static string NatureEffect(InvDocType t) => t.Nature switch
+    {
+        StockNature.Increase => "ماهیت این سند افزایشی است: با قطعی شدن، مقدار اقلام به موجودی انبار اضافه می‌شود.",
+        StockNature.Decrease => "ماهیت این سند کاهشی است: با قطعی شدن، مقدار اقلام از موجودی انبار کسر و بهای تمام‌شده خروج بر اساس روش قیمت‌گذاری کالا محاسبه می‌شود.",
+        _ => t.IsTransfer
+            ? "سند انتقال: مقدار اقلام از انبار مبدأ کسر و به انبار مقصد اضافه می‌شود؛ مانده کل تغییر نمی‌کند."
+            : "ماهیت این سند خنثی است: هیچ اثری بر مانده موجودی ندارد و صرفاً جنبه یادداشتی دارد."
+    };
+
+    private static string StatusBadge(InvDocStatus s) => s switch
+    {
+        InvDocStatus.Draft => "badge-soft-warning",
+        InvDocStatus.Confirmed => "badge-soft-success",
+        _ => "badge-soft-muted"
+    };
+}

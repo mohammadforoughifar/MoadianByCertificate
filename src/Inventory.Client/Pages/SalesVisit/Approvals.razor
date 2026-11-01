@@ -1,0 +1,364 @@
+@namespace Inventory.Client.Pages
+@page "/sales/approvals"
+@inject ISalesVisitApi Api
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+
+<PageTitle>تأیید سفارش‌های ویزیتور</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>تأیید سفارش‌های ویزیتور</h1>
+        <p class="lead">سفارش‌های ارسال‌شده را با هشدار کسری موجودی، سقف تخفیف و اعتبار مشتری بررسی کنید</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-outline-primary" data-all-requests-link @onclick="@(() => Nav.NavigateTo("/sales/requests"))">
+            <i class="bi bi-collection"></i> همهٔ درخواست‌ها (با رد‌شده‌ها)
+        </button>
+        <button class="btn btn-light" @onclick="LoadAsync"><i class="bi bi-arrow-clockwise"></i> بازخوانی</button>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else if (items.Count == 0)
+{
+    <div class="empty-state">
+        <i class="bi bi-check2-circle"></i>
+        <h5>صف تأیید خالی است</h5>
+        <div class="text-muted fs-8">سفارش ارسال‌شدهٔ جدیدی وجود ندارد.</div>
+    </div>
+}
+else
+{
+    <div class="row g-3">
+        @foreach (var item in items)
+        {
+            var o = item.Order;
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="bi bi-receipt"></i>
+                        <span class="card-title">@o.Number — @o.PartyName</span>
+                        <span class="ms-2 fs-8 text-muted">ویزیتور: @o.ReferrerName — @o.Date.ToFa()</span>
+                        <div class="ms-auto d-flex gap-1">
+                            @if (o.DiscountOverLimit)
+                            {
+                                <span class="vis-badge vis-danger">تخفیف بالای سقف</span>
+                            }
+                            @if (item.StockWarnings.Count > 0)
+                            {
+                                <span class="vis-badge vis-warning">کسری موجودی</span>
+                            }
+                            @if (o.ReturnCount > 0)
+                            {
+                                <span class="vis-badge vis-orange">@Fa.Digits(o.ReturnCount) بار برگشتی</span>
+                            }
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-12 col-lg-7">
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>کالا</th>
+                                                <th class="text-start">مقدار</th>
+                                                <th class="text-start">قیمت</th>
+                                                <th class="text-start">تخفیف</th>
+                                                <th class="text-start">جمع</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var l in o.Lines)
+                                            {
+                                                var warn = item.StockWarnings.FirstOrDefault(w => w.ProductId == l.ProductId);
+                                                <tr class="@(warn is null ? "" : "table-warning")">
+                                                    <td class="fs-8">
+                                                        @l.ProductName
+                                                        @if (warn is not null)
+                                                        {
+                                                            <div class="fs-9 text-danger">
+                                                                موجودی @Fa.Number(warn.Available) — نیاز @Fa.Number(warn.Required)
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td class="text-start fs-8">@Fa.Number(l.Quantity)</td>
+                                                    <td class="text-start fs-8">@Fa.Money(l.UnitPrice)</td>
+                                                    <td class="text-start fs-8">@l.DiscountText</td>
+                                                    <td class="text-start fs-8">@Fa.Money(l.LineTotal)</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="col-12 col-lg-5">
+                                <div class="vis-sum">
+                                    <div class="d-flex justify-content-between fs-8"><span>جمع کل</span><span>@Fa.Money(o.TotalGross)</span></div>
+                                    <div class="d-flex justify-content-between fs-8"><span>تخفیف</span><span class="text-danger">@Fa.Money(o.TotalDiscount)</span></div>
+                                    <div class="d-flex justify-content-between fw-700 mt-1"><span>قابل پرداخت</span><span>@Fa.Money(o.TotalNet)</span></div>
+                                    <div class="fs-9 text-muted mt-1">پرداخت: @VisUi.PaymentText(o.PaymentMethod) — انبار: @o.WarehouseName</div>
+                                    @if (!string.IsNullOrWhiteSpace(o.Note))
+                                    {
+                                        <div class="fs-9 text-muted mt-1">یادداشت ویزیتور: @o.Note</div>
+                                    }
+                                </div>
+
+                                @* ---------- تاریخ تحویل: درخواست ویزیتور + تصمیم مدیر ---------- *@
+                                <div class="vis-date-box mt-2">
+                                    <div class="d-flex justify-content-between align-items-center fs-8">
+                                        <span class="text-muted"><i class="bi bi-truck"></i> تاریخ درخواستی ویزیتور</span>
+                                        <b>@(o.DeliveryDate?.ToFa() ?? "—")</b>
+                                    </div>
+                                    <label class="form-label fs-8 mt-2 mb-1">تاریخ نهایی تحویل (قابل تغییر)</label>
+                                    <DatePicker Value="FinalDateOf(o.Id)"
+                                                ValueChanged="d => SetFinalDate(o.Id, d)"
+                                                AllowClear="false" />
+                                    @if (IsFinalDateChanged(o))
+                                    {
+                                        <div class="alert alert-warning py-1 px-2 mt-2 mb-0 fs-9">
+                                            <i class="bi bi-exclamation-triangle"></i>
+                                            تاریخ نهایی با تاریخ ویزیتور فرق دارد؛ هر دو تاریخ در سابقه ثبت می‌شود.
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="form-text fs-9 mt-1">مطابق تاریخ ویزیتور — برای تغییر، تاریخ دیگری انتخاب کنید.</div>
+                                    }
+                                </div>
+
+                                <div class="d-grid gap-2 mt-2">
+                                    <button class="btn @(item.StockWarnings.Count > 0 ? "btn-warning" : "btn-primary")"
+                                            data-approve @onclick="@(() => ApproveAsync(o, item.StockWarnings))">
+                                        <i class="bi bi-patch-check"></i> تأیید و ارسال به مالی
+                                        @if (item.StockWarnings.Count > 0)
+                                        {
+                                            <span class="ms-1">(با کسری موجودی)</span>
+                                        }
+                                    </button>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-outline-warning flex-fill" @onclick="@(() => Start(Decision.Return, o))">
+                                            <i class="bi bi-arrow-return-right"></i> برگشت
+                                        </button>
+                                        <button class="btn btn-outline-danger flex-fill" @onclick="@(() => Start(Decision.Reject, o))">
+                                            <i class="bi bi-x-octagon"></i> رد
+                                        </button>
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-outline-primary btn-sm flex-fill" title="ویرایش تخفیف و اقلام سفارش توسط مدیر بدون محدودیت سقف" @onclick="@(() => Nav.NavigateTo($"/sales/visits/{o.Id}/edit"))">
+                                            <i class="bi bi-pencil-square"></i> ویرایش / تغییر تخفیف
+                                        </button>
+                                        <button class="btn btn-link btn-sm text-decoration-none" @onclick="@(() => Nav.NavigateTo($"/sales/visits/{o.Id}"))">
+                                            جزئیات و گردش
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (stockTarget is not null)
+    {
+        <div class="vis-modal-back">
+            <div class="vis-modal" data-approve-confirm>
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <i class="bi bi-exclamation-triangle-fill text-warning fs-4"></i>
+                    <b>کسری موجودی — @stockTarget.Number</b>
+                </div>
+                <div class="fs-8 mb-2">موجودی انبار «@stockTarget.WarehouseName» برای این اقلام کافی نیست:</div>
+                <table class="table table-sm">
+                    <thead><tr><th>کالا</th><th class="text-start">نیاز</th><th class="text-start">موجودی</th></tr></thead>
+                    <tbody>
+                        @foreach (var w in stockWarnings)
+                        {
+                            <tr>
+                                <td class="fs-8">@w.ProductName</td>
+                                <td class="text-start fs-8 num">@Fa.Number(w.Required)</td>
+                                <td class="text-start fs-8 num text-danger">@Fa.Number(w.Available)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                <div class="fs-8 text-muted mb-3">
+                    با تأیید شما، سفارش تأیید و به کارتابل مالی می‌رود؛ تأمین موجودی پیش از ثبت فروش لازم است.
+                </div>
+                <div class="d-flex gap-2 justify-content-end">
+                    <button class="btn btn-light" data-approve-cancel @onclick="CancelApprove">انصراف</button>
+                    <button class="btn btn-warning" data-approve-proceed @onclick="ProceedApprove">
+                        <i class="bi bi-check2-circle"></i> تأیید و ادامه
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (decision is not null)
+    {
+        <div class="vis-modal-back" @onclick="Close">
+            <div class="vis-modal" @onclick:stopPropagation="true">
+                <h6 class="mb-2">
+                    @(decision == Decision.Return ? "برگشت برای اصلاح" : "رد سفارش")
+                    <span class="text-muted fs-8">— @target?.Number</span>
+                </h6>
+                <label class="form-label">دلیل (اجباری)</label>
+                <textarea class="form-control" rows="3" @bind="comment" placeholder="دلیل برای ویزیتور ارسال می‌شود"></textarea>
+                <div class="d-flex gap-2 mt-3">
+                    <button class="btn @(decision == Decision.Return ? "btn-warning" : "btn-danger")" @onclick="SendAsync">ثبت</button>
+                    <button class="btn btn-light" @onclick="Close">انصراف</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+<style>
+    .vis-date-box { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 10px; padding: .55rem .7rem; }
+    .vis-sum { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: .6rem .75rem; }
+    .vis-badge { display: inline-block; font-size: .68rem; border-radius: 99px; padding: .1rem .5rem; border: 1px solid transparent; }
+    .vis-warning { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+    .vis-orange { background: #ffedd5; color: #9a3412; border-color: #fed7aa; }
+    .vis-danger { background: #ffe4e6; color: #9f1239; border-color: #fecdd3; }
+    .vis-modal-back { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 1rem; }
+    .vis-modal { background: #fff; border-radius: 14px; padding: 1.1rem 1.2rem; width: 100%; max-width: 460px; }
+    .fs-8 { font-size: .78rem; }
+    .fs-9 { font-size: .7rem; }
+</style>
+
+@code {
+    private enum Decision { Return, Reject }
+
+    private bool loading = true;
+    private bool busy;
+    private List<VisApprovalItem> items = new();
+    private Decision? decision;
+    private VisOrderDto? target;
+    private string? comment;
+
+    /// <summary>تاریخ نهایی انتخاب‌شدهٔ مدیر برای هر سفارش (کلید: شناسهٔ سفارش).</summary>
+    private readonly Dictionary<int, DateTime?> finalDates = new();
+
+    /// <summary>تاریخ نهایی فعلی — پیش‌فرض همان تاریخ درخواستی ویزیتور.</summary>
+    private DateTime? FinalDateOf(int orderId) => finalDates.TryGetValue(orderId, out var d) ? d : null;
+
+    private void SetFinalDate(int orderId, DateTime? value) => finalDates[orderId] = value?.Date;
+
+    private bool IsFinalDateChanged(VisOrderDto o)
+        => FinalDateOf(o.Id).HasValue && o.DeliveryDate.HasValue
+           && FinalDateOf(o.Id)!.Value.Date != o.DeliveryDate!.Value.Date;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("تأیید سفارش‌های ویزیتور");
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            items = await Api.ApprovalsAsync();
+
+            // تاریخ نهایی پیش‌فرض = تاریخ درخواستی ویزیتور (مدیر می‌تواند تغییر دهد)
+            finalDates.Clear();
+            foreach (var it in items)
+                finalDates[it.Order.Id] = (it.Order.DeliveryDate ?? it.Order.Date).Date;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private VisOrderDto? stockTarget;
+    private List<VisStockWarning> stockWarnings = new();
+
+    /// <summary>
+    /// تأیید سفارش. اگر کسری موجودی باشد اول آلارم داده می‌شود:
+    /// تأیید کاربر ⇒ ادامهٔ تأیید، انصراف ⇒ هیچ تغییری (کار متوقف می‌شود).
+    /// </summary>
+    private async Task ApproveAsync(VisOrderDto o, List<VisStockWarning> warnings)
+    {
+        if (busy) return;
+        if (warnings is { Count: > 0 })
+        {
+            stockWarnings = warnings;
+            stockTarget = o;
+            return;
+        }
+        await DoApproveAsync(o, viaShortage: false);
+    }
+
+    private void CancelApprove()
+    {
+        stockTarget = null;
+        stockWarnings = new();
+        Toast.Info("تأیید سفارش متوقف شد؛ ابتدا موجودی انبار را تأمین کنید.");
+    }
+
+    private async Task ProceedApprove()
+    {
+        var o = stockTarget;
+        stockTarget = null;
+        stockWarnings = new();
+        if (o is not null) await DoApproveAsync(o, viaShortage: true);
+    }
+
+    /// <summary>
+    /// تأیید واقعی سفارش. اگر مدیر با وجود کسری موجودی تأیید کرده باشد،
+    /// همین موضوع در گردش سفارش (comment) ثبت می‌شود تا سابقه گم نشود.
+    /// </summary>
+    private async Task DoApproveAsync(VisOrderDto o, bool viaShortage)
+    {
+        if (busy) return;
+        busy = true;
+        try
+        {
+            var finalDate = FinalDateOf(o.Id) ?? o.DeliveryDate ?? o.Date;
+            var changed = o.DeliveryDate.HasValue && finalDate.Date != o.DeliveryDate.Value.Date;
+            var note = viaShortage ? "تأیید با وجود کسری موجودی انبار (به‌تأیید مدیر)" : null;
+            await Api.ApproveAsync(o.Id, note, finalDate);
+            Toast.Success(changed
+                ? $"سفارش {o.Number} تأیید شد؛ تاریخ نهایی تحویل {finalDate.ToFa()} (تاریخ ویزیتور {o.DeliveryDate!.Value.ToFa()} در سابقه ماند)."
+                : $"سفارش {o.Number} تأیید شد و به صف مالی رفت.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private void Start(Decision kind, VisOrderDto o)
+    {
+        decision = kind;
+        target = o;
+        comment = "";
+    }
+
+    private void Close()
+    {
+        decision = null;
+        target = null;
+    }
+
+    private async Task SendAsync()
+    {
+        if (target is null || decision is null) return;
+        if (string.IsNullOrWhiteSpace(comment)) { Toast.Error("دلیل را وارد کنید."); return; }
+        try
+        {
+            if (decision == Decision.Return) await Api.ReturnAsync(target.Id, comment!);
+            else await Api.RejectAsync(target.Id, comment!);
+            Toast.Success("تصمیم ثبت و به ویزیتور اطلاع داده شد.");
+            Close();
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

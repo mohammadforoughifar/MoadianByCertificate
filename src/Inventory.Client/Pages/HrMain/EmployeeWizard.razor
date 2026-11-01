@@ -1,0 +1,850 @@
+@namespace Inventory.Client.Pages
+@page "/hr-main/employees"
+@page "/hr-main/employees/new"
+@page "/hr-main/employees/{Id:int}"
+@inject IHrCoreService EmpSvc
+@inject IHrMainService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>پرسنل</PageTitle>
+
+@if (IsWizard)
+{
+    @* ==================== حالت ویزارد (ثبت/ویرایش چندمرحله‌ای) ==================== *@
+    <div class="page-head">
+        <div>
+            <h1><i class="bi bi-person-lines-fill"></i> @(Id is > 0 ? "ویرایش پرونده پرسنل" : "ثبت پرسنل جدید")</h1>
+        </div>
+        <a class="btn btn-sm btn-outline-secondary ms-auto" href="@(empRead ? "hr-main/employees" : "hr-main")">بازگشت</a>
+    </div>
+
+    @if (!empCan)
+    {
+        <div class="alert alert-warning">دسترسی ثبت/ویرایش پرسنل برای شما فعال نیست.</div>
+        return;
+    }
+
+    @if (wLoading)
+    {
+        <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        return;
+    }
+
+    @if (wLoadFailed)
+    {
+        <div class="hr-error" role="alert"><span>پرونده پرسنل دریافت نشد.</span><button class="btn btn-sm btn-outline-secondary" @onclick="InitWizard">تلاش مجدد</button></div>
+        return;
+    }
+
+    @* ---------- نشانگر مراحل ---------- *@
+    <div class="wiz-steps mb-4">
+        @for (var i = 1; i <= 5; i++)
+        {
+            var s = i;
+            var cls = s < step ? "done" : s == step ? "active" : "";
+            <button type="button" class="wiz-step @cls" disabled="@(s > maxStep)" @onclick="() => GoStep(s)">
+                <span class="wiz-num">
+                    @if (s < step)
+                    {
+                        <i class="bi bi-check-lg"></i>
+                    }
+                    else
+                    {
+                        @Fa.Digits(s)
+                    }
+                </span>
+                <span class="wiz-title">@StepTitle(s)</span>
+            </button>
+            @if (s < 5)
+            {
+                <span class="wiz-line @(s < step ? "done" : "")"></span>
+            }
+        }
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(wError))
+    {
+        <div class="alert alert-danger">@wError</div>
+    }
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-body">
+            @if (step == 1)
+            {
+                <h5 class="fw-bold mb-3"><i class="bi bi-person-fill"></i> گام ۱ — مشخصات فردی</h5>
+                <div class="row g-3">
+                    <div class="col-12">
+                        <div class="d-flex align-items-center gap-3 p-2 border rounded bg-light">
+                            @if (photoUrl is null)
+                            {
+                                <span class="d-inline-flex align-items-center justify-content-center rounded-circle bg-secondary text-white fw-bold" style="width:64px;height:64px;font-size:1.3rem;flex-shrink:0">@HrCoreUi.Initials(form.FirstName, form.LastName)</span>
+                            }
+                            else
+                            {
+                                <img src="@photoUrl" alt="عکس پرسنل" class="rounded-circle" style="width:64px;height:64px;object-fit:cover;flex-shrink:0" />
+                            }
+                            <div>
+                                <label class="btn btn-sm btn-outline-primary mb-1">
+                                    <i class="bi bi-camera"></i> انتخاب عکس
+                                    <InputFile OnChange="OnPhotoSelected" accept=".jpg,.jpeg,.png,.webp" style="display:none" />
+                                </label>
+                                @if (photoBytes is not null)
+                                {
+                                    <button type="button" class="btn btn-sm btn-light border ms-1 mb-1" @onclick="CancelPhoto">انصراف انتخاب</button>
+                                }
+                                else if (Id is > 0 && !string.IsNullOrWhiteSpace(savedPhotoPath) && !photoRemove)
+                                {
+                                    <button type="button" class="btn btn-sm btn-light border ms-1 mb-1" @onclick="() => photoRemove = true"><i class="bi bi-trash text-danger"></i> حذف عکس</button>
+                                }
+                                <div class="small text-muted">JPG ،PNG یا WebP — بدون محدودیت حجم @if (photoRemove) { <span class="text-danger">(هنگام ثبت نهایی حذف می‌شود)</span> } </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3"><label class="form-label">نام <span class="text-danger">*</span></label><input class="form-control" @bind="form.FirstName" /></div>
+                    <div class="col-md-3"><label class="form-label">نام خانوادگی <span class="text-danger">*</span></label><input class="form-control" @bind="form.LastName" /></div>
+                    <div class="col-md-3"><label class="form-label">کد ملی <span class="text-danger">*</span></label><input class="form-control num" maxlength="10" dir="ltr" @bind="form.NationalCode" placeholder="۱۰ رقم" /></div>
+                    <div class="col-md-3"><label class="form-label">تاریخ تولد</label><DatePicker @bind-Value="birthDate" AllowClear="true" MinYear="1300" /></div>
+                    <div class="col-md-3">
+                        <label class="form-label">جنسیت</label>
+                        <select class="form-select" @bind="form.Gender"><option value="0">مرد</option><option value="1">زن</option></select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">وضعیت تأهل</label>
+                        <select class="form-select" @bind="form.MaritalStatus"><option value="0">مجرد</option><option value="1">متاهل</option></select>
+                    </div>
+                    <div class="col-md-3"><label class="form-label">آخرین مدرک تحصیلی</label><input class="form-control" @bind="form.Degree" placeholder="مثلاً کارشناسی" /></div>
+                    <div class="col-md-3"><label class="form-label">رشته تحصیلی</label><input class="form-control" @bind="form.FieldOfStudy" /></div>
+                </div>
+            }
+            else if (step == 2)
+            {
+                <h5 class="fw-bold mb-3"><i class="bi bi-telephone-fill"></i> گام ۲ — تماس و آدرس</h5>
+                <div class="row g-3">
+                    <div class="col-md-4"><label class="form-label">موبایل</label><input class="form-control num" dir="ltr" @bind="form.Mobile" placeholder="09..." /></div>
+                    <div class="col-md-4"><label class="form-label">تلفن ثابت</label><input class="form-control num" dir="ltr" @bind="form.Landline" placeholder="021..." /></div>
+                    <div class="col-md-4"><label class="form-label">ایمیل</label><input class="form-control" dir="ltr" @bind="form.Email" /></div>
+                    <div class="col-12"><label class="form-label">آدرس محل سکونت</label><textarea class="form-control" rows="2" @bind="form.Address"></textarea></div>
+                    <div class="col-12"><hr class="my-1" /><div class="small fw-bold text-muted">تماس اضطراری (بستگان)</div></div>
+                    <div class="col-md-4"><label class="form-label">نام</label><input class="form-control" @bind="form.EmergencyContactName" /></div>
+                    <div class="col-md-4"><label class="form-label">نسبت</label><input class="form-control" @bind="form.EmergencyContactRelation" placeholder="همسر، پدر، …" /></div>
+                    <div class="col-md-4"><label class="form-label">شماره تماس</label><input class="form-control num" dir="ltr" @bind="form.EmergencyContactPhone" /></div>
+                </div>
+            }
+            else if (step == 3)
+            {
+                <h5 class="fw-bold mb-3"><i class="bi bi-diagram-3-fill"></i> گام ۳ — جایگاه سازمانی</h5>
+                @if (!nodesReady || !positionsReady || !managersReady)
+                {
+                    <div class="alert alert-light border small">انتخاب‌های در دسترس نمایش داده می‌شوند؛ مقادیر قبلی فیلدهای غیرفعال حفظ می‌شوند.</div>
+                }
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">کد پرسنلی</label>
+                        <div class="input-group">
+                            <input class="form-control num" @bind="form.Code" placeholder="خودکار" />
+                            <button class="btn btn-outline-secondary" title="کد بعدی" @onclick="FillCode"><i class="bi bi-magic"></i></button>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">واحد سازمانی</label>
+                        <select class="form-select" @bind="form.HrMainNodeId" disabled="@(!nodesReady)">
+                            <option value="">—</option>
+                            @if (form.HrMainNodeId is > 0 && !nodes.Any(x => x.Id == form.HrMainNodeId))
+                            {
+                                <option value="@form.HrMainNodeId">@(savedNodeName ?? "مقدار ثبت‌شده")</option>
+                            }
+                            @foreach (var n in nodes)
+                            {
+                                <option value="@n.Id">@(new string('—', n.Level)) @n.Name (@HrMainUi.OrgLevel(n.Level))</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">پست سازمانی</label>
+                        <select class="form-select" @bind="form.HrMainPositionId" disabled="@(!positionsReady)">
+                            <option value="">—</option>
+                            @if (form.HrMainPositionId is > 0 && !NodePositions.Any(x => x.Id == form.HrMainPositionId))
+                            {
+                                <option value="@form.HrMainPositionId">@(savedPositionTitle ?? "مقدار ثبت‌شده")</option>
+                            }
+                            @foreach (var p in NodePositions)
+                            {
+                                <option value="@p.Id">@p.Title@(string.IsNullOrWhiteSpace(p.Grade) ? "" : $" ({p.Grade})")</option>
+                            }
+                        </select>
+                        @if (!string.IsNullOrWhiteSpace(SelectedPositionDesc))
+                        {
+                            <div class="form-text">@SelectedPositionDesc</div>
+                        }
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">مدیر مستقیم</label>
+                        <select class="form-select" @bind="form.ManagerId" disabled="@(!managersReady)">
+                            <option value="">—</option>
+                            @if (form.ManagerId is > 0 && !managers.Any(x => x.Id == form.ManagerId))
+                            {
+                                <option value="@form.ManagerId">@(savedManagerName ?? "مقدار ثبت‌شده")</option>
+                            }
+                            @foreach (var m in managers.Where(x => x.Id != Id))
+                            {
+                                <option value="@m.Id">@m.FullName (@m.Code)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">نوع استخدام</label>
+                        <select class="form-select" @bind="form.EmploymentType">
+                            <option value="0">رسمی</option><option value="1">قراردادی</option><option value="2">پیمانی</option>
+                            <option value="3">ساعتی</option><option value="4">مشاوره‌ای</option>
+                            <option value="5">تمام‌وقت</option><option value="6">پاره‌وقت</option>
+                            <option value="7">پروژه‌ای</option><option value="8">آزمایشی</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">وضعیت</label>
+                        <select class="form-select" @bind="form.Status">
+                            <option value="0">فعال</option><option value="1">مرخصی بلندمدت</option><option value="2">معلق</option>
+                            <option value="3">قطع همکاری</option><option value="4">بازنشسته</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4"><label class="form-label">محل کار</label><input class="form-control" @bind="form.Workplace" placeholder="شعبه / ساختمان / سایت" /></div>
+                </div>
+            }
+            else if (step == 4)
+            {
+                <h5 class="fw-bold mb-3"><i class="bi bi-cash-stack"></i> گام ۴ — قرارداد و حقوق</h5>
+                <div class="row g-3">
+                    <div class="col-md-4"><label class="form-label">تاریخ استخدام <span class="text-danger">*</span></label><DatePicker @bind-Value="hireDate" /></div>
+                    <div class="col-md-4"><label class="form-label">حقوق پایه (ریال)</label><input class="form-control num" type="number" min="0" @bind="form.BaseSalary" /></div>
+                    @if (form.BaseSalary > 0)
+                    {
+                        <div class="col-md-4 d-flex align-items-end pb-2"><span class="text-muted small num">@form.BaseSalary.Num() ریال</span></div>
+                    }
+                    <div class="col-md-4"><label class="form-label">شبا (بدون فاصله)</label><input class="form-control num" dir="ltr" placeholder="IR..." @bind="form.Sheba" maxlength="29" /></div>
+                    <div class="col-md-4"><label class="form-label">نام بانک</label><input class="form-control" placeholder="مثلاً ملت" @bind="form.BankName" maxlength="60" /></div>
+                    <div class="col-md-4"><label class="form-label">شماره بیمه تأمین اجتماعی</label><input class="form-control num" dir="ltr" inputmode="numeric" placeholder="۸ تا ۱۰ رقم" @bind="form.InsuranceNo" maxlength="12" /></div>
+                    <div class="col-12">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="wact" @bind="form.IsActive" />
+                            <label class="form-check-label" for="wact">پرونده فعال باشد</label>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="alert alert-light border small mb-0">قراردادهای دوره‌ای و احکام پرسنلی (استخدام، ارتقا، انتقال، تغییر حقوق و…) بعد از ثبت، از بخش کارگزینی قابل مدیریت است.</div>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <h5 class="fw-bold mb-3"><i class="bi bi-clipboard-check-fill"></i> گام ۵ — بازبینی و ثبت نهایی</h5>
+                <dl class="row wiz-review">
+                    <dt class="col-sm-3">عکس</dt><dd class="col-sm-9">@if (photoUrl is null) { <span>—</span> } else { <img src="@photoUrl" alt="عکس پرسنل" class="rounded-circle" style="width:48px;height:48px;object-fit:cover" /> }</dd>
+                    <dt class="col-sm-3">نام و نام خانوادگی</dt><dd class="col-sm-9">@form.FirstName @form.LastName</dd>
+                    <dt class="col-sm-3">کد ملی</dt><dd class="col-sm-9 num">@form.NationalCode</dd>
+                    <dt class="col-sm-3">تاریخ تولد</dt><dd class="col-sm-9 num">@(birthDate.HasValue ? PersianDate.ToShortFa(birthDate.Value) : "—")</dd>
+                    <dt class="col-sm-3">موبایل</dt><dd class="col-sm-9 num">@(string.IsNullOrWhiteSpace(form.Mobile) ? "—" : form.Mobile)</dd>
+                    <dt class="col-sm-3">تلفن ثابت</dt><dd class="col-sm-9 num">@(string.IsNullOrWhiteSpace(form.Landline) ? "—" : form.Landline)</dd>
+                    <dt class="col-sm-3">تماس اضطراری</dt><dd class="col-sm-9">@EmergencyReview</dd>
+                    <dt class="col-sm-3">مدرک تحصیلی</dt><dd class="col-sm-9">@DegreeReview</dd>
+                    <dt class="col-sm-3">جایگاه سازمانی</dt><dd class="col-sm-9">@NodeName(form.HrMainNodeId) — @PositionTitle(form.HrMainPositionId)</dd>
+                    <dt class="col-sm-3">محل کار</dt><dd class="col-sm-9">@(string.IsNullOrWhiteSpace(form.Workplace) ? "—" : form.Workplace)</dd>
+                    <dt class="col-sm-3">تاریخ استخدام</dt><dd class="col-sm-9 num">@(hireDate.HasValue ? PersianDate.ToShortFa(hireDate.Value) : "—")</dd>
+                    <dt class="col-sm-3">نوع استخدام / وضعیت</dt><dd class="col-sm-9">@HrCoreUi.EmpType(form.EmploymentType) / @HrCoreUi.EmpStatus(form.Status)</dd>
+                    <dt class="col-sm-3">حقوق پایه</dt><dd class="col-sm-9 num">@(form.BaseSalary > 0 ? form.BaseSalary.Num() + " ریال" : "—")</dd>
+                    <dt class="col-sm-3">شبا</dt><dd class="col-sm-9 num" dir="ltr" style="text-align:right">@(string.IsNullOrWhiteSpace(form.Sheba) ? "—" : form.Sheba)</dd>
+                    <dt class="col-sm-3">بانک</dt><dd class="col-sm-9">@(string.IsNullOrWhiteSpace(form.BankName) ? "—" : form.BankName)</dd>
+                    <dt class="col-sm-3">شماره بیمه</dt><dd class="col-sm-9 num">@(string.IsNullOrWhiteSpace(form.InsuranceNo) ? "—" : form.InsuranceNo)</dd>
+                </dl>
+                @if (Id is > 0)
+                {
+                    <h6 class="fw-bold mt-4 mb-2"><i class="bi bi-paperclip"></i> مدارک پرسنل</h6>
+                    <AttachmentBox Module="HrEmployee" RefId="Id.Value" CanUpload="empUpdate" />
+                }
+            }
+        </div>
+        <div class="card-footer bg-white border-0 d-flex justify-content-between">
+            <div class="d-flex gap-2">
+                <button class="btn btn-light" @onclick='() => Nav.NavigateTo("hr-main/employees")'>انصراف</button>
+                @if (step > 1)
+                {
+                    <button class="btn btn-light" @onclick="Prev"><i class="bi bi-arrow-right"></i> مرحله قبل</button>
+                }
+            </div>
+            <div class="d-flex gap-2">
+                @if (step < 5)
+                {
+                    <button class="btn btn-primary" @onclick="Next">مرحله بعد <i class="bi bi-arrow-left"></i></button>
+                }
+                else
+                {
+                    <button class="btn btn-primary" disabled="@wSaving" @onclick="Finish">
+                        @if (wSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm"></span>
+                        }
+                        <i class="bi bi-check-lg"></i> @(Id is > 0 ? "ثبت تغییرات" : "ثبت نهایی پرسنل")
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    @* ==================== حالت فهرست ==================== *@
+    <div class="page-head">
+        <div>
+            <h1><i class="bi bi-people-fill"></i> پرسنل</h1>
+        </div>
+        @if (empCreate)
+        {
+            <div class="ms-auto d-flex gap-2">
+                <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("hr-main/employees/new")'><i class="bi bi-plus-lg"></i> پرسنل جدید</button>
+                <button class="btn btn-outline-primary" @onclick="() => showImport = true"><i class="bi bi-file-earmark-arrow-up"></i> ورود از اکسل</button>
+                <button class="btn btn-outline-success" @onclick="DownloadTemplate"><i class="bi bi-file-earmark-excel"></i> نمونه اکسل</button>
+            </div>
+        }
+    </div>
+
+    @if (!empRead)
+    {
+        <div class="alert alert-warning">دسترسی مشاهده پرسنل برای شما فعال نیست.</div>
+        return;
+    }
+
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-5">
+                    <label class="form-label small text-muted">جستجو (نام / کد / کد ملی)</label>
+                    <input class="form-control" @bind="q" @bind:event="oninput" @onkeyup="OnSearchKey" placeholder="تایپ کنید و Enter بزنید…" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label small text-muted">واحد سازمانی</label>
+                    <select class="form-select" @bind="fNode" @bind:after="ReloadFirst" disabled="@(!nodesReady)" aria-label="فیلتر واحد سازمانی">
+                        <option value="0">همه</option>
+                        @foreach (var n in nodes)
+                        {
+                            <option value="@n.Id">@(new string('—', n.Level)) @n.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <button class="btn btn-primary w-100" @onclick="ReloadFirst"><i class="bi bi-search"></i> جستجو</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            @if (loading)
+            {
+                <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+            }
+            else if (listError is not null)
+            {
+                <div class="hr-error" role="alert"><span>@listError</span><button class="btn btn-sm btn-outline-secondary" @onclick="Reload">تلاش مجدد</button></div>
+            }
+            else if (items.Count == 0)
+            {
+                <div class="empty-state"><i class="bi bi-inbox"></i><h5>موردی یافت نشد</h5></div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr><th></th><th>کد</th><th>نام و نام خانوادگی</th><th>واحد سازمانی</th><th>پست</th><th>وضعیت</th><th style="width:120px"></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var e in items)
+                            {
+                                <tr class="@(!e.IsActive ? "opacity-50" : "")">
+                                    <td><span class="hr-avatar" style="background:@HrCoreUi.AvatarColor(e.Code)">@HrCoreUi.Initials(e.FirstName, e.LastName)</span></td>
+                                    <td class="num fw-bold">@e.Code</td>
+                                    <td>
+                                        <a href="hr-main/employees/@e.Id/profile" class="fw-bold text-decoration-none">@e.FullName</a>
+                                        <div class="small text-muted num">@e.NationalCode</div>
+                                    </td>
+                                    <td>@(e.HrMainNodeName ?? "—")</td>
+                                    <td>@(e.HrMainPositionTitle ?? e.PostTitle ?? "—")</td>
+                                    <td><span class="badge @HrCoreUi.StatusBadge(e.Status)">@HrCoreUi.EmpStatus(e.Status)</span></td>
+                                    <td class="text-end">
+                                            <a class="btn btn-sm btn-light" title="پرونده" href="hr-main/employees/@e.Id/profile"><i class="bi bi-folder2-open text-primary"></i></a>
+                                            @if (empUpdate)
+                                            {
+                                                <button class="btn btn-sm btn-light" title="ویرایش چندمرحله‌ای" @onclick="() => GoEdit(e.Id)"><i class="bi bi-pencil text-primary"></i></button>
+                                            }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="d-flex justify-content-between align-items-center p-2 border-top">
+                    <span class="small text-muted num">مجموع: @total.Num() نفر</span>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-light" disabled="@(skip == 0)" @onclick="PrevPage">قبلی</button>
+                        <button class="btn btn-light" disabled="@(skip + take >= total)" @onclick="NextPage">بعدی</button>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+<style>
+    .hr-avatar { display: inline-flex; width: 34px; height: 34px; border-radius: 50%; color: #fff; font-weight: 800; align-items: center; justify-content: center; font-size: .8rem; }
+    .wiz-steps { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+    .wiz-step { display: flex; align-items: center; gap: .5rem; background: #fff; border: 1px solid #e5e7eb; border-radius: 2rem; padding: .35rem .9rem .35rem .35rem; color: #6b7280; }
+    .wiz-step:disabled { opacity: .55; cursor: not-allowed; }
+    .wiz-step.active { border-color: #a21caf; color: #111; box-shadow: 0 2px 10px rgba(162,28,175,.15); }
+    .wiz-step.done { border-color: #22c55e; }
+    .wiz-num { display: inline-flex; width: 30px; height: 30px; border-radius: 50%; background: #f3f4f6; align-items: center; justify-content: center; font-weight: 800; font-size: .85rem; }
+    .wiz-step.active .wiz-num { background: #a21caf; color: #fff; }
+    .wiz-step.done .wiz-num { background: #22c55e; color: #fff; }
+    .wiz-title { font-size: .82rem; font-weight: 700; white-space: nowrap; }
+    .wiz-line { flex: 1; min-width: 12px; height: 2px; background: #e5e7eb; border-radius: 2px; }
+    .wiz-line.done { background: #22c55e; }
+    .wiz-review dt { font-weight: 700; color: #374151; }
+    .wiz-review dd { margin-bottom: .4rem; }
+</style>
+
+<Modal Visible="showImport" Title="ورود گروهی پرسنل از اکسل" Size="modal-lg" OnClose="CloseImport">
+    <ChildContent>
+        <ol class="small text-muted mb-3">
+            <li>نمونه اکسل را دانلود کنید (دکمه «نمونه اکسل»).</li>
+            <li>سطر نمونه را پاک کنید و اطلاعات پرسنل را وارد کنید (ستون‌های * الزامی‌اند؛ تاریخ‌ها شمسی مثل 1404/01/01).</li>
+            <li>فایل را انتخاب و «شروع ورود» را بزنید.</li>
+        </ol>
+        <InputFile class="form-control" OnChange="OnImportFile" accept=".xlsx" />
+        @if (impFile is not null)
+        {
+            <div class="small mt-2">فایل انتخاب‌شده: <b>@impFile.Name</b> <span class="text-muted">(@(impFile.Size / 1024) کیلوبایت)</span></div>
+        }
+        @if (impSaving)
+        {
+            <div class="mt-3"><span class="spinner-border spinner-border-sm"></span> در حال ورود اطلاعات…</div>
+        }
+        @if (impResult is not null)
+        {
+            <div class="alert @(impResult.Failed == 0 ? "alert-success" : "alert-warning") mt-3 mb-2">
+                <span class="num">@impResult.Created.Num()</span> نفر ثبت شد@if (impResult.Failed > 0)
+                {<span>؛ <span class="num">@impResult.Failed.Num()</span> سطر خطا داشت.</span>}
+            </div>
+            @if (impResult.Errors.Count > 0)
+            {
+                <div class="border rounded" style="max-height:220px;overflow-y:auto">
+                    <table class="table table-sm mb-0">
+                        <thead class="table-light"><tr><th>سطر</th><th>نام</th><th>خطا</th></tr></thead>
+                        <tbody>
+                            @foreach (var er in impResult.Errors)
+                            {
+                                <tr><td class="num">@er.Row</td><td>@er.Name</td><td class="text-danger small">@er.Message</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseImport">بستن</button>
+        <button class="btn btn-primary" disabled="@(impSaving || impFile is null)" @onclick="StartImport">شروع ورود</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private bool canNodes => Auth.Has("HrMain.Read") || Auth.Has("HrMain.Org") || Auth.IsAdmin;
+    private bool canPositions => Auth.Has("HrMain.Read") || Auth.Has("HrMain.Positions") || Auth.IsAdmin;
+    private bool empRead => Auth.Has("HrCore.Read") || Auth.IsAdmin;
+    private bool empCreate => Auth.Has("HrCore.Create") || Auth.IsAdmin;
+    private bool empUpdate => Auth.Has("HrCore.Update") || Auth.IsAdmin;
+    private bool empCan => (Id is > 0 ? empUpdate : empCreate);
+
+    private bool IsWizard
+    {
+        get
+        {
+            var p = HrNavigation.Path(Nav.ToBaseRelativePath(Nav.Uri));
+            return p == "hr-main/employees/new" || Id is > 0;
+        }
+    }
+
+    // ---------- فهرست ----------
+    private bool loading = true;
+    private string? q;
+    private int fNode;
+    private int skip, take = 20, total;
+    private int listRequest;
+    private string? listError;
+    private List<HrEmployeeDto> items = new();
+    private List<HrMainOrgNodeDto> nodes = new();
+
+    // ---------- ویزارد ----------
+    private bool wLoading = true, wSaving, wLoadFailed;
+    private bool nodesReady, positionsReady, managersReady;
+    private string? savedNodeName, savedPositionTitle, savedManagerName;
+    private int step = 1, maxStep = 1;
+    private string? wError;
+    private string? lastInitKey;
+    private HrEmployeeSaveDto form = new();
+    private byte[]? photoBytes;
+    private string? photoContentType, photoFileName, photoUrl, savedPhotoUrl, savedPhotoPath;
+    private bool photoRemove;
+    private DateTime? birthDate, hireDate = DateTime.Today;
+    private List<HrMainPositionDto> positions = new();
+    private List<HrEmployeeDto> managers = new();
+
+    private List<HrMainPositionDto> NodePositions =>
+        form.HrMainNodeId is > 0
+            ? positions.Where(p => p.OrgNodeId == form.HrMainNodeId.Value).ToList()
+            : positions;
+
+    private string? SelectedPositionDesc
+    {
+        get
+        {
+            var p = positions.FirstOrDefault(x => x.Id == form.HrMainPositionId);
+            if (p is null || string.IsNullOrWhiteSpace(p.JobDescription)) return null;
+            var d = p.JobDescription.Trim();
+            return d.Length > 120 ? d[..120] + "…" : d;
+        }
+    }
+
+    private static string StepTitle(int s) => s switch
+    {
+        1 => "مشخصات فردی",
+        2 => "تماس و آدرس",
+        3 => "جایگاه سازمانی",
+        4 => "قرارداد و حقوق",
+        _ => "بازبینی و ثبت"
+    };
+
+    private string NodeName(int? id) =>
+        nodes.FirstOrDefault(n => n.Id == id)?.Name ?? (id == form.HrMainNodeId ? savedNodeName : null) ?? "—";
+
+    private string PositionTitle(int? id) =>
+        positions.FirstOrDefault(p => p.Id == id)?.Title ?? (id == form.HrMainPositionId ? savedPositionTitle : null) ?? "—";
+
+    private string EmergencyReview =>
+        string.IsNullOrWhiteSpace(form.EmergencyContactName) ? "—"
+        : form.EmergencyContactName
+            + (string.IsNullOrWhiteSpace(form.EmergencyContactRelation) ? "" : $" ({form.EmergencyContactRelation})")
+            + (string.IsNullOrWhiteSpace(form.EmergencyContactPhone) ? "" : $" — {form.EmergencyContactPhone}");
+
+    private string DegreeReview =>
+        string.IsNullOrWhiteSpace(form.Degree) ? "—"
+        : string.IsNullOrWhiteSpace(form.FieldOfStudy) ? form.Degree : $"{form.Degree} — {form.FieldOfStudy}";
+
+    protected override void OnInitialized() => Nav.LocationChanged += LocationChanged;
+
+    protected override async Task OnParametersSetAsync() => await InitForRoute();
+
+    public void Dispose() => Nav.LocationChanged -= LocationChanged;
+
+    private void LocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        // ناوبری داخلی فهرست ↔ ویزارد همین کامپوننت است و پارامتر عوض نمی‌شود؛
+        // پس تغییر مسیر را مستقیم گوش می‌دهیم تا فرم بدون F5 باز شود.
+        var p = HrNavigation.Path(Nav.ToBaseRelativePath(e.Location));
+        if (!p.StartsWith("hr-main/employees")) return;
+        _ = InvokeAsync(async () => { await InitForRoute(); StateHasChanged(); });
+    }
+
+    private async Task InitForRoute()
+    {
+        var key = IsWizard ? $"W{Id}" : "L";
+        if (key == lastInitKey) return;
+        lastInitKey = key;
+        if (IsWizard) await InitWizard();
+        else await InitList();
+    }
+
+    // ==================== فهرست ====================
+
+    private async Task InitList()
+    {
+        if (!empRead) { loading = false; return; }
+        if (canNodes) { try { nodes = await Svc.ListOrgNodesAsync(); nodesReady = true; } catch { nodesReady = false; } }
+        await Reload();
+    }
+
+    private async Task ReloadFirst() { skip = 0; await Reload(); }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await ReloadFirst();
+    }
+
+    private async Task Reload()
+    {
+        var request = ++listRequest;
+        loading = true; listError = null;
+        try
+        {
+            var r = await EmpSvc.SearchEmployeesAsync(q, null, null, skip, take, fNode > 0 ? fNode : null);
+            if (request != listRequest) return;
+            items = r.Items;
+            total = r.Total;
+        }
+        catch { if (request == listRequest) listError = "فهرست پرسنل دریافت نشد."; }
+        finally { if (request == listRequest) loading = false; }
+    }
+
+    private async Task PrevPage() { skip = Math.Max(0, skip - take); await Reload(); }
+    private async Task NextPage() { skip += take; await Reload(); }
+
+    private void GoEdit(int id) => Nav.NavigateTo($"hr-main/employees/{id}");
+
+    // ==================== ویزارد ====================
+
+    private async Task InitWizard()
+    {
+        if (!empCan) { wLoading = false; return; }
+        wLoading = true; wLoadFailed = false;
+        nodesReady = positionsReady = managersReady = false;
+        savedNodeName = savedPositionTitle = savedManagerName = null;
+        wError = null;
+        step = 1; maxStep = 1;
+        try
+        {
+            if (canNodes) { try { nodes = await Svc.ListOrgNodesAsync(); nodesReady = true; } catch { nodesReady = false; } }
+            if (canPositions) { try { positions = await Svc.ListPositionsAsync(); positionsReady = true; } catch { positionsReady = false; } }
+            if (empRead) { try { managers = (await EmpSvc.SearchEmployeesAsync(null, null, 0, 0, 200)).Items; managersReady = true; } catch { managersReady = false; } }
+
+            if (Id is > 0)
+            {
+                var e = await EmpSvc.GetEmployeeAsync(Id.Value);
+                savedNodeName = e.HrMainNodeName; savedPositionTitle = e.HrMainPositionTitle; savedManagerName = e.ManagerName;
+                form = new HrEmployeeSaveDto
+                {
+                    Code = e.Code, FirstName = e.FirstName, LastName = e.LastName, NationalCode = e.NationalCode,
+                    BirthDate = e.BirthDate, Gender = e.Gender, MaritalStatus = e.MaritalStatus,
+                    Mobile = e.Mobile, Email = e.Email, Address = e.Address, HireDate = e.HireDate,
+                    Landline = e.Landline, EmergencyContactName = e.EmergencyContactName,
+                    EmergencyContactRelation = e.EmergencyContactRelation, EmergencyContactPhone = e.EmergencyContactPhone,
+                    Workplace = e.Workplace, Degree = e.Degree, FieldOfStudy = e.FieldOfStudy,
+                    OrgUnitId = e.OrgUnitId, PostTitle = e.PostTitle,
+                    HrMainNodeId = e.HrMainNodeId, HrMainPositionId = e.HrMainPositionId,
+                    ManagerId = e.ManagerId, EmploymentType = e.EmploymentType, Status = e.Status,
+                    SystemUserId = e.SystemUserId, BaseSalary = e.BaseSalary, IsActive = e.IsActive, Sheba = e.Sheba, BankName = e.BankName, InsuranceNo = e.InsuranceNo
+                };
+                birthDate = e.BirthDate;
+                hireDate = e.HireDate;
+                maxStep = 5;
+                savedPhotoPath = e.PhotoPath;
+                await LoadSavedPhoto();
+            }
+            else
+            {
+                form = new HrEmployeeSaveDto { HireDate = DateTime.Today };
+                birthDate = null;
+                hireDate = DateTime.Today;
+                ResetPhoto();
+            }
+        }
+        catch (Exception ex)
+        {
+            wLoadFailed = true;
+            wError = ex.Message;
+            Toast.Error(ex.Message);
+        }
+        finally { wLoading = false; }
+    }
+
+    private async Task FillCode()
+    {
+        try { form.Code = await EmpSvc.NextEmployeeCodeAsync(); } catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void GoStep(int s)
+    {
+        if (s >= 1 && s <= maxStep) { step = s; wError = null; }
+    }
+
+    private void Prev()
+    {
+        if (step > 1) { step--; wError = null; }
+    }
+
+    private void Next()
+    {
+        wError = ValidateStep(step);
+        if (wError is not null) return;
+        if (step < 5)
+        {
+            step++;
+            maxStep = Math.Max(maxStep, step);
+        }
+    }
+
+    private string? ValidateStep(int s)
+    {
+        if (s == 1)
+        {
+            if (string.IsNullOrWhiteSpace(form.FirstName)) return "نام الزامی است.";
+            if (string.IsNullOrWhiteSpace(form.LastName)) return "نام خانوادگی الزامی است.";
+            var nc = (form.NationalCode ?? "").Trim();
+            if (nc.Length != 10 || !nc.All(char.IsDigit)) return "کد ملی باید ۱۰ رقم باشد.";
+        }
+        else if (s == 2)
+        {
+            var m = (form.Mobile ?? "").Trim();
+            if (m.Length > 0 && (m.Length != 11 || !m.StartsWith("09") || !m.All(char.IsDigit)))
+                return "شماره موبایل معتبر نیست (مثل 09123456789).";
+            var em = (form.Email ?? "").Trim();
+            if (em.Length > 0 && (!em.Contains('@') || !em.Contains('.')))
+                return "ایمیل معتبر نیست.";
+        }
+        else if (s == 4)
+        {
+            if (!hireDate.HasValue) return "تاریخ استخدام الزامی است.";
+            if (form.BaseSalary < 0) return "حقوق پایه نامعتبر است.";
+            if (!string.IsNullOrWhiteSpace(form.Sheba) && !HrSheba.IsValid(HrSheba.Norm(form.Sheba)))
+                return "شماره شبا معتبر نیست (مثل IR123456789012345678901234).";
+        }
+        return null;
+    }
+
+    private async Task Finish()
+    {
+        if (!empCan || wLoading || wLoadFailed || wSaving) return;
+        for (var s = 1; s <= 4; s++)
+        {
+            var err = ValidateStep(s);
+            if (err is not null) { step = s; wError = err; return; }
+        }
+        wSaving = true;
+        try
+        {
+            form.BirthDate = birthDate;
+            form.HireDate = hireDate ?? DateTime.Today;
+            var saved = await EmpSvc.SaveEmployeeAsync(Id is > 0 ? Id : null, form);
+            if (photoBytes is not null)
+            {
+                try
+                {
+                    await using var ms = new MemoryStream(photoBytes);
+                    await EmpSvc.UploadEmployeePhotoAsync(saved.Id, ms, photoFileName ?? "photo.jpg", photoContentType);
+                }
+                catch (Exception ex) { Toast.Error("پرسنل ثبت شد ولی عکس ذخیره نشد: " + ex.Message); }
+            }
+            else if (photoRemove && saved.Id > 0)
+            {
+                try { await EmpSvc.DeleteEmployeePhotoAsync(saved.Id); }
+                catch (Exception ex) { Toast.Error("حذف عکس انجام نشد: " + ex.Message); }
+            }
+            Toast.Success(Id is > 0 ? "تغییرات پرسنل ثبت شد." : "پرسنل جدید ثبت شد.");
+            Nav.NavigateTo(empRead ? $"hr-main/employees/{saved.Id}/profile" : "hr-main");
+        }
+        catch (Exception ex)
+        {
+            wError = ex.Message;
+            Toast.Error(ex.Message);
+        }
+        finally { wSaving = false; }
+    }
+
+    // ==================== ورود اکسل ====================
+    private bool showImport, impSaving;
+    private IBrowserFile? impFile;
+    private HrEmployeeImportResultDto? impResult;
+
+    private async Task DownloadTemplate()
+    {
+        try
+        {
+            var f = await EmpSvc.GetEmployeeImportTemplateAsync();
+            await JS.InvokeVoidAsync("saveAsFile", f.FileName, Convert.ToBase64String(f.Data));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void OnImportFile(InputFileChangeEventArgs e)
+    {
+        impFile = e.File;
+        impResult = null;
+    }
+
+    private void CloseImport()
+    {
+        showImport = false;
+        impFile = null;
+        impResult = null;
+    }
+
+    private async Task StartImport()
+    {
+        if (impFile is null) return;
+        impSaving = true;
+        impResult = null;
+        try
+        {
+            await using var s = impFile.OpenReadStream(long.MaxValue);
+            impResult = await EmpSvc.ImportEmployeesAsync(s, impFile.Name);
+            if (impResult.Created > 0) await ReloadFirst();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { impSaving = false; }
+    }
+
+    // ==================== عکس پرسنل ====================
+    private void ResetPhoto()
+    {
+        photoBytes = null;
+        photoContentType = photoFileName = null;
+        photoUrl = savedPhotoUrl = savedPhotoPath = null;
+        photoRemove = false;
+    }
+
+    private async Task LoadSavedPhoto()
+    {
+        photoBytes = null;
+        photoRemove = false;
+        savedPhotoUrl = null;
+        photoUrl = null;
+        if (Id is not > 0 || string.IsNullOrWhiteSpace(savedPhotoPath)) return;
+        try
+        {
+            var f = await EmpSvc.GetEmployeePhotoAsync(Id.Value);
+            savedPhotoUrl = $"data:{f.ContentType};base64,{Convert.ToBase64String(f.Data)}";
+            photoUrl = savedPhotoUrl;
+        }
+        catch { savedPhotoUrl = null; photoUrl = null; }
+    }
+
+    private async Task OnPhotoSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file is null) return;
+        if (file.Size > 5 * 1024 * 1024) { Toast.Error("حداکثر حجم عکس ۵ مگابایت است."); return; }
+        try
+        {
+            await using var stream = file.OpenReadStream(long.MaxValue);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            photoBytes = ms.ToArray();
+            photoContentType = file.ContentType;
+            photoFileName = file.Name;
+            photoRemove = false;
+            photoUrl = $"data:{file.ContentType};base64,{Convert.ToBase64String(photoBytes)}";
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void CancelPhoto()
+    {
+        photoBytes = null;
+        photoContentType = photoFileName = null;
+        photoRemove = false;
+        photoUrl = savedPhotoUrl;
+    }
+}

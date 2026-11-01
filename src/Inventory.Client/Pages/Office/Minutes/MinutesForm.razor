@@ -1,0 +1,1261 @@
+@page "/misc/minutes/new"
+@page "/misc/minutes/{Id:int}"
+@using System.Net.Http.Headers
+@using System.Text
+@inject IMinutesApiService Minutes
+@inject AiAssistantService AiSvc
+@inject IApiClient Api
+@inject IEmailClientService Email
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject RealtimeService Rt
+@inject LayoutState Layout
+@implements IDisposable
+
+<PageTitle>صورتجلسه — فرم‌های متفرقه</PageTitle>
+
+<div class="container-fluid py-3" style="max-width:1400px">
+
+    @* ================== نوار بالای صفحه ================== *@
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-secondary" @onclick='() => Nav.NavigateTo("misc/minutes")'>
+            <i class="bi bi-arrow-right me-1"></i>فهرست صورتجلسه‌ها
+        </button>
+        <h4 class="mb-0"><i class="bi bi-journal-text me-2"></i>@(minutesId == 0 ? "ثبت صورتجلسه جدید" : $"صورتجلسه {minutesId}")</h4>
+        @if (detail != null)
+        {
+            @if (detail.Status == "Closed")
+            {
+                <span class="badge text-bg-success">اتمام نهایی</span>
+                <span class="badge text-bg-light border" title="زمان بسته‌شدن">
+                    <i class="bi bi-lock-fill me-1"></i>قفل‌شده — تغییر امکان‌پذیر نیست
+                </span>
+            }
+            else
+            {
+                <span class="badge text-bg-warning">در حال بررسی</span>
+            }
+            if (detail.Items.Count > 0)
+            {
+                var done = detail.Items.Count(i => i.ItemStatus == "Done");
+                <span class="badge text-bg-light border num">بندها: @done از @detail.Items.Count انجام شد</span>
+            }
+        }
+        </div>
+        <div class="d-flex flex-wrap gap-1 mm-actions">
+            @if (canEdit)
+            {
+                <button class="btn btn-sm btn-primary" disabled="@busy" @onclick="Save">
+                    <i class="bi bi-save me-1"></i>@(minutesId == 0 ? "ثبت صورتجلسه" : "ذخیره")
+                </button>
+                <button class="btn btn-sm btn-outline-success" disabled="@busy" @onclick="OpenSubmit">
+                    <i class="bi bi-send me-1"></i>ارسال به گردش
+                </button>
+            }
+            @if (minutesId > 0)
+            {
+                <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="DownloadPrint">
+                    <i class="bi bi-printer me-1"></i>چاپ
+                </button>
+                @if (canWorkOrder)
+                {
+                    <button class="btn btn-sm btn-outline-primary" @onclick="GoWorkOrderWhole">
+                        <i class="bi bi-kanban me-1"></i>دستور کار کل صورتجلسه
+                        @if (woWholeCount > 0) { <span class="badge text-bg-info ms-1 num">@woWholeCount</span> }
+                    </button>
+                }
+                @if (canInnerLetter)
+                {
+                    <button class="btn btn-sm btn-outline-info" @onclick="GoInnerWhole">
+                        <i class="bi bi-envelope me-1"></i>نامه داخلی
+                    </button>
+                }
+                @if (canOutgoing)
+                {
+                    <button class="btn btn-sm btn-outline-info" @onclick="GoOutgoing">
+                        <i class="bi bi-send-check me-1"></i>نامه صادره
+                    </button>
+                }
+                @if (canEmail)
+                {
+                    <button class="btn btn-sm btn-outline-info" @onclick="GoEmail">
+                        <i class="bi bi-envelope-at me-1"></i>ایمیل
+                    </button>
+                }
+            }
+        </div>
+    </div>
+
+    @if (busy && detail == null)
+    {
+        <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    }
+    else if (detail != null || minutesId == 0)
+    {
+        @* ================== کارت اطلاعات عمومی ================== *@
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-12 col-lg-6">
+                        <label class="form-label fw-600">عنوان صورتجلسه <span class="text-danger">*</span></label>
+                        <input class="form-control" @bind="title" maxlength="300" disabled="@isClosed"
+                               placeholder="مثلاً: جلسه هماهنگی پروژه انبار" />
+                    </div>
+                    <div class="col-6 col-lg-3">
+                        <label class="form-label fw-600">تاریخ جلسه <span class="text-danger">*</span></label>
+                        <DatePicker Value="meetingDate" ValueChanged="v => meetingDate = v" CssClass="form-control-sm" />
+                    </div>
+                    <div class="col-6 col-lg-3">
+                        <label class="form-label fw-600">تاریخ ثبت <span class="fs-7 text-muted">(خودکار)</span></label>
+                        <input class="form-control form-control-sm text-muted" readonly
+                               value="@RegisteredDisplay" />
+                        <div class="fs-7 text-muted mt-1" title="ثبت‌کننده">
+                            <i class="bi bi-person me-1"></i>@(detail?.CreatedByName ?? "شما (بعد از ثبت)")
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @* ================== کارت شرکت‌کنندگان ================== *@
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-white py-2">
+                <span class="fw-600"><i class="bi bi-people me-1"></i>شرکت‌کنندگان جلسه</span>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-12 col-lg-6">
+                        <label class="form-label fw-600">حاضرین <span class="text-danger">*</span></label>
+                        <MultiSearchSelect Items="users" Values="attendeeIds" ValuesChanged="OnAttendees"
+                                           Placeholder="جستجوی نام حاضر…" CssClass="form-select form-select-sm"
+                                           Disabled="isClosed" />
+                        @if (attendeeIds.Count == 0)
+                        {
+                            <div class="fs-7 text-danger mt-1"><i class="bi bi-exclamation-triangle me-1"></i>حداقل یک حاضر انتخاب کنید.</div>
+                        }
+                    </div>
+                    <div class="col-12 col-lg-6">
+                        <label class="form-label fw-600">غایبین</label>
+                        <MultiSearchSelect Items="users" Values="absentIds" ValuesChanged="OnAbsents"
+                                           Placeholder="جستجوی نام غایب…" CssClass="form-select form-select-sm"
+                                           Disabled="@(detail?.Status == "Closed")" />
+                    </div>
+                </div>
+
+                @* امضای حاضرین *@
+                @if (minutesId > 0 && detail != null && detail.Participants.Any(p => p.Kind == "Attendee"))
+                {
+                    <hr class="my-3" />
+                    <div class="fw-600 mb-2"><i class="bi bi-pen me-1"></i>امضای حاضرین جلسه</div>
+                    <div class="row g-2">
+                        @foreach (var p in detail.Participants.Where(x => x.Kind == "Attendee"))
+                        {
+                            <div class="col-6 col-md-4 col-xl-3">
+                                <div class="border rounded p-2 h-100" style="background:#f8fafc">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span class="fw-600 fs-7">@p.Name</span>
+                                        @if (p.SignedAt != null)
+                                        {
+                                            <span class="badge text-bg-success"><i class="bi bi-check-lg me-1"></i>امضا شده</span>
+                                            @if (canCreator && detail?.Status != "Closed")
+                                            {
+                                                <button type="button" class="btn btn-link btn-sm text-danger p-0 ms-1"
+                                                        title="برداشتن امضای شرکت‌کننده"
+                                                        @onclick="() => RemoveParticipantSignature(p)">
+                                                    <i class="bi bi-eraser"></i>
+                                                </button>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <span class="badge text-bg-secondary">بدون امضا</span>
+                                        }
+                                    </div>
+                                    <div class="text-center my-2" style="min-height:52px">
+                                        @if (!string.IsNullOrWhiteSpace(p.SignatureData))
+                                        {
+                                            <img src="data:image/png;base64,@p.SignatureData" alt="امضا" style="max-height:52px" />
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted">—</span>
+                                        }
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span class="fs-7 text-muted num">@(p.SignedAt != null ? PersianDate.ToShortFa(p.SignedAt.Value) : "")</span>
+                                        @if (canSign && p.UserId == Auth.UserId && p.SignedAt == null && detail.Status != "Closed")
+                                        {
+                                            <button type="button" class="btn btn-sm btn-outline-primary py-0"
+                                                    @onclick="() => OpenSign(p)">
+                                                <i class="bi bi-pencil me-1"></i>امضا کن
+                                            </button>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        @* ================== کارت بندها ================== *@
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-white py-2 d-flex align-items-center justify-content-between gap-2">
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                <span class="fw-600"><i class="bi bi-list-ol me-1"></i>بندها / موارد بحث و تصمیمات</span>
+                <span class="fs-7 text-muted">هر بند: شرح، تاریخ انجام، مسئول، تاریخ پیگیری، مسئول پیگیری</span>
+                </div>
+                @if (canEdit)
+                {
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-sm btn-primary" @onclick="NewRow">
+                            <i class="bi bi-plus-lg me-1"></i>افزودن بند
+                        </button>
+                        @if (Auth.IsAdmin || Auth.Has("AiAssistant.Use"))
+                        {
+                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="OpenAiMinutes" title="تولید بندها از متن جلسه با هوش مصنوعی">
+                                <i class="bi bi-robot me-1"></i>پیش‌نویس هوشمند
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="d-none d-md-block table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width:46px">ردیف</th>
+                            <th>شرح بند / تصمیم</th>
+                            <th style="width:118px">تاریخ انجام</th>
+                            <th style="width:140px">مسئول</th>
+                            <th style="width:118px">تاریخ پیگیری</th>
+                            <th style="width:140px">مسئول پیگیری</th>
+                            <th style="width:110px">وضعیت</th>
+                            <th style="width:150px">تصمیمات</th>
+                            @if (canEdit || canWorkOrder || canInnerLetter)
+                            {
+                                <th style="width:170px" class="mm-actions-cell">عملیات</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (rows.Count == 0)
+                        {
+                            <tr><td colspan="9" class="text-center text-muted py-4">بندی ثبت نشده است.</td></tr>
+                        }
+                        @foreach (var row in rows)
+                        {
+                            <tr>
+                                <td class="num fw-600">@row.RowNo</td>
+                                <td>
+                                    <div class="fw-500">@row.Description</div>
+                                    @if (!string.IsNullOrWhiteSpace(row.RespNote))
+                                    {
+                                        <div class="fs-7 text-success mt-1"><i class="bi bi-check2-circle me-1"></i>مسئول: @row.RespNote</div>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(row.FollowUpNote))
+                                    {
+                                        <div class="fs-7 @(row.FollowUpDecision == "Rejected" ? "text-danger" : "text-success") mt-1">
+                                            <i class="bi @(row.FollowUpDecision == "Rejected" ? "bi-x-circle" : "bi-check2-circle") me-1"></i>
+                                            پیگیری: @row.FollowUpNote
+                                        </div>
+                                    }
+                                </td>
+                                <td class="num fs-7">@(row.DueDate != null ? PersianDate.ToShortFa(row.DueDate.Value) : "—")</td>
+                                <td class="fs-7">@UserName(row.ResponsibleUserId)</td>
+                                <td class="num fs-7">@(row.FollowUpDate != null ? PersianDate.ToShortFa(row.FollowUpDate.Value) : "—")</td>
+                                <td class="fs-7">@UserName(row.FollowUpUserId)</td>
+                                <td><span class="@ItemStatusClass(row.ItemStatus)">@ItemStatusText(row.ItemStatus)</span></td>
+                                <td>
+                                    <div class="d-flex flex-column gap-1">
+                                        <span class="fs-7 @(row.RespApproved ? "text-success" : "text-muted")">
+                                            <i class="bi @(row.RespApproved ? "bi-check-circle-fill" : "bi-circle") me-1"></i>
+                                            مسئول @(row.RespApproved ? "(تایید " + PersianDate.ToShortFa(row.RespApprovedAt!.Value) + ")" : "بررسی نشده")
+                                        </span>
+                                        <span class="fs-7 @FollowUpColor(row.FollowUpDecision)">
+                                            <i class="bi @(row.FollowUpDecision == "Approved" ? "bi-check-circle-fill" : row.FollowUpDecision == "Rejected" ? "bi-x-circle-fill" : "bi-circle") me-1"></i>
+                                            پیگیری: @FollowUpText(row.FollowUpDecision)
+                                        </span>
+                                    </div>
+                                </td>
+                                <td class="mm-actions-cell">
+                                    @RowActions(row)
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* نمای کارتی برای موبایل *@
+            <div class="d-md-none p-2">
+                @if (rows.Count == 0)
+                {
+                    <div class="text-center text-muted py-4">بندی ثبت نشده است.</div>
+                }
+                @foreach (var row in rows)
+                {
+                    <div class="card mb-2 shadow-sm border">
+                        <div class="card-body p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="badge bg-secondary">بند @row.RowNo</span>
+                                <span class="@ItemStatusClass(row.ItemStatus)">@ItemStatusText(row.ItemStatus)</span>
+                            </div>
+                            <div class="fw-500 mb-2">@row.Description</div>
+                            <div class="fs-7 text-muted mb-1">
+                                <i class="bi bi-person me-1"></i>مسئول انجام: <b>@UserName(row.ResponsibleUserId)</b>
+                                <span class="ms-2"><i class="bi bi-calendar me-1"></i>مهلت: @(row.DueDate != null ? PersianDate.ToShortFa(row.DueDate.Value) : "—")</span>
+                            </div>
+                            <div class="fs-7 text-muted mb-2">
+                                <i class="bi bi-person-check me-1"></i>مسئول پیگیری: <b>@UserName(row.FollowUpUserId)</b>
+                                <span class="ms-2"><i class="bi bi-calendar-check me-1"></i>تاریخ پیگیری: @(row.FollowUpDate != null ? PersianDate.ToShortFa(row.FollowUpDate.Value) : "—")</span>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(row.RespNote))
+                            {
+                                <div class="fs-7 text-success mb-1"><i class="bi bi-check2-circle me-1"></i>مسئول: @row.RespNote</div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(row.FollowUpNote))
+                            {
+                                <div class="fs-7 @(row.FollowUpDecision == "Rejected" ? "text-danger" : "text-success") mb-1">
+                                    <i class="bi @(row.FollowUpDecision == "Rejected" ? "bi-x-circle" : "bi-check2-circle") me-1"></i>پیگیری: @row.FollowUpNote
+                                </div>
+                            }
+                            <div class="d-flex flex-wrap gap-1 mm-btn-row mt-2 pt-2 border-top">
+                                @RowActions(row)
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        @* ================== کارت پیوست‌ها ================== *@
+        @if (minutesId > 0)
+        {
+            <div class="card border-0 shadow-sm mb-3">
+                <div class="card-header bg-white py-2">
+                    <span class="fw-600"><i class="bi bi-paperclip me-1"></i>پیوست‌های صورتجلسه</span>
+                </div>
+                <div class="card-body">
+                    <AttachmentBox Module="MeetingMinutes" RefId="minutesId" CanUpload="@canEdit" />
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="text-center fs-7 text-muted mb-3">
+                <i class="bi bi-info-circle me-1"></i>بعد از ثبت صورتجلسه می‌توانید فایل پیوست بارگذاری کنید.
+            </div>
+        }
+    }
+</div>
+
+@* ================== مودال‌ها ================== *@
+
+@* ---------- ویرایش/افزودن بند ---------- *@
+<Modal Visible="rowModal" Title="RowModalTitle" Size="modal-lg"
+       OnClose="() => rowModal = false">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-12">
+            <label class="form-label fw-600">شرح بند / تصمیم گرفته‌شده <span class="text-danger">*</span></label>
+            <textarea class="form-control" rows="3" @bind="editingRow.Description"></textarea>
+        </div>
+        <div class="col-6">
+            <label class="form-label fw-600">تاریخ انجام</label>
+            <DatePicker Value="editingRow.DueDate" ValueChanged="v => editingRow.DueDate = v" CssClass="form-control-sm" AllowClear="true" />
+        </div>
+        <div class="col-6">
+            <label class="form-label fw-600">مسئول اجرا</label>
+            <SearchSelect Items="users" Value="editingRow.ResponsibleUserId" ValueChanged="v => editingRow.ResponsibleUserId = v"
+                          Placeholder="جستجوی نام مسئول…" CssClass="form-select form-select-sm" />
+        </div>
+        <div class="col-6">
+            <label class="form-label fw-600">تاریخ پیگیری</label>
+            <DatePicker Value="editingRow.FollowUpDate" ValueChanged="v => editingRow.FollowUpDate = v" CssClass="form-control-sm" AllowClear="true" />
+        </div>
+        <div class="col-6">
+            <label class="form-label fw-600">مسئول پیگیری <span class="fs-7 text-muted">(حق تایید/رد)</span></label>
+            <SearchSelect Items="users" Value="editingRow.FollowUpUserId" ValueChanged="v => editingRow.FollowUpUserId = v"
+                          Placeholder="جستجوی نام مسئول پیگیری…" CssClass="form-select form-select-sm" />
+        </div>
+    </div>
+
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => rowModal = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@busy" @onclick="SaveRow">ذخیره</button>
+    </Footer>
+</Modal>
+
+@* ---------- تصمیم مسئول پیگیری (تایید/رد + شرح) ---------- *@
+<Modal Visible="followUpModal" Title="FollowUpModalTitle" Size="modal-sm"
+       OnClose="() => followUpModal = false">
+    <ChildContent>
+    <p class="fs-7">بند «@ShortDesc(targetRow?.Description ?? "")»</p>
+    <label class="form-label fw-600">@(followUpDecision == "Rejected" ? "دلیل رد (شرح)" : "شرح تایید (اختیاری)")</label>
+    <textarea class="form-control form-control-sm" rows="3" @bind="followUpNote" maxlength="500"></textarea>
+
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => followUpModal = false">انصراف</button>
+        <button class="btn @(followUpDecision == "Rejected" ? "btn-danger" : "btn-success")" @onclick="DoFollowUpDecision">@(followUpDecision == "Rejected" ? "ثبت رد" : "ثبت تایید")</button>
+    </Footer>
+</Modal>
+
+@* ---------- ارسال به گردش (سوال غایبین) ---------- *@
+<Modal Visible="submitModal" Title="ارسال صورتجلسه به گردش" Size="modal-sm"
+       OnClose="() => submitModal = false">
+    <ChildContent>
+    <div class="fs-7">
+        <p>با ارسال، به <b>همهٔ حاضرین</b> نوتیفیکیشن ارسال می‌شود.</p>
+        <div class="form-check mt-2">
+            <input class="form-check-input" type="checkbox" id="chkAbsent" @bind="includeAbsentees" />
+            <label class="form-check-label" for="chkAbsent">
+                ارسال به <b>غایبین</b> هم انجام شود؟ (@(detail?.Participants.Count(p => p.Kind == "Absent") ?? 0) نفر غایب)
+            </label>
+        </div>
+    </div>
+
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => submitModal = false">انصراف</button>
+        <button class="btn btn-success" disabled="@busy" @onclick="DoSubmit">ارسال</button>
+    </Footer>
+</Modal>
+
+@* ---------- حذف بند ---------- *@
+<Modal Visible="delRowVisible" Title="حذف بند" Size="modal-sm"
+       OnClose="() => delRowVisible = false">
+    <ChildContent>
+    <p class="mb-0">بند «@ShortDesc(delRowTarget?.Description ?? "")» حذف شود؟</p>
+
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => delRowVisible = false">انصراف</button>
+        <button class="btn btn-danger" @onclick="DoDeleteRow">حذف</button>
+    </Footer>
+</Modal>
+
+@* ---------- امضا ---------- *@
+<SignaturePadModal Visible="signModal" VisibleChanged="v => signModal = v"
+                  SignerName="SignerNameDisplay" OnSign="OnSignatureSaved" />
+
+@* ---------- 🤖 پیش‌نویس هوشمند بندها ---------- *@
+<Modal Visible="aiMinutesModal" Title="@AiModalTitle" Size="modal-lg"
+       OnClose="() => aiMinutesModal = false">
+    <ChildContent>
+    @if (aiMinutesDraft == null)
+    {
+        <label class="form-label fw-600">متن جلسه (یادداشت خام، خلاصه صحبت‌ها…)</label>
+        <textarea class="form-control" rows="6" placeholder="مثلاً: در جلسه مقرر شد احمد تا شنبه فاکتورها را بررسی کند و مریم قرارداد را نهایی کند…"
+                  @bind="aiMinutesRaw"></textarea>
+        @if (!string.IsNullOrEmpty(aiMinutesErr))
+        {
+            <div class="alert alert-danger mt-2 mb-0 py-2">@aiMinutesErr</div>
+        }
+    }
+    else
+    {
+        @if (!string.IsNullOrWhiteSpace(aiMinutesDraft.Summary))
+        {
+            <p class="text-muted fs-7">@aiMinutesDraft.Summary</p>
+        }
+        <div class="list-group">
+            @foreach (var it in aiMinutesDraft.Items)
+            {
+                <label class="list-group-item d-flex gap-2 align-items-start">
+                    <input type="checkbox" class="form-check-input mt-1" checked="@aiMinutesSel.Contains(it)"
+                           @onchange="() => ToggleAiMinutesItem(it)" />
+                    <span>
+                        @it.Text
+                        @if (!string.IsNullOrWhiteSpace(it.Responsible))
+                        {
+                            <small class="text-muted"> — مسئول: @it.Responsible</small>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(it.DeadlineText))
+                        {
+                            <small class="text-muted"> — مهلت: @it.DeadlineText</small>
+                        }
+                    </span>
+                </label>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(aiMinutesErr))
+        {
+            <div class="alert alert-danger mt-2 mb-0 py-2">@aiMinutesErr</div>
+        }
+    }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => aiMinutesModal = false">انصراف</button>
+        @if (aiMinutesDraft == null)
+        {
+            <button class="btn btn-primary" disabled="@(aiMinutesBusy || string.IsNullOrWhiteSpace(aiMinutesRaw))" @onclick="GenerateAiMinutes">
+                @if (aiMinutesBusy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                تولید بندها
+            </button>
+        }
+        else
+        {
+            <button class="btn btn-outline-secondary" disabled="@aiMinutesBusy" @onclick="() => { aiMinutesDraft = null; aiMinutesSel.Clear(); }">بازگشت</button>
+            <button class="btn btn-success" disabled="@(aiMinutesBusy || aiMinutesSel.Count == 0)" @onclick="AddAiMinutesItems">
+                @if (aiMinutesBusy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                افزودن @aiMinutesSel.Count بند
+            </button>
+        }
+    </Footer>
+</Modal>
+
+@code {
+    // ================== حالت اصلی ==================
+    [Parameter] public int? Id { get; set; }
+
+    private int minutesId = 0;
+    private string title = "";
+    private DateTime? meetingDate = DateTime.Now;
+    private List<int> attendeeIds = new();
+    private List<int> absentIds = new();
+    private MinutesDetailDto? detail;
+    private List<RowForm> rows = new();
+    private List<LookupItem> users = new();
+    private bool busy = true;
+
+    // دسترسی‌ها
+    private bool canView => Auth.Has("MeetingMinutes.View");
+    private bool canCreator => minutesId > 0 && detail?.CreatedByUserId == Auth.UserId;
+    private bool canEdit => (minutesId == 0 && Auth.Has("MeetingMinutes.Create")) || (minutesId > 0 && canCreator && Auth.Has("MeetingMinutes.Update"));
+    // حذف بند/صورتجلسه فقط برای ایجادکننده و با مجوز حذف مجاز است.
+    private bool canDelete => canCreator && detail?.Status != "Closed" && Auth.Has("MeetingMinutes.Delete");
+    private bool canSign => Auth.Has("MeetingMinutes.Sign");
+    private bool canWorkOrder => Auth.Has("WorkOrders.Create");
+    private bool canInnerLetter => Auth.Has("MeetingMinutes.ToInnerLetter");
+    private bool canOutgoing => Auth.Has("MeetingMinutes.ToOutgoingLetter");
+    private bool canEmail => Auth.Has("MeetingMinutes.SendEmail");
+
+    private int woWholeCount;
+
+    // ================== مودال بند ==================
+    private bool rowModal;
+    private RowForm editingRow = new();
+
+    // ================== مودال تصمیم پیگیری ==================
+    private bool followUpModal;
+    private RowForm? targetRow;
+    private string followUpDecision = "Approved";
+    private string followUpNote = "";
+
+    // ================== مودال ارسال ==================
+    private bool submitModal;
+    private bool includeAbsentees = true;
+
+
+
+    // ================== مودال امضا ==================
+    private bool signModal;
+    private MinutesParticipantDto? signTarget;
+
+    // ================== مودال حذف بند ==================
+    private bool delRowVisible;
+    private RowForm? delRowTarget;
+
+    // ================== فرم بند ==================
+    private class RowForm
+    {
+        public int Id; // 0 = هنوز ذخیره نشده
+        public int RowNo;
+        public string Description = "";
+        public DateTime? DueDate;
+        public int ResponsibleUserId;
+        public DateTime? FollowUpDate;
+        public int FollowUpUserId;
+        // وضعیت و تصمیمات (از سرور)
+        public string ItemStatus = "InProgress";
+        public bool RespApproved;
+        public DateTime? RespApprovedAt;
+        public string? RespNote;
+        public string? FollowUpDecision;
+        public DateTime? FollowUpDecidedAt;
+        public string? FollowUpNote;
+        public int WoCount;
+    }
+
+    // ================== بارگذاری ==================
+
+    protected override void OnInitialized()
+    {
+        Layout.SetTitle("صورتجلسه");
+        Rt.DataChanged += OnRealtimeChanged;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        minutesId = Id ?? 0;
+        Layout.SetTitle(minutesId == 0 ? "ثبت صورتجلسه" : $"صورتجلسه {minutesId}");
+        if (!canView) return;
+        try
+        {
+            // کاربران فعال برای کمبوها — از اندپوینت سبک خود ماژول می‌آید؛
+            // GET api/users برای کاربران بدون مجوز SystemUsers با ۴۰۳ می‌شکست.
+            var allUsers = await Api.GetAsync<List<Inventory.Shared.Dtos.UserLookupItemDto>>("api/meeting-minutes/user-options");
+            users = allUsers
+                .Select(u => new LookupItem { Id = u.Id, Name = u.Name })
+                .ToList();
+
+            if (minutesId == 0)
+            {
+                // جدید — پیش‌فرض: خود کاربر حاضر است
+                attendeeIds = new List<int> { Auth.UserId };
+            }
+            else
+            {
+                await LoadDetail();
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Error("خطا در بارگذاری: " + ex.Message);
+        }
+        busy = false;
+    }
+
+    private async Task LoadDetail()
+    {
+        detail = await Minutes.GetDetailAsync(minutesId);
+        if (detail is null)
+        {
+            // دسترسی با حدس‌زدن شناسه در نوار آدرس ممکن نیست — سرور «پیدا نشد» می‌دهد.
+            Toast.Error("صورتجلسه پیدا نشد یا در گردش شما نیست.");
+            Nav.NavigateTo("misc/minutes");
+            return;
+        }
+        title = detail.Title;
+        lastLoadedTitle = detail.Title;
+        meetingDate = detail.MeetingDate;
+        attendeeIds = detail.Participants.Where(p => p.Kind == "Attendee").Select(p => p.UserId).ToList();
+        absentIds = detail.Participants.Where(p => p.Kind == "Absent").Select(p => p.UserId).ToList();
+        rows = detail.Items.Select(i => ToRowForm(i)).ToList();
+        ApplyTabTitle();
+        await LoadWorkOrderBadgesAsync();
+    }
+
+    private void ApplyTabTitle()
+    {
+        var name = (detail?.Title ?? title ?? "").Trim();
+        Layout.SetTitle(string.IsNullOrWhiteSpace(name)
+            ? (minutesId == 0 ? "ثبت صورتجلسه" : $"صورتجلسه {minutesId}")
+            : $"صورتجلسه — {name}");
+    }
+
+    private static RowForm ToRowForm(MinutesItemDto i) => new()
+    {
+        Id = i.Id,
+        RowNo = i.RowNo,
+        Description = i.Description,
+        DueDate = i.DueDate,
+        ResponsibleUserId = i.ResponsibleUserId ?? 0,
+        FollowUpDate = i.FollowUpDate,
+        FollowUpUserId = i.FollowUpUserId ?? 0,
+        ItemStatus = i.ItemStatus,
+        RespApproved = i.RespApproved,
+        RespApprovedAt = i.RespApprovedAt,
+        RespNote = i.RespNote,
+        FollowUpDecision = i.FollowUpDecision,
+        FollowUpDecidedAt = i.FollowUpDecidedAt,
+        FollowUpNote = i.FollowUpNote
+    };
+
+    private async Task LoadWorkOrderBadgesAsync()
+    {
+        if (minutesId <= 0) return;
+        try
+        {
+            var whole = await Api.GetAsync<List<WoSrcDto>>($"api/workorders/for-source?module=MeetingMinutes&sourceId={minutesId}");
+            woWholeCount = whole.Count(w => w.Status != "Closed");
+            foreach (var row in rows.Where(r => r.Id > 0))
+            {
+                var list = await Api.GetAsync<List<WoSrcDto>>($"api/workorders/for-source?module=MeetingMinutesItem&sourceId={row.Id}");
+                row.WoCount = list.Count(w => w.Status != "Closed");
+            }
+        }
+        catch { }
+    }
+
+    private class WoSrcDto
+    {
+        public int Id { get; set; }
+        public string Number { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string Status { get; set; } = "";
+    }
+
+    private string? lastLoadedTitle;
+
+    private async void OnRealtimeChanged(string scope)
+    {
+        if (scope != "meeting-minutes" || minutesId <= 0) return;
+        try
+        {
+            // اگر کاربر روی عنوان تایپ کرده باشد، دست‌خوردنش نکن — فقط بندها/وضعیت رفرش می‌شوند
+            var userEditingTitle = title != (lastLoadedTitle ?? "");
+            await LoadDetail();
+            if (userEditingTitle) title = detail?.Title ?? title; // عنوان کاربری حفظ می‌شود
+            else if (detail != null) { title = detail.Title; lastLoadedTitle = detail.Title; }
+        }
+        catch { }
+        try { await InvokeAsync(StateHasChanged); } catch { }
+    }
+
+    // ================== اقدامات ==================
+
+    private void OnAttendees(List<int> v)
+    {
+        attendeeIds = v;
+        absentIds = absentIds.Where(x => !attendeeIds.Contains(x)).ToList();
+    }
+
+    private void OnAbsents(List<int> v) => absentIds = v.Where(x => !attendeeIds.Contains(x)).ToList();
+
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(title)) { Toast.Error("عنوان صورتجلسه الزامی است."); return; }
+        if (meetingDate is null) { Toast.Error("تاریخ جلسه را انتخاب کنید."); return; }
+        if (attendeeIds.Count == 0) { Toast.Error("حداقل یک حاضر انتخاب کنید."); return; }
+        if (rows.Any(r => string.IsNullOrWhiteSpace(r.Description))) { Toast.Error("شرح همهٔ بندها الزامی است."); return; }
+        foreach (var r in rows)
+        {
+            if (r.DueDate != null && r.FollowUpDate != null && r.FollowUpDate.Value.Date < r.DueDate.Value.Date)
+            {
+                Toast.Error($"در بند {r.RowNo}، تاریخ پیگیری نمی‌تواند قبل از تاریخ انجام باشد.");
+                return;
+            }
+        }
+
+        busy = true;
+        try
+        {
+            var dto = new SaveMinutesDto
+            {
+                Id = minutesId,
+                Title = title.Trim(),
+                MeetingDate = meetingDate.Value,
+                AttendeeUserIds = attendeeIds,
+                AbsentUserIds = absentIds,
+                Items = rows.Select(r => new SaveMinutesItemDto
+                {
+                    Id = r.Id,
+                    Description = r.Description,
+                    DueDate = r.DueDate,
+                    ResponsibleUserId = r.ResponsibleUserId is > 0 ? r.ResponsibleUserId : null,
+                    FollowUpDate = r.FollowUpDate,
+                    FollowUpUserId = r.FollowUpUserId is > 0 ? r.FollowUpUserId : null
+                }).ToList()
+            };
+            var newId = await Minutes.SaveAsync(dto);
+            if (minutesId == 0)
+            {
+                minutesId = newId;
+                Nav.NavigateTo($"misc/minutes/{newId}", replace: true);
+            }
+            await LoadDetail();
+            Toast.Success(minutesId == newId ? "ذخیره شد." : "صورتجلسه ثبت شد — حالا «ارسال به گردش» را بزنید تا اطلاع‌رسانی شود.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        busy = false;
+    }
+
+    private void NewRow()
+    {
+        editingRow = new RowForm { RowNo = rows.Count + 1 };
+        rowModal = true;
+    }
+
+    private void OpenRowEdit(RowForm r)
+    {
+        editingRow = new RowForm
+        {
+            Id = r.Id, RowNo = r.RowNo, Description = r.Description, DueDate = r.DueDate,
+            ResponsibleUserId = r.ResponsibleUserId, FollowUpDate = r.FollowUpDate, FollowUpUserId = r.FollowUpUserId
+        };
+        rowModal = true;
+    }
+
+private async Task SaveRow()
+    {
+        if (string.IsNullOrWhiteSpace(editingRow.Description)) { Toast.Error("شرح بند الزامی است."); return; }
+        if (minutesId == 0) { Toast.Error("ابتدا صورتجلسه را ثبت کنید، بعد بند اضافه کنید."); rowModal = false; return; }
+        if (editingRow.DueDate != null && editingRow.FollowUpDate != null && editingRow.FollowUpDate.Value.Date < editingRow.DueDate.Value.Date)
+        {
+            Toast.Error("تاریخ پیگیری نمی‌تواند قبل از تاریخ انجام باشد.");
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            var dto = new SaveMinutesItemDto
+            {
+                Id = editingRow.Id,
+                Description = editingRow.Description,
+                DueDate = editingRow.DueDate,
+                ResponsibleUserId = editingRow.ResponsibleUserId is > 0 ? editingRow.ResponsibleUserId : null,
+                FollowUpDate = editingRow.FollowUpDate,
+                FollowUpUserId = editingRow.FollowUpUserId is > 0 ? editingRow.FollowUpUserId : null
+            };
+            if (editingRow.Id > 0) await Minutes.UpdateItemAsync(editingRow.Id, dto);
+            else await Minutes.AddItemAsync(minutesId, dto);
+            rowModal = false;
+            await LoadDetail();
+            Toast.Success("بند ذخیره شد.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        busy = false;
+    }
+
+    // ==================== 🤖 پیش‌نویس هوشمند بندها ====================
+
+    private bool aiMinutesModal;
+    private bool aiMinutesBusy;
+    private string aiMinutesRaw = "";
+    private string aiMinutesErr = "";
+    private AiMinutesDraft? aiMinutesDraft;
+    private readonly HashSet<AiMinutesItem> aiMinutesSel = new();
+
+    private string AiModalTitle => aiMinutesDraft == null ? "🤖 پیش‌نویس هوشمند بندها" : "بندهای پیشنهادی هوش مصنوعی";
+
+    private void OpenAiMinutes()
+    {
+        aiMinutesModal = true;
+        aiMinutesErr = "";
+        aiMinutesDraft = null;
+        aiMinutesSel.Clear();
+    }
+
+    private async Task GenerateAiMinutes()
+    {
+        if (string.IsNullOrWhiteSpace(aiMinutesRaw) || aiMinutesBusy) return;
+        aiMinutesBusy = true; aiMinutesErr = "";
+        try
+        {
+            aiMinutesDraft = await AiSvc.DraftMinutesAsync(aiMinutesRaw.Trim(), string.IsNullOrWhiteSpace(title) ? null : title.Trim());
+            aiMinutesSel.Clear();
+            foreach (var it in aiMinutesDraft.Items) aiMinutesSel.Add(it);
+            if (aiMinutesDraft.Items.Count == 0) aiMinutesErr = "بندی از این متن استخراج نشد؛ متن کامل‌تری بنویسید.";
+        }
+        catch (Exception ex) { aiMinutesErr = ex.Message; }
+        finally { aiMinutesBusy = false; }
+    }
+
+    private void ToggleAiMinutesItem(AiMinutesItem item)
+    {
+        if (!aiMinutesSel.Remove(item)) aiMinutesSel.Add(item);
+    }
+
+    private int? MatchResponsible(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || users.Count == 0) return null;
+        var n = name.Trim();
+        var hit = users.FirstOrDefault(u => u.Name == n)
+            ?? users.FirstOrDefault(u => u.Name.Contains(n) || n.Contains(u.Name));
+        return hit?.Id;
+    }
+
+    private async Task AddAiMinutesItems()
+    {
+        if (minutesId <= 0)
+        {
+            aiMinutesErr = "ابتدا صورتجلسه را ذخیره کنید، بعد بندها را اضافه کنید.";
+            return;
+        }
+        if (aiMinutesSel.Count == 0 || aiMinutesBusy) return;
+        aiMinutesBusy = true; aiMinutesErr = "";
+        try
+        {
+            var count = 0;
+            foreach (var it in aiMinutesSel.ToList())
+            {
+                await Minutes.AddItemAsync(minutesId, new SaveMinutesItemDto
+                {
+                    Description = it.Text,
+                    ResponsibleUserId = MatchResponsible(it.Responsible),
+                });
+                count++;
+            }
+            aiMinutesModal = false;
+            await LoadDetail();
+            Toast.Success($"{count} بند با هوش مصنوعی اضافه شد.");
+        }
+        catch (Exception ex) { aiMinutesErr = ex.Message; }
+        finally { aiMinutesBusy = false; }
+    }
+
+private void AskDeleteRow(RowForm r)
+    {
+        delRowTarget = r;
+        delRowVisible = true;
+    }
+
+    private async Task DoDeleteRow()
+    {
+        if (delRowTarget is null) return;
+        try
+        {
+            await Minutes.DeleteItemAsync(delRowTarget.Id);
+            delRowVisible = false;
+            await LoadDetail();
+            Toast.Success("بند حذف شد.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+    }
+
+    // ---------- تصمیمات ----------
+
+    private async Task DoRespDecision(RowForm row, bool approved)
+    {
+        try
+        {
+            await Minutes.RespDecisionAsync(row.Id, approved, approved ? "انجام شد" : "بازگشت");
+            await LoadDetail();
+            Toast.Success(approved ? "تایید شما ثبت شد." : "بند بازگشت.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private bool isClosed => detail?.Status == "Closed";
+    private string RowModalTitle => editingRow.Id > 0 ? "ویرایش بند" : "بند جدید صورتجلسه";
+    private string RegisteredDisplay => detail?.DateRegistered != null ? PersianDate.ToShortFa(detail.DateRegistered) : "— ثبت نشده";
+
+    private string FollowUpModalTitle => followUpDecision == "Rejected" ? "رد بند" : "تایید بند";
+    private string SignerNameDisplay => signTarget?.Name ?? "";
+
+    private void OpenFollowUp(RowForm row, string decision)
+    {
+        targetRow = row;
+        followUpDecision = decision;
+        followUpNote = "";
+        followUpModal = true;
+    }
+
+private async Task DoFollowUpDecision()
+    {
+        if (targetRow is null) return;
+        if (followUpDecision == "Rejected" && string.IsNullOrWhiteSpace(followUpNote))
+        {
+            Toast.Error("برای رد کردن، دلیل را بنویسید.");
+            return;
+        }
+        try
+        {
+            await Minutes.FollowUpDecisionAsync(targetRow.Id, followUpDecision, followUpNote);
+            followUpModal = false;
+            await LoadDetail();
+            Toast.Success(followUpDecision == "Rejected" ? "رد شما ثبت شد." : "تایید شما ثبت شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- ارسال به گردش ----------
+
+    private void OpenSubmit()
+    {
+        if (minutesId == 0) { Toast.Error("ابتدا صورتجلسه را ثبت کنید."); return; }
+        includeAbsentees = true;
+        submitModal = true;
+    }
+
+private async Task DoSubmit()
+    {
+        busy = true;
+        try
+        {
+            await Minutes.SubmitAsync(minutesId, includeAbsentees);
+            submitModal = false;
+            Toast.Success("صورتجلسه به گردش ارسال شد — نوتیفیکیشن‌ها فرستاده شدند.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        busy = false;
+    }
+
+    // ---------- ناوبری و اتصال مستقیم به سایر بخش‌ها ----------
+
+    private void GoWorkOrderWhole()
+    {
+        if (minutesId <= 0) return;
+        Nav.NavigateTo($"/work-orders?sourceModule=MeetingMinutes&sourceId={minutesId}");
+    }
+
+    private void GoWorkOrderRow(RowForm row)
+    {
+        if (minutesId <= 0 || row.Id <= 0) return;
+        Nav.NavigateTo($"/work-orders?sourceModule=MeetingMinutesItem&sourceId={row.Id}&sourceRefId={minutesId}");
+    }
+
+    private void GoInnerWhole()
+    {
+        if (minutesId <= 0) return;
+        Nav.NavigateTo($"/letters?compose=1&source=MeetingMinutes&sourceId={minutesId}");
+    }
+
+    private void GoInnerRow(RowForm row)
+    {
+        if (minutesId <= 0 || row.Id <= 0) return;
+        Nav.NavigateTo($"/letters?compose=1&source=MeetingMinutes&sourceId={minutesId}&itemId={row.Id}");
+    }
+
+    private void GoOutgoing()
+    {
+        if (minutesId <= 0) return;
+        Nav.NavigateTo($"/outgoing-letters?compose=1&source=MeetingMinutes&sourceId={minutesId}");
+    }
+
+    private void GoEmail()
+    {
+        if (minutesId <= 0) return;
+        Nav.NavigateTo($"/office/email?compose=1&attach=MeetingMinutes&sourceId={minutesId}");
+    }
+
+    private void GoOutgoingRow(RowForm row)
+    {
+        if (minutesId <= 0 || row.Id <= 0) return;
+        Nav.NavigateTo($"/outgoing-letters?compose=1&source=MeetingMinutes&sourceId={minutesId}&itemId={row.Id}");
+    }
+
+    private void GoEmailRow(RowForm row)
+    {
+        if (minutesId <= 0 || row.Id <= 0) return;
+        Nav.NavigateTo($"/office/email?compose=1&attach=MeetingMinutes&sourceId={minutesId}&itemId={row.Id}");
+    }
+
+    private RenderFragment RowActions(RowForm row) => builder =>
+    {
+        int seq = 0;
+        builder.OpenElement(seq++, "div");
+        builder.AddAttribute(seq++, "class", "d-flex flex-wrap gap-1 mm-btn-row");
+
+        if (row.Id > 0)
+        {
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "type", "button");
+            builder.AddAttribute(seq++, "class", "btn btn-outline-secondary btn-sm py-0");
+            builder.AddAttribute(seq++, "title", "ویرایش بند");
+            builder.AddAttribute(seq++, "disabled", !canEdit);
+            builder.AddAttribute(seq++, "onclick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => OpenRowEdit(row)));
+            builder.AddMarkupContent(seq++, "<i class=\"bi bi-pencil\"></i>");
+            builder.CloseElement();
+
+            if (canDelete)
+            {
+                builder.OpenElement(seq++, "button");
+                builder.AddAttribute(seq++, "type", "button");
+                builder.AddAttribute(seq++, "class", "btn btn-outline-danger btn-sm py-0");
+                builder.AddAttribute(seq++, "title", "حذف بند");
+                builder.AddAttribute(seq++, "onclick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => AskDeleteRow(row)));
+                builder.AddMarkupContent(seq++, "<i class=\"bi bi-trash\"></i>");
+                builder.CloseElement();
+            }
+        }
+
+        if (canWorkOrder && row.Id > 0 && detail?.Status != "Closed")
+        {
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "type", "button");
+            builder.AddAttribute(seq++, "class", "btn btn-outline-primary btn-sm py-0");
+            builder.AddAttribute(seq++, "title", "دستور کار برای این بند");
+            builder.AddAttribute(seq++, "onclick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => GoWorkOrderRow(row)));
+            builder.AddMarkupContent(seq++, "<i class=\"bi bi-kanban\"></i>");
+            if (row.WoCount > 0)
+            {
+                builder.OpenElement(seq++, "span");
+                builder.AddAttribute(seq++, "class", "badge text-bg-info ms-1 num");
+                builder.AddContent(seq++, row.WoCount.ToString());
+                builder.CloseElement();
+            }
+            builder.CloseElement();
+        }
+
+        if (canInnerLetter && row.Id > 0)
+        {
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "type", "button");
+            builder.AddAttribute(seq++, "class", "btn btn-outline-info btn-sm py-0");
+            builder.AddAttribute(seq++, "title", "تبدیل این بند به نامه داخلی");
+            builder.AddAttribute(seq++, "onclick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => GoInnerRow(row)));
+            builder.AddMarkupContent(seq++, "<i class=\"bi bi-envelope\"></i>");
+            builder.CloseElement();
+        }
+
+        if (canOutgoing && row.Id > 0)
+        {
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "type", "button");
+            builder.AddAttribute(seq++, "class", "btn btn-outline-info btn-sm py-0");
+            builder.AddAttribute(seq++, "title", "تبدیل این بند به نامه صادره");
+            builder.AddAttribute(seq++, "onclick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => GoOutgoingRow(row)));
+            builder.AddMarkupContent(seq++, "<i class=\"bi bi-send-check\"></i>");
+            builder.CloseElement();
+        }
+
+        if (canEmail && row.Id > 0)
+        {
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "type", "button");
+            builder.AddAttribute(seq++, "class", "btn btn-outline-info btn-sm py-0");
+            builder.AddAttribute(seq++, "title", "ارسال این بند با ایمیل");
+            builder.AddAttribute(seq++, "onclick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => GoEmailRow(row)));
+            builder.AddMarkupContent(seq++, "<i class=\"bi bi-envelope-at\"></i>");
+            builder.CloseElement();
+        }
+
+        if (row.Id > 0 && detail?.Status != "Closed" && row.ResponsibleUserId == Auth.UserId)
+        {
+            if (!row.RespApproved)
+            {
+                builder.OpenElement(seq++, "button");
+                builder.AddAttribute(seq++, "type", "button");
+                builder.AddAttribute(seq++, "class", "btn btn-success btn-sm py-0");
+                builder.AddAttribute(seq++, "title", "تایید انجام توسط مسئول");
+                builder.AddAttribute(seq++, "onclick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => DoRespDecision(row, true)));
+                builder.AddMarkupContent(seq++, "<i class=\"bi bi-check-lg\"></i>");
+                builder.CloseElement();
+            }
+            else
+            {
+                builder.OpenElement(seq++, "button");
+                builder.AddAttribute(seq++, "type", "button");
+                builder.AddAttribute(seq++, "class", "btn btn-outline-warning btn-sm py-0");
+                builder.AddAttribute(seq++, "title", "بازگشت بند توسط مسئول");
+                builder.AddAttribute(seq++, "onclick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => DoRespDecision(row, false)));
+                builder.AddMarkupContent(seq++, "<i class=\"bi bi-arrow-counterclockwise\"></i>");
+                builder.CloseElement();
+            }
+        }
+
+        if (row.Id > 0 && detail?.Status != "Closed" && row.FollowUpUserId == Auth.UserId && string.IsNullOrWhiteSpace(row.FollowUpDecision))
+        {
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "type", "button");
+            builder.AddAttribute(seq++, "class", "btn btn-success btn-sm py-0");
+            builder.AddAttribute(seq++, "title", "تایید توسط مسئول پیگیری");
+            builder.AddAttribute(seq++, "onclick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => OpenFollowUp(row, "Approved")));
+            builder.AddMarkupContent(seq++, "<i class=\"bi bi-check2\"></i>");
+            builder.CloseElement();
+
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "type", "button");
+            builder.AddAttribute(seq++, "class", "btn btn-danger btn-sm py-0");
+            builder.AddAttribute(seq++, "title", "رد توسط مسئول پیگیری (با شرح)");
+            builder.AddAttribute(seq++, "onclick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => OpenFollowUp(row, "Rejected")));
+            builder.AddMarkupContent(seq++, "<i class=\"bi bi-x-lg\"></i>");
+            builder.CloseElement();
+        }
+
+        builder.CloseElement();
+    };
+
+    // ---------- امضا ----------
+
+    private void OpenSign(MinutesParticipantDto p)
+    {
+        signTarget = p;
+        signModal = true;
+    }
+
+    private async Task OnSignatureSaved(string base64)
+    {
+        try
+        {
+            await Minutes.SignAsync(minutesId, base64);
+            await LoadDetail();
+            Toast.Success("امضای شما ثبت شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task RemoveParticipantSignature(MinutesParticipantDto participant)
+    {
+        if (!canCreator) return;
+        try
+        {
+            await Minutes.RemoveSignatureAsync(minutesId, participant.UserId);
+            await LoadDetail();
+            Toast.Success($"امضای {participant.Name} برداشته شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- چاپ ----------
+
+    private async Task DownloadPrint()
+    {
+        try
+        {
+            var (data, fileName, contentType) = await Api.GetFileAsync($"api/meeting-minutes/{minutesId}/print");
+            if (data.Length < 5 || data[0] != (byte)'%' || data[1] != (byte)'P')
+                throw new Exception("خروجی چاپ PDF معتبر نیست.");
+            var b64 = Convert.ToBase64String(data);
+            await JS.InvokeAsync<bool>("downloadBase64", fileName, b64, contentType);
+        }
+        catch (Exception ex)
+        {
+            Toast.Error("خطا در دریافت PDF: " + ex.Message);
+        }
+    }
+
+    // ================== ابزار نمایش ==================
+
+    private string UserName(int? userId)
+    {
+        if (userId is null or <= 0) return "—";
+        return users.FirstOrDefault(u => u.Id == userId)?.Name ?? userId.Value.ToString();
+    }
+
+    private string ShortDesc(string? s)
+    {
+        s = (s ?? "").Trim().Replace('\n', ' ');
+        return s.Length > 40 ? s[..40] + "…" : s;
+    }
+
+    private string FollowUpText(string? d) => d switch
+    {
+        "Approved" => "تایید شد",
+        "Rejected" => "رد شد",
+        _ => "در انتظار"
+    };
+
+    private string FollowUpColor(string? d) => d switch
+    {
+        "Approved" => "text-success",
+        "Rejected" => "text-danger",
+        _ => "text-muted"
+    };
+
+    private static string ItemStatusClass(string status) => status switch
+    {
+        "Done" => "badge text-bg-success",
+        "Rejected" => "badge text-bg-danger",
+        _ => "badge text-bg-secondary"
+    };
+
+    private static string ItemStatusText(string status) => status switch
+    {
+        "Done" => "انجام شد",
+        "Rejected" => "رد شده",
+        _ => "در جریان"
+    };
+
+    public void Dispose() => Rt.DataChanged -= OnRealtimeChanged;
+}

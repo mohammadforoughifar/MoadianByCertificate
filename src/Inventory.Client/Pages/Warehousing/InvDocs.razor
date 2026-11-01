@@ -1,0 +1,437 @@
+@page "/inv/docs"
+@inject IInvDocService DocSvc
+@inject IInvDocTypeService DocTypeSvc
+@inject IInvWarehouseService WarehouseSvc
+@inject NavigationManager Nav
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>اسناد انبار</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>عملیات انبار — رسید و حواله</h1>
+        <p class="lead">ثبت و پیگیری اسناد ورود، خروج و انتقال کالا</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-primary" href="/inv/docs/new"><i class="bi bi-plus-lg"></i> سند جدید</a>
+    </div>
+</div>
+
+@* ---------- فیلتر ماهیت ---------- *@
+<div class="mtabs mb-3">
+    <button class="mtab @(fNature is null ? "active" : "")" @onclick="() => SetNature(null)">
+        <i class="bi bi-collection"></i> همه اسناد
+    </button>
+    <button class="mtab @(fNature == StockNature.Increase ? "active" : "")" @onclick="() => SetNature(StockNature.Increase)">
+        <i class="bi bi-box-arrow-in-down"></i> رسیدها (افزایشی)
+    </button>
+    <button class="mtab @(fNature == StockNature.Decrease ? "active" : "")" @onclick="() => SetNature(StockNature.Decrease)">
+        <i class="bi bi-box-arrow-up"></i> حواله‌ها (کاهشی)
+    </button>
+    <button class="mtab @(fNature == StockNature.Neutral ? "active" : "")" @onclick="() => SetNature(StockNature.Neutral)">
+        <i class="bi bi-arrow-left-right"></i> انتقال / خنثی
+    </button>
+</div>
+
+@* ---------- نوار فیلترها ---------- *@
+<div class="card mb-3">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-3">
+                <label class="form-label">جستجو</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="شماره سند، عطف، طرف حساب…" value="@search"
+                           @oninput="OnSearchInput" @onkeyup="OnSearchKey" />
+                </div>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">نوع سند</label>
+                <select class="form-select" value="@(fDocTypeId?.ToString() ?? "")" @onchange="OnDocType">
+                    <option value="">همه</option>
+                    @foreach (var t in TypeOptions)
+                    {
+                        <option value="@t.Id">@t.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">انبار</label>
+                <select class="form-select" value="@(fWarehouseId?.ToString() ?? "")" @onchange="OnWarehouse">
+                    <option value="">همه انبارها</option>
+                    @foreach (var w in warehouses)
+                    {
+                        <option value="@w.Id">@w.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">وضعیت</label>
+                <select class="form-select" value="@(fStatus is null ? "" : ((int)fStatus).ToString())" @onchange="OnStatus">
+                    <option value="">همه</option>
+                    <option value="0">پیش‌نویس</option>
+                    <option value="1">قطعی</option>
+                    <option value="2">ابطال شده</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">بازه تاریخ</label>
+                <div class="d-flex gap-1">
+                    <DatePicker Value="fFrom" ValueChanged="OnFrom" AllowClear="true" />
+                    <DatePicker Value="fTo" ValueChanged="OnTo" AllowClear="true" />
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span><i class="bi bi-journal-text text-primary"></i> فهرست اسناد</span>
+        <span class="badge badge-soft-primary num ms-auto">@total.Num() سند</span>
+    </div>
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state">
+                <i class="bi bi-journal-x"></i>
+                <h5>سندی یافت نشد</h5>
+                <p class="text-muted">با دکمه «سند جدید» اولین رسید یا حواله را ثبت کنید.</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th style="width:8px"></th>
+                            <th>شماره</th>
+                            <th>تاریخ</th>
+                            <th>نوع سند</th>
+                            <th>انبار</th>
+                            <th>طرف حساب</th>
+                            <th class="text-center">اقلام</th>
+                            <th class="text-center">مقدار</th>
+                            <th class="text-center">مبلغ کل</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var d in items)
+                        {
+                            <tr>
+                                <td class="p-0"><div class="nature-strip @NatureCls(d.Nature)" style="height:44px"></div></td>
+                                <td class="num fw-600">@d.Number</td>
+                                <td class="num">@d.Date.ToFaDate()</td>
+                                <td>
+                                    <span class="badge @NatureBadge(d.Nature)">
+                                        <i class="bi @(string.IsNullOrWhiteSpace(d.DocTypeIcon) ? NatureIcon(d.Nature) : d.DocTypeIcon)"></i>
+                                        @d.DocTypeName
+                                    </span>
+                                </td>
+                                <td>
+                                    @d.WarehouseName
+                                    @if (d.IsTransfer && !string.IsNullOrWhiteSpace(d.CounterWarehouseName))
+                                    {
+                                        <i class="bi bi-arrow-left-short text-muted"></i>
+                                        <span class="text-muted">@d.CounterWarehouseName</span>
+                                    }
+                                </td>
+                                <td class="text-muted">@(string.IsNullOrWhiteSpace(d.PartyName) ? "—" : d.PartyName)</td>
+                                <td class="text-center num">@d.LineCount.Num()</td>
+                                <td class="text-center num">@d.TotalQuantity.Num()</td>
+                                <td class="text-center num fw-600">@d.TotalValue.Money()</td>
+                                <td><span class="badge @StatusBadge(d.Status)">@d.StatusTitle</span></td>
+                                <td class="text-end text-nowrap">
+                                    <a class="btn btn-sm btn-light" title="مشاهده / ویرایش" href="@($"/inv/docs/edit/{d.Id}")"><i class="bi bi-pencil text-primary"></i></a>
+                                    @if (d.Status == InvDocStatus.Draft)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="قطعی کردن" @onclick="() => Confirm(d)"><i class="bi bi-check2-circle text-success"></i></button>
+                                        <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(d)"><i class="bi bi-trash text-danger"></i></button>
+                                    }
+                                    else if (d.Status == InvDocStatus.Confirmed)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="برگشت از قطعی" @onclick="() => Unconfirm(d)"><i class="bi bi-arrow-counterclockwise text-warning"></i></button>
+                                        <button class="btn btn-sm btn-light" title="ابطال" @onclick="() => Cancel(d)"><i class="bi bi-x-circle text-danger"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var d in items)
+                {
+                    <div class="m-card @StatusCard(d.Status)">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi @(string.IsNullOrWhiteSpace(d.DocTypeIcon) ? NatureIcon(d.Nature) : d.DocTypeIcon)"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-700 num text-truncate">@d.Number</span>
+                                    <span class="badge @StatusBadge(d.Status) fs-8">@d.StatusTitle</span>
+                                </div>
+                                <div class="fs-8 text-muted text-truncate">@d.DocTypeName — @d.WarehouseName</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">تاریخ</div>
+                                <div class="num fw-700">@d.Date.ToFaDate()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-money">
+                                <span>مبلغ کل</span>
+                                <b class="num">@d.TotalValue.Money() <small>ریال</small></b>
+                            </div>
+                            <div class="m-card-row"><span><i class="bi bi-list-ol text-muted"></i> اقلام</span><b class="num">@d.LineCount.Num()</b></div>
+                            <div class="m-card-row"><span><i class="bi bi-person text-muted"></i> طرف حساب</span><b>@(string.IsNullOrWhiteSpace(d.PartyName) ? "—" : d.PartyName)</b></div>
+                        </div>
+                        <div class="m-card-actions">
+                            <a class="btn btn-light text-primary" href="@($"/inv/docs/edit/{d.Id}")"><i class="bi bi-pencil"></i> مشاهده</a>
+                            @if (d.Status == InvDocStatus.Draft)
+                            {
+                                <button class="btn btn-light text-success" @onclick="() => Confirm(d)"><i class="bi bi-check2-circle"></i></button>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="OnPage" />
+        }
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "docTypeId")] public int? QueryDocTypeId { get; set; }
+    [SupplyParameterFromQuery(Name = "warehouseId")] public int? QueryWarehouseId { get; set; }
+
+    private List<InvDoc> items = new();
+    private List<InvDocType> docTypes = new();
+    private List<LookupItem> warehouses = new();
+
+    private bool loading = true;
+    private int page = 1, total;
+    private const int PageSize = 15;
+
+    private StockNature? fNature;
+    private int? fDocTypeId, fWarehouseId;
+    private InvDocStatus? fStatus;
+    private DateTime? fFrom, fTo;
+    private string search = "";
+
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+
+    private List<InvDocType> TypeOptions =>
+        (fNature is null ? docTypes : docTypes.Where(t => t.Nature == fNature)).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("اسناد انبار");
+        fDocTypeId = QueryDocTypeId;
+        fWarehouseId = QueryWarehouseId;
+        try
+        {
+            docTypes = await DocTypeSvc.GetAllAsync(true);
+            warehouses = await WarehouseSvc.GetLookupsAsync();
+            if (fDocTypeId is > 0)
+                fNature = docTypes.FirstOrDefault(t => t.Id == fDocTypeId)?.Nature;
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var res = await DocSvc.GetAllAsync(fNature, fDocTypeId, fWarehouseId, fStatus,
+                string.IsNullOrWhiteSpace(search) ? null : search.Trim(), fFrom, fTo, page, PageSize);
+            items = res.Items;
+            total = res.TotalCount;
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task Reload()
+    {
+        page = 1;
+        await Load();
+    }
+
+    private async Task SetNature(StockNature? n)
+    {
+        fNature = n;
+        if (fDocTypeId is > 0 && n is not null && docTypes.FirstOrDefault(t => t.Id == fDocTypeId)?.Nature != n)
+            fDocTypeId = null;
+        await Reload();
+    }
+
+    private async Task OnDocType(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        fDocTypeId = string.IsNullOrEmpty(raw) ? null : int.Parse(raw);
+        await Reload();
+    }
+
+    private async Task OnWarehouse(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        fWarehouseId = string.IsNullOrEmpty(raw) ? null : int.Parse(raw);
+        await Reload();
+    }
+
+    private async Task OnStatus(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        fStatus = string.IsNullOrEmpty(raw) ? null : (InvDocStatus)int.Parse(raw);
+        await Reload();
+    }
+
+    private async Task OnFrom(DateTime? d)
+    {
+        fFrom = d;
+        await Reload();
+    }
+
+    private async Task OnTo(DateTime? d)
+    {
+        fTo = d;
+        await Reload();
+    }
+
+    private void OnSearchInput(ChangeEventArgs e) => search = e.Value?.ToString() ?? "";
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Reload();
+    }
+
+    private async Task OnPage(int p)
+    {
+        page = p;
+        await Load();
+    }
+
+    // ---------- عملیات روی سند ----------
+    private async Task Confirm(InvDoc d)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"سند «{d.Number}» قطعی شود؟ پس از قطعی شدن روی موجودی انبار اثر می‌گذارد."))
+            return;
+        try
+        {
+            await DocSvc.ConfirmAsync(d.Id);
+            Toast.Success("سند قطعی شد.");
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+    }
+
+    private async Task Unconfirm(InvDoc d)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"سند «{d.Number}» به حالت پیش‌نویس برگردد؟ اثر آن بر موجودی حذف می‌شود."))
+            return;
+        try
+        {
+            await DocSvc.UnconfirmAsync(d.Id);
+            Toast.Success("سند به پیش‌نویس برگشت.");
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+    }
+
+    private async Task Cancel(InvDoc d)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"سند «{d.Number}» ابطال شود؟"))
+            return;
+        try
+        {
+            await DocSvc.CancelAsync(d.Id);
+            Toast.Success("سند ابطال شد.");
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+    }
+
+    private async Task Delete(InvDoc d)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"سند «{d.Number}» حذف شود؟"))
+            return;
+        try
+        {
+            await DocSvc.DeleteAsync(d.Id);
+            Toast.Success("سند حذف شد.");
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+    }
+
+    // ---------- کمکی‌های نمایش ----------
+    private static string NatureIcon(StockNature n) => n switch
+    {
+        StockNature.Increase => "bi-box-arrow-in-down",
+        StockNature.Decrease => "bi-box-arrow-up",
+        _ => "bi-arrow-left-right"
+    };
+
+    private static string NatureBadge(StockNature n) => n switch
+    {
+        StockNature.Increase => "badge-nature-inc",
+        StockNature.Decrease => "badge-nature-dec",
+        _ => "badge-nature-neu"
+    };
+
+    private static string NatureCls(StockNature n) => n switch
+    {
+        StockNature.Increase => "inc",
+        StockNature.Decrease => "dec",
+        _ => "neu"
+    };
+
+    private static string StatusBadge(InvDocStatus s) => s switch
+    {
+        InvDocStatus.Draft => "badge-soft-warning",
+        InvDocStatus.Confirmed => "badge-soft-success",
+        _ => "badge-soft-muted"
+    };
+
+    private static string StatusCard(InvDocStatus s) => s switch
+    {
+        InvDocStatus.Draft => "st-progress",
+        InvDocStatus.Confirmed => "st-ready",
+        _ => "st-cancelled"
+    };
+}

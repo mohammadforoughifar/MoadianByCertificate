@@ -1,0 +1,336 @@
+@namespace Inventory.Client.Pages
+@page "/my"
+@inject IFaAttService AttSvc
+@inject IFaPayClientService PaySvc
+@inject IFaComService ComSvc
+@inject IHrTalentService TalentSvc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>داشبورد من</PageTitle>
+
+<div class="my-board">
+    @* ---------- سربرگ ---------- *@
+    <div class="my-hero">
+        <div>
+            <h1><i class="bi bi-grid-1x2-fill"></i> داشبورد من</h1>
+            <div class="my-hero-sub">@Greeting، @MyName 👋</div>
+            <div class="my-hero-date">@HeroDate</div>
+        </div>
+        <a class="btn btn-sm btn-light" href="hr-main/my" title="پرونده‌ی من"><i class="bi bi-person-vcard"></i></a>
+    </div>
+
+    @if (nothingAllowed)
+    {
+        <div class="alert alert-warning">هیچ‌کدام از بخش‌های شخصی برای حساب شما فعال نیست.</div>
+    }
+
+    @* ---------- ساعت‌زنی ---------- *@
+    @if (canAtt)
+    {
+        <div class="card border-0 shadow-sm my-card">
+            <div class="card-body text-center py-4">
+                @if (attLoadFailed)
+                {
+                    <div class="text-muted small mb-2">وضعیت امروز دریافت نشد.</div>
+                }
+                else if (attToday is not null)
+                {
+                    if (attToday.Daily is not null)
+                    {
+                        <span class="badge @FaAttUi.DayBadge(attToday.Daily.Status) fs-6 mb-3">@FaAttUi.DayStatus(attToday.Daily.Status)</span>
+                        <div class="d-flex justify-content-center gap-4 mb-3">
+                            <div><div class="small text-muted">ورود</div><div class="num fw-bold fs-5" dir="ltr">@FmtClock(attToday.Daily.FirstIn)</div></div>
+                            <div><div class="small text-muted">خروج</div><div class="num fw-bold fs-5" dir="ltr">@FmtClock(attToday.Daily.LastOut)</div></div>
+                            <div><div class="small text-muted">کارکرد</div><div class="num fw-bold fs-5">@FaAttUi.Min(attToday.Daily.WorkMinutes)</div></div>
+                        </div>
+                    }
+                    <div class="d-flex gap-2 justify-content-center">
+                        <button class="btn btn-success btn-lg flex-fill my-punch" disabled="@(!canIn || punching)" @onclick="() => Punch(0)">
+                            @if (punching && punchType == 0) { <span class="spinner-border spinner-border-sm"></span> }
+                            <i class="bi bi-box-arrow-in-right"></i> ثبت ورود
+                        </button>
+                        <button class="btn btn-outline-danger btn-lg flex-fill my-punch" disabled="@(!canOut || punching)" @onclick="() => Punch(1)">
+                            @if (punching && punchType == 1) { <span class="spinner-border spinner-border-sm"></span> }
+                            <i class="bi bi-box-arrow-left"></i> ثبت خروج
+                        </button>
+                    </div>
+                    <div class="small text-muted mt-2">
+                        <i class="bi bi-geo-alt"></i>
+                        @if (punching && geoWaiting)
+                        {
+                            <span>در حال دریافت موقعیت…</span>
+                        }
+                        else if (geoState == GeoState.Denied)
+                        {
+                            <span class="text-warning">بدون اجازه‌ی مکان، تردد بدون موقعیت ثبت می‌شود.</span>
+                        }
+                        else
+                        {
+                            <span>موقعیت (GPS) همراه تردد ثبت می‌شود.</span>
+                        }
+                    </div>
+                    @if (attToday.Logs.Count > 0)
+                    {
+                        <div class="text-muted small mt-2" dir="ltr">
+                            @foreach (var l in attToday.Logs.Take(4))
+                            {
+                                <span class="badge text-bg-light border ms-1">
+                                    @LogChip(l)
+                                </span>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+
+    @* ---------- آمار quick ---------- *@
+    <div class="row g-3">
+        @if (canAtt)
+        {
+            <div class="col-6">
+                <a class="card border-0 shadow-sm my-card my-stat text-decoration-none h-100 d-block" href="fa-att/my-leaves">
+                    <div class="card-body text-center py-3">
+                        <div class="text-muted small">مانده مرخصی استحقاقی</div>
+                        <div class="num fw-bold fs-3 @(LeaveMutedClass)">@LeaveRemainText</div>
+                        <div class="small text-muted">مرخصی‌های من <i class="bi bi-chevron-left"></i></div>
+                    </div>
+                </a>
+            </div>
+        }
+        @if (canPay)
+        {
+            <div class="col-6">
+                <a class="card border-0 shadow-sm my-card my-stat text-decoration-none h-100 d-block" href="fa-pay/my">
+                    <div class="card-body text-center py-3">
+                        <div class="text-muted small">آخرین فیش @lastSlipBadge</div>
+                        <div class="num fw-bold fs-3 @(SlipMutedClass)">@LastSlipNetText</div>
+                        <div class="small text-muted">
+                            @LastSlipLabel <i class="bi bi-chevron-left"></i>
+                        </div>
+                    </div>
+                </a>
+            </div>
+        }
+    </div>
+
+    @* ---------- اطلاعیه‌ها ---------- *@
+    @if (canCom)
+    {
+        <div class="card border-0 shadow-sm my-card">
+            <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-megaphone text-primary"></i> اطلاعیه‌های اخیر</span>
+                <a class="small text-decoration-none" href="fa-com">همه</a>
+            </div>
+            <div class="list-group list-group-flush">
+                @if (feed.Count == 0)
+                {
+                    <div class="list-group-item text-muted small">اطلاعیه‌ای برای نمایش نیست.</div>
+                }
+                else
+                {
+                    @foreach (var a in feed.Take(3))
+                    {
+                        <a class="list-group-item list-group-item-action" href="fa-com">
+                            <div class="fw-bold small">@a.Title</div>
+                            <div class="text-muted" style="font-size:.75rem">
+                                @BodyPreview(a.Body)
+                            </div>
+                        </a>
+                    }
+                }
+            </div>
+        </div>
+    }
+
+    @* ---------- دسترسی سریع ---------- *@
+    <div class="card border-0 shadow-sm my-card">
+        <div class="card-header bg-white fw-bold"><i class="bi bi-grid text-primary"></i> دسترسی سریع</div>
+        <div class="card-body">
+            <div class="row g-2 text-center">
+                @foreach (var q in QuickLinks)
+                {
+                    <div class="col-3">
+                        <a class="d-block my-quick" href="@q.Href">
+                            <i class="bi @q.Icon"></i>
+                            <span>@q.Title</span>
+                        </a>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* داشبورد موبایل پرسنل — اول موبایل، روی دسکتاپ وسط‌چین */
+    .my-board { max-width: 620px; margin: 0 auto; }
+    .my-board .my-card { border-radius: 1rem; }
+    .my-hero { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin: 0 0 1rem; }
+    .my-hero h1 { font-size: 1.35rem; font-weight: 800; margin-bottom: .25rem; }
+    .my-hero-sub { font-weight: 600; }
+    .my-hero-date { color: var(--bs-secondary-color); font-size: .85rem; }
+    .my-punch { min-height: 56px; font-size: 1.05rem; border-radius: .8rem; }
+    .my-stat .card-body { border-radius: 1rem; }
+    .my-quick { padding: .8rem .25rem; border-radius: .9rem; background: #f8f9fa; color: inherit; text-decoration: none; }
+    .my-quick i { display: block; font-size: 1.5rem; margin-bottom: .3rem; color: var(--bs-primary); }
+    .my-quick span { font-size: .75rem; font-weight: 600; }
+    @@media (max-width: 575px) {
+        .my-board { font-size: .95rem; }
+        .my-hero h1 { font-size: 1.15rem; }
+    }
+</style>
+
+@code {
+    // ---------- مجوزها ----------
+    private bool canAtt => Auth.Has("FaAtt.Read") || Auth.Has("FaAtt.Create") || Auth.IsAdmin;
+    private bool canPay => Auth.Has("FaPay.Read") || Auth.Has("FaPay.Manage") || Auth.IsAdmin;
+    private bool canCom => Auth.Has("FaCom.Read") || Auth.Has("FaCom.Manage") || Auth.IsAdmin;
+    private bool canLms => Auth.Has("FaLms.Read") || Auth.IsAdmin;
+    private bool nothingAllowed => !(canAtt || canPay || canCom || canLms);
+
+    // ---------- وضعیت ----------
+    private FaAttMyTodayDto? attToday;
+    private bool attLoadFailed;
+    private double? leaveRemain;
+    private FaPaySlipDto? lastSlip;
+    private string? lastSlipBadge => lastSlip is null ? "" : lastSlip.IsPaid ? "✅" : "⏳";
+    private List<FaComAnnouncementDto> feed = new();
+    private bool punching, geoWaiting;
+    private int punchType = -1;
+    private GeoState geoState = GeoState.Unknown;
+    private System.Timers.Timer? clockTimer;
+
+    private enum GeoState { Unknown, Granted, Denied }
+    private sealed record GeoPos(double Lat, double Lng);
+
+    private string TodayFa => PersianDate.ToShortFa(DateTime.Today);
+    private string HeroDate => attToday?.ShiftName is null
+        ? TodayFa
+        : $"{TodayFa} — شیفت: {attToday.ShiftName}";
+    private string LeaveRemainText => leaveRemain is null
+        ? "—"
+        : $"{Fa.Digits(leaveRemain.Value.ToString("0.#"))} روز";
+    private string LeaveMutedClass => leaveRemain is null ? "text-muted" : "";
+    private string LastSlipNetText => lastSlip is null
+        ? "—"
+        : Fa.Digits(((long)Math.Round(lastSlip.NetPay)).ToString("N0"));
+    private string SlipMutedClass => lastSlip is null ? "text-muted" : "";
+    private string LastSlipLabel => lastSlip is null
+        ? "فیش حقوقی من"
+        : $"{FaPayUi.MonthName(lastSlip.RunMonth)} — فیش‌های من";
+
+    private static string BodyPreview(string? body)
+        => string.IsNullOrWhiteSpace(body) ? "" : (body.Length > 90 ? body[..90] + "…" : body);
+
+    private static string LogChip(FaAttLogDto l)
+        => $"{(l.Type == 0 ? "↙" : "↗")} {l.Timestamp:HH:mm}{(l.Latitude is null ? "" : " 📍")}";
+    private string MyName => (attToday?.EmployeeName ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+    private string Greeting
+    {
+        get
+        {
+            var h = DateTime.Now.Hour;
+            if (h >= 17) return "شب بخیر";
+            if (h >= 12) return "ظهر بخیر";
+            return "صبح بخیر";
+        }
+    }
+
+    private bool canIn => attToday?.Logs.LastOrDefault() is null or { Type: 1 };
+    private bool canOut => attToday?.Logs.LastOrDefault() is { Type: 0 };
+
+    private record QuickLink(string Href, string Title, string Icon);
+    private List<QuickLink> QuickLinks => new()
+    {
+        new("fa-att/my-leaves", "مرخصی من", "bi-calendar-heart"),
+        new("fa-pay/my", "فیش‌های من", "bi-receipt"),
+        new("hr-main/my", "پرونده‌ی من", "bi-person-vcard"),
+        canLms ? new("fa-lms/my", "دوره‌های من", "bi-mortarboard") : new("fa-att/clock", "ساعت‌زنی", "bi-fingerprint"),
+        new("fa-com", "اعلان‌ها", "bi-megaphone"),
+        new("fa-com/my", "تیکت‌ها", "bi-ticket-detailed"),
+        new("fa-com/polls", "نظرسنجی", "bi-bar-chart"),
+        new("fa-com/my-suggestions", "پیشنهادها", "bi-lightbulb"),
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAll();
+        // به‌روزرسانی ساعت سربرگ/وضعیت هر دقیقه
+        clockTimer = new System.Timers.Timer(60_000);
+        clockTimer.Elapsed += (_, _) => InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAll()
+    {
+        if (canAtt) await LoadAtt();
+        if (canPay) await LoadPay();
+        if (canCom) await LoadCom();
+    }
+
+    private async Task LoadAtt()
+    {
+        try
+        {
+            attToday = await AttSvc.GetMyTodayAsync();
+            attLoadFailed = false;
+            try
+            {
+                var balances = await AttSvc.MyBalancesAsync();
+                leaveRemain = balances
+                    .OrderByDescending(b => b.LeaveTypeName == "استحقاقی")
+                    .ThenByDescending(b => b.EntitledDays)
+                    .FirstOrDefault()?.Remaining;
+            }
+            catch { leaveRemain = null; }
+        }
+        catch { attLoadFailed = true; }
+    }
+
+    private async Task LoadPay()
+    {
+        try
+        {
+            var slips = await PaySvc.MySlipsAsync();
+            lastSlip = slips.OrderByDescending(s => s.RunYear).ThenByDescending(s => s.RunMonth).FirstOrDefault();
+        }
+        catch { lastSlip = null; }
+    }
+
+    private async Task LoadCom()
+    {
+        try { feed = await ComSvc.GetFeedAsync(); }
+        catch { feed = new(); }
+    }
+
+    private async Task Punch(int type)
+    {
+        if (punching) return;
+        punching = true; punchType = type; geoWaiting = true;
+        try
+        {
+            double? lat = null, lng = null;
+            try
+            {
+                var pos = await JS.InvokeAsync<GeoPos?>("attGetPosition", 8000);
+                if (pos is not null) { lat = pos.Lat; lng = pos.Lng; }
+                geoState = pos is not null ? GeoState.Granted : GeoState.Denied;
+            }
+            catch { geoState = GeoState.Denied; }
+
+            await AttSvc.ClockAsync(new FaAttClockSaveDto { Type = type, Latitude = lat, Longitude = lng });
+            Toast.Success((type == 0 ? "ورود" : "خروج") + " ثبت شد" + (lat is null ? "." : " — همراه با موقعیت 📍"));
+            await LoadAtt();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { punching = false; geoWaiting = false; punchType = -1; }
+    }
+
+    private static string FmtClock(DateTime? d) => d == null ? "—" : Fa.Digits(d.Value.ToString("HH:mm"));
+
+    public void Dispose() => clockTimer?.Dispose();
+}

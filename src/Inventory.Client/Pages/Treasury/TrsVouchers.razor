@@ -1,0 +1,462 @@
+@page "/trs/vouchers"
+@inject ITrsVoucherService VoucherSvc
+@inject ITrsAccountService AccountSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>دریافت و پرداخت</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>اسناد دریافت و پرداخت</h1>
+        <p class="lead">دریافت از مشتری، پرداخت به تأمین‌کننده و انتقال بین حساب‌ها</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-outline-primary" href="/trs/vouchers/new/Transfer"><i class="bi bi-arrow-left-right"></i> انتقال وجه</a>
+        <a class="btn btn-outline-danger" href="/trs/vouchers/new/Payment"><i class="bi bi-box-arrow-up"></i> پرداخت</a>
+        <a class="btn btn-primary" href="/trs/vouchers/new/Receipt"><i class="bi bi-box-arrow-in-down"></i> دریافت</a>
+    </div>
+</div>
+
+<!-- ---------- تب نوع سند ---------- -->
+<div class="mtabs mb-3">
+    <button class="mtab @(kind is null ? "active" : "")" @onclick="() => SetKind(null)">همه</button>
+    <button class="mtab @(kind == TreasuryKind.Receipt ? "active" : "")" @onclick="() => SetKind(TreasuryKind.Receipt)">
+        <i class="bi bi-box-arrow-in-down"></i> دریافت
+    </button>
+    <button class="mtab @(kind == TreasuryKind.Payment ? "active" : "")" @onclick="() => SetKind(TreasuryKind.Payment)">
+        <i class="bi bi-box-arrow-up"></i> پرداخت
+    </button>
+    <button class="mtab @(kind == TreasuryKind.Transfer ? "active" : "")" @onclick="() => SetKind(TreasuryKind.Transfer)">
+        <i class="bi bi-arrow-left-right"></i> انتقال
+    </button>
+</div>
+
+<!-- ---------- فیلترها ---------- -->
+<div class="card mb-3">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-3">
+                <label class="form-label">جستجو</label>
+                <input class="form-control" placeholder="شماره، شرح یا طرف حساب…"
+                       @bind="search" @bind:event="oninput" @onkeyup="OnSearchKey" />
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">وضعیت</label>
+                <select class="form-select" value="@(status?.ToString() ?? "")" @onchange="OnStatus">
+                    <option value="">همه</option>
+                    <option value="Draft">پیش‌نویس</option>
+                    <option value="Confirmed">قطعی</option>
+                    <option value="Cancelled">ابطال شده</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">صندوق/بانک</label>
+                <select class="form-select" value="@trsAccountId" @onchange="OnAccount">
+                    <option value="0">همه</option>
+                    @foreach (var a in accounts)
+                    {
+                        <option value="@a.Id">@a.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">از تاریخ</label>
+                <DatePicker Value="from" ValueChanged="OnFrom" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">تا تاریخ</label>
+                <DatePicker Value="to" ValueChanged="OnTo" AllowClear="true" />
+            </div>
+            <div class="col-12 col-md-1 d-grid">
+                <button class="btn btn-outline-secondary" @onclick="Reset" title="پاک کردن فیلترها">
+                    <i class="bi bi-x-circle"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else if (items.Count == 0)
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="bi bi-cash-coin"></i>
+                <h5>سندی یافت نشد</h5>
+                <p class="text-muted">اولین سند دریافت یا پرداخت را ثبت کنید.</p>
+                <a class="btn btn-primary" href="/trs/vouchers/new/Receipt"><i class="bi bi-plus-lg"></i> سند دریافت</a>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <!-- ---------- جدول دسکتاپ ---------- -->
+    <div class="card grid-desktop">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:52px">شماره</th>
+                            <th>نوع</th>
+                            <th>تاریخ</th>
+                            <th>طرف حساب / حساب</th>
+                            <th>فاکتورهای مرتبط</th>
+                            <th>شرح</th>
+                            <th class="text-center">نقد</th>
+                            <th class="text-center">چک</th>
+                            <th class="text-center">جمع</th>
+                            <th class="text-center">وضعیت</th>
+                            <th class="text-center">سند حسابداری</th>
+                            <th style="width:150px"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var v in items)
+                        {
+                            var row = v;
+                            <tr>
+                                <td class="num fw-600">@row.Number.Num()</td>
+                                <td>
+                                    <span class="badge @KindBadge(row.Kind)">
+                                        <i class="bi @KindIcon(row.Kind)"></i> @ShortKind(row.Kind)
+                                    </span>
+                                </td>
+                                <td class="num">@row.Date.ToFaDate()</td>
+                                <td class="min-w-0">
+                                    @if (row.Kind == TreasuryKind.Transfer)
+                                    {
+                                        <span class="fs-8">@row.FromAccountName</span>
+                                        <i class="bi bi-arrow-left text-muted fs-8"></i>
+                                        <span class="fs-8">@row.ToAccountName</span>
+                                    }
+                                    else
+                                    {
+                                        <span>@(row.PartyName ?? "—")</span>
+                                    }
+                                </td>
+                                <td class="fs-8">
+                                    @if (row.InvoiceAllocations.Count == 1)
+                                    {
+                                        <a href="@($"/fac/invoices/edit/{row.InvoiceAllocations[0].InvoiceId}")">
+                                            <span class="num">#@row.InvoiceAllocations[0].InvoiceNumber.Num()</span>
+                                        </a>
+                                        <div class="text-muted num">@row.InvoiceAllocations[0].Amount.Money()</div>
+                                    }
+                                    else if (row.InvoiceAllocations.Count > 1)
+                                    {
+                                        <span class="badge badge-soft-info" title="@InvoiceSummary(row)">@row.InvoiceAllocations.Count.Num() فاکتور</span>
+                                        <div class="text-muted num">@row.InvoiceAllocations.Sum(a => a.Amount).Money()</div>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td class="fs-8 text-muted text-truncate" style="max-width:200px">@row.Description</td>
+                                <td class="text-center num">@(row.CashAmount == 0 ? "—" : row.CashAmount.Money())</td>
+                                <td class="text-center num">@(row.ChequeAmount == 0 ? "—" : row.ChequeAmount.Money())</td>
+                                <td class="text-center num fw-700">@row.TotalAmount.Money()</td>
+                                <td class="text-center"><span class="badge @StatusBadge(row.Status)">@row.StatusTitle</span></td>
+                                <td class="text-center">
+                                    @if (row.VoucherId is > 0)
+                                    {
+                                        <a class="badge badge-soft-primary num" href="@($"/acc/vouchers/edit/{row.VoucherId}")">
+                                            @row.VoucherNumber.GetValueOrDefault().Num()
+                                        </a>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td>
+                                    <div class="d-flex gap-1 justify-content-end">
+                                        <a class="btn btn-sm btn-outline-secondary" href="@($"/trs/vouchers/edit/{row.Id}")" title="مشاهده / ویرایش">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
+                                        @if (row.Status == TreasuryStatus.Draft)
+                                        {
+                                            <button class="btn btn-sm btn-outline-success" @onclick="() => Confirm(row)" title="قطعی">
+                                                <i class="bi bi-check2-circle"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(row)" title="حذف">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        }
+                                        else if (row.Status == TreasuryStatus.Confirmed)
+                                        {
+                                            <button class="btn btn-sm btn-outline-warning" @onclick="() => Unconfirm(row)" title="برگشت از قطعی">
+                                                <i class="bi bi-arrow-counterclockwise"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-danger" @onclick="() => Cancel(row)" title="ابطال">
+                                                <i class="bi bi-x-octagon"></i>
+                                            </button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ---------- کارت موبایل ---------- -->
+    <div class="cards-mobile">
+        @foreach (var v in items)
+        {
+            var row = v;
+            <div class="m-card @StatusStripe(row.Status)">
+                <div class="m-card-head">
+                    <div class="m-card-icon @KindSoft(row.Kind)"><i class="bi @KindIcon(row.Kind)"></i></div>
+                    <div class="min-w-0">
+                        <div class="fw-600 text-truncate">@ShortKind(row.Kind) شماره <span class="num">@row.Number.Num()</span></div>
+                        <div class="fs-8 text-muted num">@row.Date.ToFaDate()</div>
+                    </div>
+                    <span class="badge @StatusBadge(row.Status) ms-auto">@row.StatusTitle</span>
+                </div>
+                <div class="m-card-body">
+                    <div class="m-card-row">
+                        <span>@(row.Kind == TreasuryKind.Transfer ? "مسیر" : "طرف حساب")</span>
+                        <span>
+                            @if (row.Kind == TreasuryKind.Transfer)
+                            {
+                                @($"{row.FromAccountName} ← {row.ToAccountName}")
+                            }
+                            else
+                            {
+                                @(row.PartyName ?? "—")
+                            }
+                        </span>
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(row.Description))
+                    {
+                        <div class="m-card-row"><span>شرح</span><span>@row.Description</span></div>
+                    }
+                    @if (row.InvoiceAllocations.Count > 0)
+                    {
+                        <div class="m-card-row"><span>فاکتورها</span><span>@InvoiceSummary(row)</span></div>
+                    }
+                    @if (row.ChequeAmount > 0)
+                    {
+                        <div class="m-card-row"><span>چک</span><span class="num">@row.ChequeAmount.Money()</span></div>
+                    }
+                    <div class="m-card-money num">@row.TotalAmount.Money()</div>
+                </div>
+                <div class="m-card-actions">
+                    <a class="btn btn-sm btn-outline-secondary" href="@($"/trs/vouchers/edit/{row.Id}")">
+                        <i class="bi bi-pencil"></i> ویرایش
+                    </a>
+                    @if (row.Status == TreasuryStatus.Draft)
+                    {
+                        <button class="btn btn-sm btn-outline-success" @onclick="() => Confirm(row)"><i class="bi bi-check2-circle"></i> قطعی</button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(row)"><i class="bi bi-trash"></i></button>
+                    }
+                    else if (row.Status == TreasuryStatus.Confirmed)
+                    {
+                        <button class="btn btn-sm btn-outline-warning" @onclick="() => Unconfirm(row)"><i class="bi bi-arrow-counterclockwise"></i> برگشت</button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    <Pager Page="page" PageCount="PageCount" OnPageChanged="OnPage" />
+}
+
+@code {
+    private List<TrsVoucher> items = new();
+    private List<TrsAccount> accounts = new();
+
+    private TreasuryKind? kind;
+    private TreasuryStatus? status;
+    private int trsAccountId;
+    private string search = "";
+    private DateTime? from, to;
+
+    private int page = 1, pageSize = 15, total;
+    private bool loading = true;
+
+    private int PageCount => total == 0 ? 1 : (int)Math.Ceiling(total / (double)pageSize);
+
+    private static string InvoiceSummary(TrsVoucher voucher)
+    {
+        if (voucher.InvoiceAllocations.Count == 0) return "—";
+        if (voucher.InvoiceAllocations.Count == 1)
+        {
+            var allocation = voucher.InvoiceAllocations[0];
+            var kindTitle = allocation.InvoiceKind switch
+            {
+                InvoiceKind.Sale => "فروش",
+                InvoiceKind.Purchase => "خرید",
+                InvoiceKind.PurchaseReturn => "برگشت از خرید",
+                _ => "برگشت از فروش"
+            };
+            return $"{kindTitle} #{allocation.InvoiceNumber.Num()} — {allocation.Amount.Money()}";
+        }
+        return string.Join("، ", voucher.InvoiceAllocations.Select(a => $"#{a.InvoiceNumber.Num()} ({a.Amount.Money()})"));
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("دریافت و پرداخت");
+        try { accounts = await AccountSvc.GetAllAsync(true); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var res = await VoucherSvc.GetAllAsync(kind, status, null, trsAccountId, search, from, to, page, pageSize);
+            items = res.Items;
+            total = res.TotalCount;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task SetKind(TreasuryKind? k)
+    {
+        kind = k;
+        page = 1;
+        await Load();
+    }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key != "Enter") return;
+        page = 1;
+        await Load();
+    }
+
+    private async Task OnStatus(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        status = string.IsNullOrEmpty(raw) ? null : Enum.Parse<TreasuryStatus>(raw);
+        page = 1;
+        await Load();
+    }
+
+    private async Task OnAccount(ChangeEventArgs e)
+    {
+        trsAccountId = int.Parse(e.Value?.ToString() ?? "0");
+        page = 1;
+        await Load();
+    }
+
+    private async Task OnFrom(DateTime? d) { from = d; page = 1; await Load(); }
+    private async Task OnTo(DateTime? d) { to = d; page = 1; await Load(); }
+
+    private async Task OnPage(int p) { page = p; await Load(); }
+
+    private async Task Reset()
+    {
+        search = ""; status = null; trsAccountId = 0; from = null; to = null; page = 1;
+        await Load();
+    }
+
+    private async Task Confirm(TrsVoucher v)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm",
+            $"{ShortKind(v.Kind)} شماره {v.Number} قطعی شود؟ سند حسابداری صادر خواهد شد.")) return;
+        try
+        {
+            await VoucherSvc.ConfirmAsync(v.Id);
+            Toast.Success("سند قطعی شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Unconfirm(TrsVoucher v)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm",
+            "سند به پیش‌نویس برگردد؟ سند حسابداری آن حذف می‌شود.")) return;
+        try
+        {
+            await VoucherSvc.UnconfirmAsync(v.Id);
+            Toast.Success("سند به پیش‌نویس برگشت.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Cancel(TrsVoucher v)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "این سند ابطال شود؟")) return;
+        try
+        {
+            await VoucherSvc.CancelAsync(v.Id);
+            Toast.Success("سند ابطال شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Delete(TrsVoucher v)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"سند شماره {v.Number} حذف شود؟")) return;
+        try
+        {
+            await VoucherSvc.DeleteAsync(v.Id);
+            Toast.Success("سند حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string ShortKind(TreasuryKind k) => k switch
+    {
+        TreasuryKind.Receipt => "دریافت",
+        TreasuryKind.Payment => "پرداخت",
+        _ => "انتقال"
+    };
+
+    private static string KindIcon(TreasuryKind k) => k switch
+    {
+        TreasuryKind.Receipt => "bi-box-arrow-in-down",
+        TreasuryKind.Payment => "bi-box-arrow-up",
+        _ => "bi-arrow-left-right"
+    };
+
+    private static string KindBadge(TreasuryKind k) => k switch
+    {
+        TreasuryKind.Receipt => "badge-soft-success",
+        TreasuryKind.Payment => "badge-soft-danger",
+        _ => "badge-soft-info"
+    };
+
+    private static string KindSoft(TreasuryKind k) => k switch
+    {
+        TreasuryKind.Receipt => "bg-soft-success",
+        TreasuryKind.Payment => "bg-soft-danger",
+        _ => "bg-soft-info"
+    };
+
+    private static string StatusBadge(TreasuryStatus s) => s switch
+    {
+        TreasuryStatus.Draft => "badge-soft-muted",
+        TreasuryStatus.Confirmed => "badge-soft-success",
+        _ => "badge-soft-danger"
+    };
+
+    private static string StatusStripe(TreasuryStatus s) => s switch
+    {
+        TreasuryStatus.Draft => "st-progress",
+        TreasuryStatus.Confirmed => "st-ready",
+        _ => "st-cancelled"
+    };
+}

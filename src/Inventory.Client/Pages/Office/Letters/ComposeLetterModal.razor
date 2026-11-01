@@ -1,0 +1,761 @@
+@inject ILetterService LetterSvc
+@inject IOutgoingLetterService OutgoingSvc
+@inject IIncomingLetterService IncomingSvc
+@inject IJSRuntime JS
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject AiAssistantService AiSvc
+
+@* ============================================================
+   فرم ایجاد نامه — شیت کناری مطابق طرح مصوب (پروتوتایپ نسخه ۶):
+   • گیرنده (الزامی) / ارجاع / هامش — هرکدام انفرادی|گروهی با کمبوباکس
+   • فوریت و محرمانگی رادیویی
+   • ادیتور متن غنی
+   • پیوست: دراپ‌زون — بدون محدودیت تعداد، هر فایل ≤۲۰MB، فایل خالی رد می‌شود
+   • عطف/پیرو با مودال انتخاب از نامه‌های دریافتی/ارسالی
+   • ذخیره پیش‌نویس + ادامه پیش‌نویس + ویرایش نامه (قبل از خوانده‌شدن)
+   ============================================================ *@
+
+@if (visible)
+{
+@* استایل inline: انیمیشن/ترنسفورم والد را خنثی می‌کند تا position:fixed نسبت به ویوپورت بماند *@
+<div class="ltx" style="animation:none;transform:none">
+    <div class="ov"></div>
+    <div class="sheet" @onclick="CloseCombos">
+        <div class="sheet-h">
+            <b><i class="bi bi-envelope-plus" style="color:var(--p2)"></i> @SheetTitle</b>
+            <span class="dt"><i class="bi bi-calendar3"></i> @DateTime.Now.ToFa()</span>
+            <button class="x" @onclick="Close"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="sheet-b">
+
+            <div class="row3">
+                <LetterPickCombo @ref="cbRcv" Label="گیرنده" Icon="bi-person-plus" Required="true"
+                                 Users="allUsers" Groups="allGroups"
+                                 SelectedUsers="rcvUsers" SelectedGroups="rcvGroups"
+                                 HasError="errRcv" Changed="OnRcvChanged" />
+                <LetterPickCombo @ref="cbErja" Label="ارجاع" Icon="bi-arrow-left-circle"
+                                 Users="allUsers" Groups="allGroups"
+                                 SelectedUsers="erjaUsers" SelectedGroups="erjaGroups" />
+                <LetterPickCombo @ref="cbHamesh" Label="هامش (رونوشت)" Icon="bi-people"
+                                 Users="allUsers" Groups="allGroups"
+                                 SelectedUsers="hameshUsers" SelectedGroups="hameshGroups" />
+            </div>
+
+            @* 🤖 پیشنهاد گیرنده هوشمند — از روی عنوان و متن نامه *@
+            @if (Auth.IsAdmin || Auth.Has("AiAssistant.Use"))
+            {
+                <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:-.2rem 0 .4rem">
+                    <button type="button" class="lbtn ghost" style="padding:.3rem .7rem;font-size:.8rem"
+                            disabled="@aiRcvBusy" @onclick="SuggestReceivers">
+                        @if (aiRcvBusy) { <span class="spinner-border spinner-border-sm"></span> }
+                        <i class="bi bi-robot"></i> پیشنهاد گیرنده هوشمند
+                    </button>
+                    <small class="text-muted">از روی عنوان و متنی که نوشتی، گیرنده مناسب پیشنهاد می‌دهد.</small>
+                </div>
+                @if (!string.IsNullOrEmpty(aiRcvErr))
+                {
+                    <div class="ferr" style="margin-bottom:.4rem"><i class="bi bi-exclamation-circle"></i> @aiRcvErr</div>
+                }
+                @if (aiReceivers != null)
+                {
+                    <div class="selpills" style="margin-top:0;margin-bottom:.4rem">
+                        @foreach (var s in aiReceivers.Suggestions)
+                        {
+                            var ss = s;
+                            <button type="button" class="addrel" title="@ss.Reason" @onclick="() => AddSuggestedReceiver(ss.UserId)">
+                                <i class="bi bi-plus-lg"></i> @ss.Name
+                                @if (!string.IsNullOrWhiteSpace(ss.Department))
+                                {
+                                    <small>(@ss.Department)</small>
+                                }
+                            </button>
+                        }
+                        @if (aiReceivers.Suggestions.Count == 0)
+                        {
+                            <small class="text-muted">پیشنهادی یافت نشد؛ عنوان یا متن را کامل‌تر بنویس.</small>
+                        }
+                    </div>
+                }
+            }
+
+            <div class="row2">
+                <div class="fcard">
+                    <label>فوریت نامه</label>
+                    <div class="rads">
+                        @foreach (var f in new[] { "عادی", "فوری", "آنی" })
+                        {
+                            var v = f;
+                            <div class="rad @(foriat == v ? "on" : "")" @onclick="() => foriat = v"><span class="rdot"></span> @v</div>
+                        }
+                    </div>
+                </div>
+                <div class="fcard">
+                    <label>محرمانگی نامه</label>
+                    <div class="rads">
+                        @foreach (var m in new[] { "عادی", "محرمانه", "سری" })
+                        {
+                            var v = m;
+                            <div class="rad @(mahram == v ? "on" : "")" @onclick="() => mahram = v"><span class="rdot"></span> @v</div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="fcard @(errTitle ? "err" : "")">
+                <label>عنوان نامه <span class="req">*</span></label>
+                <input class="tin" placeholder="عنوان نامه را وارد کنید…" @bind="title" @bind:event="oninput" />
+                @if (errTitle)
+                {
+                    <div class="ferr"><i class="bi bi-exclamation-circle"></i> عنوان نامه الزامی است</div>
+                }
+            </div>
+
+            <div class="fcard">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem">
+                    <label style="margin:0">متن نامه</label>
+                    @if (Auth.IsAdmin || Auth.Has("AiAssistant.Use"))
+                    {
+                        <button type="button" class="lbtn pri" style="padding:.3rem .7rem;font-size:.8rem" @onclick="ToggleAiDraft">
+                            <i class="bi bi-robot"></i> پیش‌نویس هوشمند
+                        </button>
+                    }
+                </div>
+                @if (aiDraftOpen)
+                {
+                    <div style="background:#f5f3ff;border:1px dashed #a78bfa;border-radius:.7rem;padding:.7rem;margin:.6rem 0;display:flex;flex-direction:column;gap:.55rem">
+                        <input class="tin" placeholder="موضوع یا خواسته‌ات را بنویس… (مثلاً: درخواست خرید ۵ لپ‌تاپ برای واحد مالی)"
+                               @bind="aiTopic" @bind:event="oninput" />
+                        <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+                            <select class="tin" style="flex:1;min-width:110px" @bind="aiKind">
+                                <option value="داخلی">داخلی</option>
+                                <option value="صادره">صادره</option>
+                                <option value="جوابیه">جوابیه</option>
+                                <option value="درخواست">درخواست</option>
+                                <option value="ابلاغ">ابلاغ</option>
+                            </select>
+                            <select class="tin" style="flex:1;min-width:110px" @bind="aiTone">
+                                <option value="رسمی">لحن رسمی</option>
+                                <option value="دوستانه">لحن دوستانه</option>
+                                <option value="دستوری">لحن دستوری</option>
+                            </select>
+                            <input class="tin" style="flex:2;min-width:150px" placeholder="نام گیرنده (اختیاری)"
+                                   @bind="aiTo" @bind:event="oninput" />
+                        </div>
+                        <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+                            <button type="button" class="lbtn grn" disabled="@(aiBusy || string.IsNullOrWhiteSpace(aiTopic))" @onclick="GenerateAiDraft">
+                                @if (aiBusy) { <span class="spinner-border spinner-border-sm"></span> }
+                                <i class="bi bi-magic"></i> تولید پیش‌نویس
+                            </button>
+                            <small class="text-muted">عنوان و متن با هوش مصنوعی پر می‌شود (قابل ویرایش).</small>
+                        </div>
+                        @if (!string.IsNullOrEmpty(aiErr))
+                        {
+                            <div class="ferr"><i class="bi bi-exclamation-circle"></i> @aiErr</div>
+                        }
+                    </div>
+                }
+                <RichTextEditor @ref="_rich" Id="ltxEditor" Placeholder="متن نامه را بنویسید…"
+                                @bind-Value="pendingBody" Height="260" />
+            </div>
+
+                <div class="fcard">
+                    <label>پیوست</label>
+                    <div class="dz">
+                        <div class="ic"><i class="bi bi-cloud-arrow-up"></i></div>
+                        <div><b>فایل را بکشید و رها کنید یا کلیک کنید</b><small>بدون محدودیت تعداد و حجم</small></div>
+                        <InputFile OnChange="OnFiles" multiple />
+                    </div>
+                    <div class="selpills">
+                        @foreach (var f in pendingFiles)
+                        {
+                            var ff = f;
+                            <span class="spill"><i class="bi @FileIcon(ff.Name)"></i> @ff.Name <small>(@FmtSize(ff.Size))</small> <i class="bi bi-x-lg" @onclick="() => pendingFiles.Remove(ff)"></i></span>
+                        }
+                        @foreach (var a in savedAtts)
+                        {
+                            var aa = a;
+                            <span class="spill"><i class="bi @FileIcon(aa.FileName)"></i> @aa.FileName <small>(@FmtSize(aa.Size))</small> <i class="bi bi-x-lg" @onclick="() => RemoveSavedAtt(aa)"></i></span>
+                        }
+                    </div>
+                    @if (!string.IsNullOrEmpty(fileErr))
+                    {
+                        <div class="ferr"><i class="bi bi-exclamation-circle"></i> @fileErr</div>
+                    }
+                </div>
+
+                <div class="fcard">
+                    <label>نامه‌های مرتبط (عطف / پیرو) <span class="opt">اختیاری</span></label>
+                    <div class="selpills" style="margin-top:0">
+                        @foreach (var r in related)
+                        {
+                            var rr = r;
+                            <span class="rpill">
+                                <span class="k @(rr.Related == 2 ? "atf" : "peyro")">@(rr.Related == 2 ? "عطف" : "پیرو")</span>
+                                <span class="num"># @rr.RelateLetterNumber.FaDigits()</span> @rr.RelateLetterTitle
+                                <i class="bi bi-x-lg" @onclick="() => related.Remove(rr)"></i>
+                            </span>
+                        }
+                        <button type="button" class="addrel" @onclick="OpenRel"><i class="bi bi-plus-lg"></i> ثبت نامه مرتبط</button>
+                    </div>
+                </div>
+        </div>
+        <div class="sheet-f">
+            @if (isEditLetter)
+            {
+                <button class="lbtn grn" disabled="@busy" @onclick="SubmitEdit">
+                    @if (busy) { <span class="spinner-border spinner-border-sm"></span> }
+                    <i class="bi bi-check-lg"></i> ذخیره تغییرات
+                </button>
+            }
+            else
+            {
+                <button class="lbtn grn" disabled="@busy" @onclick="Send">
+                    @if (busy) { <span class="spinner-border spinner-border-sm"></span> }
+                    <i class="bi bi-send"></i> ارسال
+                </button>
+                <button class="lbtn pri" disabled="@busy" @onclick="SaveDraft"><i class="bi bi-save"></i> ذخیره بعنوان پیش‌نویس</button>
+            }
+            <span class="spacer"></span>
+            <button class="lbtn red" @onclick="Close"><i class="bi bi-x-lg"></i> انصراف</button>
+        </div>
+    </div>
+
+    @* ---------- مودال انتخاب نامه مرتبط ---------- *@
+    @if (relOpen)
+    {
+        <div class="gov">
+            <div class="gmodal" style="width:min(640px,96vw)" @onclick:stopPropagation="true">
+                <div class="gm-h">
+                    <div class="ttl"><b><i class="bi bi-link-45deg" style="color:var(--p2)"></i> ثبت نامه مرتبط</b><small>نوع رابطه را انتخاب و نامه‌ها را علامت بزنید</small></div>
+                    <button class="x" @onclick="() => relOpen = false"><i class="bi bi-x-lg"></i></button>
+                </div>
+                <div class="gm-seg">
+                    <button class="@(relType == 2 ? "on" : "")" @onclick="() => relType = 2"><i class="bi bi-arrow-90deg-right"></i> عطف به</button>
+                    <button class="@(relType == 1 ? "on" : "")" @onclick="() => relType = 1"><i class="bi bi-arrow-return-left"></i> پیرو</button>
+                </div>
+                <div class="gm-b">
+                    <div class="d-flex gap-2 mb-2 flex-wrap">
+                        @foreach (var tab in new[] { (1, "داخلی"), (2, "صادره"), (3, "وارده") })
+                        {
+                            <button type="button" class="btn btn-sm @(relSourceType == tab.Item1 ? "btn-primary" : "btn-outline-secondary")" @onclick="() => { relSourceType = tab.Item1; _ = SearchRel(); }">@tab.Item2 <span class="badge bg-light text-dark">@relResults.Count(x => x.SourceType == tab.Item1)</span></button>
+                        }
+                    </div>
+                    <input class="tin" style="margin-bottom:9px" placeholder="جستجوی شماره یا عنوان…"
+                           @bind="relSearch" @bind:event="oninput" @bind:after="SearchRel" />
+                    @foreach (var rl in relResults.Where(x => x.SourceType == relSourceType))
+                    {
+                        <div class="rl-row @(relSel.Contains(rl.SelectionKey) ? "on" : "")" @onclick="() => ToggleRelSel(rl.SelectionKey)">
+                            <span class="chk"><i class="bi bi-check"></i></span>
+                            <div class="inf"><b>@rl.Title</b><small class="num"># @rl.LetterNumber.FaDigits() · @rl.Date.ToFa()</small></div>
+                            <span class="rl-dir @(rl.SourceType == 2 ? "out" : "in")"><i class="bi @(rl.SourceType == 2 ? "bi-send" : rl.SourceType == 3 ? "bi-box-arrow-in-down" : "bi-file-earmark-text")"></i> @rl.SourceTypeTitle</span>
+                        </div>
+                    }
+                    @if (!relResults.Any(x => x.SourceType == relSourceType)) { <div class="cempty">نامه‌ای در این دسته یافت نشد</div> }
+                </div>
+                <div class="gm-f">
+                    <button class="lbtn ghost" @onclick="() => relOpen = false">انصراف</button>
+                    <button class="lbtn pri" @onclick="AddRel"><i class="bi bi-check-lg"></i> افزودن نامه‌های انتخابی</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+}
+
+@code {
+    [Parameter] public EventCallback OnSent { get; set; }
+
+    private const long MaxFile = 20L * 1024 * 1024; // ۲۰ مگابایت
+
+    private bool visible;
+    private bool busy;
+    private bool isEditLetter;
+    private int editLetterId;
+    private int? draftId;
+
+    private string title = "";
+    private string foriat = "عادی";
+    private string mahram = "عادی";
+    private string pendingBody = "";
+
+    private bool errTitle, errRcv;
+
+    // ==================== 🤖 پیش‌نویس هوشمند ====================
+    private bool aiDraftOpen;
+    private bool aiBusy;
+    private string aiTopic = "";
+    private string aiKind = "داخلی";
+    private string aiTone = "رسمی";
+    private string aiTo = "";
+    private string aiErr = "";
+
+    private void ToggleAiDraft()
+    {
+        aiDraftOpen = !aiDraftOpen;
+        aiErr = "";
+    }
+
+    private async Task GenerateAiDraft()
+    {
+        if (string.IsNullOrWhiteSpace(aiTopic) || aiBusy) return;
+        aiBusy = true; aiErr = "";
+        try
+        {
+            var draft = await AiSvc.DraftLetterAsync(aiTopic.Trim(), aiTone, aiKind,
+                string.IsNullOrWhiteSpace(aiTo) ? null : aiTo.Trim(), null);
+            if (string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(draft.Subject))
+                title = draft.Subject.Trim();
+            if (!string.IsNullOrWhiteSpace(draft.BodyHtml))
+            {
+                pendingBody = draft.BodyHtml;
+                if (_rich != null) await _rich.SetContentAsync(pendingBody);
+            }
+            aiDraftOpen = false;
+            Toast.Success(draft.UsedFallback ? "پیش‌نویس (حالت آفلاین) درج شد." : "پیش‌نویس هوشمند درج شد.");
+        }
+        catch (Exception ex) { aiErr = ex.Message; }
+        finally { aiBusy = false; }
+    }
+
+    // ==================== 🤖 پیشنهاد گیرنده هوشمند ====================
+    private bool aiRcvBusy;
+    private string aiRcvErr = "";
+    private AiReceiversResponse? aiReceivers;
+
+    private async Task SuggestReceivers()
+    {
+        if (aiRcvBusy) return;
+        aiRcvBusy = true; aiRcvErr = ""; aiReceivers = null;
+        try
+        {
+            var html = _rich != null ? await _rich.GetContentAsync() : pendingBody;
+            aiReceivers = await AiSvc.SuggestReceiversAsync(title ?? "", html ?? "");
+        }
+        catch (Exception ex) { aiRcvErr = ex.Message; }
+        finally { aiRcvBusy = false; }
+    }
+
+    private void AddSuggestedReceiver(int userId)
+    {
+        if (userId <= 0 || !rcvUsers.Add(userId)) return;
+        errRcv = false;
+        Toast.Success("به گیرندگان اضافه شد.");
+    }
+
+    private List<LetterReciverDto> allUsers = new();
+    private List<LetterGroupDto> allGroups = new();
+
+    private LetterPickCombo? cbRcv, cbErja, cbHamesh;
+    private RichTextEditor? _rich;
+    private HashSet<int> rcvUsers = new(), rcvGroups = new();
+    private HashSet<int> erjaUsers = new(), erjaGroups = new();
+    private HashSet<int> hameshUsers = new(), hameshGroups = new();
+
+    // پیوست‌ها
+    private List<Microsoft.AspNetCore.Components.Forms.IBrowserFile> pendingFiles = new();
+    private List<LetterAttachmentDto> savedAtts = new(); // پیوست‌های موجود پیش‌نویس
+    private string fileErr = "";
+
+    // عطف/پیرو
+    private List<RelatedLetterDto> related = new();
+    private bool relOpen;
+    private int relType = 2;
+    private string relSearch = "";
+    private int relSourceType = 1;
+    private sealed class RelatedPick
+    {
+        public int LetterId { get; set; }
+        public string SelectionKey => $"{SourceType}:{LetterId}";
+        public string LetterNumber { get; set; } = "";
+        public string Title { get; set; } = "";
+        public DateTime Date { get; set; }
+        public int SourceType { get; set; }
+        public string SourceTypeTitle => SourceType == 1 ? "داخلی" : SourceType == 2 ? "صادره" : "وارده";
+    }
+    private List<RelatedPick> relResults = new();
+    private HashSet<string> relSel = new();
+
+    private string SheetTitle => isEditLetter ? "ویرایش نامه" : draftId is > 0 ? "ادامه پیش‌نویس" : "ایجاد نامه جدید";
+
+    // ==================== باز کردن ====================
+
+    /// <summary>نامه جدید — یا از روی پیش‌نویس (title/text/pishnevisId)</summary>
+    /// <summary>
+    /// باز کردن فرم — با قابلیت پیش‌پرکردن عنوان، متن و پیوست‌ها.
+    /// پیش‌پرکردن برای «تبدیل ایمیل شخصی به نامه داخلی» به کار می‌رود.
+    /// </summary>
+    public void Open(string? prefTitle = null, string? prefText = null, int? pishnevisId = null,
+                     List<Microsoft.AspNetCore.Components.Forms.IBrowserFile>? prefFiles = null,
+                     LetterCopyRecipients? prefRecivers = null)
+    {
+        ResetAll();
+        title = prefTitle ?? "";
+        pendingBody = prefText ?? "";
+        draftId = pishnevisId;
+        if (prefFiles != null && prefFiles.Count > 0) pendingFiles.AddRange(prefFiles);
+        ApplyCopyRecipients(prefRecivers);
+        visible = true;
+        _ = LoadListsAsync();
+        if (pishnevisId is > 0) _ = LoadDraftAttsAsync(pishnevisId.Value);
+        StateHasChanged();
+        _ = InitEditorAsync();
+    }
+
+    /// <summary>
+    /// پیش‌انتخاب افرادِ در گردشِ نامهٔ مبدأ هنگام «کپی نامه».
+    /// هر فرد دقیقاً در همان نقشی قرار می‌گیرد که در گردش نامهٔ مبدأ داشته است:
+    /// گیرنده ← «گیرنده»، ارجاع ← «ارجاع»، هامش ← «هامش (رونوشت)».
+    /// باید «پس از» ResetAll فراخوانی شود چون ResetAll این مجموعه‌ها را پاک می‌کند.
+    /// گروه‌ها عمداً پر نمی‌شوند: در گردش، گروه‌ها پیش‌تر به کاربر باز شده‌اند
+    /// (ErjaService.ExpandToUserIdsAsync) و اینجا به‌صورت کاربران انفرادی می‌آیند —
+    /// همان قراردادی که OpenEdit هم دارد.
+    /// </summary>
+    private void ApplyCopyRecipients(LetterCopyRecipients? r)
+    {
+        if (r == null || r.IsEmpty) return;
+        foreach (var id in r.Girande) rcvUsers.Add(id);
+        foreach (var id in r.Erja) erjaUsers.Add(id);
+        foreach (var id in r.Hamesh) hameshUsers.Add(id);
+    }
+
+    /// <summary>پاسخ به نامه: گیرنده = فرستنده اصلی + عطف خودکار به نامه مبدأ</summary>
+    public void OpenReply(string subject, string bodyHtml, int senderUserId,
+                          int letterId, string letterNumber, string letterTitle)
+    {
+        Open(subject, bodyHtml);
+        if (senderUserId > 0) rcvUsers.Add(senderUserId);
+        related.Add(new RelatedLetterDto
+        {
+            Related = 2, // عطف
+            RelateLetterId = letterId,
+            RelateLetterNumber = letterNumber,
+            RelateLetterTitle = letterTitle,
+        });
+        StateHasChanged();
+    }
+
+    /// <summary>ویرایش نامه ارسال‌شده (فقط قبل از خوانده‌شدن) — همه اطلاعات فرم ایجاد قابل ویرایش است</summary>
+    public void OpenEdit(InnerLetterDetailDto letter)
+    {
+        ResetAll();
+        isEditLetter = true;
+        editLetterId = letter.LetterId;
+        title = letter.Title;
+        foriat = letter.Foriat;
+        mahram = letter.Mahramanegi;
+        pendingBody = letter.Text ?? "";
+
+        // گیرندگان فعلی (گروه‌ها هنگام ارسال به کاربر باز شده‌اند؛ اینجا به‌صورت کاربران انفرادی می‌آیند)
+        foreach (var r in letter.ReciversGirande) rcvUsers.Add(r.UserId);
+        foreach (var r in letter.ReciversErja) erjaUsers.Add(r.UserId);
+        foreach (var r in letter.ReciversHamesh) hameshUsers.Add(r.UserId);
+
+        // عطف / پیرو فعلی
+        related = letter.RelatedLetters.Select(r => new RelatedLetterDto
+        {
+            Related = r.Related,
+            RelateLetterId = r.RelateLetterId,
+            RelateLetterNumber = r.RelateLetterNumber,
+            RelateLetterTitle = r.RelateLetterTitle
+        }).ToList();
+
+        visible = true;
+        _ = LoadListsAsync();
+        _ = LoadLetterAttsAsync(letter.LetterId);
+        StateHasChanged();
+        _ = InitEditorAsync();
+    }
+
+    private async Task LoadLetterAttsAsync(int letterId)
+    {
+        try { savedAtts = await LetterSvc.GetAttachmentsAsync(letterId); StateHasChanged(); }
+        catch { }
+    }
+
+    private void ResetAll()
+    {
+        isEditLetter = false; editLetterId = 0; draftId = null;
+        title = ""; foriat = "عادی"; mahram = "عادی"; pendingBody = "";
+        errTitle = errRcv = false; fileErr = "";
+        rcvUsers.Clear(); rcvGroups.Clear();
+        erjaUsers.Clear(); erjaGroups.Clear();
+        hameshUsers.Clear(); hameshGroups.Clear();
+        pendingFiles.Clear(); savedAtts.Clear();
+        related.Clear(); relOpen = false; relSel.Clear();
+        aiDraftOpen = false; aiTopic = ""; aiTo = ""; aiErr = ""; aiKind = "داخلی"; aiTone = "رسمی";
+        aiRcvBusy = false; aiRcvErr = ""; aiReceivers = null;
+    }
+
+    private async Task InitEditorAsync()
+    {
+        await Task.Delay(60); // صبر برای رندر contenteditable
+        if (_rich != null) await _rich.SetContentAsync(pendingBody);
+    }
+
+    private async Task LoadListsAsync()
+    {
+        try
+        {
+            if (allUsers.Count == 0) allUsers = await LetterSvc.GetReciversAsync();
+            allGroups = await LetterSvc.GetGroupsAsync();
+            StateHasChanged();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task LoadDraftAttsAsync(int pishId)
+    {
+        try { savedAtts = await LetterSvc.GetPishnevisAttachmentsAsync(pishId); StateHasChanged(); }
+        catch { }
+    }
+
+    private async Task Close()
+    {
+        if (visible && (!string.IsNullOrWhiteSpace(title) || !string.IsNullOrWhiteSpace(pendingBody)) &&
+            !await JS.InvokeAsync<bool>("confirm", "اطلاعات فرم وارد شده است. فرم بسته شود؟")) return;
+        visible = false;
+    }
+
+    private void CloseCombos()
+    {
+        cbRcv?.Close(); cbErja?.Close(); cbHamesh?.Close();
+    }
+
+    private void OnRcvChanged()
+    {
+        if (rcvUsers.Count + rcvGroups.Count > 0) errRcv = false;
+    }
+
+    // ==================== پیوست‌ها ====================
+
+    private async Task OnFiles(Microsoft.AspNetCore.Components.Forms.InputFileChangeEventArgs e)
+    {
+        var rejected = new List<string>();
+        foreach (var picked in e.GetMultipleFiles(int.MaxValue))
+        {
+            if (picked.Size <= 0) { rejected.Add($"{picked.Name} (خالی — ۰ بایت)"); continue; }
+            if (picked.Size > 20 * 1024 * 1024) { rejected.Add($"{picked.Name} (بیش از ۲۰ مگابایت)"); continue; }
+            // مرجع IBrowserFile مرورگر فقط تا قبل از اولین رندرِ بعدی معتبر است (خطای
+            // «no file with ID N — file list may have changed»)؛ پس بایت‌ها را همان‌جا
+            // می‌خوانیم و نسخهٔ حافظه‌ای امن برای بارگذاریِ بعدی نگه می‌داریم.
+            MemoryBrowserFile f;
+            try
+            {
+                await using var src = picked.OpenReadStream(long.MaxValue);
+                using var ms = new MemoryStream(picked.Size > 0 ? (int)picked.Size : 0);
+                await src.CopyToAsync(ms);
+                f = new MemoryBrowserFile(picked.Name, picked.ContentType, ms.ToArray());
+            }
+            catch (Exception readEx) { rejected.Add($"{picked.Name} (خوانش: {readEx.Message})"); continue; }
+            if (pendingFiles.Any(x => x.Name == f.Name && x.Size == f.Size) ||
+                savedAtts.Any(x => x.FileName == f.Name && x.Size == f.Size))
+            { rejected.Add($"{f.Name} (تکراری)"); continue; }
+            pendingFiles.Add(f);
+        }
+        fileErr = rejected.Count > 0 ? "این فایل‌ها پذیرفته نشدند: " + string.Join("، ", rejected) : "";
+        if (rejected.Count > 0) Toast.Error("برخی فایل‌ها پذیرفته نشدند.");
+        StateHasChanged();
+    }
+
+    private async Task RemoveSavedAtt(LetterAttachmentDto a)
+    {
+        try
+        {
+            await LetterSvc.DeleteAttachmentAsync(a.Id);
+            savedAtts.Remove(a);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string FmtSize(long b) =>
+        b >= 1024 * 1024 ? $"{b / 1024.0 / 1024.0:0.#} مگابایت".FaDigits()
+        : b >= 1024 ? $"{b / 1024} کیلوبایت".FaDigits()
+        : $"{b} بایت".FaDigits();
+
+    private static string FileIcon(string name)
+    {
+        var e = (Path.GetExtension(name) ?? "").TrimStart('.').ToLowerInvariant();
+        return e switch
+        {
+            "pdf" => "bi-file-earmark-pdf",
+            "xls" or "xlsx" or "csv" => "bi-file-earmark-excel",
+            "doc" or "docx" => "bi-file-earmark-word",
+            "png" or "jpg" or "jpeg" or "gif" or "webp" or "svg" => "bi-file-earmark-image",
+            "zip" or "rar" or "7z" => "bi-file-earmark-zip",
+            _ => "bi-file-earmark"
+        };
+    }
+
+    // ==================== عطف / پیرو ====================
+
+    private async Task OpenRel()
+    {
+        relSel.Clear(); relSearch = ""; relOpen = true;
+        await SearchRel();
+    }
+
+
+    private async Task SearchRel()
+    {
+        var term = string.IsNullOrWhiteSpace(relSearch) ? null : relSearch;
+        var all = new List<RelatedPick>();
+        try
+        {
+            var items = await LetterSvc.PickAsync(term);
+            all.AddRange(items.Select(x => new RelatedPick { LetterId = x.LetterId, LetterNumber = x.LetterNumber, Title = x.Title, Date = x.Date, SourceType = 1 }));
+        }
+        catch { }
+        try
+        {
+            var items = await OutgoingSvc.PickAsync(term);
+            all.AddRange(items.Select(x => new RelatedPick { LetterId = x.LetterId, LetterNumber = x.LetterNumber, Title = x.Title, Date = x.Date, SourceType = 2 }));
+        }
+        catch { }
+        try
+        {
+            var result = await IncomingSvc.PickAsync(term, 1, 100);
+            all.AddRange(result.Items.Select(x => new RelatedPick { LetterId = x.SourceId, LetterNumber = x.LetterNumber, Title = x.Title, Date = x.Date, SourceType = 3 }));
+        }
+        catch { }
+        relResults = all.Where(r => related.All(x => x.RelateLetterId != r.LetterId))
+            .GroupBy(x => x.SelectionKey).Select(g => g.First()).OrderByDescending(x => x.Date).ToList();
+    }
+
+    private void ToggleRelSel(string key) { if (!relSel.Remove(key)) relSel.Add(key); }
+
+    private void AddRel()
+    {
+        if (relSel.Count == 0) { Toast.Error("هیچ نامه‌ای انتخاب نشده است."); return; }
+        foreach (var key in relSel)
+        {
+            var l = relResults.FirstOrDefault(x => x.SelectionKey == key);
+            if (l == null) continue;
+            related.Add(new RelatedLetterDto
+            {
+                Related = relType,
+                RelateLetterId = l.LetterId,
+                RelateLetterNumber = l.LetterNumber,
+                RelateLetterTitle = l.Title
+            });
+        }
+        relOpen = false;
+        Toast.Success("نامه(های) مرتبط افزوده شد.");
+    }
+
+    // ==================== ارسال / پیش‌نویس / ویرایش ====================
+
+    private async Task<string> EditorHtmlAsync()
+    {
+        if (_rich != null) return await _rich.GetContentAsync();
+        return pendingBody;
+    }
+
+    private bool Validate()
+    {
+        errTitle = string.IsNullOrWhiteSpace(title);
+        errRcv = rcvUsers.Count + rcvGroups.Count == 0;
+        if (errTitle || errRcv) { Toast.Error("موارد الزامی را تکمیل کنید."); return false; }
+        return true;
+    }
+
+    private async Task Send()
+    {
+        if (!Validate()) return;
+        busy = true;
+        try
+        {
+            var dto = new AddInnerLetterDto
+            {
+                Title = title.Trim(),
+                Text = await EditorHtmlAsync(),
+                Foriat = foriat,
+                Mahramanegi = mahram,
+                ReciversGirande = rcvUsers.ToList(),
+                GroupsGirande = rcvGroups.ToList(),
+                ReciversErja = erjaUsers.ToList(),
+                GroupsErja = erjaGroups.ToList(),
+                ReciversHamesh = hameshUsers.ToList(),
+                GroupsHamesh = hameshGroups.ToList(),
+                RelatedLetters = related,
+                FromPishnevisId = draftId
+            };
+            var letterId = await LetterSvc.SendAsync(dto);
+
+            // آپلود پیوست‌های جدید روی نامه ارسال‌شده
+            await UploadPendingAsync(id => LetterSvc.UploadAttachmentAsync(letterId, id.stream, id.name, id.type));
+
+            Toast.Success("نامه با موفقیت ارسال شد.");
+            visible = false;
+            await OnSent.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SaveDraft()
+    {
+        if (string.IsNullOrWhiteSpace(title)) { errTitle = true; Toast.Error("برای ذخیره پیش‌نویس، عنوان لازم است."); return; }
+        busy = true;
+        try
+        {
+            var id = await LetterSvc.SavePishnevisAsync(new PishnevisDto
+            {
+                PishnevisId = draftId ?? 0,
+                Title = title.Trim(),
+                Text = await EditorHtmlAsync()
+            });
+            await UploadPendingAsync(x => LetterSvc.UploadPishnevisAttachmentAsync(id, x.stream, x.name, x.type));
+            Toast.Success("پیش‌نویس ذخیره شد.");
+            visible = false;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SubmitEdit()
+    {
+        if (!Validate()) return;
+        busy = true;
+        try
+        {
+            await LetterSvc.EditAsync(editLetterId, new EditInnerLetterDto
+            {
+                Title = title.Trim(),
+                Text = await EditorHtmlAsync(),
+                Foriat = foriat,
+                Mahramanegi = mahram,
+                ReciversGirande = rcvUsers.ToList(),
+                GroupsGirande = rcvGroups.ToList(),
+                ReciversErja = erjaUsers.ToList(),
+                GroupsErja = erjaGroups.ToList(),
+                ReciversHamesh = hameshUsers.ToList(),
+                GroupsHamesh = hameshGroups.ToList(),
+                RelatedLetters = related
+            });
+
+            // آپلود پیوست‌های تازه‌افزوده روی نامه
+            await UploadPendingAsync(x => LetterSvc.UploadAttachmentAsync(editLetterId, x.stream, x.name, x.type));
+
+            Toast.Success("نامه ویرایش شد.");
+            visible = false;
+            await OnSent.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task UploadPendingAsync(Func<(Stream stream, string name, string type), Task> uploader)
+    {
+        foreach (var f in pendingFiles)
+        {
+            try
+            {
+                await using var s = f.OpenReadStream(long.MaxValue);
+                await uploader((s, f.Name, f.ContentType));
+            }
+            catch (Exception ex) { Toast.Error($"بارگذاری {f.Name}: {ex.Message}"); }
+        }
+        pendingFiles.Clear();
+    }
+}

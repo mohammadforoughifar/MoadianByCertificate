@@ -1,0 +1,491 @@
+@using Inventory.Shared.Dtos
+@inject ILetterService LetterSvc
+@inject IToastService Toast
+
+@* ============================================================
+   بایگانی درختی — طراحی مینیمال و آرام
+   - فقط منوی سه‌نقطه / راست‌کلیک (بدون نوار عملیات بالا)
+   - فرزندان تودرتو با خط راهنمای ظریف + انیمیشن نرم
+   - درگ‌اند‌دراپ + انتقال با منو
+   - جستجو فقط بر اساس موضوع و شماره نامه
+   ============================================================ *@
+
+<div class="arv" @onclick="CloseMenus">
+
+    <div class="arv-bar">
+        <button class="arv-add" @onclick="StartCreateRoot" @onclick:stopPropagation="true">
+            <i class="bi bi-folder-plus"></i> دسته جدید
+        </button>
+        <div class="grow"></div>
+        <button class="arv-ico" title="بازکردن همه" @onclick="ExpandAll" @onclick:stopPropagation="true"><i class="bi bi-arrows-expand"></i></button>
+        <button class="arv-ico" title="بستن همه" @onclick="CollapseAll" @onclick:stopPropagation="true"><i class="bi bi-arrows-collapse"></i></button>
+    </div>
+
+    @* ساخت دسته اصلی *@
+    @if (createParentId == 0 && creating)
+    {
+        <div class="arv-new">
+            <i class="bi bi-folder-plus"></i>
+            <input placeholder="نام دسته جدید…" @bind="createText" @bind:event="oninput" @onclick:stopPropagation="true"
+                   @onkeydown="e => CreateKeyDown(e)" />
+            <button class="ok" @onclick="SubmitCreate" @onclick:stopPropagation="true"><i class="bi bi-check-lg"></i></button>
+            <button class="no" @onclick="CancelCreate" @onclick:stopPropagation="true"><i class="bi bi-x-lg"></i></button>
+        </div>
+    }
+
+    @if (loading)
+    {
+        <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    }
+    else if (VisibleRoots.Count == 0 && !creating)
+    {
+        <div class="empty">
+            <i class="bi bi-archive"></i>
+            @(string.IsNullOrWhiteSpace(Filter) ? "بایگانی خالی است — با «دسته جدید» شروع کنید" : "موردی یافت نشد")
+        </div>
+    }
+    else
+    {
+        @* محل رهاسازی «ریشه» هنگام کشیدن پوشه *@
+        @if (dragged is { IsFolder: true } && dragged.ParentId != 0)
+        {
+            <div class="arv-rootdrop @(dragOverId == 0 ? "dropping" : "")"
+                 @ondragover:preventDefault="true" @ondragover="() => dragOverId = 0"
+                 @ondragleave="() => { if (dragOverId == 0) dragOverId = null; }"
+                 @ondrop="DropToRoot">
+                <i class="bi bi-box-arrow-up"></i> انتقال به ریشه بایگانی
+            </div>
+        }
+
+        <div class="arv-tree">
+            @foreach (var n in VisibleRoots)
+            {
+                @RenderNode(n)
+            }
+        </div>
+    }
+
+    @* ---------- منوی زمینه (کلیک روی ⋮ یا راست‌کلیک) ---------- *@
+    @if (menuNode is { } mn)
+    {
+        <div class="arv-menu" style="left:max(8px, calc(@(menuX)px - 185px)); top:min(@(menuY)px, calc(100vh - 230px))"
+             @onclick:stopPropagation="true">
+            @if (mn.IsFolder)
+            {
+                <button @onclick="() => StartCreateSub(mn)"><i class="bi bi-folder-plus"></i> زیرپوشه جدید</button>
+                <button @onclick="() => StartRename(mn)"><i class="bi bi-pencil"></i> تغییر نام</button>
+                <button @onclick="() => MoveViaMenu(mn)"><i class="bi bi-arrows-move"></i> انتقال به…</button>
+                <div class="mdiv"></div>
+                <button class="danger" @onclick="() => DeleteNode(mn)"><i class="bi bi-trash"></i> حذف پوشه</button>
+            }
+            else
+            {
+                <button @onclick="() => OpenLetter(mn)"><i class="bi bi-envelope-open"></i> باز کردن نامه</button>
+                <button @onclick="() => MoveViaMenu(mn)"><i class="bi bi-arrows-move"></i> انتقال به…</button>
+                <div class="mdiv"></div>
+                <button class="warn" @onclick="() => DeleteNode(mn)"><i class="bi bi-box-arrow-up"></i> خروج از بایگانی</button>
+            }
+        </div>
+    }
+</div>
+
+<BayeganiFolderPickerModal @ref="picker" />
+<LetterConfirmModal @ref="confirm" />
+
+@code {
+    [Parameter] public string? Filter { get; set; }
+    [Parameter] public EventCallback<BayeganiNodeDto> OnOpenLetter { get; set; }
+    [Parameter] public bool IncomingOnly { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    /// <summary>وقتی نامه‌ای از بایگانی خارج شد (برای بستن ریدر اگر همان نامه باز است)</summary>
+    [Parameter] public EventCallback<BayeganiNodeDto> OnLetterUnarchived { get; set; }
+
+    private List<BayeganiNodeDto> roots = new();
+    private readonly HashSet<int> expanded = new();
+    private bool loading = true;
+
+    private int selectedNodeId;
+    private BayeganiNodeDto? menuNode;
+    private double menuX, menuY;
+
+    private bool creating;
+    private int createParentId;
+    private string createText = "";
+
+    private int renameId;
+    private string renameText = "";
+
+    private BayeganiNodeDto? dragged;
+    private int? dragOverId;
+
+    private BayeganiFolderPickerModal? picker;
+    private LetterConfirmModal? confirm;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    /// <summary>تعداد گره‌های قابل‌نمایش پس از فیلتر — والد برای حالت جایگزین استفاده می‌کند.</summary>
+    // (Parameter در بخش پارامترها تعریف شده؛ اینجا فقط وضعیت داخلی است)
+    public int NodeCount { get; private set; }
+
+    /// <summary>
+    /// شناسهٔ نامه‌هایی که در درخت (پوشه‌ها) حاضرند. والد از این مجموعه استفاده می‌کند تا
+    /// نامه‌های بایگانی‌شده‌ای که گره درختی ندارند را در «فهرست جایگزین» نشان دهد؛
+    /// وگرنه آن نامه‌ها هیچ‌جا دیده نمی‌شدند و «گم» به‌نظر می‌رسیدند.
+    /// </summary>
+    public HashSet<int> TreeLetterIds { get; private set; } = new();
+
+    /// <summary>پس از هر بار بارگذاری (موفق یا ناموفق) والد را باخبر می‌کند.</summary>
+    [Parameter] public EventCallback OnLoaded { get; set; }
+
+    public async Task ReloadAsync()
+    {
+        loading = true; StateHasChanged();
+        try
+        {
+            roots = await LetterSvc.GetBayeganiTreeAsync();
+            if (IncomingOnly) roots = KeepIncomingNodes(roots);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally
+        {
+            NodeCount = CountNodes(roots);
+            TreeLetterIds = CollectLetterIds(roots);
+            loading = false;
+            StateHasChanged();
+            if (OnLoaded.HasDelegate)
+            {
+                try { await OnLoaded.InvokeAsync(); }
+                catch { /* اطلاع‌رسانی به والد نباید بارگذاری درخت را بشکند */ }
+            }
+        }
+    }
+
+    private static int CountNodes(List<BayeganiNodeDto> nodes)
+    {
+        var c = nodes.Count;
+        foreach (var n in nodes) c += CountNodes(n.Children);
+        return c;
+    }
+
+    private static HashSet<int> CollectLetterIds(List<BayeganiNodeDto> nodes)
+    {
+        var set = new HashSet<int>();
+        foreach (var n in nodes)
+        {
+            if (!n.IsFolder && n.LetterId is { } id) set.Add(id);
+            set.UnionWith(CollectLetterIds(n.Children));
+        }
+        return set;
+    }
+
+    // ==================== فیلتر (فقط موضوع و شماره نامه) ====================
+
+    private List<BayeganiNodeDto> VisibleRoots =>
+        string.IsNullOrWhiteSpace(Filter) ? roots : roots.Select(FilterNode).Where(n => n != null).Select(n => n!).ToList();
+
+    private BayeganiNodeDto? FilterNode(BayeganiNodeDto n)
+    {
+        var q = Filter!.Trim();
+        var selfMatch = n.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
+                        || (!n.IsFolder && (n.LetterNumber ?? "").Contains(q));
+
+        var kids = n.Children.Select(FilterNode).Where(c => c != null).Select(c => c!).ToList();
+        if (!selfMatch && kids.Count == 0) return null;
+
+        return new BayeganiNodeDto
+        {
+            BayeganiId = n.BayeganiId, Title = n.Title, ParentId = n.ParentId,
+            TypeBayegani = n.TypeBayegani, IsFolder = n.IsFolder, ErjaId = n.ErjaId,
+            LetterId = n.LetterId, LetterNumber = n.LetterNumber, Sender = n.Sender,
+            Date = n.Date, Foriat = n.Foriat, Mahramanegi = n.Mahramanegi,
+            HasAttachment = n.HasAttachment, SourceType = n.SourceType,
+            Children = kids.Count > 0 ? kids : n.Children.Where(c => selfMatch).ToList()
+        };
+    }
+
+    private static List<BayeganiNodeDto> KeepIncomingNodes(List<BayeganiNodeDto> source)
+    {
+        var result = new List<BayeganiNodeDto>();
+        foreach (var node in source)
+        {
+            if (!node.IsFolder)
+            {
+                if (node.SourceType == 3) result.Add(node);
+                continue;
+            }
+            var children = KeepIncomingNodes(node.Children);
+            if (children.Count == 0) continue;
+            result.Add(new BayeganiNodeDto
+            {
+                BayeganiId = node.BayeganiId, Title = node.Title, ParentId = node.ParentId,
+                TypeBayegani = node.TypeBayegani, IsFolder = true, SourceType = node.SourceType,
+                Children = children
+            });
+        }
+        return result;
+    }
+
+    private bool IsOpen(BayeganiNodeDto n) => expanded.Contains(n.BayeganiId) || !string.IsNullOrWhiteSpace(Filter);
+
+    private void ClickFolder(BayeganiNodeDto n)
+    {
+        selectedNodeId = n.BayeganiId;
+        menuNode = null;
+        if (!expanded.Add(n.BayeganiId)) expanded.Remove(n.BayeganiId);
+    }
+
+    private void ExpandAll() { AddAll(roots); }
+    private void AddAll(List<BayeganiNodeDto> list)
+    {
+        foreach (var n in list.Where(x => x.IsFolder)) { expanded.Add(n.BayeganiId); AddAll(n.Children); }
+    }
+    private void CollapseAll() => expanded.Clear();
+
+    private static int CountLetters(BayeganiNodeDto n) =>
+        n.Children.Count(c => !c.IsFolder) + n.Children.Where(c => c.IsFolder).Sum(CountLetters);
+
+    private void CloseMenus() => menuNode = null;
+
+    private void OpenMenu(BayeganiNodeDto n, MouseEventArgs e)
+    {
+        selectedNodeId = n.BayeganiId;
+        if (menuNode?.BayeganiId == n.BayeganiId) { menuNode = null; return; }
+        menuNode = n;
+        menuX = e.ClientX;
+        menuY = e.ClientY;
+    }
+
+    // ==================== ساخت پوشه ====================
+
+    private void StartCreateRoot() { creating = true; createParentId = 0; createText = ""; menuNode = null; }
+    private void StartCreateSub(BayeganiNodeDto parent)
+    {
+        creating = true; createParentId = parent.BayeganiId; createText = ""; menuNode = null;
+        expanded.Add(parent.BayeganiId);
+    }
+    private void CancelCreate() { creating = false; createText = ""; }
+
+    private async Task CreateKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await SubmitCreate();
+        else if (e.Key == "Escape") CancelCreate();
+    }
+
+    private async Task SubmitCreate()
+    {
+        if (string.IsNullOrWhiteSpace(createText)) { Toast.Error("نام پوشه را وارد کنید."); return; }
+        try
+        {
+            var dto = new SaveBayeganiFolderDto { Title = createText.Trim(), ParentId = createParentId };
+            if (createParentId == 0) await LetterSvc.AddBayeganiMainCategoryAsync(dto);
+            else await LetterSvc.AddBayeganiSubCategoryAsync(dto);
+            Toast.Success("پوشه ساخته شد");
+            creating = false; createText = "";
+            await ReloadAsync();
+            await OnChanged.InvokeAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ==================== تغییرنام ====================
+
+    private void StartRename(BayeganiNodeDto n) { renameId = n.BayeganiId; renameText = n.Title; menuNode = null; }
+    private void CancelRename() { renameId = 0; renameText = ""; }
+
+    private async Task RenameKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await SubmitRename();
+        else if (e.Key == "Escape") CancelRename();
+    }
+
+    private async Task SubmitRename()
+    {
+        if (string.IsNullOrWhiteSpace(renameText)) { Toast.Error("نام پوشه را وارد کنید."); return; }
+        try
+        {
+            await LetterSvc.EditBayeganiFolderAsync(renameId, new SaveBayeganiFolderDto { Title = renameText.Trim() });
+            Toast.Success("نام پوشه تغییر کرد");
+            renameId = 0;
+            await ReloadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ==================== انتقال ====================
+
+    private async Task MoveViaMenu(BayeganiNodeDto n)
+    {
+        menuNode = null;
+        if (picker == null) return;
+        var dest = await picker.PickAsync(
+            n.IsFolder ? $"انتقال پوشه «{n.Title}»" : "انتقال نامه به پوشه",
+            allowRoot: n.IsFolder,
+            excludeFolderId: n.IsFolder ? n.BayeganiId : null);
+        if (dest is not { } d) return;
+        await MoveAsync(n, d);
+    }
+
+    private async Task MoveAsync(BayeganiNodeDto n, int newParentId)
+    {
+        try
+        {
+            if (n.IsFolder) await LetterSvc.MoveBayeganiFolderAsync(n.BayeganiId, newParentId);
+            else await LetterSvc.MoveBayeganiLetterAsync(n.BayeganiId, newParentId);
+            if (newParentId > 0) expanded.Add(newParentId);
+            Toast.Success(n.IsFolder ? "پوشه جابجا شد" : "نامه جابجا شد");
+            await ReloadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ==================== حذف / خروج از بایگانی ====================
+
+    private async Task DeleteNode(BayeganiNodeDto n)
+    {
+        menuNode = null;
+        if (confirm != null)
+        {
+            var ok = n.IsFolder
+                ? await confirm.AskAsync("حذف پوشه",
+                    $"آیا مطمئن هستید که می‌خواهید پوشه «{n.Title}» را حذف کنید؟ نامه‌های داخل آن از بایگانی خارج می‌شوند.",
+                    "بله، حذف کن", "bi-trash", "danger")
+                : await confirm.AskAsync("خروج از بایگانی",
+                    $"آیا مطمئن هستید که می‌خواهید نامه «{n.Title}» را از بایگانی خارج کنید؟",
+                    "بله، خارج کن", "bi-box-arrow-up", "warn");
+            if (!ok) return;
+        }
+        try
+        {
+            await LetterSvc.DeleteBayeganiAsync(n.BayeganiId);
+            Toast.Success(n.IsFolder ? "پوشه حذف شد" : "نامه از بایگانی خارج شد");
+            if (selectedNodeId == n.BayeganiId) selectedNodeId = 0;
+            await ReloadAsync();
+            await OnChanged.InvokeAsync();
+            if (!n.IsFolder) await OnLetterUnarchived.InvokeAsync(n);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ==================== درگ‌اند‌دراپ ====================
+
+    private void DragStart(BayeganiNodeDto n) { dragged = n; menuNode = null; }
+    private void DragEnd() { dragged = null; dragOverId = null; }
+
+    private bool CanDropOn(BayeganiNodeDto target)
+    {
+        if (dragged == null || !target.IsFolder) return false;
+        if (dragged.BayeganiId == target.BayeganiId) return false;
+        if (dragged.ParentId == target.BayeganiId) return false;
+        if (dragged.IsFolder && IsInSubtree(dragged, target.BayeganiId)) return false;
+        return true;
+    }
+
+    private static bool IsInSubtree(BayeganiNodeDto root, int id)
+    {
+        if (root.BayeganiId == id) return true;
+        return root.Children.Any(c => IsInSubtree(c, id));
+    }
+
+    private async Task DropOn(BayeganiNodeDto target)
+    {
+        var d = dragged;
+        dragOverId = null; dragged = null;
+        if (d == null || !target.IsFolder) return;
+        if (d.BayeganiId == target.BayeganiId || d.ParentId == target.BayeganiId) return;
+        await MoveAsync(d, target.BayeganiId);
+    }
+
+    private async Task DropToRoot()
+    {
+        var d = dragged;
+        dragOverId = null; dragged = null;
+        if (d is not { IsFolder: true } || d.ParentId == 0) return;
+        await MoveAsync(d, 0);
+    }
+
+    private async Task OpenLetter(BayeganiNodeDto n)
+    {
+        menuNode = null;
+        selectedNodeId = n.BayeganiId;
+        if (!n.IsFolder) await OnOpenLetter.InvokeAsync(n);
+    }
+
+    // ==================== رندر بازگشتی ====================
+
+    private RenderFragment RenderNode(BayeganiNodeDto n) => __builder =>
+    {
+        @if (n.IsFolder)
+        {
+            var open = IsOpen(n);
+            var cnt = CountLetters(n);
+            <div class="tn-fold @(selectedNodeId == n.BayeganiId ? "sel" : "") @(dragOverId == n.BayeganiId && CanDropOn(n) ? "dropping" : "")"
+                 draggable="true"
+                 @ondragstart="() => DragStart(n)" @ondragstart:stopPropagation="true"
+                 @ondragend="DragEnd"
+                 @ondragover:preventDefault="true" @ondragover="() => { if (CanDropOn(n)) dragOverId = n.BayeganiId; }" @ondragover:stopPropagation="true"
+                 @ondragleave="() => { if (dragOverId == n.BayeganiId) dragOverId = null; }"
+                 @ondrop="() => DropOn(n)" @ondrop:stopPropagation="true"
+                 @onclick="() => ClickFolder(n)" @onclick:stopPropagation="true"
+                 @oncontextmenu="e => OpenMenu(n, e)" @oncontextmenu:preventDefault="true">
+                <span class="chev @(open ? "open" : "")"><i class="bi bi-chevron-left"></i></span>
+                <span class="fico"><i class="bi @(open ? "bi-folder2-open" : "bi-folder-fill")"></i></span>
+                @if (renameId == n.BayeganiId)
+                {
+                    <input class="tn-edit" @bind="renameText" @bind:event="oninput"
+                           @onclick:stopPropagation="true" @onkeydown="RenameKeyDown" />
+                    <button class="tn-ok" @onclick="SubmitRename" @onclick:stopPropagation="true"><i class="bi bi-check-lg"></i></button>
+                    <button class="tn-no" @onclick="CancelRename" @onclick:stopPropagation="true"><i class="bi bi-x-lg"></i></button>
+                }
+                else
+                {
+                    <span class="tn-title">@n.Title</span>
+                    @if (cnt > 0) { <span class="tn-cnt num">@cnt.FaDigits()</span> }
+                    <span class="grow"></span>
+                    <button class="tn-dd" @onclick="e => OpenMenu(n, e)" @onclick:stopPropagation="true"><i class="bi bi-three-dots-vertical"></i></button>
+                }
+            </div>
+
+            @if (creating && createParentId == n.BayeganiId)
+            {
+                <div class="tn-kids">
+                    <div class="arv-new">
+                        <i class="bi bi-folder-plus"></i>
+                        <input placeholder="نام زیرپوشه…" @bind="createText" @bind:event="oninput"
+                               @onclick:stopPropagation="true" @onkeydown="CreateKeyDown" />
+                        <button class="ok" @onclick="SubmitCreate" @onclick:stopPropagation="true"><i class="bi bi-check-lg"></i></button>
+                        <button class="no" @onclick="CancelCreate" @onclick:stopPropagation="true"><i class="bi bi-x-lg"></i></button>
+                    </div>
+                </div>
+            }
+
+            @if (open && n.Children.Count > 0)
+            {
+                <div class="tn-kids">
+                    @foreach (var c in n.Children)
+                    {
+                        @RenderNode(c)
+                    }
+                </div>
+            }
+        }
+        else
+        {
+            <div class="tn-leaf @(selectedNodeId == n.BayeganiId ? "sel" : "")" draggable="true"
+                 title="@(n.Sender ?? "")"
+                 @ondragstart="() => DragStart(n)" @ondragstart:stopPropagation="true"
+                 @ondragend="DragEnd"
+                 @onclick="() => OpenLetter(n)" @onclick:stopPropagation="true"
+                 @oncontextmenu="e => OpenMenu(n, e)" @oncontextmenu:preventDefault="true">
+                <span class="lico"><i class="bi bi-envelope-paper"></i></span>
+                <span class="tn-title">@n.Title</span>
+                @if (n.Foriat is { } fo && fo != "عادی") { <span class="tg red">!</span> }
+                @if (n.Mahramanegi is { } mh && mh != "عادی") { <span class="tg dark"><i class="bi bi-lock-fill"></i></span> }
+                @if (n.HasAttachment) { <span class="tg gray"><i class="bi bi-paperclip"></i></span> }
+                <span class="grow"></span>
+                <span class="tn-meta num">@((n.LetterNumber ?? "").FaDigits())</span>
+                <button class="tn-dd" @onclick="e => OpenMenu(n, e)" @onclick:stopPropagation="true"><i class="bi bi-three-dots-vertical"></i></button>
+            </div>
+        }
+    };
+}

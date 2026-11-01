@@ -1,0 +1,1169 @@
+@using System.Text.Json
+@implements IDisposable
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject IAuthState Auth
+
+<div class="wpmf-root @(_isFullscreen ? "wpmf-fullscreen" : "")" dir="rtl">
+    <div class="wpmf-head">
+        <div><div class="wpmf-kicker">نگار ذهنی</div><input class="wpmf-title" value="@_map.Title" @oninput="OnTitleInput" disabled="@(!CanEdit)" /></div>
+        <div class="wpmf-head-actions"><span class="wpmf-save-state">@(_dirty ? "تغییرات ذخیره‌نشده" : _status)</span><button class="btn btn-sm btn-outline-secondary wpmf-maximize" type="button" @onclick="ToggleFullscreen" title="@(_isFullscreen ? "بازگشت به اندازهٔ معمول" : "بزرگ‌نمایی تمام‌صفحه")" aria-label="@(_isFullscreen ? "بازگشت به اندازهٔ معمول" : "بزرگ‌نمایی تمام‌صفحه")"><i class="bi @(_isFullscreen ? "bi-fullscreen-exit" : "bi-arrows-fullscreen")"></i></button><button class="btn btn-sm btn-primary" @onclick="SaveAsync" disabled="@(!CanEdit || _saving)"><i class="bi bi-cloud-check"></i> @(_saving ? "در حال ذخیره…" : "ذخیره نقشه")</button></div>
+    </div>
+    <div class="wpmf-toolbar">
+        <div class="wpmf-tools">
+            @if (SelectedNode is not null)
+            {
+                if (SelectedNode.ChildMindFlow is not null || SelectedNode.LinkedMindFlowProjectId.HasValue)
+                {
+                    var linkedFlowForToolbar = SelectedNode.LinkedMindFlowProjectId is int linkedId ? FindAccessibleMindFlow(linkedId) : null;
+                    var canDesignSubFlow = SelectedNode.ChildMindFlow is not null ? CanEdit : linkedFlowForToolbar?.CanManage == true && linkedFlowForToolbar.Status == "Open";
+                    <a class="btn btn-sm btn-outline-primary" href="@SubMindFlowHref(SelectedNode.Id)" target="_blank" rel="noopener noreferrer" title="بازکردن زیرنگاشت در تب جدید">
+                        <i class="bi bi-diagram-3"></i> @(canDesignSubFlow ? "طراحی زیرنگاشت" : "مشاهده زیرنگاشت")
+                    </a>
+                }
+                else if (CanEdit)
+                {
+                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="CreateChildMindFlowAsync" disabled="@_saving">
+                        <i class="bi bi-plus-square"></i> ساخت زیرنگاشت
+                    </button>
+                }
+            }
+            <button class="btn btn-sm btn-light" @onclick="AddChild" disabled="@(!CanEdit)"><i class="bi bi-node-plus"></i> زیرشاخه</button>
+            <button class="btn btn-sm btn-light" @onclick="AddSibling" disabled="@(!CanEdit)"><i class="bi bi-diagram-2"></i> هم‌سطح</button>
+            <button class="btn btn-sm btn-light" @onclick="Undo" disabled="@(!CanEdit || _undo.Count == 0)">↶</button>
+            <button class="btn btn-sm btn-light" @onclick="Redo" disabled="@(!CanEdit || _redo.Count == 0)">↷</button>
+            <button class="btn btn-sm btn-light" @onclick="ToggleCollapse" disabled="@(!CanEdit)" title="جمع/بازکردن شاخه">@(SelectedNode?.Collapsed == true ? "⊞" : "⊟")</button>
+            <button class="btn btn-sm btn-outline-danger" @onclick="DeleteSelected" disabled="@(!CanEdit || SelectedNode?.ParentId is null)"><i class="bi bi-trash"></i></button>
+        </div>
+        <div class="wpmf-zoom"><input class="form-control form-control-sm" placeholder="جست‌وجو در نقشه" @bind="_search" @bind:event="oninput" /><button class="btn btn-sm btn-light" @onclick="ZoomOut">−</button><span>@((int)(Zoom * 100))٪</span><button class="btn btn-sm btn-light" @onclick="ZoomIn">＋</button><button class="btn btn-sm btn-light" @onclick="Fit">نمای کامل</button></div>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(_message)) { <div class="alert alert-warning py-2 px-3 mb-2">@_message</div> }
+    @* اگر ماژول JS «کشیدن گره با ماوس» بارگذاری نشود، فقط همین قابلیت از کار می‌افتد؛
+       نقشه، ویرایش، ذخیره و بقیهٔ عملیات مثل قبل کار می‌کنند (قبلاً کل صفحه می‌افتاد). *@
+    @if (_dragUnavailable)
+    {
+        <div class="alert alert-info py-2 px-3 mb-2 fs-9">
+            <i class="bi bi-info-circle"></i>
+            جابه‌جایی گره‌ها با کشیدن ماوس در این نشست فعال نشد (فایل اسکریپت نقشه بارگذاری نشد)؛
+            برای تغییر جای گره از تنظیمات گره استفاده کنید. اگر تکرار شد، صفحه را یک‌بار با
+            <b>Ctrl+F5</b> تازه کنید.
+        </div>
+    }
+    @if (_loading)
+    {
+        <div class="wpmf-loading"><span class="spinner-border spinner-border-sm"></span> در حال بارگذاری نقشهٔ پروژه…</div>
+    }
+    else
+    {
+        <div class="wpmf-workarea">
+            <div class="wpmf-canvas-wrap">
+                <div class="wpmf-canvas-scroller">
+                    <div class="wpmf-grid"></div>
+                    <svg id="@_svgId" class="wpmf-canvas" data-readonly="@(!CanEdit)" viewBox="@ViewBox" aria-label="@(IsStandalone ? "نگاشت ذهنی مستقل" : "نقشه ذهنی پروژه")">
+                    @foreach (var node in VisibleNodes.Where(n => n.ParentId.HasValue))
+                    {
+                        var parent = _map.Nodes.FirstOrDefault(n => n.Id == node.ParentId);
+                        if (parent is not null && IsVisible(parent))
+                        {
+                            var direction = node.X >= parent.X ? 1 : -1;
+                            var sx = parent.X + direction * Width(parent) / 2;
+                            var ex = node.X - direction * Width(node) / 2;
+                            var mid = (sx + ex) / 2;
+                            <path class="wpmf-link" data-parent-id="@parent.Id" data-node-id="@node.Id" d="M @N(sx) @N(parent.Y) C @N(mid) @N(parent.Y), @N(mid) @N(node.Y), @N(ex) @N(node.Y)" stroke="@node.Color" />
+                        }
+                    }
+                    @foreach (var node in VisibleNodes)
+                    {
+                            var progress = GetProgress(node.Id);
+                            var workOrderCount = NodeWorkOrderIds(node).Count;
+                            var linkedSubFlow = HasAccessibleSubMindFlow(node);
+                            var actionCount = (workOrderCount > 0 ? 1 : 0) + (linkedSubFlow ? 1 : 0);
+                            var actionSpace = actionCount * 30;
+                            var width = Width(node);
+                            var height = Height(node);
+                            var selected = node.Id == _selectedId;
+                        var cx = width / 2 - 18;
+                        var cy = -height / 2 + 18;
+                        var radius = 13;
+                        var circumference = 2 * Math.PI * radius;
+                        <g class="wpmf-node @(selected ? "selected" : "") @(string.IsNullOrWhiteSpace(_search) || !node.Text.Contains(_search, StringComparison.OrdinalIgnoreCase) ? "" : "match")" data-node-id="@node.Id" data-parent-id="@(node.ParentId?.ToString() ?? "")" data-x="@N(node.X)" data-y="@N(node.Y)" data-width="@N(width)" transform="translate(@N(node.X),@N(node.Y))" @onclick="() => Select(node.Id)" @onclick:stopPropagation="true">
+                            <rect class="wpmf-node-bg" x="@N(-width / 2)" y="@N(-height / 2)" width="@N(width)" height="@N(height)" rx="18" fill="@(node.ParentId is null ? node.Color : "#fff")" stroke="@node.Color" />
+                            @if (workOrderCount > 0)
+                            {
+                                <foreignObject x="@N(-width / 2 + 4)" y="@N(-height / 2 + 4)" width="27" height="24">
+                                    <button xmlns="http://www.w3.org/1999/xhtml" type="button" class="wpmf-node-action wpmf-node-order-action" title="بازکردن دستورکارهای این گره (@workOrderCount)" @onclick="() => OpenNodeWorkOrdersAsync(node)" @onclick:stopPropagation="true">
+                                        <i class="bi bi-clipboard-check"></i><span>@workOrderCount</span>
+                                    </button>
+                                </foreignObject>
+                            }
+                            @if (linkedSubFlow)
+                            {
+                                var subIconX = -width / 2 + (workOrderCount > 0 ? 34 : 4);
+                                <foreignObject x="@N(subIconX)" y="@N(-height / 2 + 4)" width="27" height="24">
+                                    <a xmlns="http://www.w3.org/1999/xhtml" class="wpmf-node-action wpmf-node-subflow-action" href="@SubMindFlowHref(node.Id)" target="_blank" rel="noopener noreferrer" title="بازکردن زیرمایندفلو در تب جدید" @onclick="StopNodeAction" @onclick:stopPropagation="true">
+                                        <i class="bi bi-diagram-3"></i>
+                                    </a>
+                                </foreignObject>
+                            }
+                            <foreignObject x="@N(-width / 2 + (node.ParentId is null ? 8 : 0) + actionSpace)" y="@N(-height / 2)" width="@N(width - (progress.HasValue ? 34 : 8) - actionSpace)" height="@N(height)">
+                                <div xmlns="http://www.w3.org/1999/xhtml" class="wpmf-node-label @(node.ParentId is null ? "root" : "")">@node.Text</div>
+                            </foreignObject>
+                            @if (progress is double pct)
+                            {
+                                <circle class="wpmf-ring-track @(node.ParentId is null ? "root-track" : "")" cx="@N(cx)" cy="@N(cy)" r="@N(radius)" />
+                                <circle class="wpmf-ring-value" cx="@N(cx)" cy="@N(cy)" r="@N(radius)" stroke="@(node.ParentId is null ? "#fff" : node.Color)" stroke-dasharray="@N(circumference)" stroke-dashoffset="@N(circumference * (1 - Math.Clamp(pct, 0, 100) / 100))" transform="rotate(-90 @N(cx) @N(cy))" />
+                                <foreignObject x="@N(cx - 14)" y="@N(cy - 8)" width="28" height="16"><div xmlns="http://www.w3.org/1999/xhtml" class="wpmf-ring-label @(node.ParentId is null ? "root-label" : "")">@Math.Round(pct)%</div></foreignObject>
+                            }
+                            @if (node.Collapsed && ChildCount(node.Id) > 0) { <circle class="wpmf-collapse-dot" cx="0" cy="@N(height / 2 + 8)" r="6" /> }
+                        </g>
+                    }
+                    </svg>
+                </div>
+                <div class="wpmf-hint">@(CanEdit ? "برای دیدن بخش‌های بیرون قاب، افقی یا عمودی اسکرول کن؛ گره را بکش تا جابه‌جا یا روی گرهٔ مقصد رها کن تا زیرشاخه شود." : "برای دیدن جزئیات، روی گره کلیک کن؛ برای دیدن بخش‌های بیرون قاب اسکرول کن.")</div>
+            </div>
+            <aside class="wpmf-inspector" aria-label="پنل تنظیمات و طراحی؛ برای دیدن گزینه‌های بیشتر عمودی اسکرول کنید">
+                @if (SelectedNode is not null)
+                {
+                    var p = GetProgress(SelectedNode.Id);
+                    <section class="wpmf-inspector-card wpmf-node-settings-card">
+                        <header class="wpmf-card-heading"><i class="bi bi-sliders"></i><span>مشخصات گره</span></header>
+                        <div class="wpmf-card-body">
+                    <div class="wpmf-progress-head"><div class="wpmf-progress-ring" style="@RingStyle(SelectedNode.Color, p ?? 0)"><span>@(p is double v ? $"{Math.Round(v)}٪" : "—")</span></div><div><strong>پیشرفت این شاخه</strong><small>@ProgressSource(SelectedNode)</small></div></div>
+                    <section class="wpmf-size-panel">
+                        <div class="wpmf-size-heading"><b>اندازهٔ المان انتخاب‌شده</b><small>@Math.Round(Width(SelectedNode)) × @Math.Round(Height(SelectedNode)) px</small></div>
+                        <div class="wpmf-size-row">
+                            <span>عرض</span>
+                            <button type="button" class="btn btn-sm btn-light" title="کوچک‌کردن عرض" @onclick="() => AdjustSelectedNodeSize(-20, 0)" disabled="@(!CanEdit || Width(SelectedNode) <= MinNodeWidth)">−</button>
+                            <output>@Math.Round(Width(SelectedNode)) px</output>
+                            <button type="button" class="btn btn-sm btn-light" title="بزرگ‌کردن عرض" @onclick="() => AdjustSelectedNodeSize(20, 0)" disabled="@(!CanEdit || Width(SelectedNode) >= MaxNodeWidth)">＋</button>
+                        </div>
+                        <div class="wpmf-size-row">
+                            <span>ارتفاع</span>
+                            <button type="button" class="btn btn-sm btn-light" title="کم‌کردن ارتفاع" @onclick="() => AdjustSelectedNodeSize(0, -10)" disabled="@(!CanEdit || Height(SelectedNode) <= MinNodeHeight)">−</button>
+                            <output>@Math.Round(Height(SelectedNode)) px</output>
+                            <button type="button" class="btn btn-sm btn-light" title="زیادکردن ارتفاع" @onclick="() => AdjustSelectedNodeSize(0, 10)" disabled="@(!CanEdit || Height(SelectedNode) >= MaxNodeHeight)">＋</button>
+                        </div>
+                    </section>
+                    <label class="form-label small mb-1">عنوان بخش</label>
+                    <input class="form-control form-control-sm mb-3" value="@SelectedNode.Text" @oninput="OnNodeText" disabled="@(!CanEdit)" />
+                    <label class="form-label small mb-1">یادداشت</label>
+                    <textarea class="form-control form-control-sm mb-3" rows="2" value="@SelectedNode.Note" @oninput="OnNodeNote" disabled="@(!CanEdit)" placeholder="توضیح...">@SelectedNode.Note</textarea>
+                    <label class="form-label small mb-1">رنگ شاخه</label>
+                    <div class="wpmf-colors mb-3">@foreach (var color in Palette) { <button class="@(SelectedNode.Color == color ? "active" : "")" style="background:@color" @onclick="() => SetColor(color)" disabled="@(!CanEdit)" aria-label="تغییر رنگ"></button> }</div>
+                        </div>
+                    </section>
+                    <section class="wpmf-inspector-card wpmf-order-card">
+                        <header class="wpmf-card-heading"><i class="bi bi-clipboard-check"></i><span>دستورکارهای این گره</span><b class="wpmf-card-count">@NodeWorkOrderIds(SelectedNode).Count</b></header>
+                        @if (CanEdit)
+                        {
+                            <button type="button" class="wpmf-add-order-btn" @onclick="ToggleWorkOrderOptions" aria-expanded="@_showWorkOrderOptions" disabled="@_loadingOrders">
+                                <i class="bi @(_showWorkOrderOptions ? "bi-dash-circle" : "bi-plus-circle")"></i> @(_showWorkOrderOptions ? "بستن فهرست" : "افزودن دستورکار")
+                            </button>
+                        }
+                        @if (_showWorkOrderOptions && CanEdit)
+                        {
+                            <div id="wpmf-order-options" class="wpmf-order-picker-list" role="listbox" aria-label="انتخاب دستورکار">
+                                @if (_loadingOrders)
+                                {
+                                    <div class="wpmf-combo-empty">در حال بارگذاری دستورکارها…</div>
+                                }
+                                else if (FilteredWorkOrders.Count == 0)
+                                {
+                                    <div class="wpmf-combo-empty">دستورکار دیگری برای اتصال در دسترس نیست.</div>
+                                }
+                                else
+                                {
+                                    @foreach (var order in FilteredWorkOrders)
+                                    {
+                                        <button type="button" class="wpmf-order-picker-option" @key="order.Id" @onclick="() => ChooseWorkOrderAsync(order)">
+                                            <span class="wpmf-order-picker-icon"><i class="bi bi-clipboard"></i></span>
+                                            <span class="wpmf-order-picker-copy"><strong>@order.Number · @order.Title</strong><small>@(string.IsNullOrWhiteSpace(order.ProjectName) ? "بدون پروژه" : order.ProjectName)</small></span>
+                                            <span class="badge @(order.Status == "Closed" ? "text-bg-secondary" : "text-bg-success")">@(order.Status == "Closed" ? "بسته" : "باز")</span>
+                                        </button>
+                                    }
+                                }
+                            </div>
+                            @if (_hasMoreWorkOrders)
+                            {
+                                <button type="button" class="wpmf-load-more-orders" @onclick="LoadMoreWorkOrdersAsync" disabled="@_loadingOrders">@( _loadingOrders ? "در حال بارگذاری…" : "نمایش دستورکارهای بیشتر")</button>
+                            }
+                        }
+                    @if (NodeWorkOrderIds(SelectedNode).Count > 0)
+                    {
+                        <div class="wpmf-order-chips">
+                            @foreach (var orderId in NodeWorkOrderIds(SelectedNode))
+                            {
+                                var orderChip = FindWorkOrder(orderId);
+                                <span class="wpmf-order-chip @(orderId == _selectedWorkOrderId ? "active" : "")" @key="orderId">
+                                    <button type="button" class="wpmf-order-chip-main" @onclick="() => SelectNodeWorkOrderAsync(orderId)">
+                                        <i class="bi bi-clipboard-check"></i> @(orderChip is null ? $"#{orderId}" : orderChip.Number)
+                                    </button>
+                                    @if (CanEdit) { <button type="button" class="wpmf-order-chip-remove" title="قطع اتصال" @onclick="() => UnlinkWorkOrderAsync(orderId)">×</button> }
+                                </span>
+                            }
+                        </div>
+                    }
+                    @if (_showNodeWorkOrderList && NodeWorkOrderIds(SelectedNode).Count > 1)
+                    {
+                        <div class="wpmf-node-order-list">
+                            <div class="small fw-semibold mb-1">دستورکارهای این گره</div>
+                            @foreach (var orderId in NodeWorkOrderIds(SelectedNode))
+                            {
+                                var row = FindWorkOrder(orderId);
+                                <button type="button" class="wpmf-node-order-row" @key="orderId" @onclick="() => SelectNodeWorkOrderAsync(orderId)">
+                                    <strong>@(row?.Number ?? $"دستورکار #{orderId}")</strong>
+                                    <span>@(row?.Title ?? "برای مشاهده کلیک کن")</span>
+                                </button>
+                            }
+                        </div>
+                    }
+                    @if (_selectedWorkOrderId is int linkedOrderId && NodeWorkOrderIds(SelectedNode).Contains(linkedOrderId))
+                    {
+                        var linkedOrder = FindWorkOrder(linkedOrderId);
+                        @if (linkedOrder is not null)
+                        {
+                            <div class="small text-muted mb-2 d-flex justify-content-between align-items-center gap-2 flex-wrap">
+                                <span><b>@linkedOrder.Number</b> · @linkedOrder.Title · @(linkedOrder.Status == "Closed" ? "بسته" : "باز")</span>
+                                <a class="small" href="@($"/work-orders?open={linkedOrder.Id}")" target="_blank" rel="noopener noreferrer"><i class="bi bi-box-arrow-up-right"></i> باز کردن در تب جدید</a>
+                            </div>
+                            @if (_loadingChecklist)
+                            {
+                                <div class="small text-muted py-2">در حال بارگذاری چک‌لیست دستور…</div>
+                            }
+                            else if (_linkedChecklist.Count == 0)
+                            {
+                                <div class="wpmf-empty-check">این دستور هنوز چک‌لیست ندارد.</div>
+                            }
+                            else
+                            {
+                                <div class="small text-muted mb-2">برای تکمیل مربع را تیک بزن.@(CanReorderChecklist(linkedOrder) ? " برای تغییر ترتیب، ردیف را با دستگیره بکش." : "")</div>
+                                @foreach (var item in _linkedChecklist)
+                                {
+                                    var mayToggle = CanToggleChecklistItem(linkedOrder, item);
+                                    var mayReorder = CanReorderChecklist(linkedOrder);
+                                    <div class="wpmf-check-row @(mayReorder ? "reorderable" : "") @(item.Id == _dragChecklistItemId ? "dragging" : "") @(item.Id == _checklistDropTargetId ? "drop-target" : "")" @key="item.Id"
+                                         draggable="@mayReorder" @ondragstart="() => StartChecklistDrag(item.Id)" @ondragend="ClearChecklistDrag"
+                                         @ondragover="() => ChecklistDragOver(item.Id)" @ondragover:preventDefault="true"
+                                         @ondrop="() => DropChecklistItem(linkedOrder.Id, item.Id)" @ondrop:preventDefault="true">
+                                        @if (mayReorder) { <span class="wpmf-drag-handle" title="برای تغییر ترتیب بکش">⠿</span> }
+                                        <input type="checkbox" checked="@item.IsDone" @onchange="e => ToggleWorkOrderItem(linkedOrder.Id, item.Id, e)" disabled="@(!mayToggle)" />
+                                        <span class="wpmf-check-text @(item.IsDone ? "done" : "")">@item.Text</span>
+                                        @if (item.IsDone && !string.IsNullOrWhiteSpace(item.DoneByName)) { <small class="text-muted">@item.DoneByName</small> }
+                                    </div>
+                                }
+                            }
+                        }
+                        else
+                        {
+                            <div class="wpmf-empty-check">اطلاعات این دستورکار در دسترس نیست یا مجوز مشاهدهٔ آن را نداری.</div>
+                            <a class="small" href="@($"/work-orders?open={linkedOrderId}")" target="_blank" rel="noopener noreferrer">رفتن به دستورکار در تب جدید</a>
+                        }
+                    }
+                    else if (NodeWorkOrderIds(SelectedNode).Count == 0)
+                    {
+                        <div class="wpmf-empty-check">برای دیدن چک‌لیست اصلی، دستورکارهای موجود را به این گره وصل کن.</div>
+                    }
+                    </section>
+                    <section class="wpmf-inspector-card wpmf-subflow-card">
+                        <header class="wpmf-card-heading"><i class="bi bi-diagram-3"></i><span>زیرنگاشت</span><span class="wpmf-card-status">@(SelectedNode.ChildMindFlow is not null ? "ساخته‌شده" : SelectedNode.LinkedMindFlowProjectId.HasValue ? "پیوندشده" : "ندارد")</span></header>
+                    @if (SelectedNode.ChildMindFlow is not null)
+                    {
+                        <a class="wpmf-subflow-link" href="@SubMindFlowHref(SelectedNode.Id)" target="_blank" rel="noopener noreferrer">
+                            <i class="bi bi-diagram-3"></i> @(CanEdit ? "طراحی" : "مشاهدهٔ") «@SelectedNode.ChildMindFlow.Title» در تب جدید
+                        </a>
+                    }
+                    else if (SelectedNode.LinkedMindFlowProjectId is int linkedMindFlowId)
+                    {
+                        var linkedMindFlow = FindAccessibleMindFlow(linkedMindFlowId);
+                        @if (linkedMindFlow is not null)
+                        {
+                            <a class="wpmf-subflow-link" href="@($"/work-projects/mindflow?projectId={linkedMindFlow.ProjectId}")" target="_blank" rel="noopener noreferrer">
+                                <i class="bi bi-diagram-3"></i> @(linkedMindFlow.CanManage && linkedMindFlow.Status == "Open" ? "طراحی" : "مشاهدهٔ") «@linkedMindFlow.Title» در تب جدید
+                            </a>
+                        }
+                        else
+                        {
+                            <div class="wpmf-empty-check">این زیرمایندفلو برای حساب فعلی قابل مشاهده نیست.</div>
+                        }
+                        @if (CanEdit)
+                        {
+                            <button type="button" class="btn btn-sm btn-link text-danger p-0 mt-1" @onclick="UnlinkExistingMindFlow">قطع پیوند</button>
+                        }
+                    }
+                    else if (CanEdit)
+                    {
+                        <label class="form-label small mb-1">جست‌وجو و پیوند به مایندفلو موجود</label>
+                        <div class="wpmf-combobox mb-2">
+                            <input class="form-control form-control-sm" role="combobox" aria-expanded="@_showMindFlowOptions" aria-controls="wpmf-mindflow-options"
+                                   placeholder="نام یا شمارهٔ پروژه را جست‌وجو کن…" value="@_mindFlowSearch"
+                                   @oninput="SearchMindFlows" @onfocus="ShowMindFlowOptions" />
+                            @if (_showMindFlowOptions)
+                            {
+                                <div id="wpmf-mindflow-options" class="wpmf-combo-options" role="listbox">
+                                    @if (_mindFlowsLoading) { <div class="wpmf-combo-empty">در حال بارگذاری…</div> }
+                                    else if (FilteredMindFlows.Count == 0) { <div class="wpmf-combo-empty">مایندفلوی دیگری در دسترس نیست.</div> }
+                                    else
+                                    {
+                                        @foreach (var flow in FilteredMindFlows)
+                                        {
+                                            <button type="button" class="wpmf-combo-option" @key="flow.ProjectId" @onclick="() => LinkExistingMindFlow(flow)">
+                                                <strong>@flow.Number — @flow.Title</strong>
+                                                <small>@(flow.Status == "Closed" ? "بسته · فقط‌خواندنی" : "باز")</small>
+                                            </button>
+                                        }
+                                    }
+                                </div>
+                            }
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-primary" @onclick="CreateChildMindFlowAsync" disabled="@_saving">
+                            <i class="bi bi-plus-circle"></i> ساخت زیرمایندفلوی تازه
+                        </button>
+                    }
+                    </section>
+                    @if (CanManageAccess)
+                    {
+                        <section class="wpmf-access-panel wpmf-inspector-card">
+                            <div class="wpmf-checks-title"><b>@(IsStandalone ? "دسترسی‌های این نگاشت" : "افرادی که نگاشت را می‌بینند")</b><span>@_mindFlowMembers.Count اشتراک</span></div>
+                            <div class="small text-muted mb-2">@(IsStandalone ? "فقط شما و افراد دعوت‌شده به این نگاشت دسترسی دارند؛ نقش ویرایشگر امکان طراحی می‌دهد." : "مدیر و اعضای پروژه خودکار دسترسی دارند؛ دعوت مستقیم فقط مشاهده است.")</div>
+                            @if (!string.IsNullOrWhiteSpace(_accessMessage))
+                            {
+                                <div class="alert @AccessMessageClass py-1 px-2 small mb-2">@_accessMessage</div>
+                            }
+                            @if (IsStandalone)
+                            {
+                                <label class="form-label small mb-1" for="wpmf-invite-role">نقش دعوت‌شده‌ها</label>
+                                <select id="wpmf-invite-role" class="form-select form-select-sm mb-2" @bind="_inviteRole">
+                                    <option value="Viewer">فقط مشاهده</option>
+                                    <option value="Editor">مشاهده و طراحی</option>
+                                </select>
+                            }
+                            <label class="form-label small mb-1">جست‌وجو و انتخاب چند نفر برای دعوت</label>
+                            <div class="wpmf-combobox mb-2">
+                                <input class="form-control form-control-sm" role="combobox" aria-expanded="@_showCandidateOptions" aria-controls="wpmf-candidate-options"
+                                       placeholder="نام یا نام کاربری را جست‌وجو کن…" value="@_memberSearch"
+                                       @oninput="SearchMindFlowCandidatesAsync" @onfocus="ShowCandidateOptions" disabled="@_peopleLoading" />
+                                @if (_showCandidateOptions)
+                                {
+                                    <div id="wpmf-candidate-options" class="wpmf-combo-options" role="listbox" aria-multiselectable="true">
+                                        @if (_peopleLoading)
+                                        {
+                                            <div class="wpmf-combo-empty">در حال جست‌وجو…</div>
+                                        }
+                                        else if (_candidates.Count == 0)
+                                        {
+                                            <div class="wpmf-combo-empty">فرد فعالی برای دعوت در شرکت جاری پیدا نشد؛ اتصال کاربر به همین شرکت را بررسی کن.</div>
+                                        }
+                                        else
+                                        {
+                                            @foreach (var user in _candidates)
+                                            {
+                                                var isSelected = _selectedCandidateIds.Contains(user.UserId);
+                                                <button type="button" class="wpmf-combo-option @(isSelected ? "selected" : "")" @key="user.UserId" @onclick="() => ToggleCandidate(user)">
+                                                    <span><i class="bi @(isSelected ? "bi-check-square-fill" : "bi-square")"></i> @user.Name</span>
+                                                    <small>@(isSelected ? "انتخاب‌شده" : "افزودن به انتخاب")</small>
+                                                </button>
+                                            }
+                                        }
+                                    </div>
+                                }
+                            </div>
+                            @if (_selectedCandidateIds.Count > 0)
+                            {
+                                <div class="wpmf-selection-chips">
+                                    @foreach (var candidateId in _selectedCandidateIds)
+                                    {
+                                        <span class="wpmf-selection-chip" @key="candidateId">@_selectedCandidateNames.GetValueOrDefault(candidateId, $"کاربر #{candidateId}")
+                                            <button type="button" aria-label="حذف از انتخاب" @onclick="() => RemoveCandidateFromSelection(candidateId)">×</button>
+                                        </span>
+                                    }
+                                </div>
+                            }
+                            <div class="wpmf-add-member">
+                                <button type="button" class="btn btn-sm btn-outline-primary" @onclick="AddMindFlowMemberAsync" disabled="@(_selectedCandidateIds.Count == 0 || _peopleLoading || _savingMembers)">
+                                    <i class="bi bi-person-plus"></i> افزودن @(_selectedCandidateIds.Count > 0 ? $"{_selectedCandidateIds.Count} نفر" : "افراد انتخاب‌شده")
+                                </button>
+                            </div>
+                            @if (_peopleLoading) { <div class="small text-muted py-2">در حال دریافت دسترسی‌ها…</div> }
+                            else if (_mindFlowMembers.Count == 0) { <div class="small text-muted py-2">هنوز کسی مستقیم به نگاشت دعوت نشده است.</div> }
+                            else
+                            {
+                                @foreach (var member in _mindFlowMembers)
+                                {
+                                    <div class="wpmf-member-row" @key="member.UserId"><span><i class="bi bi-person-check"></i> @member.Name @if (IsStandalone) { <small class="text-muted">· @(member.Role == "Editor" ? "ویرایشگر" : "فقط مشاهده")</small> }</span><button class="wpmf-remove" @onclick="() => RemoveMindFlowMemberAsync(member)" title="لغو دسترسی">×</button></div>
+                                }
+                            }
+                        </section>
+                    }
+                }
+                else { <div class="text-muted small">یک گره را انتخاب کن.</div> }
+            </aside>
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly string[] Palette = ["#596cf3", "#e28b4d", "#32a783", "#ae6fc7", "#d85d75", "#318eae"];
+    private const double MinNodeWidth = 120, MaxNodeWidth = 420, MinNodeHeight = 50, MaxNodeHeight = 180;
+    [Parameter] public int ProjectId { get; set; }
+    [Parameter] public int? StandaloneMapId { get; set; }
+    [Parameter] public string ProjectTitle { get; set; } = "پروژه";
+    [Parameter] public bool CanEdit { get; set; }
+    [Parameter] public bool CanManageAccess { get; set; }
+    [Parameter] public Guid? SelectedNodeId { get; set; }
+    [Parameter] public string? SubFlowPath { get; set; }
+    private WorkProjectMindFlowDto _map = new();
+    private readonly Stack<string> _undo = new();
+    private readonly Stack<string> _redo = new();
+    private DotNetObjectReference<WorkProjectMindFlow>? _self;
+
+    /// <summary>ماژول JS نگار ذهنی وقتی با import پویا بارگذاری شود (fallback).</summary>
+    private IJSObjectReference? _dragModule;
+
+    /// <summary>کشیدن با ماوس فعال نشد (خطای JS) — راهنمای کوچک بالای نقشه نشان داده می‌شود.</summary>
+    private bool _dragUnavailable;
+    private int _loadedProjectId;
+    private int? _loadedStandaloneMapId;
+    private string _loadedSubFlowPath = "";
+    private Guid? _lastRequestedNodeId;
+    private Guid _selectedId;
+    private int? _selectedWorkOrderId;
+    private bool _showNodeWorkOrderList;
+    private readonly List<MindFlowWorkOrder> _projectOrders = new();
+    private readonly Dictionary<int, MindFlowWorkOrder> _workOrderCache = new();
+    private readonly List<MindFlowChecklistItem> _linkedChecklist = new();
+    private readonly List<WorkProjectMindFlowAccessibleProjectDto> _availableMindFlows = new();
+    private readonly HashSet<Guid> _unsavedChildNodeIds = new();
+    private readonly List<WorkProjectMindFlowMemberDto> _mindFlowMembers = new();
+    private readonly List<WorkProjectMindFlowUserDto> _candidates = new();
+    private readonly HashSet<int> _selectedCandidateIds = new();
+    private readonly Dictionary<int, string> _selectedCandidateNames = new();
+    private int? _loadedChecklistOrderId;
+    private int? _dragChecklistItemId, _checklistDropTargetId;
+    private int _checklistLoadGeneration, _workOrderLoadGeneration, _workOrderSkip, _candidateSearchGeneration;
+    private bool _hasMoreWorkOrders;
+    private string _memberSearch = "", _mindFlowSearch = "", _inviteRole = "Viewer";
+    private bool _peopleLoading, _savingMembers, _wasCanManageAccess, _loadingOrders, _showWorkOrderOptions, _showCandidateOptions, _showMindFlowOptions, _mindFlowsLoading;
+    private bool _loading = true, _saving, _dirty, _attached, _loadingChecklist, _isFullscreen;
+    private string _message = "", _accessMessage = "", _status = "ذخیره نشده", _search = "";
+    private double Zoom = 1;
+    private bool IsStandalone => StandaloneMapId is > 0;
+    private string _svgId => IsStandalone ? $"wpmf-canvas-standalone-{StandaloneMapId}" : $"wpmf-canvas-{ProjectId}";
+    private string RootMapApiUrl => IsStandalone ? $"api/mindflows/{StandaloneMapId}" : $"api/workprojects/{ProjectId}/mindflow";
+    private string ShareApiUrl => IsStandalone ? $"api/mindflows/{StandaloneMapId}" : $"api/workprojects/{ProjectId}/mindflow";
+    private string SubMapApiUrl(string path) => IsStandalone
+        ? $"api/mindflows/{StandaloneMapId}/sub?path={Uri.EscapeDataString(path)}"
+        : $"api/workprojects/{ProjectId}/mindflow/sub?path={Uri.EscapeDataString(path)}";
+    private WorkProjectMindFlowNodeDto? SelectedNode => _map.Nodes.FirstOrDefault(n => n.Id == _selectedId);
+    private string AccessMessageClass => _accessMessage.StartsWith("دسترسی ثبت شد", StringComparison.Ordinal) || _accessMessage == "دسترسی لغو شد." ? "alert-success" : "alert-warning";
+    private List<WorkProjectMindFlowNodeDto> VisibleNodes => _map.Nodes.Where(IsVisible).ToList();
+    private string ViewBox => $"{N(800 - 800 / Zoom)} {N(450 - 450 / Zoom)} {N(1600 / Zoom)} {N(900 / Zoom)}";
+    private int LinkedWorkOrderCount => _map.Nodes.SelectMany(NodeWorkOrderIds).Distinct().Count();
+    private List<MindFlowWorkOrder> FilteredWorkOrders => _projectOrders.Concat(_workOrderCache.Values)
+        .GroupBy(o => o.Id).Select(g => g.First())
+        .Where(o => !_map.Nodes.SelectMany(NodeWorkOrderIds).Contains(o.Id))
+        .ToList();
+    private List<WorkProjectMindFlowAccessibleProjectDto> FilteredMindFlows => _availableMindFlows.Where(flow =>
+        flow.ProjectId != ProjectId
+        && !_map.Nodes.Any(n => n.LinkedMindFlowProjectId == flow.ProjectId)
+        && (string.IsNullOrWhiteSpace(_mindFlowSearch)
+            || flow.Title.Contains(_mindFlowSearch, StringComparison.OrdinalIgnoreCase)
+            || flow.Number.Contains(_mindFlowSearch, StringComparison.OrdinalIgnoreCase))).ToList();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var subPath = NormalizeSubMindFlowPath(SubFlowPath);
+        if (_loadedProjectId == ProjectId && _loadedStandaloneMapId == StandaloneMapId && _loadedSubFlowPath == subPath && _map.Nodes.Count > 0)
+        {
+            if (SelectedNodeId != _lastRequestedNodeId)
+            {
+                _lastRequestedNodeId = SelectedNodeId;
+                if (SelectedNodeId is Guid requested && _map.Nodes.Any(n => n.Id == requested)) await Select(requested);
+            }
+            if (CanManageAccess && !_wasCanManageAccess) await LoadMindFlowPeopleAsync();
+            _wasCanManageAccess = CanManageAccess;
+            return;
+        }
+        _self?.Dispose(); _self = null; _attached = false;
+        _workOrderLoadGeneration++; _candidateSearchGeneration++;
+        _loadedProjectId = ProjectId; _loadedStandaloneMapId = StandaloneMapId; _loadedSubFlowPath = subPath;
+        _projectOrders.Clear(); _workOrderCache.Clear(); _workOrderSkip = 0; _hasMoreWorkOrders = false; _loadingOrders = false; _linkedChecklist.Clear(); _loadedChecklistOrderId = null;
+        _checklistLoadGeneration++; _loadingChecklist = false; _selectedWorkOrderId = null; _showNodeWorkOrderList = false;
+        _mindFlowMembers.Clear(); _candidates.Clear(); _selectedCandidateIds.Clear(); _selectedCandidateNames.Clear();
+        _accessMessage = ""; _savingMembers = false;
+        _memberSearch = ""; _mindFlowSearch = ""; _inviteRole = "Viewer";
+        _availableMindFlows.Clear(); _unsavedChildNodeIds.Clear();
+        _showCandidateOptions = false; _showWorkOrderOptions = false; _showMindFlowOptions = false; _wasCanManageAccess = CanManageAccess;
+        _loading = true;
+        try
+        {
+            var url = string.IsNullOrWhiteSpace(subPath) ? RootMapApiUrl : SubMapApiUrl(subPath);
+            _map = await Http.GetFromJsonAsync<WorkProjectMindFlowDto>(url) ?? new();
+            _map.Nodes ??= new();
+            var isNewMap = _map.Nodes.Count == 0;
+            if (isNewMap && string.IsNullOrWhiteSpace(subPath)) CreateStarter();
+            Normalize();
+            _selectedId = SelectedNodeId is Guid requested && _map.Nodes.Any(n => n.Id == requested)
+                ? requested : _map.Nodes.FirstOrDefault(n => n.ParentId is null)?.Id ?? Guid.Empty;
+            var initialOrders = NodeWorkOrderIds(SelectedNode);
+            _selectedWorkOrderId = initialOrders.Count > 0 ? initialOrders[0] : null;
+            _lastRequestedNodeId = SelectedNodeId;
+            _status = isNewMap ? "نگاشت تازه؛ ذخیره‌نشده" : "ذخیره‌شده"; _dirty = isNewMap && string.IsNullOrWhiteSpace(subPath); _message = "";
+            await LoadProjectOrdersAsync();
+            await LoadAvailableMindFlowsAsync();
+            await LoadLinkedChecklistAsync();
+            if (CanManageAccess) await LoadMindFlowPeopleAsync();
+            if (isNewMap && !string.IsNullOrWhiteSpace(subPath)) _message = "این زیرمایندفلو هنوز ذخیره نشده یا در دسترس نیست.";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException)
+        {
+            _map = new WorkProjectMindFlowDto { ProjectId = ProjectId, Title = ProjectTitle, Nodes = new() };
+            if (string.IsNullOrWhiteSpace(subPath)) { CreateStarter(); _message = "نقشه بارگذاری نشد؛ اتصال API را بررسی کن."; }
+            else _message = "زیرمایندفلو پیدا نشد یا دسترسی لازم را نداری.";
+        }
+        finally { _loading = false; }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_attached && !_loading && _map.Nodes.Count > 0)
+        {
+            _self ??= DotNetObjectReference.Create(this);
+            await AttachDragAsync();
+        }
+    }
+
+    /// <summary>
+    /// اتصال «کشیدنِ گره‌ها» به ماژول JS — دو لایه برای اینکه هرگز رندر صفحه را نشکند.
+    /// <para>
+    /// باگ واقعی: خطای <c>Could not find 'inventoryWorkProjectMindFlow.attachDrag'
+    /// ('inventoryWorkProjectMindFlow' was undefined)</c> هنگام باز کردن «نگار ذهنی» در
+    /// پروژه‌های بخش دستور کار. دلیلش نبودِ تابع در صفحه نبود؛ فایل
+    /// <c>wwwroot/js/inventory-workproject-mindflow.js</c> وجود داشت ولی هیچ‌جا در
+    /// <c>index.html</c> بارگذاری نمی‌شد، پس متغیر سراسری هرگز ساخته نمی‌شد و JSInterop
+    /// استثنا می‌داد و کل کامپوننت از رندر می‌افتاد.
+    /// </para>
+    /// <para>
+    /// اصلاح: (۱) اسکریپت به index.html اضافه شد؛ (۲) همین‌جا هم اگر تابع سراسری نبود،
+    /// ماژول با import پویا بارگذاری می‌شود (مثل الگوی چت) تا حتی با index.html قدیمی در
+    /// کش مرورگر هم کار کند؛ (۳) هر خطای JS فقط «کشیدن با ماوس» را از کار می‌اندازد و
+    /// پیام کوتاهی در بالای نقشه نشان داده می‌شود — نه سقوط کل صفحه.
+    /// </para>
+    /// </summary>
+    private async Task AttachDragAsync()
+    {
+        try
+        {
+            // تابع سراسری از اسکریپت index.html موجود است؟
+            var hasGlobal = await JS.InvokeAsync<bool>("eval",
+                "typeof window.inventoryWorkProjectMindFlow === 'object' && typeof window.inventoryWorkProjectMindFlow.attachDrag === 'function'");
+
+            if (hasGlobal)
+                await JS.InvokeVoidAsync("inventoryWorkProjectMindFlow.attachDrag", _svgId, _self);
+            else
+            {
+                // بارگذاری پویا — مستقل از ترتیب/کش اسکریپت‌های index.html
+                _dragModule ??= await JS.InvokeAsync<IJSObjectReference>("import",
+                    "./js/inventory-workproject-mindflow.js?v=1");
+                await _dragModule.InvokeVoidAsync("attachDrag", _svgId, _self);
+            }
+
+            _attached = true;
+            _dragUnavailable = false;
+        }
+        catch (Exception ex)
+        {
+            // تلاش دوباره در هر رندر بی‌فایده است (و لاگ را پر می‌کند)؛ یک‌بار علامت می‌زنیم.
+            _attached = true;
+            _dragUnavailable = true;
+            Console.WriteLine($"[MindFlow] فعال‌سازی کشیدن گره‌ها انجام نشد: {ex.Message}");
+        }
+    }
+
+    private void CreateStarter()
+    {
+        _map = CreateStarterMap($"نقشهٔ {ProjectTitle}");
+        _selectedId = _map.Nodes[0].Id; _dirty = true;
+    }
+    private WorkProjectMindFlowDto CreateStarterMap(string title)
+    {
+        var root = Guid.NewGuid();
+        return new WorkProjectMindFlowDto { ProjectId = ProjectId, Title = title, Nodes = new()
+        {
+            new() { Id = root, Text = title, X = 800, Y = 450, Color = "#596cf3" },
+            new() { ParentId = root, Text = "هدف‌ها", X = 520, Y = 270, Color = "#596cf3" },
+            new() { ParentId = root, Text = "کارها", X = 520, Y = 630, Color = "#32a783" },
+            new() { ParentId = root, Text = "ریسک‌ها", X = 1080, Y = 270, Color = "#e28b4d" },
+            new() { ParentId = root, Text = "نتیجه‌ها", X = 1080, Y = 630, Color = "#ae6fc7" }
+        }};
+    }
+
+    private void Normalize()
+    {
+        _map.Nodes ??= new();
+        foreach (var node in _map.Nodes)
+        {
+            node.Note ??= "";
+            node.Color = string.IsNullOrWhiteSpace(node.Color) ? Palette[0] : node.Color;
+            node.WorkOrderIds ??= new();
+            if (node.WorkOrderId is int legacy && legacy > 0 && !node.WorkOrderIds.Contains(legacy)) node.WorkOrderIds.Insert(0, legacy);
+            node.WorkOrderIds = node.WorkOrderIds.Where(id => id > 0).Distinct().ToList();
+            node.WorkOrderId = null;
+        }
+    }
+    private async Task SaveAsync()
+    {
+        if (!CanEdit || _saving) return;
+        _saving = true; _message = "";
+        try
+        {
+            Normalize();
+            _map.ProjectId = IsStandalone ? 0 : ProjectId;
+            var path = NormalizeSubMindFlowPath(SubFlowPath);
+            var url = string.IsNullOrWhiteSpace(path) ? RootMapApiUrl : SubMapApiUrl(path);
+            var response = await Http.PutAsJsonAsync(url, _map);
+            if (!response.IsSuccessStatusCode) { _message = await ErrorMessage(response); return; }
+            _dirty = false; _unsavedChildNodeIds.Clear(); _status = $"ذخیره شد · {DateTime.Now:HH:mm}";
+        }
+        catch (HttpRequestException) { _message = "ذخیره انجام نشد؛ اتصال به سرور را بررسی کن."; }
+        finally { _saving = false; }
+    }
+    private async Task CreateChildMindFlowAsync()
+    {
+        if (!CanEdit || SelectedNode is null || SelectedNode.ChildMindFlow is not null || SelectedNode.LinkedMindFlowProjectId.HasValue) return;
+        Snapshot();
+        SelectedNode.ChildMindFlow = CreateStarterMap($"{SelectedNode.Text} — نگار ذهنی");
+        _unsavedChildNodeIds.Add(SelectedNode.Id);
+        Dirty();
+        await SaveAsync();
+    }
+    private void LinkExistingMindFlow(WorkProjectMindFlowAccessibleProjectDto flow)
+    {
+        if (!CanEdit || SelectedNode is null || SelectedNode.ChildMindFlow is not null) return;
+        Snapshot(); SelectedNode.LinkedMindFlowProjectId = flow.ProjectId;
+        _mindFlowSearch = ""; _showMindFlowOptions = false; Dirty();
+    }
+    private void StopNodeAction() { }
+    private void UnlinkExistingMindFlow()
+    {
+        if (!CanEdit || SelectedNode is null) return;
+        Snapshot(); SelectedNode.LinkedMindFlowProjectId = null; Dirty();
+    }
+    private async Task LoadAvailableMindFlowsAsync()
+    {
+        _mindFlowsLoading = true;
+        try
+        {
+            var flows = await Http.GetFromJsonAsync<List<WorkProjectMindFlowAccessibleProjectDto>>("api/workprojects/mindflow/accessible") ?? new();
+            _availableMindFlows.Clear(); _availableMindFlows.AddRange(flows);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException) { _availableMindFlows.Clear(); }
+        finally { _mindFlowsLoading = false; }
+    }
+    private void SearchMindFlows(ChangeEventArgs e)
+    {
+        _mindFlowSearch = e.Value?.ToString() ?? "";
+        _showMindFlowOptions = true;
+    }
+    private void ShowMindFlowOptions() => _showMindFlowOptions = true;
+    private WorkProjectMindFlowAccessibleProjectDto? FindAccessibleMindFlow(int id) => _availableMindFlows.FirstOrDefault(x => x.ProjectId == id);
+    private bool HasAccessibleSubMindFlow(WorkProjectMindFlowNodeDto node)
+        => node.ChildMindFlow is not null || (node.LinkedMindFlowProjectId is int id && FindAccessibleMindFlow(id) is not null);
+    private static string NormalizeSubMindFlowPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        var ids = new List<Guid>();
+        foreach (var part in path.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!Guid.TryParse(part, out var id) || id == Guid.Empty) return "invalid";
+            ids.Add(id);
+        }
+        return ids.Count is 0 or > 8 ? "invalid" : string.Join(",", ids);
+    }
+    private string SubMindFlowHref(Guid ownerNodeId)
+    {
+        var owner = _map.Nodes.FirstOrDefault(node => node.Id == ownerNodeId);
+        if (owner?.LinkedMindFlowProjectId is int linkedProjectId)
+            return $"/work-projects/mindflow?projectId={linkedProjectId}";
+        var currentPath = NormalizeSubMindFlowPath(SubFlowPath);
+        var rootHref = IsStandalone ? $"/mindflows/{StandaloneMapId}" : $"/work-projects/mindflow?projectId={ProjectId}";
+        if (currentPath == "invalid") return rootHref;
+        var ids = currentPath == "" ? new List<Guid>() : currentPath.Split(',').Select(Guid.Parse).ToList();
+        ids.Add(ownerNodeId);
+        var pathQuery = Uri.EscapeDataString(string.Join(",", ids));
+        return IsStandalone ? $"{rootHref}?subFlowPath={pathQuery}" : $"{rootHref}&subFlowPath={pathQuery}";
+    }
+    private static async Task<string> ErrorMessage(HttpResponseMessage response)
+    {
+        try { var data = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>(); return data?.GetValueOrDefault("message") ?? $"ذخیره ناموفق بود ({(int)response.StatusCode})."; }
+        catch { return $"ذخیره ناموفق بود ({(int)response.StatusCode})."; }
+    }
+    private void AddChild()
+    {
+        if (!CanEdit || SelectedNode is null) return; Snapshot();
+        var p = SelectedNode; p.Collapsed = false;
+        var siblings = _map.Nodes.Count(n => n.ParentId == p.Id); var sign = p.X < 800 ? -1 : 1;
+        var node = new WorkProjectMindFlowNodeDto { ParentId = p.Id, Text = "کار جدید", X = Math.Clamp(p.X + sign * 240, 120, 1480), Y = Math.Clamp(p.Y + (siblings % 2 == 0 ? 115 : -115), 90, 810), Color = p.ParentId is null ? Palette[_map.Nodes.Count % Palette.Length] : p.Color };
+        _map.Nodes.Add(node); _selectedId = node.Id; Dirty();
+    }
+    private void AddSibling()
+    {
+        if (!CanEdit || SelectedNode is null) return;
+        if (SelectedNode.ParentId is not Guid parentId) { AddChild(); return; }
+        Snapshot(); var n = SelectedNode; var p = _map.Nodes.FirstOrDefault(x => x.Id == parentId); if (p is null) return;
+        var sibling = new WorkProjectMindFlowNodeDto { ParentId = parentId, Text = "کار جدید", X = n.X, Y = Math.Clamp(p.Y + (_map.Nodes.Count(x => x.ParentId == parentId) % 2 == 0 ? 115 : -115), 90, 810), Color = n.Color };
+        _map.Nodes.Add(sibling); _selectedId = sibling.Id; Dirty();
+    }
+    private void DeleteSelected()
+    {
+        if (!CanEdit || SelectedNode?.ParentId is not Guid parent) return; Snapshot();
+        var remove = new HashSet<Guid> { _selectedId }; var changed = true;
+        while (changed) { changed = false; foreach (var n in _map.Nodes.Where(n => n.ParentId.HasValue && remove.Contains(n.ParentId.Value))) if (remove.Add(n.Id)) changed = true; }
+        _map.Nodes.RemoveAll(n => remove.Contains(n.Id)); _selectedId = parent; Dirty();
+    }
+    private void ToggleCollapse() { if (!CanEdit || SelectedNode is null || ChildCount(_selectedId) == 0) return; Snapshot(); SelectedNode.Collapsed = !SelectedNode.Collapsed; Dirty(); }
+    private async Task ToggleWorkOrderOptions()
+    {
+        if (!CanEdit) return;
+        _showWorkOrderOptions = !_showWorkOrderOptions;
+        if (_showWorkOrderOptions && !_loadingOrders && _projectOrders.Count == 0)
+            await LoadProjectOrdersAsync();
+    }
+    private Task LoadMoreWorkOrdersAsync() => LoadProjectOrdersAsync(loadMore: true);
+    private async Task LoadProjectOrdersAsync(bool loadMore = false)
+    {
+        if (_loadingOrders) return;
+        var generation = ++_workOrderLoadGeneration;
+        var skip = loadMore ? _workOrderSkip : 0;
+        _loadingOrders = true;
+        try
+        {
+            var rows = await Http.GetFromJsonAsync<List<MindFlowWorkOrder>>($"api/workorders/mindflow-lookup?take=100&skip={skip}") ?? new();
+            if (generation != _workOrderLoadGeneration) return;
+            foreach (var order in rows) _workOrderCache[order.Id] = order;
+            if (!loadMore) _projectOrders.Clear();
+            var knownIds = _projectOrders.Select(o => o.Id).ToHashSet();
+            _projectOrders.AddRange(rows.Where(o => knownIds.Add(o.Id)));
+            _workOrderSkip = skip + rows.Count;
+            _hasMoreWorkOrders = rows.Count == 100;
+
+            foreach (var linkedId in NodeWorkOrderIds(SelectedNode).Where(id => !_workOrderCache.ContainsKey(id)))
+            {
+                try
+                {
+                    var linked = await Http.GetFromJsonAsync<MindFlowWorkOrder>($"api/workorders/{linkedId}");
+                    if (linked is not null) _workOrderCache[linked.Id] = linked;
+                }
+                catch (HttpRequestException) { }
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException)
+        {
+            if (generation == _workOrderLoadGeneration)
+            {
+                if (!loadMore) _projectOrders.Clear();
+                _hasMoreWorkOrders = false;
+                _message = "فهرست دستورکارها بارگذاری نشد.";
+            }
+        }
+        finally
+        {
+            if (generation == _workOrderLoadGeneration) _loadingOrders = false;
+        }
+    }
+    private async Task LoadLinkedChecklistAsync(bool force = false)
+    {
+        var orderId = _selectedWorkOrderId;
+        if (!force && orderId == _loadedChecklistOrderId) return;
+        var generation = ++_checklistLoadGeneration;
+        _linkedChecklist.Clear(); _loadedChecklistOrderId = orderId;
+        if (orderId is null) { _loadingChecklist = false; return; }
+        _loadingChecklist = true;
+        try
+        {
+            var rows = await Http.GetFromJsonAsync<List<MindFlowChecklistItem>>($"api/workorders/{orderId}/checklist") ?? new();
+            if (generation == _checklistLoadGeneration) _linkedChecklist.AddRange(rows);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException)
+        {
+            if (generation == _checklistLoadGeneration) _message = "چک‌لیست دستور بارگذاری نشد؛ دسترسی به دستور کار را بررسی کن.";
+        }
+        finally { if (generation == _checklistLoadGeneration) _loadingChecklist = false; }
+    }
+    private async Task LoadMindFlowPeopleAsync()
+    {
+        if (!CanManageAccess) return;
+        var generation = _candidateSearchGeneration;
+        _peopleLoading = true; _message = "";
+        try
+        {
+            var membersTask = Http.GetFromJsonAsync<List<WorkProjectMindFlowMemberDto>>($"{ShareApiUrl}/members");
+            var candidatesTask = FetchMindFlowCandidatesAsync(_memberSearch);
+            await Task.WhenAll((Task)membersTask, (Task)candidatesTask);
+            var members = await membersTask ?? new();
+            var candidates = await candidatesTask ?? new();
+            _mindFlowMembers.Clear(); _mindFlowMembers.AddRange(members);
+            if (generation == _candidateSearchGeneration) ReplaceCandidates(candidates);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException)
+        {
+            _accessMessage = "فهرست افراد یا دسترسی‌ها بارگذاری نشد؛ شرکت فعال و دسترسی مالک نگاشت را بررسی کن.";
+        }
+        finally { if (generation == _candidateSearchGeneration) _peopleLoading = false; }
+    }
+    private async Task SearchMindFlowCandidatesAsync(ChangeEventArgs e)
+    {
+        _memberSearch = e.Value?.ToString() ?? "";
+        _showCandidateOptions = true;
+        var generation = ++_candidateSearchGeneration;
+        await Task.Delay(250);
+        if (generation != _candidateSearchGeneration || !CanManageAccess) return;
+        _peopleLoading = true;
+        try
+        {
+            var candidates = await FetchMindFlowCandidatesAsync(_memberSearch);
+            if (generation == _candidateSearchGeneration) ReplaceCandidates(candidates);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException)
+        {
+            if (generation == _candidateSearchGeneration) _accessMessage = "جست‌وجوی افراد انجام نشد؛ شرکت فعال یا اتصال سرور را بررسی کن.";
+        }
+        finally { if (generation == _candidateSearchGeneration) _peopleLoading = false; }
+    }
+    private Task<List<WorkProjectMindFlowUserDto>?> FetchMindFlowCandidatesAsync(string search)
+    {
+        var url = $"{ShareApiUrl}/candidates?take=100";
+        if (!string.IsNullOrWhiteSpace(search)) url += $"&q={Uri.EscapeDataString(search.Trim())}";
+        return Http.GetFromJsonAsync<List<WorkProjectMindFlowUserDto>>(url);
+    }
+    private void ReplaceCandidates(List<WorkProjectMindFlowUserDto> candidates)
+    {
+        _candidates.Clear(); _candidates.AddRange(candidates);
+        foreach (var user in candidates)
+            if (_selectedCandidateIds.Contains(user.UserId)) _selectedCandidateNames[user.UserId] = user.Name;
+    }
+    private void ShowCandidateOptions() => _showCandidateOptions = true;
+    private void ToggleCandidate(WorkProjectMindFlowUserDto user)
+    {
+        if (!CanManageAccess) return;
+        if (_selectedCandidateIds.Remove(user.UserId)) _selectedCandidateNames.Remove(user.UserId);
+        else
+        {
+            _selectedCandidateIds.Add(user.UserId);
+            _selectedCandidateNames[user.UserId] = user.Name;
+        }
+    }
+    private void RemoveCandidateFromSelection(int userId)
+    {
+        _selectedCandidateIds.Remove(userId);
+        _selectedCandidateNames.Remove(userId);
+    }
+    private async Task AddMindFlowMemberAsync()
+    {
+        if (!CanManageAccess || _selectedCandidateIds.Count == 0 || _savingMembers) return;
+        var userIds = _selectedCandidateIds.ToList();
+        _savingMembers = true;
+        _accessMessage = "";
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"{ShareApiUrl}/members",
+                new AddWorkProjectMindFlowMembersDto { UserIds = userIds, Role = IsStandalone ? _inviteRole : "Viewer" });
+            if (!response.IsSuccessStatusCode) { _accessMessage = await ErrorMessage(response); return; }
+            _selectedCandidateIds.Clear(); _selectedCandidateNames.Clear();
+            _memberSearch = ""; _showCandidateOptions = false;
+            _accessMessage = $"دسترسی ثبت شد برای {userIds.Count} نفر.";
+            await LoadMindFlowPeopleAsync();
+        }
+        catch (HttpRequestException) { _accessMessage = "افزودن افراد انجام نشد؛ اتصال سرور و شرکت فعال را بررسی کن."; }
+        finally { _savingMembers = false; }
+    }
+    private async Task RemoveMindFlowMemberAsync(WorkProjectMindFlowMemberDto member)
+    {
+        if (!CanManageAccess || !await JS.InvokeAsync<bool>("confirm", $"دسترسی «{member.Name}» به این نگاشت لغو شود؟")) return;
+        _accessMessage = "";
+        try
+        {
+            var response = await Http.DeleteAsync($"{ShareApiUrl}/members/{member.UserId}");
+            if (!response.IsSuccessStatusCode) { _accessMessage = await ErrorMessage(response); return; }
+            _accessMessage = "دسترسی لغو شد.";
+            await LoadMindFlowPeopleAsync();
+        }
+        catch (HttpRequestException) { _accessMessage = "لغو دسترسی انجام نشد؛ اتصال سرور را بررسی کن."; }
+    }
+    private async Task ChooseWorkOrderAsync(MindFlowWorkOrder order)
+    {
+        if (!CanEdit || SelectedNode is null || NodeWorkOrderIds(SelectedNode).Contains(order.Id)) return;
+        Snapshot();
+        SelectedNode.WorkOrderIds ??= new();
+        SelectedNode.WorkOrderIds.Add(order.Id);
+        SelectedNode.WorkOrderId = null;
+        _workOrderCache[order.Id] = order;
+        _selectedWorkOrderId = order.Id; _showNodeWorkOrderList = false;
+        _showWorkOrderOptions = false; _message = ""; Dirty();
+        await LoadLinkedChecklistAsync(force: true);
+    }
+    private async Task UnlinkWorkOrderAsync(int orderId)
+    {
+        if (!CanEdit || SelectedNode is null || !NodeWorkOrderIds(SelectedNode).Contains(orderId)) return;
+        Snapshot();
+        SelectedNode.WorkOrderIds ??= new();
+        SelectedNode.WorkOrderIds.RemoveAll(id => id == orderId);
+        if (SelectedNode.WorkOrderId == orderId) SelectedNode.WorkOrderId = null;
+        var remaining = NodeWorkOrderIds(SelectedNode);
+        if (_selectedWorkOrderId == orderId || remaining.Count == 1)
+        {
+            _selectedWorkOrderId = remaining.Count > 0 ? remaining[0] : null;
+            _showNodeWorkOrderList = false;
+        }
+        if (remaining.Count < 2) _showNodeWorkOrderList = false;
+        Dirty();
+        await LoadLinkedChecklistAsync(force: true);
+    }
+    private async Task SelectNodeWorkOrderAsync(int orderId)
+    {
+        if (SelectedNode is null || !NodeWorkOrderIds(SelectedNode).Contains(orderId)) return;
+        _showNodeWorkOrderList = false;
+        _selectedWorkOrderId = orderId;
+        await EnsureWorkOrderDetailsAsync(new[] { orderId });
+        await LoadLinkedChecklistAsync(force: true);
+    }
+    private async Task OpenNodeWorkOrdersAsync(WorkProjectMindFlowNodeDto node)
+    {
+        await Select(node.Id);
+        var ids = NodeWorkOrderIds(node);
+        if (ids.Count == 1)
+        {
+            await SelectNodeWorkOrderAsync(ids[0]);
+            return;
+        }
+        if (ids.Count > 1)
+        {
+            _showNodeWorkOrderList = true; _selectedWorkOrderId = null;
+            _checklistLoadGeneration++; _linkedChecklist.Clear(); _loadedChecklistOrderId = null; _loadingChecklist = false;
+            await EnsureWorkOrderDetailsAsync(ids);
+        }
+    }
+    private async Task EnsureWorkOrderDetailsAsync(IEnumerable<int> ids)
+    {
+        foreach (var id in ids.Distinct())
+        {
+            if (_workOrderCache.ContainsKey(id)) continue;
+            try
+            {
+                var order = await Http.GetFromJsonAsync<MindFlowWorkOrder>($"api/workorders/{id}");
+                if (order is not null) _workOrderCache[order.Id] = order;
+            }
+            catch (HttpRequestException) { }
+        }
+    }
+    private async Task ToggleWorkOrderItem(int orderId, int itemId, ChangeEventArgs e)
+    {
+        var item = _linkedChecklist.FirstOrDefault(x => x.Id == itemId);
+        var order = FindWorkOrder(orderId);
+        if (item is null || order is null || !CanToggleChecklistItem(order, item)) return;
+        var isDone = e.Value is bool b ? b : bool.TryParse(e.Value?.ToString(), out var parsed) && parsed;
+        if (item.IsDone == isDone) return;
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"api/workorders/{orderId}/checklist/{itemId}/toggle", new { isDone });
+            if (!response.IsSuccessStatusCode) { _message = await ErrorMessage(response); return; }
+            _message = "";
+            try
+            {
+                var refreshedOrder = await Http.GetFromJsonAsync<MindFlowWorkOrder>($"api/workorders/{orderId}");
+                if (refreshedOrder is not null) _workOrderCache[orderId] = refreshedOrder;
+            }
+            catch (HttpRequestException) { }
+            await LoadProjectOrdersAsync();
+            await LoadLinkedChecklistAsync(force: true);
+        }
+        catch (HttpRequestException) { _message = "ثبت وضعیت انجام نشد؛ اتصال API را بررسی کن."; }
+    }
+    private MindFlowWorkOrder? FindWorkOrder(int id) => _workOrderCache.TryGetValue(id, out var order) ? order : _projectOrders.FirstOrDefault(o => o.Id == id);
+    private static List<int> NodeWorkOrderIds(WorkProjectMindFlowNodeDto? node)
+    {
+        if (node is null) return new();
+        var ids = node.WorkOrderIds?.ToList() ?? new();
+        if (node.WorkOrderId is int legacyId && legacyId > 0 && !ids.Contains(legacyId)) ids.Add(legacyId);
+        return ids.Where(id => id > 0).Distinct().ToList();
+    }
+    private bool CanToggleChecklistItem(MindFlowWorkOrder order, MindFlowChecklistItem item)
+    {
+        var owner = order.OwnerUserId == Auth.UserId;
+        var assignee = order.Assignees.Any(a => a.UserId == Auth.UserId);
+        return order.Status != "Closed" && (owner || (assignee && !item.IsDone));
+    }
+    private bool CanReorderChecklist(MindFlowWorkOrder order) => order.Status != "Closed" && order.OwnerUserId == Auth.UserId;
+    private void StartChecklistDrag(int itemId)
+    {
+        if (_linkedChecklist.Any(i => i.Id == itemId)) { _dragChecklistItemId = itemId; _checklistDropTargetId = null; }
+    }
+    private void ChecklistDragOver(int targetId)
+    {
+        if (_dragChecklistItemId is not null && targetId != _dragChecklistItemId) _checklistDropTargetId = targetId;
+    }
+    private void ClearChecklistDrag() { _dragChecklistItemId = null; _checklistDropTargetId = null; }
+    private async Task DropChecklistItem(int orderId, int targetId)
+    {
+        if (_dragChecklistItemId is not int draggedId || draggedId == targetId) { ClearChecklistDrag(); return; }
+        var order = FindWorkOrder(orderId);
+        var from = _linkedChecklist.FindIndex(i => i.Id == draggedId);
+        var to = _linkedChecklist.FindIndex(i => i.Id == targetId);
+        if (order is null || !CanReorderChecklist(order) || from < 0 || to < 0) { ClearChecklistDrag(); return; }
+
+        var item = _linkedChecklist[from];
+        _linkedChecklist.RemoveAt(from);
+        var insertAt = from < to ? to - 1 : to;
+        _linkedChecklist.Insert(insertAt, item);
+        ClearChecklistDrag();
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"api/workorders/{orderId}/checklist/reorder",
+                new { itemIds = _linkedChecklist.Select(i => i.Id).ToList() });
+            if (!response.IsSuccessStatusCode)
+            {
+                _message = await ErrorMessage(response);
+                await LoadLinkedChecklistAsync(force: true);
+                return;
+            }
+            _message = "";
+        }
+        catch (HttpRequestException)
+        {
+            _message = "تغییر ترتیب ذخیره نشد؛ اتصال سرور را بررسی کن.";
+            await LoadLinkedChecklistAsync(force: true);
+        }
+    }
+    private void SetColor(string color)
+    {
+        if (!CanEdit || SelectedNode is null) return; Snapshot(); var branch = SelectedNode; while (branch.ParentId is Guid p && _map.Nodes.FirstOrDefault(n => n.Id == p) is { ParentId: not null } parent) branch = parent; Recolor(branch.Id, color); Dirty();
+    }
+    private void Recolor(Guid id, string color) { var node = _map.Nodes.FirstOrDefault(n => n.Id == id); if (node is not null) node.Color = color; foreach (var c in _map.Nodes.Where(n => n.ParentId == id).ToList()) Recolor(c.Id, color); }
+    private void OnTitleInput(ChangeEventArgs e) { if (!CanEdit) return; Snapshot(); _map.Title = e.Value?.ToString() ?? ""; var root = _map.Nodes.FirstOrDefault(n => n.ParentId is null); if (root is not null) root.Text = _map.Title; Dirty(); }
+    private void OnNodeText(ChangeEventArgs e) { if (!CanEdit || SelectedNode is null) return; Snapshot(); SelectedNode.Text = e.Value?.ToString() ?? ""; Dirty(); }
+    private void OnNodeNote(ChangeEventArgs e) { if (!CanEdit || SelectedNode is null) return; Snapshot(); SelectedNode.Note = e.Value?.ToString() ?? ""; Dirty(); }
+    private async Task Select(Guid id)
+    {
+        if (!_map.Nodes.Any(n => n.Id == id)) return;
+        var changed = _selectedId != id;
+        _selectedId = id; _message = "";
+        if (!changed) { await LoadLinkedChecklistAsync(); return; }
+        _showWorkOrderOptions = false; _showNodeWorkOrderList = false;
+        var ids = NodeWorkOrderIds(SelectedNode);
+        _selectedWorkOrderId = ids.Count > 0 ? ids[0] : null;
+        await EnsureWorkOrderDetailsAsync(ids);
+        await LoadLinkedChecklistAsync(force: true);
+    }
+    [JSInvokable]
+    public async Task SelectNodeFromCanvas(Guid id)
+    {
+        if (_map.Nodes.Any(n => n.Id == id)) await Select(id);
+        await InvokeAsync(StateHasChanged);
+    }
+    private void Dirty() { _dirty = true; _status = "ویرایش نشده"; }
+    private void Snapshot() { _undo.Push(JsonSerializer.Serialize(_map)); _redo.Clear(); }
+    private void Undo() { if (!CanEdit || _undo.Count == 0) return; _redo.Push(JsonSerializer.Serialize(_map)); Restore(_undo.Pop()); }
+    private void Redo() { if (!CanEdit || _redo.Count == 0) return; _undo.Push(JsonSerializer.Serialize(_map)); Restore(_redo.Pop()); }
+    private void Restore(string json) { _map = JsonSerializer.Deserialize<WorkProjectMindFlowDto>(json) ?? new(); Normalize(); _selectedId = _map.Nodes.Any(n => n.Id == _selectedId) ? _selectedId : _map.Nodes.FirstOrDefault()?.Id ?? Guid.Empty; Dirty(); }
+    private double? GetProgress(Guid id)
+    {
+        var n = _map.Nodes.FirstOrDefault(x => x.Id == id); if (n is null) return null;
+        var linkedProgress = NodeWorkOrderIds(n).Select(FindWorkOrder).Where(order => order is not null).Select(order => order!.OrderProgress).ToList();
+        if (linkedProgress.Count > 0) return linkedProgress.Average();
+        var children = _map.Nodes.Where(x => x.ParentId == id).Select(x => GetProgress(x.Id)).Where(x => x.HasValue).Select(x => x!.Value).ToList();
+        return children.Count == 0 ? null : children.Average();
+    }
+    private string ProgressSource(WorkProjectMindFlowNodeDto node)
+    {
+        var linkedIds = NodeWorkOrderIds(node);
+        if (linkedIds.Count > 0)
+        {
+            var orders = linkedIds.Select(FindWorkOrder).Where(order => order is not null).ToList();
+            return orders.Count == 0 ? "دستورهای متصل در دسترس نیستند" : $"میانگین پیشرفت {orders.Count} دستور از چک‌لیست اصلی";
+        }
+        var count = _map.Nodes.Count(c => c.ParentId == node.Id && GetProgress(c.Id).HasValue);
+        return count > 0 ? $"میانگین {count} زیرشاخه" : "برای محاسبهٔ پیشرفت، دستور کار وصل کن";
+    }
+    private static string RingStyle(string color, double value) => $"--ring-color:{color};--ring-p:{Math.Clamp(value, 0, 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}%";
+    private int ChildCount(Guid id) => _map.Nodes.Count(n => n.ParentId == id);
+    private bool IsVisible(WorkProjectMindFlowNodeDto node) { if (node.ParentId is not Guid p) return true; var parent = _map.Nodes.FirstOrDefault(n => n.Id == p); return parent is not null && !parent.Collapsed && IsVisible(parent); }
+    private double? NodeProgress(Guid id) => GetProgress(id);
+    private static double Width(WorkProjectMindFlowNodeDto node)
+        => Math.Clamp(node.Width ?? (node.ParentId is null ? 250 : Math.Clamp(100 + node.Text.Length * 12, 145, 245)), MinNodeWidth, MaxNodeWidth);
+    private static double Height(WorkProjectMindFlowNodeDto node)
+        => Math.Clamp(node.Height ?? (node.ParentId is null ? 82 : 62), MinNodeHeight, MaxNodeHeight);
+    private void AdjustSelectedNodeSize(double widthDelta, double heightDelta)
+    {
+        if (!CanEdit || SelectedNode is not { } node) return;
+        var width = Math.Clamp(Width(node) + widthDelta, MinNodeWidth, MaxNodeWidth);
+        var height = Math.Clamp(Height(node) + heightDelta, MinNodeHeight, MaxNodeHeight);
+        if (width == Width(node) && height == Height(node)) return;
+        Snapshot();
+        node.Width = width; node.Height = height;
+        node.X = Math.Clamp(node.X, width / 2 + 4, 1600 - width / 2 - 4);
+        node.Y = Math.Clamp(node.Y, height / 2 + 4, 900 - height / 2 - 4);
+        Dirty();
+    }
+    private static string N(double x) => x.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+    private void ZoomIn() => Zoom = Math.Min(1.7, Zoom + .1);
+    private void ZoomOut() => Zoom = Math.Max(.6, Zoom - .1);
+    private void Fit() => Zoom = 1;
+    private void ToggleFullscreen() => _isFullscreen = !_isFullscreen;
+
+    [JSInvokable]
+    public Task CommitDrag(Guid rootId, List<DragPoint> points, Guid? targetParentId)
+    {
+        if (!CanEdit || points.Count == 0) return Task.CompletedTask;
+        Snapshot(); var moved = points.ToDictionary(p => p.Id); var root = _map.Nodes.FirstOrDefault(n => n.Id == rootId); var target = moved.GetValueOrDefault(rootId);
+        var dx = root is null || target is null ? 0 : target.X - root.X; var dy = root is null || target is null ? 0 : target.Y - root.Y;
+        foreach (var point in points) if (_map.Nodes.FirstOrDefault(n => n.Id == point.Id) is { } node) { node.X = point.X; node.Y = point.Y; }
+        var descendants = new HashSet<Guid> { rootId }; var changed = true;
+        while (changed) { changed = false; foreach (var child in _map.Nodes.Where(n => n.ParentId.HasValue && descendants.Contains(n.ParentId.Value))) if (descendants.Add(child.Id)) changed = true; }
+        foreach (var id in descendants.Where(id => !moved.ContainsKey(id))) if (_map.Nodes.FirstOrDefault(n => n.Id == id) is { } hidden) { hidden.X += dx; hidden.Y += dy; }
+        if (root?.ParentId is not null && targetParentId is Guid nextParentId && !descendants.Contains(nextParentId)
+            && _map.Nodes.FirstOrDefault(n => n.Id == nextParentId) is { } nextParent)
+        {
+            root.ParentId = nextParentId;
+            nextParent.Collapsed = false;
+        }
+        _selectedId = rootId; Dirty(); return InvokeAsync(StateHasChanged);
+    }
+    public void Dispose()
+    {
+        _workOrderLoadGeneration++;
+        _candidateSearchGeneration++;
+        _self?.Dispose();
+        // آزادسازی ماژول JS (اگر با import پویا بارگذاری شده باشد) — بی‌صدا
+        if (_dragModule is not null)
+        {
+            var module = _dragModule;
+            _dragModule = null;
+            _ = SafeDisposeModuleAsync(module);
+        }
+    }
+
+    private static async Task SafeDisposeModuleAsync(IJSObjectReference module)
+    {
+        try { await module.DisposeAsync(); } catch { /* صفحه در حال بسته شدن است */ }
+    }
+    public sealed class DragPoint { public Guid Id { get; set; } public double X { get; set; } public double Y { get; set; } }
+    public sealed class MindFlowWorkOrder
+    {
+        public int Id { get; set; }
+        public string Number { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string ProjectName { get; set; } = "";
+        public string Status { get; set; } = "";
+        public int OwnerUserId { get; set; }
+        public int OrderProgress { get; set; }
+        public List<MindFlowWorkOrderAssignee> Assignees { get; set; } = new();
+    }
+    public sealed class MindFlowWorkOrderAssignee { public int UserId { get; set; } }
+    public sealed class MindFlowChecklistItem
+    {
+        public int Id { get; set; }
+        public string Text { get; set; } = "";
+        public bool IsDone { get; set; }
+        public string? DoneByName { get; set; }
+        public DateTime? DoneAt { get; set; }
+    }
+}

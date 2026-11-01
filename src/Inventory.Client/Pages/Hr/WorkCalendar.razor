@@ -1,0 +1,1231 @@
+@page "/work-calendar"
+@namespace Inventory.Client.Pages
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>تقویم کاری</PageTitle>
+
+<div class="page-head mb-4">
+    <h1><i class="bi bi-calendar2-week"></i> تقویم کاری</h1>
+    <div class="lead">نمای <b>سالانه (۱۲ ماه)</b> با <b>تعطیلات رسمی کشور</b>، روزهای کاری/تعطیل، ساعت شروع و پایان (با پشتیبانی شیفت شب)، اضافه‌کاری و <b>تنظیمات</b> (ساعت پیش‌فرض، روزهای تعطیل هفته و...). ورود/خروج پرسنل دقیقاً بر اساس همین تقویم ارزیابی می‌شود.</div>
+</div>
+
+@if (!Auth.Has("Attendance.SelfCheckin") && !Auth.Has("Attendance.ManageShifts") && !Auth.IsAdmin)
+{
+    <div class="alert alert-warning">دسترسی به تقویم کاری برای شما فعال نیست.</div>
+}
+else
+{
+    var canManage = Auth.Has("Attendance.ManageShifts") || Auth.IsAdmin;
+
+    <div class="wc-card card border-0 shadow-sm">
+        <div class="card-header bg-white">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="fw-800 fs-5"><i class="bi bi-calendar3 text-primary"></i> سال @Fa.Digits(vmYear)</span>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary" @onclick="PrevYear" title="سال قبل"><i class="bi bi-chevron-right"></i></button>
+                        <button class="btn btn-outline-secondary" @onclick="GoCurrentYear">امروز</button>
+                        <button class="btn btn-outline-secondary" @onclick="NextYear" title="سال بعد"><i class="bi bi-chevron-left"></i></button>
+                    </div>
+                    <input type="number" class="form-control form-control-sm wc-year-input" dir="ltr" min="1300" max="1500" value="@vmYear" @onchange="JumpYear" />
+                </div>
+                <ul class="nav nav-pills wc-tabs">
+                    <li class="nav-item"><button class="nav-link @(tab == "cal" ? "active" : "")" @onclick='() => SetTab("cal")'><i class="bi bi-grid-3x3-gap me-1"></i> تقویم سال</button></li>
+                    <li class="nav-item"><button class="nav-link @(tab == "hol" ? "active" : "")" @onclick='() => SetTab("hol")'><i class="bi bi-flag-fill me-1"></i> تعطیلات رسمی</button></li>
+                    @if (canManage)
+                    {
+                        <li class="nav-item"><button class="nav-link @(tab == "set" ? "active" : "")" @onclick='() => SetTab("set")'><i class="bi bi-gear me-1"></i> تنظیمات</button></li>
+                    }
+                </ul>
+            </div>
+        </div>
+
+        <div class="card-body">
+            @if (loading)
+            {
+                <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+            }
+            else if (tab == "cal")
+            {
+                @* ================== تب تقویم سال ================== *@
+                @if (!string.IsNullOrEmpty(calError))
+                {
+                    <div class="alert alert-danger d-flex align-items-center gap-2">
+                        <i class="bi bi-exclamation-triangle-fill"></i>
+                        <div>
+                            <b>تقویم از سرور دریافت نشد.</b>
+                            <div class="small">@calError</div>
+                            <div class="small text-muted mt-1">اگر بعد از انتشار (پابلیش) این خطا را می‌بینید، احتمالاً ساختار دیتابیس سرور به‌روز نیست؛ یک‌بار API را ری‌استارت کنید تا جدول‌های تقویم خودکار ساخته شوند، سپس صفحه را با Ctrl+Shift+R نوسازی کنید.</div>
+                        </div>
+                    </div>
+                }
+                <div class="row g-2 mb-3">
+                    <div class="col-6 col-md-2"><div class="wc-stat wc-stat-work"><span class="wc-stat-num">@Fa.Digits(summary?.TotalWorkDays ?? 0)</span><span class="wc-stat-lbl">روز کاری</span></div></div>
+                    <div class="col-6 col-md-2"><div class="wc-stat"><span class="wc-stat-num">@Num(summary?.TotalWorkHours ?? 0)</span><span class="wc-stat-lbl">ساعت کاری سال</span></div></div>
+                    <div class="col-6 col-md-2"><div class="wc-stat wc-stat-official"><span class="wc-stat-num">@Fa.Digits(summary?.TotalOfficialHolidays ?? 0)</span><span class="wc-stat-lbl">تعطیل رسمی</span></div></div>
+                    <div class="col-6 col-md-2"><div class="wc-stat wc-stat-company"><span class="wc-stat-num">@Fa.Digits(summary?.TotalCompanyHolidays ?? 0)</span><span class="wc-stat-lbl">تعطیلی شرکتی</span></div></div>
+                    <div class="col-6 col-md-2"><div class="wc-stat wc-stat-rest"><span class="wc-stat-num">@Fa.Digits(summary?.TotalRestDays ?? 0)</span><span class="wc-stat-lbl">روز تعطیل هفته</span></div></div>
+                    <div class="col-6 col-md-2"><div class="wc-stat wc-stat-custom"><span class="wc-stat-num">@Fa.Digits(summary?.TotalCustomDays ?? 0)</span><span class="wc-stat-lbl">قانون سفارشی</span></div></div>
+                </div>
+
+                @if (summary is not null && !summary.HasLunarCatalog)
+                {
+                    <div class="alert alert-light border small d-flex align-items-center gap-2 py-2">
+                        <i class="bi bi-info-circle text-warning"></i>
+                        <span>برای سال @Fa.Digits(vmYear) تعطیلات قمری در کاتالوگ موجود نیست (تقویم رسمی آن هنوز ابلاغ نشده)؛ فقط تعطیلات ثابت (نوروز و...) از تب «تعطیلات رسمی» وارد می‌شود و موارد قمری را می‌توانید دستی اضافه کنید.</span>
+                    </div>
+                }
+
+                @if (!canManage)
+                {
+                    <div class="alert alert-light border small py-2"><i class="bi bi-eye me-1"></i> نمای فقط-خواندنی — برای ویرایش تقویم، دسترسی «مدیریت شیفت» لازم است.</div>
+                }
+
+                @if (canManage)
+                {
+                    <div class="wc-bulk">
+                        <div class="wc-bulk-item">
+                            <label class="form-label small fw-800 mb-1">اعمال ساعت به همه‌ی روزهای کاری سال</label>
+                            <div class="d-flex gap-1 align-items-center" dir="ltr">
+                                <input type="time" class="form-control form-control-sm wc-bulk-time" value="@bulkStart" @onchange='e => bulkStart = e.Value?.ToString()' />
+                                <span class="text-muted">-</span>
+                                <input type="time" class="form-control form-control-sm wc-bulk-time" value="@bulkEnd" @onchange='e => bulkEnd = e.Value?.ToString()' />
+                                <button class="btn btn-sm btn-outline-primary" @onclick="ApplyHoursToYear"><i class="bi bi-calendar2-check me-1"></i> اعمال</button>
+                            </div>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="MarkRestDaysOff"><i class="bi bi-cupstraw me-1"></i> تعطیل‌کردن روزهای تعطیل هفته</button>
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="CopyPrevYear"><i class="bi bi-calendar-plus me-1"></i> کپی از سال قبل</button>
+                            <button class="btn btn-sm btn-outline-danger" @onclick="ResetYear"><i class="bi bi-eraser me-1"></i> پاک‌کردن قوانین سال</button>
+                        </div>
+                    </div>
+                }
+
+                <div class="wc-layout @(sel != null ? "with-editor" : "")">
+                    <div class="wc-year-grid">
+                        @foreach (var mo in months)
+                        {
+                            <div class="wc-month">
+                                <div class="wc-month-head">
+                                    <b>@mo.MonthName</b>
+                                    <span class="wc-month-stats">@Fa.Digits(mo.WorkDays) روز کاری • @Num(mo.WorkHours) ساعت</span>
+                                </div>
+                                <div class="wc-week-header">
+                                    @foreach (var w in WeekHeads)
+                                    {
+                                        <span>@w</span>
+                                    }
+                                </div>
+                                <div class="wc-days">
+                                    @for (int i = 0; i < mo.FirstDayColumn; i++)
+                                    {
+                                        <span></span>
+                                    }
+                                    @foreach (var day in mo.Days)
+                                    {
+                                        <button type="button" class="wc-day @DayClass(day)" title="@DayTitle(day)" @onclick='() => SelectDay(day)'>@Fa.Digits(day.DayNumber)</button>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    @if (sel != null && sel is not null)
+                    {
+                        var day = sel;
+                        <div class="wc-editor">
+                            <div class="wc-editor-card">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <b class="small"><i class="bi bi-pencil-square text-primary"></i> @Fa.Digits(vmYear)/@Fa.Digits(day.MonthOf)/@Fa.Digits(day.DayNumber) — @PersianDate.DayName(day.Date)</b>
+                                    <button class="btn btn-sm btn-light" @onclick='() => sel = null' title="بستن"><i class="bi bi-x-lg"></i></button>
+                                </div>
+
+                                @if (!string.IsNullOrEmpty(day.HolidayName))
+                                {
+                                    <div class="alert alert-danger py-1 px-2 small mb-2">
+                                        <i class="bi bi-flag-fill me-1"></i> @(day.IsOfficial ? "تعطیل رسمی:" : "تعطیلی شرکتی:") @day.HolidayName
+                                        <div class="text-muted" style="font-size:.7rem">تعریف قانون سفارشی برای این روز، تعطیلی را برای ارزیابی حضور بازنویسی می‌کند.</div>
+                                    </div>
+                                }
+
+                                @if (canManage)
+                                {
+                                    <div class="mb-2">
+                                        <span class="wc-flabel">وضعیت روز</span>
+                                        <div class="wc-seg2">
+                                            <button type="button" class="wc-segbtn @(day.IsWorkday ? "on" : "")" @onclick='() => SetWorkday(day, true)'><i class="bi bi-briefcase me-1"></i>روز کاری</button>
+                                            <button type="button" class="wc-segbtn wc-segbtn-off @(day.IsWorkday ? "" : "on")" @onclick='() => SetWorkday(day, false)'><i class="bi bi-cupstraw me-1"></i>تعطیل</button>
+                                        </div>
+                                    </div>
+
+                                    @if (day.IsWorkday)
+                                    {
+                                        var night = IsNight(day.StartText, day.EndText);
+                                        <div class="mb-2">
+                                            <span class="wc-flabel">ساعت کاری <i class="bi @(night ? "bi-moon-stars-fill text-night" : "bi-clock")"></i></span>
+                                            <div class="wc-times" dir="ltr">
+                                                <input type="time" class="form-control form-control-sm" value="@day.StartText" @onchange='e => { day.StartText = e.Value?.ToString(); MarkDirty(); }' />
+                                                <span class="wc-dash">تا</span>
+                                                <input type="time" class="form-control form-control-sm" value="@day.EndText" @onchange='e => { day.EndText = e.Value?.ToString(); MarkDirty(); }' />
+                                            </div>
+                                            @if (night)
+                                            {
+                                                <div class="wc-night-hint"><i class="bi bi-moon-stars"></i> شیفت شب — عبور از نیمه‌شب ✓</div>
+                                            }
+                                        </div>
+                                    }
+
+                                    <div class="mb-2">
+                                        <span class="wc-flabel">اضافه‌کاری</span>
+                                        <select class="form-select form-select-sm" value="@day.OtMode" @onchange='e => { day.OtMode = int.Parse(e.Value?.ToString() ?? "0"); MarkDirty(); }'>
+                                            <option value="0">بدون</option>
+                                            <option value="1">بازه زمانی (از-تا)</option>
+                                            <option value="2">کلِ روز اضافه‌کار</option>
+                                            <option value="3">سقف ساعتی</option>
+                                            <option value="4">مازادِ در انتظار تصمیم مدیر</option>
+                                        </select>
+                                        @if (day.OtMode == 1)
+                                        {
+                                            <div class="wc-times mt-1" dir="ltr">
+                                                <input type="time" class="form-control form-control-sm" value="@day.OtStartText" @onchange='e => { day.OtStartText = e.Value?.ToString(); MarkDirty(); }' />
+                                                <span class="wc-dash">تا</span>
+                                                <input type="time" class="form-control form-control-sm" value="@day.OtEndText" @onchange='e => { day.OtEndText = e.Value?.ToString(); MarkDirty(); }' />
+                                            </div>
+                                        }
+                                        else if (day.OtMode == 2)
+                                        {
+                                            <div class="wc-ot-hint mt-1">همه‌ی حضور این روز = اضافه‌کاری</div>
+                                        }
+                                        else if (day.OtMode == 3)
+                                        {
+                                            <div class="d-flex align-items-center gap-2 mt-1">
+                                                <input type="number" min="0" max="24" step="0.5" class="form-control form-control-sm wc-hours" dir="ltr" value="@day.OvertimeText" @onchange='e => { day.OvertimeText = e.Value?.ToString(); MarkDirty(); }' placeholder="0" />
+                                                <span class="small text-muted">ساعت</span>
+                                            </div>
+                                        }
+                                        else if (day.OtMode == 4)
+                                        {
+                                            <div class="wc-ot-hint mt-1">ماندنِ بعد از پایان شیفت «در انتظار تصمیم مدیر» می‌ماند — نه کسری، نه اضافه‌کار خودکار</div>
+                                        }
+                                    </div>
+
+                                    <div class="mb-2">
+                                        <span class="wc-flabel">یادداشت</span>
+                                        <input type="text" class="form-control form-control-sm" value="@day.Note" @onchange='e => { day.Note = e.Value?.ToString(); MarkDirty(); }' placeholder="مثلاً: ایام عزاداری، نوبت‌گیری..." />
+                                    </div>
+
+                                    @if (day.HasRule)
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary w-100" @onclick='() => ResetDay(day)'>
+                                            <i class="bi bi-arrow-counterclockwise me-1"></i> حذف قانون سفارشی (بازگشت به پیش‌فرض/تعطیلی)
+                                        </button>
+                                    }
+                                    <div class="small text-muted mt-2">پس از تغییرات، دکمه‌ی «ذخیره‌ی تقویم سال» را بزنید.</div>
+                                }
+                                else
+                                {
+                                    <ul class="small text-muted ps-3 mb-0">
+                                        <li>وضعیت: <b>@(day.IsWorkday ? "روز کاری" : "تعطیل")</b></li>
+                                        @if (day.IsWorkday)
+                                        {
+                                            <li>ساعت: @Fa.Digits(day.StartText) تا @Fa.Digits(day.EndText)</li>
+                                        }
+                                        <li>منبع: @SourceText(day)</li>
+                                    </ul>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div class="wc-legend d-flex flex-wrap gap-3 mt-3 small text-muted">
+                    <span><span class="wc-dot wc-dot-work"></span> روز کاری</span>
+                    <span><span class="wc-dot wc-dot-rest"></span> تعطیل هفته (جمعه و...)</span>
+                    <span><span class="wc-dot wc-dot-official"></span> تعطیل رسمی</span>
+                    <span><span class="wc-dot wc-dot-company"></span> تعطیلی شرکتی</span>
+                    <span><span class="wc-dot wc-dot-custom"></span> قانون سفارشی</span>
+                    <span><span class="wc-dot wc-dot-today"></span> امروز</span>
+                </div>
+
+                @if (canManage)
+                {
+                    <div class="d-flex flex-wrap justify-content-end align-items-center gap-3 mt-3">
+                        @if (saveMsg != "")
+                        {
+                            <span class="small @(saveError ? "text-danger" : "text-success")"><i class="bi @(saveError ? "bi-exclamation-triangle" : "bi-check-circle")"></i> @saveMsg</span>
+                        }
+                        <button class="btn btn-primary rounded-pill px-4 fw-800" @onclick="SaveYear" disabled="@saving">
+                            @if (saving)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span> <span>در حال ذخیره…</span>
+                            }
+                            else
+                            {
+                                <i class="bi bi-save me-1"></i> <span>ذخیره‌ی تقویم سال @Fa.Digits(vmYear)@(dirty ? " (تغییرات ذخیره‌نشده)" : "")</span>
+                            }
+                        </button>
+                    </div>
+                }
+
+                <div class="wc-logic mt-4">
+                    <button type="button" class="wc-logic-toggle" @onclick='() => showLogic = !showLogic'>
+                        <i class="bi @(showLogic ? "bi-chevron-up" : "bi-lightbulb")"></i>
+                        <b>منطق ارزیابی — قاعده‌ی هر روز از کجا تعیین می‌شود؟</b>
+                    </button>
+                    @if (showLogic)
+                    {
+                        <div class="wc-logic-body">
+                            <div class="logic-card">
+                                <div class="logic-title"><i class="bi bi-list-ol"></i> اولویت قواعد هر روز</div>
+                                <ol class="logic-list">
+                                    <li><b>قانون سفارشی همین تقویم</b> — روزهایی که از ویرایشگر روز تغییر داده‌اید؛ بالاترین اولویت برای کاری/تعطیلی، اضافه‌کاری و یادداشت. ساعت شروع/پایان: اگر برای کسی شیفت تعریف شده، ساعتِ شیفت او مقدم است (در تنظیمات قابل تغییر).</li>
+                                    <li><b>تعطیل رسمی کشور</b> — تعطیلات رسمی (نوروز، عید فطر، ۲۲ بهمن و...) از تب «تعطیلات رسمی»؛ اگر در تنظیمات «اعمال خودکار» خاموش باشد نادیده گرفته می‌شود.</li>
+                                    <li><b>تعطیلی شرکتی</b> — تعطیلی خاص مجموعه از پنل مرخصی.</li>
+                                    <li><b>شیفت کاربر</b> — ساعت شروع/پایان از شیفت شخص (روزهای تعطیل هفته از تنظیمات).</li>
+                                    <li><b>پیش‌فرض تنظیمات</b> — ساعت پیش‌فرض و روزهای تعطیل هفته از تب «تنظیمات».</li>
+                                </ol>
+                            </div>
+                            <div class="logic-card">
+                                <div class="logic-title"><i class="bi bi-cupstraw"></i> روزهای تعطیل و اضافه‌کاری</div>
+                                <ul class="logic-list">
+                                    <li>تعطیلِ بدون اضافه‌کاری: هر تردد = تردد غیرمجاز.</li>
+                                    <li>بازه زمانی اضافه‌کاری: تردد داخل بازه = اضافه‌کاری (حتی عبور از نیمه‌شب).</li>
+                                    <li>کلِ روز اضافه‌کار: همه‌ی حضور = اضافه‌کاری (برای روز کاری یعنی تاخیر/کسری حساب نمی‌شود).</li>
+                                    <li>سقف ساعتی: تا سقف تعیین‌شده اضافه‌کاری مجاز است.</li>
+                                    <li><b>مازادِ در انتظار تصمیم:</b> ماندنِ بعد از پایان شیفت نه کسری می‌شود و نه خودکار اضافه‌کار؛ در «کارتابل مازاد» منتظر تأیید مدیر می‌ماند (تأیید = اضافه‌کار، رد = تردد غیرمجاز).</li>
+                                    <li><b>کسری فقط وقتی ثبت می‌شود که حضور از ساعت شیفت کمتر باشد</b>؛ ماندنِ اضافه بر ساعت شیفت هرگز کسری نمی‌شود.</li>
+                                    <li><b>شیفت شب:</b> اگر پایان قبل از شروع باشد (مثلاً ۲۲:۰۰ تا ۰۶:۰۰) شیفت از نیمه‌شب عبور می‌کند و کامل محاسبه می‌شود.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+            else if (tab == "hol")
+            {
+                @* ================== تب تعطیلات رسمی ================== *@
+                <div class="row g-3">
+                    <div class="col-lg-5">
+                        <div class="wc-panel">
+                            <div class="fw-800 mb-2"><i class="bi bi-cloud-download text-primary"></i> دریافت از کاتالوگ تعطیلات</div>
+                            <p class="small text-muted mb-2">
+                                تعطیلات رسمی کشور برای سال @Fa.Digits(vmYear) به‌صورت گروهی وارد می‌شود:
+                                تعطیلات ثابت (نوروز، ۱۲ فروردین، ۱۴ و ۱۵ خرداد، ۲۲ بهمن، ۲۹ اسفند و...) همیشه، و
+                                تعطیلات قمری (عید فطر، قربان، غدیر، محرم، فاطمیه و...) برای سال‌های دارای داده (۱۴۰۴ و ۱۴۰۵).
+                                تاریخ‌های ازقبل‌ثبت‌شده رد می‌شوند.
+                            </p>
+                            @if (canManage)
+                            {
+                                <div class="form-check form-switch small mb-2">
+                                    <input class="form-check-input" type="checkbox" id="holReplace" @bind="holReplace" />
+                                    <label class="form-check-label" for="holReplace">جایگزینی تعطیلات رسمی قبلیِ این سال (به‌روزرسانی)</label>
+                                </div>
+                                <button class="btn btn-sm btn-primary" @onclick="ImportHolidays" disabled="@importing">
+                                    @if (importing)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-1"></span>
+                                    }
+                                    <i class="bi bi-magic me-1"></i> واردکردن تعطیلات رسمی سال @Fa.Digits(vmYear)
+                                </button>
+                            }
+                            else
+                            {
+                                <div class="small text-muted">برای واردکردن تعطیلات، دسترسی مدیریت لازم است.</div>
+                            }
+                            @if (importMsg != "")
+                            {
+                                <div class="alert @(importError ? "alert-danger" : "alert-success") py-1 px-2 small mt-2 mb-0">@importMsg</div>
+                            }
+                        </div>
+
+                        @if (canManage)
+                        {
+                            <div class="wc-panel mt-3">
+                                <div class="fw-800 mb-2"><i class="bi bi-plus-circle text-primary"></i> افزودن تعطیل رسمی دستی</div>
+                                <div class="small text-muted mb-2">مثلاً تعطیلات قمریِ سال‌های بدون کاتالوگ یا تعطیلی محلی.</div>
+                                <label class="wc-flabel">تاریخ (شمسی)</label>
+                                <DatePicker Value="@newHolDate" ValueChanged="v => newHolDate = v" CssClass="mb-2" />
+                                <label class="wc-flabel">عنوان</label>
+                                <input type="text" class="form-control form-control-sm mb-2" @bind="newHolName" placeholder="مثلاً: عید سعید فطر" />
+                                <button class="btn btn-sm btn-outline-primary" @onclick="AddHoliday" disabled="@(!newHolDate.HasValue || string.IsNullOrWhiteSpace(newHolName))">
+                                    <i class="bi bi-check2 me-1"></i> افزودن
+                                </button>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="col-lg-7">
+                        <div class="wc-panel">
+                            @if (!string.IsNullOrEmpty(holError))
+                            {
+                                <div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle-fill me-1"></i>دریافت تعطیلات ناموفق بود — @holError</div>
+                            }
+                            <div class="fw-800 mb-2"><i class="bi bi-list-ul text-primary"></i> تعطیلات سال @Fa.Digits(vmYear)</div>
+                            @if (holidayRows.Count == 0)
+                            {
+                                <div class="text-muted small py-3 text-center">برای این سال تعطیلی ثبت نشده — از کاتالوگ وارد کنید.</div>
+                            }
+                            else
+                            {
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-hover align-middle wc-hol-table">
+                                        <thead><tr><th>تاریخ</th><th>عنوان</th><th>نوع</th><th>روز هفته</th><th></th></tr></thead>
+                                        <tbody>
+                                            @foreach (var h in holidayRows)
+                                            {
+                                                <tr>
+                                                    <td class="text-nowrap">@Fa.Digits(PersianDate.ToShort(h.Date))</td>
+                                                    <td>@h.Name <span class="small text-muted">(@h.CreatedByName)</span></td>
+                                                    <td>
+                                                        @if (h.IsOfficial)
+                                                        {
+                                                            <span class="wc-chip wc-chip-hol">رسمی</span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="wc-chip wc-chip-company">شرکتی</span>
+                                                        }
+                                                    </td>
+                                                    <td class="small text-muted">@PersianDate.DayName(h.Date)</td>
+                                                    <td class="text-nowrap">
+                                                        @if (canManage && h.IsOfficial)
+                                                        {
+                                                            <button class="btn btn-sm btn-outline-danger py-0" @onclick='() => DeleteHoliday(h)' title="حذف"><i class="bi bi-trash"></i></button>
+                                                        }
+                                                        else if (Auth.Has("LeaveRequests.Approve") && !h.IsOfficial)
+                                                        {
+                                                            <button class="btn btn-sm btn-outline-danger py-0" @onclick='() => DeleteHoliday(h)' title="حذف تعطیلی شرکتی"><i class="bi bi-trash"></i></button>
+                                                        }
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        </div>
+                        <div class="small text-muted mt-2">
+                            <i class="bi bi-info-circle"></i> تعطیلات رسمی به‌طور خودکار در ارزیابی حضور اعمال می‌شوند (روز تعطیل = بدون کسری) مگر در تنظیمات خاموش شوند.
+                            تعطیلی شرکتی هم از «پنل مدیریت مرخصی» قابل ثبت است.
+                        </div>
+                    </div>
+                </div>
+            }
+            else if (tab == "set")
+            {
+                @* ================== تب تنظیمات ================== *@
+                <div class="row g-3">
+                    <div class="col-lg-6">
+                        <div class="wc-panel h-100">
+                            <div class="fw-800 mb-3"><i class="bi bi-clock-history text-primary"></i> ساعت کاری پیش‌فرض</div>
+                            <div class="row g-2 mb-2">
+                                <div class="col-12 col-sm-6">
+                                    <label class="wc-flabel">شروع</label>
+                                    <input type="time" class="form-control form-control-sm" dir="ltr" value="@set.DefaultStart" @onchange='e => set.DefaultStart = e.Value?.ToString() ?? "08:00"' />
+                                </div>
+                                <div class="col-12 col-sm-6">
+                                    <label class="wc-flabel">پایان</label>
+                                    <input type="time" class="form-control form-control-sm" dir="ltr" value="@set.DefaultEnd" @onchange='e => set.DefaultEnd = e.Value?.ToString() ?? "16:30"' />
+                                </div>
+                            </div>
+                            <div class="small text-muted mb-3">اگر پایان قبل از شروع باشد یعنی شیفت شب (عبور از نیمه‌شب). این ساعت مبنای روزهای کاریِ بدون قانون سفارشی است.</div>
+                            <label class="wc-flabel">تاخیر مجاز (دقیقه)</label>
+                            <input type="number" class="form-control form-control-sm" dir="ltr" min="0" max="240" value="@set.GraceMinutes" @onchange='e => { if (e.Value is string s && int.TryParse(s, out var v)) set.GraceMinutes = Math.Clamp(v, 0, 240); }' style="width:120px" />
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="wc-panel h-100">
+                            <div class="fw-800 mb-3"><i class="bi bi-calendar-x text-primary"></i> روزهای تعطیل هفته</div>
+                            <div class="d-flex flex-wrap gap-2 mb-2">
+                                @foreach (var wd in WeekDayFlags)
+                                {
+                                    var on = (set.RestDayFlags & wd.Flags) != 0;
+                                    <button type="button" class="wc-wd-chip @(on ? "on" : "")" @onclick='() => ToggleRestDay(wd.Flags)'>@wd.Name</button>
+                                }
+                            </div>
+                            <div class="small text-muted">این روزها به‌عنوان تعطیل (بدون کسری) ارزیابی می‌شوند — مثلاً «جمعه» یا «پنجشنبه و جمعه».</div>
+                            <hr />
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="applyOfficial" @bind="set.ApplyOfficialHolidays" />
+                                <label class="form-check-label small" for="applyOfficial"><b>اعمال خودکار تعطیلات رسمی کشور</b></label>
+                            </div>
+                            <div class="small text-muted mt-1">با خاموش‌کردن آن، تعطیلات رسمی در تقویم نمایش داده می‌شوند ولی روز کاری حساب می‌شوند (برای مجموعه‌هایی که تعطیلات رسمی ندارند).</div>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="wc-panel">
+                            <div class="fw-800 mb-3"><i class="bi bi-hourglass-split text-warning"></i> ماندنِ بعد از پایان شیفت (مازاد)</div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="requireExtra" @bind="set.RequireExtraApproval" />
+                                <label class="form-check-label small" for="requireExtra">
+                                    <b>مازاد «در انتظار تصمیم مدیر» ثبت شود</b> — نه کسری، نه اضافه‌کار خودکار
+                                </label>
+                            </div>
+                            <div class="small text-muted mt-1">
+                                وقتی روشن باشد، ماندنِ پرسنل بعد از پایان شیفت (مثلاً شیفت ۸ تا ۱۳ و خروج ۱۳:۱۵) در
+                                «حضور و غیاب ← کارتابل مازاد» منتظر می‌ماند تا مدیر <b>تأیید</b> کند (اضافه‌کار) یا <b>رد</b> کند (تردد غیرمجاز).
+                                <b>کسری</b> فقط وقتی ثبت می‌شود که حضور از ساعت شیفت <b>کمتر</b> باشد.
+                                خاموش‌کردن = رفتار قدیمی (مازاد = اضافه‌کار خودکار). هر شیفت می‌تواند این رفتار را جداگانه بازنویسی کند.
+                            </div>
+                            <hr />
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="shiftWins" @bind="set.ShiftOverridesCalendarTimes" />
+                                <label class="form-check-label small" for="shiftWins">
+                                    <b>ساعت شیفتِ پرسنل بر ساعت تقویم کاری مقدم باشد</b>
+                                </label>
+                            </div>
+                            <div class="small text-muted mt-1">
+                                با روشن بودن (پیش‌فرض)، اگر برای کسی شیفت ۸ تا ۱۳ تعریف شده، همین ساعت ملاک است حتی اگر ساعتِ ثبت‌شده در تقویم ۸ تا ۱۶:۳۰ باشد
+                                (تقویم همچنان کاری/تعطیلی، اضافه‌کاری و یادداشت روز را تعیین می‌کند). خاموش‌کردن = اولویتِ کامل تقویم (رفتار قدیمی).
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12 d-flex justify-content-end align-items-center gap-3">
+                        @if (saveMsg != "")
+                        {
+                            <span class="small @(saveError ? "text-danger" : "text-success")"><i class="bi @(saveError ? "bi-exclamation-triangle" : "bi-check-circle")"></i> @saveMsg</span>
+                        }
+                        <button class="btn btn-primary rounded-pill px-4 fw-800" @onclick="SaveSettings" disabled="@savingSet">
+                            @if (savingSet)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                            }
+                            else
+                            {
+                                <i class="bi bi-save me-1"></i>
+                            }
+                            ذخیره‌ی تنظیمات
+                        </button>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+<style>
+.wc-card { border-radius: 18px; }
+.wc-tabs .nav-link { padding: .3rem .9rem; font-size: .85rem; font-weight: 800; color: #475569; }
+.wc-tabs .nav-link.active { background: #6d28d9; }
+.wc-year-input { width: 90px; }
+
+/* ---- آمار ---- */
+.wc-stat { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: .55rem .8rem; display: flex; flex-direction: column; text-align: center; }
+.wc-stat-num { font-size: 1.15rem; font-weight: 800; color: #1e293b; }
+.wc-stat-lbl { font-size: .7rem; color: #64748b; font-weight: 700; }
+.wc-stat-work { background: #f0fdf4; border-color: #bbf7d0; } .wc-stat-work .wc-stat-num { color: #15803d; }
+.wc-stat-official { background: #fef2f2; border-color: #fecaca; } .wc-stat-official .wc-stat-num { color: #b91c1c; }
+.wc-stat-company { background: #fffbeb; border-color: #fde68a; } .wc-stat-company .wc-stat-num { color: #b45309; }
+.wc-stat-custom { background: #f5f3ff; border-color: #ddd6fe; } .wc-stat-custom .wc-stat-num { color: #6d28d9; }
+
+/* ---- نوار ابزار ---- */
+.wc-bulk { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 1rem; background: #faf9ff; border: 1px solid #e8e2fb; border-radius: 14px; padding: .8rem 1rem; margin-bottom: 1rem; }
+.wc-bulk-time { width: 108px; }
+
+/* ---- چیدمان: تقویم + ویرایشگر ---- */
+.wc-layout { display: block; }
+.wc-layout.with-editor { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1rem; align-items: start; }
+.wc-editor { position: sticky; top: .5rem; }
+
+/* ---- شبکه‌ی ۱۲ ماه ---- */
+.wc-year-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; }
+.wc-month { border: 1px solid #e8e2fb; border-radius: 14px; padding: .6rem .65rem; background: #fff; }
+.wc-month-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: .35rem; }
+.wc-month-head b { color: #312e81; }
+.wc-month-stats { font-size: .64rem; color: #64748b; font-weight: 700; }
+.wc-week-header { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 2px; }
+.wc-week-header span { text-align: center; font-size: .6rem; font-weight: 800; color: #94a3b8; }
+.wc-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+
+/* ---- خانه‌های روز ---- */
+button.wc-day { border: 1px solid transparent; background: #f8fafc; border-radius: 7px; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; font-size: .72rem; font-weight: 700; color: #334155; cursor: pointer; padding: 0; min-width: 0; transition: transform .06s; }
+button.wc-day:hover { transform: scale(1.12); z-index: 2; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+button.wc-day.d-rest { background: #f1f5f9; color: #64748b; }
+button.wc-day.d-official { background: #dc2626; color: #fff; font-weight: 800; }
+button.wc-day.d-company { background: #f59e0b; color: #fff; }
+button.wc-day.d-custom { border: 2px solid #8e5cff; background: #ede9fe; color: #5b21b6; }
+button.wc-day.d-custom-off { border: 2px dashed #8e5cff; background: #f5f3ff; color: #7c3aed; }
+button.wc-day.d-today { outline: 2px solid #1e293b; outline-offset: 1px; }
+button.wc-day.d-sel { box-shadow: 0 0 0 3px #93c5fd; z-index: 3; position: relative; }
+
+/* ---- ویرایشگر روز ---- */
+.wc-editor-card { background: #faf9ff; border: 2px solid #ddd0fb; border-radius: 14px; padding: .8rem .9rem; }
+.wc-flabel { display: block; font-size: .72rem; font-weight: 800; color: #5f688a; margin-bottom: .25rem; }
+.wc-seg2 { display: inline-flex; border: 1.5px solid #d8d2f0; border-radius: 10px; overflow: hidden; background: #fff; }
+.wc-segbtn { border: 0; background: transparent; padding: .35rem .75rem; font-size: .8rem; font-weight: 800; color: #64748b; cursor: pointer; }
+.wc-segbtn.on { background: #16a34a; color: #fff; }
+.wc-segbtn-off.on { background: #dc2626; color: #fff; }
+.wc-times { display: flex; align-items: center; gap: .4rem; }
+.wc-times input { width: 104px; }
+.wc-dash { color: #94a3b8; font-size: .78rem; }
+.wc-hours { width: 90px; }
+.wc-night-hint { margin-top: .3rem; font-size: .68rem; font-weight: 800; color: #6d28d9; background: #f5f0ff; border: 1px dashed #ddd0fb; border-radius: 8px; padding: .15rem .5rem; display: inline-block; }
+.wc-ot-hint { font-size: .68rem; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1px dashed #99f6e4; border-radius: 8px; padding: .15rem .5rem; display: inline-block; }
+.text-night { color: #6d28d9; }
+
+/* ---- تعطیلات / تنظیمات ---- */
+.wc-panel { background: #fff; border: 1px solid #e8e2fb; border-radius: 14px; padding: .9rem 1rem; }
+.wc-hol-table td { font-size: .82rem; }
+.wc-wd-chip { border: 1.5px solid #d8d2f0; background: #fff; border-radius: 999px; padding: .3rem .85rem; font-size: .8rem; font-weight: 800; color: #64748b; cursor: pointer; }
+.wc-wd-chip.on { background: #dc2626; border-color: #dc2626; color: #fff; }
+.wc-chip { font-size: .66rem; font-weight: 800; border-radius: 999px; padding: .12rem .5rem; white-space: nowrap; }
+.wc-chip-hol { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.wc-chip-company { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+
+/* ---- راهنما و منطق ---- */
+.wc-legend { display: flex; align-items: center; gap: .35rem; }
+.wc-dot { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-inline-end: .25rem; vertical-align: middle; }
+.wc-dot-work { background: #f8fafc; border: 1px solid #cbd5e1; }
+.wc-dot-rest { background: #f1f5f9; border: 1px solid #94a3b8; }
+.wc-dot-official { background: #dc2626; }
+.wc-dot-company { background: #f59e0b; }
+.wc-dot-custom { background: #ede9fe; border: 2px solid #8e5cff; }
+.wc-dot-today { background: #fff; outline: 2px solid #1e293b; }
+.wc-logic { background: #faf9ff; border: 1px solid #e8e2fb; border-radius: 14px; overflow: hidden; }
+.wc-logic-toggle { width: 100%; display: flex; align-items: center; gap: .5rem; background: transparent; border: 0; padding: .75rem 1rem; font-size: .88rem; cursor: pointer; color: #1e1b4b; }
+.wc-logic-toggle:hover { background: #f3efff; }
+.wc-logic-body { padding: .25rem 1rem 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: .75rem; }
+.logic-card { background: #fff; border: 1px solid #eee9fb; border-radius: 12px; padding: .8rem 1rem; }
+.logic-title { font-weight: 800; font-size: .86rem; color: #312e81; margin-bottom: .45rem; }
+.logic-title i { margin-inline-end: .25rem; color: #8e5cff; }
+.logic-list { margin: 0; padding-inline-start: 1.15rem; font-size: .78rem; color: #334155; line-height: 1.9; }
+
+@@media (max-width: 1199px) {
+    .wc-year-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .wc-layout.with-editor { grid-template-columns: 1fr; }
+    .wc-editor { position: static; order: -1; }
+}
+@@media (max-width: 640px) {
+    .wc-year-grid { grid-template-columns: 1fr; }
+    .wc-month { padding: .5rem; }
+    .wc-day { font-size: .64rem; }
+    .wc-bulk { padding: .6rem .7rem; }
+    .wc-bulk-time { width: 96px; }
+}
+</style>
+
+@code {
+    // ================== وضعیت ==================
+    private bool loading = true;
+    private string calError = "";
+    private string holError = "";
+    private bool saving, saveError, dirty;
+    private bool savingSet;
+    private bool importing, importError;
+    private string saveMsg = "";
+    private string importMsg = "";
+    private string tab = "cal";
+    private bool showLogic;
+    private int vmYear;
+    private List<YMonth> months = new();
+    private Summary? summary;
+    private SettingsForm set = new();
+    private List<HolRow> holidayRows = new();
+    private YDay? sel;
+    private bool holReplace;
+    private DateTime? newHolDate;
+    private string newHolName = "";
+    private string bulkStart = "08:00", bulkEnd = "16:30";
+
+    private static readonly string[] WeekHeads = { "ش", "ی", "د", "س", "چ", "پ", "ج" };
+    private static readonly (string Name, int Flags)[] WeekDayFlags =
+    {
+        ("شنبه", 64), ("یکشنبه", 1), ("دوشنبه", 2), ("سه‌شنبه", 4),
+        ("چهارشنبه", 8), ("پنجشنبه", 16), ("جمعه", 32),
+    };
+
+    private static string Hm(string? t) => string.IsNullOrWhiteSpace(t) || t.Length < 5 ? "08:00" : t[..5];
+    private static string Num(double v) => Fa.Digits(((decimal)v).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture));
+    private static bool IsNight(string? start, string? end) =>
+        TimeSpan.TryParse(start, out var st) && TimeSpan.TryParse(end, out var en) && en < st;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(Auth.Token))
+            Http.DefaultRequestHeaders.Authorization = new("Bearer", Auth.Token);
+        (vmYear, _, _) = PersianDate.FromGregorian(DateTime.Now);
+        await LoadYear();
+    }
+
+    // نکته: بارگذاری باید await شود (نه `_ = Load...()`); وگرنه بعد از پایان دانلود رندر مجدد
+    // انجام نمی‌شود و اسپینر برای همیشه می‌ماند.
+    private async Task SetTab(string t)
+    {
+        tab = t;
+        if (t == "hol") await LoadHolidays();
+    }
+
+    private async Task PrevYear() { vmYear--; await LoadYear(); }
+    private async Task NextYear() { vmYear++; await LoadYear(); }
+    private async Task GoCurrentYear() { (vmYear, _, _) = PersianDate.FromGregorian(DateTime.Now); await LoadYear(); }
+    private async Task JumpYear(Microsoft.AspNetCore.Components.ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var y) && y is >= 1300 and <= 1500) { vmYear = y; await LoadYear(); }
+    }
+
+    // ================== بارگذاری ==================
+    private async Task LoadYear()
+    {
+        loading = true;
+        saveMsg = "";
+        dirty = false;
+        sel = null;
+        calError = "";
+        try
+        {
+            var r = await Http.GetFromJsonAsync<YearResp>($"/api/Attendance/calendar-year?jy={vmYear}");
+            months = new();
+            if (r?.months != null)
+            {
+                foreach (var m in r.months)
+                {
+                    var ym = new YMonth
+                    {
+                        Month = m.month,
+                        MonthName = m.monthName,
+                        DaysInMonth = m.daysInMonth,
+                        FirstDayColumn = m.firstDayColumn,
+                        WorkDays = m.workDays,
+                        WorkHours = m.workHours,
+                    };
+                    foreach (var d in m.days)
+                    {
+                        var (_, _, jd) = PersianDate.FromGregorian(d.date);
+                        var otHours = d.overtimeHours > 0 ? d.overtimeHours.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) : "";
+                        var otMode = d.overtimeMode;
+                        if (otMode == 0 && !string.IsNullOrEmpty(otHours) && !d.isWorkday) otMode = 3;
+                        ym.Days.Add(new YDay
+                        {
+                            Date = d.date,
+                            DayNumber = jd,
+                            MonthOf = m.month,
+                            IsToday = d.isToday,
+                            IsWorkday = d.isWorkday,
+                            StartText = Hm(d.start),
+                            EndText = Hm(d.end),
+                            OtMode = otMode,
+                            OtStartText = d.overtimeStart != null ? Hm(d.overtimeStart) : "",
+                            OtEndText = d.overtimeEnd != null ? Hm(d.overtimeEnd) : "",
+                            OvertimeText = otHours,
+                            Source = d.source,
+                            IsOfficial = d.isOfficial,
+                            HolidayName = d.holidayName,
+                            Note = d.note,
+                            HasRule = d.hasRule,
+                        });
+                    }
+                    months.Add(ym);
+                }
+            }
+            if (r?.summary != null) summary = new Summary
+            {
+                TotalWorkDays = r.summary.totalWorkDays,
+                TotalOfficialHolidays = r.summary.totalOfficialHolidays,
+                TotalCompanyHolidays = r.summary.totalCompanyHolidays,
+                TotalRestDays = r.summary.totalRestDays,
+                TotalCustomDays = r.summary.totalCustomDays,
+                TotalWorkHours = r.summary.totalWorkHours,
+                HasLunarCatalog = r.summary.hasLunarCatalog,
+            };
+            if (r?.settings != null)
+            {
+                set = new SettingsForm
+                {
+                    DefaultStart = Hm(r.settings.defaultStart),
+                    DefaultEnd = Hm(r.settings.defaultEnd),
+                    GraceMinutes = r.settings.graceMinutes,
+                    RestDayFlags = r.settings.restDayFlags,
+                    ApplyOfficialHolidays = r.settings.applyOfficialHolidays,
+            RequireExtraApproval = r.settings.requireExtraApproval,
+            ShiftOverridesCalendarTimes = r.settings.shiftOverridesCalendarTimes,
+                };
+                bulkStart = set.DefaultStart;
+                bulkEnd = set.DefaultEnd;
+            }
+        }
+        catch (Exception ex)
+        {
+            months = new();
+            summary = null;
+            calError = "پیام سرور: " + ex.Message;
+        }
+        loading = false;
+    }
+
+    private async Task LoadHolidays()
+    {
+        holError = "";
+        try
+        {
+            var from = PersianDate.ToGregorian(vmYear, 1, 1);
+            var to = PersianDate.ToGregorian(vmYear + 1, 1, 1);
+            var all = await Http.GetFromJsonAsync<List<HolDto>>("/api/LeaveRequests/holidays");
+            holidayRows = (all ?? new List<HolDto>())
+                .Where(h => h.holidayDate.Date >= from && h.holidayDate.Date < to)
+                .Select(h => new HolRow { Id = h.id, Date = h.holidayDate, Name = h.name, IsOfficial = h.isOfficial, CreatedByName = h.createdByName })
+                .OrderBy(h => h.Date).ToList();
+        }
+        catch (Exception ex) { holidayRows = new List<HolRow>(); holError = "پیام سرور: " + ex.Message; }
+    }
+
+    // ================== نمای روز ==================
+    private string DayClass(YDay d)
+    {
+        var c = "";
+        if (d.IsToday) c += " d-today";
+        if (ReferenceEquals(sel, d)) c += " d-sel";
+        if (!d.IsWorkday)
+        {
+            if (d.Source == "Holiday") c += d.IsOfficial ? " d-official" : " d-company";
+            else c += " d-rest";
+        }
+        if (d.HasRule) c += d.IsWorkday ? " d-custom" : " d-custom-off";
+        return c.Trim();
+    }
+
+    private string DayTitle(YDay d)
+    {
+        var t = $"{PersianDate.ToShort(d.Date)} — {PersianDate.DayName(d.Date)}";
+        t += d.IsWorkday ? $" | روز کاری {d.StartText} تا {d.EndText}" : " | تعطیل";
+        if (!string.IsNullOrEmpty(d.HolidayName)) t += $" | {d.HolidayName}";
+        if (!string.IsNullOrEmpty(d.Note)) t += $" | {d.Note}";
+        if (d.HasRule) t += " | قانون سفارشی";
+        return t;
+    }
+
+    private string SourceText(YDay d) => d.Source switch
+    {
+        "Calendar" => "قانون سفارشی تقویم",
+        "Holiday" => d.IsOfficial ? "تعطیل رسمی کشور" : "تعطیلی شرکتی",
+        "Shift" => "شیفت کاربر",
+        "Default" => "پیش‌فرض تنظیمات",
+        _ => "پیش‌فرض",
+    };
+
+    private void SelectDay(YDay day) => sel = day;
+
+    private void MarkDirty() { dirty = true; saveMsg = ""; }
+
+    private void SetWorkday(YDay day, bool workday)
+    {
+        day.IsWorkday = workday;
+        day.HasRule = true;
+        dirty = true;
+        saveMsg = "";
+    }
+
+    private void ResetDay(YDay day)
+    {
+        day.HasRule = false;
+        day.Note = null;
+        day.OtMode = 0;
+        day.OvertimeText = "";
+        day.OtStartText = "";
+        day.OtEndText = "";
+        dirty = true;
+        saveMsg = "";
+    }
+
+    // ================== اکشن‌های گروهی ==================
+    private void ApplyHoursToYear()
+    {
+        var n = 0;
+        foreach (var d in AllDays.Where(d => d.IsWorkday))
+        {
+            d.StartText = bulkStart;
+            d.EndText = bulkEnd;
+            d.HasRule = true;
+            n++;
+        }
+        dirty = true;
+        saveMsg = $"ساعت {bulkStart} تا {bulkEnd} روی {Fa.Digits(n)} روز کاری اعمال شد — ذخیره فراموش نشود.";
+        saveError = false;
+    }
+
+    private void MarkRestDaysOff()
+    {
+        var n = 0;
+        foreach (var d in AllDays)
+        {
+            var isRestWeekday = (set.RestDayFlags & (1 << (int)d.Date.DayOfWeek)) != 0;
+            if (isRestWeekday && d.Source != "Holiday")
+            {
+                d.IsWorkday = false;
+                d.HasRule = true;
+                n++;
+            }
+        }
+        dirty = true;
+        saveMsg = $"{Fa.Digits(n)} روز تعطیل هفته علامت‌گذاری شد — ذخیره فراموش نشود.";
+        saveError = false;
+    }
+
+    private void ResetYear()
+    {
+        foreach (var d in AllDays) { d.HasRule = false; d.Note = null; d.OtMode = 0; d.OvertimeText = ""; d.OtStartText = ""; d.OtEndText = ""; }
+        dirty = true;
+        sel = null;
+        saveMsg = "همه‌ی قوانین سال پاک شد (بازگشت به پیش‌فرض/تعطیلات) — ذخیره فراموش نشود.";
+        saveError = false;
+    }
+
+    private async Task CopyPrevYear()
+    {
+        try
+        {
+            var r = await Http.GetFromJsonAsync<YearResp>($"/api/Attendance/calendar-year?jy={vmYear - 1}");
+            if (r?.months == null) return;
+            var n = 0;
+            foreach (var m in r.months)
+                foreach (var d in m.days.Where(d => d.hasRule))
+                {
+                    var (_, _, jd) = PersianDate.FromGregorian(d.date);
+                    var target = months.FirstOrDefault(x => x.Month == m.month)?.Days.FirstOrDefault(x => x.DayNumber == jd);
+                    if (target == null) continue;
+                    target.IsWorkday = d.isWorkday;
+                    target.StartText = Hm(d.start);
+                    target.EndText = Hm(d.end);
+                    target.OtMode = d.overtimeMode;
+                    target.OtStartText = d.overtimeStart != null ? Hm(d.overtimeStart) : "";
+                    target.OtEndText = d.overtimeEnd != null ? Hm(d.overtimeEnd) : "";
+                    target.OvertimeText = d.overtimeHours > 0 ? d.overtimeHours.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) : "";
+                    target.Note = d.note;
+                    target.HasRule = true;
+                    n++;
+                }
+            dirty = true;
+            saveMsg = n > 0 ? $"{Fa.Digits(n)} قانون از سال {Fa.Digits(vmYear - 1)} کپی شد — ذخیره فراموش نشود." : "سال قبل قانونی برای کپی نداشت.";
+            saveError = n == 0;
+        }
+        catch { saveMsg = "کپی از سال قبل ممکن نبود."; saveError = true; }
+    }
+
+    // ================== ذخیره ==================
+    private async Task SaveYear()
+    {
+        saving = true;
+        saveMsg = "";
+        saveError = false;
+
+        foreach (var d in AllDays.Where(d => d.HasRule))
+        {
+            if (d.IsWorkday && (!TimeSpan.TryParse(d.StartText, out _) || !TimeSpan.TryParse(d.EndText, out _)))
+            {
+                saveMsg = $"ساعت شروع/پایان روز {Fa.Digits(d.DayNumber)} {PersianDate.MonthName(d.MonthOf)} را کامل وارد کنید.";
+                saveError = true;
+                saving = false;
+                return;
+            }
+            if (d.OtMode == 1 && (!TimeSpan.TryParse(d.OtStartText, out _) || !TimeSpan.TryParse(d.OtEndText, out _)))
+            {
+                saveMsg = $"ساعت‌های بازه اضافه‌کاری روز {Fa.Digits(d.DayNumber)} {PersianDate.MonthName(d.MonthOf)} را کامل وارد کنید.";
+                saveError = true;
+                saving = false;
+                return;
+            }
+        }
+
+        try
+        {
+            var payload = AllDays.Select(d =>
+            {
+                double otHours = 0;
+                string? otStart = null, otEnd = null;
+                int otMode = 0;
+                if (d.HasRule)
+                {
+                    otMode = d.OtMode;
+                    if (otMode == 1) { otStart = d.OtStartText; otEnd = d.OtEndText; }
+                    else if (otMode == 3)
+                        double.TryParse(d.OvertimeText, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out otHours);
+                }
+                return new
+                {
+                    date = d.Date,
+                    isWorkday = d.IsWorkday,
+                    startTime = d.HasRule && d.IsWorkday ? d.StartText : null,
+                    endTime = d.HasRule && d.IsWorkday ? d.EndText : null,
+                    graceMinutes = 0,
+                    overtimeHours = otHours,
+                    overtimeMode = otMode,
+                    overtimeStart = otStart,
+                    overtimeEnd = otEnd,
+                    note = d.HasRule ? d.Note : null,
+                    hasRule = d.HasRule,
+                };
+            }).ToList();
+
+            var resp = await Http.PutAsJsonAsync("/api/Attendance/calendar", new { year = vmYear, month = 0, days = payload });
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success($"تقویم سال {Fa.Digits(vmYear)} ذخیره شد.");
+                await LoadYear();
+            }
+            else
+            {
+                try
+                {
+                    var body = await resp.Content.ReadAsStringAsync();
+                    using var doc = System.Text.Json.JsonDocument.Parse(body);
+                    if (doc.RootElement.TryGetProperty("message", out var m)) saveMsg = "خطا: " + m.GetString();
+                }
+                catch { saveMsg = "ذخیره‌ی تقویم ممکن نبود."; }
+                saveError = true;
+            }
+        }
+        catch (Exception ex) { saveMsg = ex.Message; saveError = true; }
+        saving = false;
+    }
+
+    // ================== تعطیلات رسمی ==================
+    private async Task ImportHolidays()
+    {
+        importing = true;
+        importMsg = "";
+        importError = false;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync("/api/Attendance/official-holidays/import", new { year = vmYear, replace = holReplace });
+            if (resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+                var added = body.TryGetProperty("added", out var addedEl) ? addedEl.GetInt32() : 0;
+                var hasLunar = body.TryGetProperty("hasLunarData", out var lunarEl) && lunarEl.GetBoolean();
+                importMsg = hasLunar
+                    ? $"{Fa.Digits(added)} تعطیل رسمی برای سال {Fa.Digits(vmYear)} وارد شد."
+                    : $"{Fa.Digits(added)} تعطیل ثابت وارد شد — تعطیلات قمری این سال در کاتالوگ نیست؛ دستی اضافه کنید.";
+                Toast.Success("تعطیلات رسمی وارد شد.");
+                await LoadYear();
+                await LoadHolidays();
+            }
+            else
+            {
+                importMsg = "واردکردن تعطیلات ممکن نشد (دسترسی کافی نیست؟).";
+                importError = true;
+            }
+        }
+        catch (Exception ex) { importMsg = ex.Message; importError = true; }
+        importing = false;
+    }
+
+    private async Task AddHoliday()
+    {
+        if (!newHolDate.HasValue || string.IsNullOrWhiteSpace(newHolName)) return;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync("/api/Attendance/official-holidays", new { holidayDate = newHolDate, name = newHolName.Trim() });
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success("تعطیل رسمی افزوده شد.");
+                newHolDate = null;
+                newHolName = "";
+                await LoadYear();
+                await LoadHolidays();
+            }
+            else
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                var msg = "افزودن ممکن نشد.";
+                try { using var doc = System.Text.Json.JsonDocument.Parse(body); if (doc.RootElement.TryGetProperty("message", out var m)) msg = m.GetString() ?? msg; } catch { }
+                Toast.Error(msg);
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteHoliday(HolRow h)
+    {
+        try
+        {
+            var url = h.IsOfficial ? $"/api/Attendance/official-holidays/{h.Id}" : $"/api/LeaveRequests/holidays/{h.Id}";
+            var resp = await Http.DeleteAsync(url);
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success("تعطیلی حذف شد.");
+                await LoadYear();
+                await LoadHolidays();
+            }
+            else Toast.Error("حذف ممکن نشد (دسترسی کافی نیست؟)");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ================== تنظیمات ==================
+    private void ToggleRestDay(int flag) => set.RestDayFlags ^= flag;
+
+    private async Task SaveSettings()
+    {
+        savingSet = true;
+        saveMsg = "";
+        saveError = false;
+        try
+        {
+            var resp = await Http.PutAsJsonAsync("/api/Attendance/calendar-settings", new
+            {
+                defaultStart = set.DefaultStart,
+                defaultEnd = set.DefaultEnd,
+                graceMinutes = set.GraceMinutes,
+                restDayFlags = set.RestDayFlags,
+                applyOfficialHolidays = set.ApplyOfficialHolidays,
+                requireExtraApproval = set.RequireExtraApproval,
+                shiftOverridesCalendarTimes = set.ShiftOverridesCalendarTimes,
+            });
+            if (resp.IsSuccessStatusCode)
+            {
+                Toast.Success("تنظیمات تقویم کاری ذخیره شد.");
+                await LoadYear();
+            }
+            else
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                var msg = "ذخیره‌ی تنظیمات ممکن نشد.";
+                try { using var doc = System.Text.Json.JsonDocument.Parse(body); if (doc.RootElement.TryGetProperty("message", out var m)) msg = m.GetString() ?? msg; } catch { }
+                Toast.Error(msg);
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        savingSet = false;
+    }
+
+    private List<YDay> AllDays => months.SelectMany(m => m.Days).ToList();
+
+    // ================== مدل‌های UI ==================
+    public class YDay
+    {
+        public DateTime Date { get; set; }
+        public int DayNumber { get; set; }
+        public int MonthOf { get; set; }
+        public bool IsToday { get; set; }
+        public bool IsWorkday { get; set; } = true;
+        public string StartText { get; set; } = "08:00";
+        public string EndText { get; set; } = "16:30";
+        public int OtMode { get; set; }
+        public string OtStartText { get; set; } = "";
+        public string OtEndText { get; set; } = "";
+        public string OvertimeText { get; set; } = "";
+        public string? Note { get; set; }
+        public string Source { get; set; } = "Default";
+        public bool IsOfficial { get; set; }
+        public string? HolidayName { get; set; }
+        public bool HasRule { get; set; }
+    }
+
+    public class YMonth
+    {
+        public int Month { get; set; }
+        public string MonthName { get; set; } = "";
+        public int DaysInMonth { get; set; }
+        public int FirstDayColumn { get; set; }
+        public int WorkDays { get; set; }
+        public double WorkHours { get; set; }
+        public List<YDay> Days { get; set; } = new();
+    }
+
+    public class Summary
+    {
+        public int TotalWorkDays { get; set; }
+        public int TotalOfficialHolidays { get; set; }
+        public int TotalCompanyHolidays { get; set; }
+        public int TotalRestDays { get; set; }
+        public int TotalCustomDays { get; set; }
+        public double TotalWorkHours { get; set; }
+        public bool HasLunarCatalog { get; set; }
+    }
+
+    public class SettingsForm
+    {
+        public string DefaultStart { get; set; } = "08:00";
+        public string DefaultEnd { get; set; } = "16:30";
+        public int GraceMinutes { get; set; } = 10;
+        public int RestDayFlags { get; set; } = 32;
+        public bool ApplyOfficialHolidays { get; set; } = true;
+        public bool RequireExtraApproval { get; set; } = true;
+        public bool ShiftOverridesCalendarTimes { get; set; } = true;
+    }
+
+    public class HolRow
+    {
+        public int Id { get; set; }
+        public DateTime Date { get; set; }
+        public string Name { get; set; } = "";
+        public bool IsOfficial { get; set; }
+        public string? CreatedByName { get; set; }
+    }
+
+    // ================== DTOهای API ==================
+    public class YearDayDto
+    {
+        public DateTime date { get; set; }
+        public bool isToday { get; set; }
+        public bool isWorkday { get; set; }
+        public string start { get; set; } = "08:00";
+        public string end { get; set; } = "16:30";
+        public int graceMinutes { get; set; }
+        public double overtimeHours { get; set; }
+        public int overtimeMode { get; set; }
+        public string? overtimeStart { get; set; }
+        public string? overtimeEnd { get; set; }
+        public string source { get; set; } = "Default";
+        public bool isOfficial { get; set; }
+        public string? holidayName { get; set; }
+        public string? note { get; set; }
+        public bool hasRule { get; set; }
+    }
+
+    public class YearMonthDto
+    {
+        public int year { get; set; }
+        public int month { get; set; }
+        public string monthName { get; set; } = "";
+        public int firstDayColumn { get; set; }
+        public int daysInMonth { get; set; }
+        public int workDays { get; set; }
+        public int offDays { get; set; }
+        public int officialDays { get; set; }
+        public int companyDays { get; set; }
+        public int customDays { get; set; }
+        public double workHours { get; set; }
+        public List<YearDayDto> days { get; set; } = new();
+    }
+
+    public class SummaryDto
+    {
+        public int totalWorkDays { get; set; }
+        public int totalOfficialHolidays { get; set; }
+        public int totalCompanyHolidays { get; set; }
+        public int totalRestDays { get; set; }
+        public int totalCustomDays { get; set; }
+        public double totalWorkHours { get; set; }
+        public bool hasLunarCatalog { get; set; }
+    }
+
+    public class SettingsDto
+    {
+        public string defaultStart { get; set; } = "08:00";
+        public string defaultEnd { get; set; } = "16:30";
+        public int graceMinutes { get; set; }
+        public int restDayFlags { get; set; }
+        public bool applyOfficialHolidays { get; set; }
+        public bool requireExtraApproval { get; set; } = true;
+        public bool shiftOverridesCalendarTimes { get; set; } = true;
+    }
+
+    public class YearResp
+    {
+        public int year { get; set; }
+        public SummaryDto? summary { get; set; }
+        public SettingsDto? settings { get; set; }
+        public List<YearMonthDto> months { get; set; } = new();
+    }
+
+    public class HolDto
+    {
+        public int id { get; set; }
+        public DateTime holidayDate { get; set; }
+        public string name { get; set; } = "";
+        public string? createdByName { get; set; }
+        public bool isOfficial { get; set; }
+    }
+}

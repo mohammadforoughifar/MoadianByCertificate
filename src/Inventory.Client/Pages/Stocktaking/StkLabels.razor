@@ -1,0 +1,342 @@
+@page "/stk/labels"
+@inject IBcdBarcodeService BarcodeSvc
+@inject IInvProductService ProductSvc
+@inject IInvCategoryService CategorySvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>چاپ برچسب بارکد</PageTitle>
+
+<div class="page-head no-print">
+    <div>
+        <h1>چاپ برچسب بارکد</h1>
+        <p class="lead">انتخاب کالا، تعیین تعداد برچسب و چاپ مستقیم شیت‌های بارکد</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-outline-secondary" href="/stk/barcodes"><i class="bi bi-arrow-right"></i> بازگشت</a>
+        <button class="btn btn-primary" @onclick="Print" disabled="@(labels.Count == 0)">
+            <i class="bi bi-printer"></i> چاپ برگه
+        </button>
+    </div>
+</div>
+
+<!-- ============ انتخاب کالا ============ -->
+<div class="card mb-3 no-print">
+    <div class="card-header"><span class="card-title"><i class="bi bi-funnel"></i> انتخاب کالا</span></div>
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-4">
+                <label class="form-label">جستجوی کالا</label>
+                <input class="form-control" placeholder="نام یا کد کالا…"
+                       @bind="search" @bind:event="oninput" @onkeyup="OnSearchKey" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">گروه کالا</label>
+                <select class="form-select" value="@(categoryId?.ToString() ?? "")" @onchange="OnCategory">
+                    <option value="">همه گروه‌ها</option>
+                    @foreach (var c in categories)
+                    {
+                        <option value="@c.Id">@Indent(c.Depth)@c.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <button class="btn btn-outline-primary w-100" @onclick="Search"><i class="bi bi-search"></i> جستجو</button>
+            </div>
+            <div class="col-6 col-md-3">
+                <button class="btn btn-outline-success w-100" @onclick="AddAllFound" disabled="@(found.Count == 0)">
+                    <i class="bi bi-plus-square"></i> افزودن همه نتایج
+                </button>
+            </div>
+        </div>
+
+        @if (found.Count > 0)
+        {
+            <div class="table-responsive mt-3" style="max-height:280px;overflow:auto">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="sticky-top bg-white">
+                        <tr>
+                            <th>کالا</th>
+                            <th style="width:130px">بارکد</th>
+                            <th style="width:70px"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in found)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="fw-500">@p.Name</div>
+                                    <div class="fs-8 text-muted num">@p.Code</div>
+                                </td>
+                                <td class="num fs-8">@(string.IsNullOrEmpty(p.Barcode) ? "—" : p.Barcode)</td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => Add(p.Id)"
+                                            disabled="@labels.Any(l => l.ProductId == p.Id)">
+                                        <i class="bi bi-plus-lg"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<!-- ============ تنظیمات برگه ============ -->
+@if (labels.Count > 0)
+{
+    <div class="card mb-3 no-print">
+        <div class="card-header">
+            <span class="card-title"><i class="bi bi-sliders"></i> تنظیم برچسب‌ها</span>
+            <div class="ms-auto d-flex gap-2 align-items-center">
+                <label class="fs-8 text-muted mb-0">اندازه</label>
+                <select class="form-select form-select-sm" style="width:auto" @bind="size">
+                    <option value="sm">کوچک — ۳۲×۲۰ میلی‌متر</option>
+                    <option value="md">متوسط — ۵۰×۳۰ میلی‌متر</option>
+                    <option value="lg">بزرگ — ۷۰×۴۰ میلی‌متر</option>
+                </select>
+                <div class="form-check mb-0 ms-2">
+                    <input class="form-check-input" type="checkbox" id="showPrice" @bind="showPrice" />
+                    <label class="form-check-label fs-8" for="showPrice">نمایش قیمت</label>
+                </div>
+                <button class="btn btn-sm btn-outline-danger ms-2" @onclick="() => labels.Clear()">
+                    <i class="bi bi-trash3"></i> خالی کردن
+                </button>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>کالا</th>
+                        <th style="width:150px">بارکد</th>
+                        <th style="width:120px">تعداد برچسب</th>
+                        <th style="width:60px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var l in labels)
+                    {
+                        <tr>
+                            <td>
+                                <div class="fw-500">@l.ProductName</div>
+                                <div class="fs-8 text-muted num">@l.ProductCode</div>
+                            </td>
+                            <td class="num fs-8">
+                                @if (string.IsNullOrEmpty(l.Barcode))
+                                {
+                                    <span class="badge badge-soft-danger fs-8">بدون بارکد</span>
+                                }
+                                else
+                                {
+                                    @l.Barcode
+                                }
+                            </td>
+                            <td>
+                                <input type="number" min="1" max="200" class="form-control form-control-sm text-center num"
+                                       value="@l.Copies" @onchange="e => SetCopies(l, e)" />
+                            </td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => labels.Remove(l)">
+                                    <i class="bi bi-x-lg"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot class="table-light">
+                    <tr>
+                        <th colspan="2" class="text-end">مجموع برچسب‌ها</th>
+                        <th class="text-center num">@labels.Sum(l => l.Copies).ToString().FaDigits()</th>
+                        <th></th>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+
+    <!-- ============ برگه چاپ ============ -->
+    <div class="card">
+        <div class="card-header no-print">
+            <span class="card-title"><i class="bi bi-eye"></i> پیش‌نمایش برگه</span>
+        </div>
+        <div class="card-body">
+            <div id="labelSheet" class="lbl-sheet">
+                @foreach (var l in labels)
+                {
+                    for (var i = 0; i < l.Copies; i++)
+                    {
+                        <div class="lbl lbl-@size">
+                            <div class="lbl-name">@l.ProductName</div>
+                            <div class="lbl-code">@((MarkupString)Barcode.ToSvg(l.Barcode ?? l.ProductCode, l.Type, BarHeight(), BarModule(), true))</div>
+                            <div class="lbl-foot">
+                                <span class="num">@l.ProductCode</span>
+                                @if (showPrice && l.SalePrice > 0)
+                                {
+                                    <span class="num lbl-price">@l.SalePrice.Money() ریال</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <div class="card no-print">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="bi bi-tags"></i>
+                <h5>هنوز کالایی برای چاپ انتخاب نشده است</h5>
+                <p>از کادر بالا کالاها را جستجو و به برگه اضافه کنید.</p>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    /* ---------- برگه برچسب ---------- */
+    .lbl-sheet {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3mm;
+        align-content: flex-start;
+    }
+
+    .lbl {
+        border: 1px dashed #cbd5e1;
+        border-radius: 3px;
+        padding: 1.5mm 2mm;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        align-items: center;
+        text-align: center;
+        overflow: hidden;
+        background: #fff;
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+
+    .lbl-sm { width: 32mm; height: 20mm; }
+    .lbl-md { width: 50mm; height: 30mm; }
+    .lbl-lg { width: 70mm; height: 40mm; }
+
+    .lbl-name {
+        font-size: 7pt;
+        font-weight: 600;
+        line-height: 1.2;
+        max-height: 2.4em;
+        overflow: hidden;
+        width: 100%;
+    }
+
+    .lbl-md .lbl-name { font-size: 8pt; }
+    .lbl-lg .lbl-name { font-size: 10pt; }
+
+    .lbl-code svg { display: block; max-width: 100%; height: auto; }
+
+    .lbl-foot {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        font-size: 6pt;
+        color: #475569;
+    }
+
+    .lbl-md .lbl-foot { font-size: 7pt; }
+    .lbl-lg .lbl-foot { font-size: 8pt; }
+    .lbl-price { font-weight: 700; color: #0f172a; }
+
+    @@media print {
+        .no-print { display: none !important; }
+        .lbl { border-color: transparent; }
+    }
+</style>
+
+@code {
+    private List<InvProduct> found = new();
+    private List<InvCategory> categories = new();
+    private List<BcdLabel> labels = new();
+
+    private string? search;
+    private int? categoryId;
+    private string size = "md";
+    private bool showPrice = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("چاپ برچسب بارکد");
+        categories = await CategorySvc.GetFlatAsync(true);
+        await Search();
+    }
+
+    private async Task Search()
+    {
+        try
+        {
+            var res = await ProductSvc.GetAllAsync(search, categoryId, activeOnly: true, page: 1, pageSize: 100);
+            found = res.Items.Where(p => !p.IsService).ToList();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Search();
+    }
+
+    private async Task OnCategory(ChangeEventArgs e)
+    {
+        categoryId = int.TryParse(e.Value?.ToString(), out var v) ? v : null;
+        await Search();
+    }
+
+    private async Task Add(int productId) => await AddMany(new List<int> { productId });
+
+    private async Task AddAllFound()
+        => await AddMany(found.Select(p => p.Id).Where(id => labels.All(l => l.ProductId != id)).ToList());
+
+    private async Task AddMany(List<int> ids)
+    {
+        if (ids.Count == 0) return;
+        try
+        {
+            var list = await BarcodeSvc.GetLabelsAsync(ids);
+            foreach (var l in list)
+            {
+                if (labels.Any(x => x.ProductId == l.ProductId)) continue;
+                labels.Add(l);
+            }
+
+            var missing = list.Count(l => string.IsNullOrEmpty(l.Barcode));
+            if (missing > 0)
+                Toast.Info($"{missing.ToString().FaDigits()} کالا بارکد ندارد؛ کد کالا روی برچسب چاپ می‌شود.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void SetCopies(BcdLabel l, ChangeEventArgs e)
+    {
+        var n = (int)Fa.ParseDecimal(e.Value?.ToString() ?? "1");
+        l.Copies = Math.Clamp(n, 1, 200);
+    }
+
+    private int BarHeight() => size switch { "sm" => 26, "lg" => 60, _ => 40 };
+    private double BarModule() => size switch { "sm" => 0.85, "lg" => 1.7, _ => 1.2 };
+
+    private async Task Print()
+    {
+        try { await JS.InvokeVoidAsync("stkPrint", "labelSheet", "برچسب بارکد"); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string Indent(int depth) => string.Concat(Enumerable.Repeat("— ", Math.Max(0, depth)));
+}

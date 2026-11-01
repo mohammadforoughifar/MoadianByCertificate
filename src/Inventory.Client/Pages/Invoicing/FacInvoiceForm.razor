@@ -1,0 +1,597 @@
+@page "/fac/invoices/new/{KindParam}"
+@page "/fac/invoices/edit/{Id:int}"
+@inject IFacInvoiceService InvoiceSvc
+@inject IInvProductService ProductSvc
+@inject IInvWarehouseService WarehouseSvc
+@inject IPartyService PartySvc
+@inject NavigationManager Nav
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject LayoutState Layout
+@inject IJSRuntime JS
+@inject ICompanyProfileService ProfileSvc
+
+<PageTitle>@doc.KindTitle</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>@doc.KindTitle @(doc.Id > 0 ? $"شماره {doc.Number.FaDigits()}" : "جدید")</h1>
+        <p class="lead">
+            <span class="badge @StatusBadge(doc.Status)">@doc.StatusTitle</span>
+            @if (doc.Status == InvoiceStatus.Confirmed && doc.Settlement == SettlementType.Credit)
+            {
+                <span class="badge badge-soft-success ms-1">تسویه‌شده: <span class="num">@doc.SettledAmount.Money()</span></span>
+                <span class="badge badge-soft-warning ms-1">مانده: <span class="num">@doc.RemainingAmount.Money()</span></span>
+            }
+            @if (doc.InvDocId is > 0)
+            {
+                <a class="badge badge-soft-info ms-1" href="@($"/inv/docs/edit/{doc.InvDocId}")">
+                    <i class="bi bi-box-seam"></i> سند انبار @doc.InvDocNumber
+                </a>
+            }
+            @if (doc.VoucherId is > 0)
+            {
+                <a class="badge badge-soft-primary ms-1" href="@($"/acc/vouchers/edit/{doc.VoucherId}")">
+                    <i class="bi bi-journal-text"></i> سند حسابداری @doc.VoucherNumber?.FaDigits()
+                </a>
+            }
+        </p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <a class="btn btn-light" href="/fac/invoices"><i class="bi bi-arrow-right"></i> بازگشت</a>
+        @if (Editable)
+        {
+            <button class="btn btn-outline-primary" @onclick="Save" disabled="@saving">
+                @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                <i class="bi bi-save"></i> ذخیره پیش‌نویس
+            </button>
+            <button class="btn btn-primary" @onclick="SaveAndConfirm" disabled="@saving">
+                <i class="bi bi-check2-circle"></i> ثبت قطعی
+            </button>
+        }
+        else if (doc.Status == InvoiceStatus.Confirmed)
+        {
+            @if (doc.Settlement == SettlementType.Credit && doc.RemainingAmount > 0)
+            {
+                <a class="btn btn-success" href="@($"/trs/vouchers/settle/{doc.Id}/pay")">
+                    <i class="bi bi-cash-coin"></i> ثبت دریافت/پرداخت <span class="num">@doc.RemainingAmount.Money()</span>
+                </a>
+            }
+            else if (doc.Settlement == SettlementType.Credit)
+            {
+                <span class="btn btn-outline-success disabled"><i class="bi bi-check2-all"></i> تسویه کامل</span>
+            }
+            else
+            {
+                <span class="btn btn-outline-success disabled"><i class="bi bi-cash"></i> نقدی تسویه شده</span>
+            }
+            <button class="btn btn-outline-secondary" @onclick="Print" disabled="@printing">
+                @if (printing) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                <i class="bi bi-printer"></i> چاپ
+            </button>
+            <button class="btn btn-outline-warning" @onclick="Unconfirm"><i class="bi bi-arrow-counterclockwise"></i> برگشت از قطعی</button>
+        }
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else
+{
+    <!-- ================= سربرگ فاکتور ================= -->
+    <div class="card mb-3">
+        <div class="card-header">
+            <i class="bi bi-card-heading text-primary"></i>
+            <span class="card-title">اطلاعات فاکتور</span>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-6 col-md-2">
+                    <label class="form-label">شماره فاکتور</label>
+                    <input type="number" class="form-control num" value="@(doc.Number > 0 ? doc.Number.ToString() : "خودکار")" disabled="true" />
+                    <div class="fs-8 text-muted mt-1"><i class="bi bi-info-circle"></i> شماره به‌صورت خودکار تولید می‌شود</div>
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label">تاریخ <span class="text-danger">*</span></label>
+                    <DatePicker Value="doc.Date" ValueChanged="OnDate" />
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="form-label">طرف حساب @(doc.Settlement == SettlementType.Credit ? "*" : "")</label>
+                    <SearchSelect Items="parties" Value="@(doc.PartyId ?? 0)" ValueChanged="OnParty" Placeholder="انتخاب طرف حساب…" />
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label">انبار <span class="text-danger">*</span></label>
+                    <select class="form-select" value="@doc.WarehouseId" @onchange="OnWarehouse" disabled="@(!Editable)">
+                        <option value="0">— انتخاب —</option>
+                        @foreach (var w in warehouses)
+                        {
+                            <option value="@w.Id">@w.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="form-label">نحوه تسویه</label>
+                    <div class="btn-group w-100" role="group">
+                        <button type="button" class="btn @(doc.Settlement == SettlementType.Credit ? "btn-primary" : "btn-outline-primary")"
+                                @onclick="() => SetSettlement(SettlementType.Credit)" disabled="@(!Editable)">نسیه</button>
+                        <button type="button" class="btn @(doc.Settlement == SettlementType.Cash ? "btn-primary" : "btn-outline-primary")"
+                                @onclick="() => SetSettlement(SettlementType.Cash)" disabled="@(!Editable)">نقدی</button>
+                    </div>
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <label class="form-label">شماره عطف</label>
+                    <input class="form-control" @bind="doc.RefNumber" disabled="@(!Editable)" placeholder="اختیاری" />
+                </div>
+                @if (doc.Settlement == SettlementType.Credit)
+                {
+                    <div class="col-6 col-md-2">
+                        <label class="form-label">سررسید</label>
+                        <DatePicker Value="doc.DueDate" ValueChanged="OnDueDate" AllowClear="true" />
+                    </div>
+                }
+                <div class="col-12 col-md-8">
+                    <label class="form-label">شرح فاکتور</label>
+                    <input class="form-control" @bind="doc.Description" disabled="@(!Editable)" placeholder="توضیحات اختیاری" />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= اقلام فاکتور ================= -->
+    <div class="card mb-3">
+        <div class="card-header">
+            <i class="bi bi-list-ol text-primary"></i>
+            <span class="card-title">اقلام فاکتور</span>
+            <span class="badge badge-soft-primary ms-auto">@doc.Lines.Count.Num() قلم</span>
+        </div>
+        <div class="card-body p-0">
+            @if (Editable)
+            {
+                <div class="p-3 border-bottom">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">افزودن کالا</label>
+                            <SearchSelect Items="products" Value="pickProductId" ValueChanged="OnPickProduct"
+                                          Placeholder="نام یا کد کالا را جستجو کنید…" />
+                        </div>
+                        <div class="col-12 col-md-6 text-muted fs-8">
+                            <i class="bi bi-info-circle"></i>
+                            با انتخاب کالا، قیمت (@(IsBuying ? "خرید" : "فروش")) و نرخ مالیات از تعریف کالا خوانده می‌شود.
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <div class="table-responsive grid-desktop">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:40px">#</th>
+                            <th style="width:22%">کالا</th>
+                            <th class="text-center" style="width:9%">مقدار</th>
+                            <th class="text-center" style="width:12%">فی</th>
+                            <th class="text-center" style="width:8%">٪ تخفیف</th>
+                            <th class="text-center" style="width:11%">تخفیف</th>
+                            <th class="text-center" style="width:7%">٪ مالیات</th>
+                            <th class="text-center" style="width:11%">مالیات</th>
+                            <th class="text-center" style="width:12%">جمع سطر</th>
+                            <th style="width:40px"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (doc.Lines.Count == 0)
+                        {
+                            <tr><td colspan="10" class="text-center text-muted py-4">هنوز قلمی اضافه نشده است</td></tr>
+                        }
+                        @for (var i = 0; i < doc.Lines.Count; i++)
+                        {
+                            var idx = i;
+                            var line = doc.Lines[idx];
+                            <tr>
+                                <td class="num text-muted">@((idx + 1).FaDigits())</td>
+                                <td>
+                                    <b>@line.ProductName</b>
+                                    <div class="fs-8 text-muted num">
+                                        @line.ProductCode.FaDigits() · @line.Unit
+                                        @if (!IsBuying)
+                                        {
+                                            <span class="@(line.CurrentStock < line.Quantity ? "text-danger" : "text-success")">
+                                                · موجودی: @line.CurrentStock.Num()
+                                            </span>
+                                        }
+                                    </div>
+                                </td>
+                                <td><input type="number" step="0.01" class="form-control form-control-sm num text-center"
+                                           value="@line.Quantity" @onchange="e => OnQty(idx, e)" disabled="@(!Editable)" /></td>
+                                <td><input type="number" step="any" class="form-control form-control-sm num text-center"
+                                           value="@line.UnitPrice" @onchange="e => OnPrice(idx, e)" disabled="@(!Editable)" /></td>
+                                <td><input type="number" step="any" class="form-control form-control-sm num text-center"
+                                           value="@line.DiscountPercent" @onchange="e => OnDiscPercent(idx, e)" disabled="@(!Editable)" /></td>
+                                <td><input type="number" step="any" class="form-control form-control-sm num text-center"
+                                           value="@line.Discount" @onchange="e => OnDiscount(idx, e)" disabled="@(!Editable)" /></td>
+                                <td><input type="number" step="any" class="form-control form-control-sm num text-center"
+                                           value="@line.VatRate" @onchange="e => OnVatRate(idx, e)" disabled="@(!Editable)" /></td>
+                                <td class="text-center num text-muted">@line.VatAmount.Money()</td>
+                                <td class="text-center num fw-600">@line.Total.Money()</td>
+                                <td class="text-center">
+                                    @if (Editable)
+                                    {
+                                        <button class="btn btn-sm btn-light" title="حذف قلم" @onclick="() => RemoveLine(idx)">
+                                            <i class="bi bi-trash text-danger"></i>
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @for (var i = 0; i < doc.Lines.Count; i++)
+                {
+                    var idx = i;
+                    var line = doc.Lines[idx];
+                    <div class="m-card">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi bi-box-seam"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <b class="text-truncate d-block">@line.ProductName</b>
+                                <div class="fs-8 text-muted num">@line.ProductCode.FaDigits() · @line.Unit</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-row">
+                                <span>مقدار</span>
+                                <input type="number" step="0.01" class="form-control form-control-sm num"
+                                       value="@line.Quantity" @onchange="e => OnQty(idx, e)" disabled="@(!Editable)" />
+                            </div>
+                            <div class="m-card-row">
+                                <span>فی</span>
+                                <input type="number" step="any" class="form-control form-control-sm num"
+                                       value="@line.UnitPrice" @onchange="e => OnPrice(idx, e)" disabled="@(!Editable)" />
+                            </div>
+                            <div class="m-card-money"><span>جمع سطر</span><b class="num">@line.Total.Money()</b></div>
+                        </div>
+                        @if (Editable)
+                        {
+                            <div class="m-card-actions">
+                                <button class="btn btn-light text-danger" @onclick="() => RemoveLine(idx)">
+                                    <i class="bi bi-trash"></i> حذف قلم
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= جمع فاکتور ================= -->
+    <div class="row g-3">
+        <div class="col-lg-7">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-sliders text-primary"></i>
+                    <span class="card-title">تخفیف و هزینه‌های فاکتور</span>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">تخفیف کلی فاکتور (ریال)</label>
+                            <input type="number" step="any" class="form-control num"
+                                   value="@doc.InvoiceDiscount" @onchange="OnInvoiceDiscount" disabled="@(!Editable)" />
+                            <div class="fs-8 text-muted mt-1">
+                                <i class="bi bi-info-circle"></i> این تخفیف به‌نسبت روی اقلام سرشکن و مأخذ مالیات کاهش می‌یابد.
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">هزینه حمل و سایر (ریال)</label>
+                            <input type="number" step="any" class="form-control num"
+                                   value="@doc.ShippingCost" @onchange="OnShipping" disabled="@(!Editable)" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-calculator text-primary"></i>
+                    <span class="card-title">جمع فاکتور</span>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex justify-content-between mb-2"><span class="text-muted">جمع کل اقلام</span><b class="num">@Gross.Money()</b></div>
+                    <div class="d-flex justify-content-between mb-2"><span class="text-muted">تخفیف اقلام</span><b class="num text-danger">@LineDiscount.Money()</b></div>
+                    <div class="d-flex justify-content-between mb-2"><span class="text-muted">تخفیف کلی</span><b class="num text-danger">@doc.InvoiceDiscount.Money()</b></div>
+                    <div class="d-flex justify-content-between mb-2 border-top pt-2"><span class="text-muted">مأخذ مالیات</span><b class="num">@Taxable.Money()</b></div>
+                    <div class="d-flex justify-content-between mb-2"><span class="text-muted">مالیات و عوارض</span><b class="num">@Vat.Money()</b></div>
+                    <div class="d-flex justify-content-between mb-2"><span class="text-muted">هزینه حمل</span><b class="num">@doc.ShippingCost.Money()</b></div>
+                    <div class="d-flex justify-content-between border-top pt-2">
+                        <span class="fw-700">مبلغ قابل پرداخت</span>
+                        <b class="num fs-5 text-primary">@Net.Money()</b>
+                    </div>
+                    <div class="fs-8 text-muted text-center mt-2">@Fa.MoneyWithWords(Net)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+}
+
+@code {
+    [Parameter] public int? Id { get; set; }
+    [Parameter] public string? KindParam { get; set; }
+
+    private FacInvoice doc = new();
+    private List<LookupItem> products = new();
+    private List<LookupItem> parties = new();
+    private List<LookupItem> warehouses = new();
+    private Dictionary<int, decimal> originalLineQuantities = new();
+
+    private bool loading = true, saving;
+    private int pickProductId;
+
+    private bool Editable => doc.Status == InvoiceStatus.Draft;
+    private bool IsBuying => doc.Kind is InvoiceKind.Purchase or InvoiceKind.PurchaseReturn;
+
+    // ---------- محاسبات زنده‌ی سمت کلاینت (سرور دوباره محاسبه می‌کند) ----------
+    private decimal Gross => doc.Lines.Sum(l => l.Gross);
+    private decimal LineDiscount => doc.Lines.Sum(l => l.Discount);
+    private decimal Taxable => Math.Max(0, Gross - LineDiscount - doc.InvoiceDiscount);
+    private decimal Vat => doc.Lines.Sum(l => l.VatAmount);
+    private decimal Net => Taxable + Vat + doc.ShippingCost;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        Layout.SetTitle("فاکتور");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            warehouses = await WarehouseSvc.GetLookupsAsync();
+            products = await ProductSvc.GetLookupsAsync();
+            try
+            {
+                var customers = await PartySvc.GetLookupsAsync(PartyType.Customer, true);
+                var suppliers = await PartySvc.GetLookupsAsync(PartyType.Supplier, true);
+                parties = customers.Concat(suppliers).GroupBy(p => p.Id).Select(g => g.First())
+                    .OrderBy(p => p.Name).ToList();
+            }
+            catch { parties = new(); }
+
+            if (Id is > 0)
+            {
+                doc = await InvoiceSvc.GetAsync(Id.Value);
+            }
+            else
+            {
+                var kind = Enum.TryParse<InvoiceKind>(KindParam, true, out var k) ? k : InvoiceKind.Sale;
+                doc = await InvoiceSvc.NewAsync(kind);
+            }
+            originalLineQuantities = doc.Lines.Where(l => l.Id > 0)
+                .ToDictionary(l => l.Id, l => l.Quantity);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    // ---------- سربرگ ----------
+    private void OnDate(DateTime? d) => doc.Date = d ?? doc.Date;
+    private void OnDueDate(DateTime? d) => doc.DueDate = d;
+
+    private void OnParty(int id)
+    {
+        doc.PartyId = id > 0 ? id : null;
+        doc.PartyName = parties.FirstOrDefault(p => p.Id == id)?.Name;
+    }
+
+    private void OnWarehouse(ChangeEventArgs e)
+        => doc.WarehouseId = int.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+
+    private void SetSettlement(SettlementType s) => doc.Settlement = s;
+
+    // ---------- اقلام ----------
+    private async Task OnPickProduct(int productId)
+    {
+        pickProductId = 0;
+        if (productId <= 0) return;
+        if (doc.WarehouseId == 0) { Toast.Error("ابتدا انبار فاکتور را انتخاب کنید."); return; }
+
+        try
+        {
+            var line = await InvoiceSvc.BuildLineAsync(productId, doc.Kind, doc.WarehouseId);
+
+            // اگر همین کالا قبلاً هست، فقط مقدارش را زیاد می‌کنیم
+            var existing = doc.Lines.FirstOrDefault(l => l.ProductId == productId);
+            if (existing is not null)
+            {
+                existing.Quantity += 1;
+                Recalc(existing);
+            }
+            else
+            {
+                line.RowNo = doc.Lines.Count + 1;
+                Recalc(line);
+                doc.Lines.Add(line);
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void RemoveLine(int idx)
+    {
+        if (idx < 0 || idx >= doc.Lines.Count) return;
+        doc.Lines.RemoveAt(idx);
+        for (var i = 0; i < doc.Lines.Count; i++) doc.Lines[i].RowNo = i + 1;
+    }
+
+    private void OnQty(int idx, ChangeEventArgs e)
+    {
+        var line = doc.Lines[idx];
+        line.Quantity = Math.Max(0, Fa.ParseDecimal(e.Value?.ToString()));
+        Recalc(line);
+    }
+
+    private void OnPrice(int idx, ChangeEventArgs e)
+    {
+        var line = doc.Lines[idx];
+        line.UnitPrice = Math.Max(0, Fa.ParseDecimal(e.Value?.ToString()));
+        Recalc(line);
+    }
+
+    private void OnDiscPercent(int idx, ChangeEventArgs e)
+    {
+        var line = doc.Lines[idx];
+        line.DiscountPercent = Math.Clamp(Fa.ParseDecimal(e.Value?.ToString()), 0, 100);
+        Recalc(line);
+    }
+
+    private void OnDiscount(int idx, ChangeEventArgs e)
+    {
+        var line = doc.Lines[idx];
+        line.DiscountPercent = 0;
+        line.Discount = Math.Clamp(Fa.ParseDecimal(e.Value?.ToString()), 0, line.Gross);
+        Recalc(line);
+    }
+
+    private void OnVatRate(int idx, ChangeEventArgs e)
+    {
+        var line = doc.Lines[idx];
+        line.VatRate = Math.Max(0, Fa.ParseDecimal(e.Value?.ToString()));
+        Recalc(line);
+    }
+
+    private void OnInvoiceDiscount(ChangeEventArgs e)
+        => doc.InvoiceDiscount = Math.Max(0, Fa.ParseDecimal(e.Value?.ToString()));
+
+    private void OnShipping(ChangeEventArgs e)
+        => doc.ShippingCost = Math.Max(0, Fa.ParseDecimal(e.Value?.ToString()));
+
+    /// <summary>محاسبه‌ی تخفیف و مالیات یک سطر (سرور در ذخیره دوباره محاسبه می‌کند).</summary>
+    private static void Recalc(FacInvoiceLine l)
+    {
+        if (l.DiscountPercent > 0)
+            l.Discount = Math.Round(l.Gross * l.DiscountPercent / 100m, 0);
+        l.Discount = Math.Clamp(l.Discount, 0, l.Gross);
+        l.VatAmount = Math.Round(l.Taxable * l.VatRate / 100m, 0);
+    }
+
+    // ---------- ذخیره ----------
+    private bool Validate()
+    {
+        if (doc.WarehouseId == 0) { Toast.Error("انبار فاکتور را انتخاب کنید."); return false; }
+        if (doc.Lines.Count == 0) { Toast.Error("حداقل یک قلم کالا اضافه کنید."); return false; }
+        if (doc.Lines.Any(l => l.Quantity <= 0)) { Toast.Error("مقدار همه‌ی اقلام باید بزرگ‌تر از صفر باشد."); return false; }
+        if (doc.Lines.Any(l => l.Quantity != decimal.Round(l.Quantity, 2)
+                               && (!originalLineQuantities.TryGetValue(l.Id, out var original) || original != l.Quantity)))
+        {
+            Toast.Error("مقدار هر قلم حداکثر تا دو رقم اعشار قابل ثبت است؛ مقدار قدیمیِ بدون تغییر قابل حفظ است.");
+            return false;
+        }
+        if (doc.Settlement == SettlementType.Credit && (doc.PartyId is null or 0))
+        {
+            Toast.Error("برای فاکتور نسیه، طرف حساب الزامی است.");
+            return false;
+        }
+        return true;
+    }
+
+    private async Task<bool> DoSave()
+    {
+        if (!Validate()) return false;
+        saving = true;
+        try
+        {
+            var saved = await InvoiceSvc.SaveAsync(doc);
+            doc = saved;
+            originalLineQuantities = doc.Lines.Where(l => l.Id > 0)
+                .ToDictionary(l => l.Id, l => l.Quantity);
+            if (Id is null) Nav.NavigateTo($"/fac/invoices/edit/{saved.Id}", replace: true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+            return false;
+        }
+        finally { saving = false; }
+    }
+
+    private async Task Save()
+    {
+        if (await DoSave()) Toast.Success("فاکتور ذخیره شد.");
+    }
+
+    private async Task SaveAndConfirm()
+    {
+        if (!await DoSave()) return;
+        if (!await JS.InvokeAsync<bool>("confirm",
+            "فاکتور قطعی شود؟ سند انبار (اثر روی موجودی) و سند حسابداری به‌صورت خودکار صادر می‌شود.")) return;
+
+        try
+        {
+            doc = await InvoiceSvc.ConfirmAsync(doc.Id);
+            Toast.Success("فاکتور قطعی شد و اسناد خودکار صادر شدند.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Unconfirm()
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "فاکتور به پیش‌نویس برگردد؟ اسناد انبار و حسابداری آن حذف می‌شود.")) return;
+        try
+        {
+            doc = await InvoiceSvc.UnconfirmAsync(doc.Id);
+            Toast.Success("فاکتور به پیش‌نویس برگشت.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    /// <summary>
+    /// چاپ فاکتور در قالب مستقلِ فاکتور (نه چاپِ صفحهٔ برنامه).
+    /// قبلاً اینجا <c>window.print()</c> صدا زده می‌شد؛ یعنی سایدبار/نوار بالا/فیلدهای فرم هم چاپ
+    /// می‌شدند و به‌خاطر قواعد <c>@media print</c> پوسته، خروجی ناخوانا بود. الان سند خودبسنده
+    /// (FacInvoicePrint) در iframe جداگانه چاپ می‌شود و سربرگ/پاورقی از «تعریف شرکت» می‌آید.
+    /// </summary>
+    private async Task Print()
+    {
+        if (printing) return;
+        printing = true;
+        try
+        {
+            // آخرین نسخهٔ فاکتور از سرور (اقلام و مبالغ محاسبه‌شدهٔ سرور)
+            var full = doc.Id > 0 ? await InvoiceSvc.GetAsync(doc.Id) : doc;
+            if (full is null || full.Lines.Count == 0)
+            {
+                Toast.Error("برای این فاکتور قلمی یافت نشد؛ چاپ انجام نشد.");
+                return;
+            }
+            companyProfile ??= await ProfileSvc.GetAsync();
+            var html = FacInvoicePrint.Build(full, companyProfile);
+            var opened = await JS.InvokeAsync<bool>("giPrint", html);
+            if (!opened)
+                Toast.Error("پنجرهٔ چاپ باز نشد؛ لطفاً اجازهٔ پنجرهٔ بازشو (pop-up) را در مرورگر فعال کنید.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { printing = false; }
+    }
+
+    private bool printing;
+    private CompanyProfileDto? companyProfile;
+
+    private static string StatusBadge(InvoiceStatus s) => s switch
+    {
+        InvoiceStatus.Draft => "badge-soft-warning",
+        InvoiceStatus.Confirmed => "badge-soft-success",
+        _ => "badge-soft-muted"
+    };
+}

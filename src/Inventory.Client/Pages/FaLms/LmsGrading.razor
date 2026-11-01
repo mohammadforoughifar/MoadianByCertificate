@@ -1,0 +1,165 @@
+@namespace Inventory.Client.Pages
+@page "/fa-lms/grading"
+@inject IFaLmsService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>کارتابل تصحیح</PageTitle>
+
+<div class="page-head mb-4">
+    <div>
+        <h1><i class="bi bi-pencil-square"></i> کارتابل تصحیح</h1>
+        <div class="lead">پاسخ‌نامه‌های ثبت‌شده در انتظار نمره مدرس — سؤال تستی خودکار تصحیح می‌شود و تشریحی را مدرس نمره می‌دهد</div>
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">دسترسی مدیریت آموزش برای شما فعال نیست.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        @if (myInstructorId is > 0)
+        {
+            <div class="btn-group mb-3" role="group" aria-label="فیلتر دوره">
+                <button type="button" class="btn @(onlyMine ? "btn-primary" : "btn-light")" @onclick="() => onlyMine = true">دوره‌های من</button>
+                <button type="button" class="btn @(!onlyMine ? "btn-primary" : "btn-light")" @onclick="() => onlyMine = false">همه <span class="badge text-bg-secondary num">@items.Count</span></button>
+            </div>
+        }
+        @if (loading)
+        {
+            <div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (Shown.Count == 0)
+        {
+            <div class="alert alert-success mb-0"><i class="bi bi-check-circle"></i> پاسخ‌نامه‌ای در انتظار تصحیح نیست.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light"><tr><th>پرسنل</th><th>دوره</th><th>آزمون</th><th>ثبت پاسخ‌نامه</th><th>تشریحی</th><th>مدرس دوره</th><th style="width:130px"></th></tr></thead>
+                    <tbody>
+                        @foreach (var p in Shown)
+                        {
+                            <tr>
+                                <td>@(p.EmployeeName ?? "—")</td>
+                                <td><a href="@($"fa-lms/courses/{p.CourseId}")">@p.CourseTitle</a></td>
+                                <td>@p.ExamTitle</td>
+                                <td class="num">@(p.SubmittedAt.HasValue ? p.SubmittedAt.Value.ToFa() : "—")</td>
+                                <td class="num">@p.TextCount از @p.QuestionCount</td>
+                                <td>@(p.InstructorName ?? "—")</td>
+                                <td><button class="btn btn-sm btn-warning" @onclick="() => OpenGrade(p)"><i class="bi bi-pencil-square"></i> تصحیح</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showGrade" Title="@gradeTitle" Size="modal-lg" OnClose="() => showGrade = false">
+    <ChildContent>
+        @if (gradeTexts.Count == 0)
+        {
+            <div class="text-center text-muted py-3">پاسخ تشریحی یافت نشد.</div>
+        }
+        else
+        {
+            @foreach (var g in gradeTexts)
+            {
+                <div class="card mb-2">
+                    <div class="card-body py-2">
+                        <div class="fw-bold">@g.QuestionText <span class="badge text-bg-info num">@FaLmsUi.Num(g.QuestionScore) نمره</span></div>
+                        <div class="border rounded bg-light p-2 my-1" style="white-space:pre-wrap">@(string.IsNullOrWhiteSpace(g.AnswerText) ? "— بی‌پاسخ —" : g.AnswerText)</div>
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-4"><label class="form-label small">نمره (۰ تا @FaLmsUi.Num(g.QuestionScore))</label><input type="number" step="0.5" min="0" class="form-control num" @bind="gradeScores[g.QuestionId]" /></div>
+                        </div>
+                    </div>
+                </div>
+            }
+        }
+    </ChildContent>
+    <Footer>
+        <div class="d-flex justify-content-end gap-2 mt-2">
+            <button class="btn btn-secondary" @onclick="() => showGrade = false">انصراف</button>
+            <button class="btn btn-success" disabled="@saving" @onclick="SaveGrade">ثبت تصحیح و اعلام نتیجه</button>
+        </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faManage => Auth.Has("FaLms.Manage") || Auth.IsAdmin;
+    private bool loading = true, onlyMine = true, showGrade, saving;
+    private int? myInstructorId;
+    private List<FaLmsPendingGradeDto> items = new();
+    private List<FaLmsPendingGradeDto> Shown => onlyMine && myInstructorId is > 0
+        ? items.Where(p => p.InstructorId == myInstructorId).ToList()
+        : items;
+
+    private FaLmsPendingGradeDto? gradeItem;
+    private string gradeTitle = "تصحیح پاسخ‌نامه";
+    private List<FaLmsTextAnswerDto> gradeTexts = new();
+    private Dictionary<int, double> gradeScores = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try
+        {
+            var inbox = await Svc.GradingInboxAsync();
+            myInstructorId = inbox.MyInstructorId;
+            items = inbox.Items;
+            if (myInstructorId is null) onlyMine = false;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OpenGrade(FaLmsPendingGradeDto p)
+    {
+        try
+        {
+            gradeItem = p;
+            gradeTitle = $"تصحیح پاسخ‌نامه — {p.EmployeeName} ({p.ExamTitle})";
+            gradeTexts = await Svc.ListTextAnswersAsync(p.AttemptId);
+            gradeScores = gradeTexts.ToDictionary(g => g.QuestionId, g => g.ManualScore ?? 0);
+            showGrade = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task SaveGrade()
+    {
+        if (gradeItem == null) return;
+        foreach (var g in gradeTexts)
+        {
+            var v = gradeScores.GetValueOrDefault(g.QuestionId);
+            if (v < 0 || v > g.QuestionScore)
+            {
+                Toast.Error($"نمره باید بین ۰ تا {FaLmsUi.Num(g.QuestionScore)} باشد.");
+                return;
+            }
+        }
+        saving = true;
+        try
+        {
+            var list = gradeScores.Select(kv => new FaLmsGradeItemDto { QuestionId = kv.Key, ManualScore = kv.Value }).ToList();
+            await Svc.GradeAttemptAsync(gradeItem.AttemptId, list);
+            Toast.Success("تصحیح ثبت و نتیجه اعلام شد.");
+            showGrade = false;
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+}

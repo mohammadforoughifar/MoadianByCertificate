@@ -1,0 +1,141 @@
+@namespace Inventory.Client.Pages
+@page "/hr-core/data-quality"
+@inject IHrCoreService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+
+<PageTitle>گزارش کیفیت داده پرسنل</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-clipboard2-x"></i> گزارش کیفیت داده پرسنل</h1>
+            <div class="lead">فهرست کارمندانی که یک یا چند فیلد مهم پرونده‌شان ناقص است</div>
+        </div>
+        <button class="btn btn-outline-secondary" @onclick="Reload"><i class="bi bi-arrow-clockwise"></i> بروزرسانی</button>
+    </div>
+</div>
+
+@if (!canManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص مدیر منابع انسانی است.</div>
+    return;
+}
+
+@if (loading || dto == null)
+{
+    <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+    return;
+}
+
+<div class="row g-3 mb-3">
+    <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-3 fw-bold num">@dto.TotalActiveEmployees.Num()</div>
+            <div class="text-muted small">کل پرسنل فعال</div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-3 fw-bold text-danger num">@dto.EmployeesWithIssues.Num()</div>
+            <div class="text-muted small">دارای نقص داده</div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-3 fw-bold text-success num">@((dto.TotalActiveEmployees - dto.EmployeesWithIssues).Num())</div>
+            <div class="text-muted small">پرونده کامل</div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-3 fw-bold num">@completionRate٪</div>
+            <div class="text-muted small">درصد تکمیل داده</div>
+        </div>
+    </div>
+</div>
+
+@if (dto.MissingByField.Count > 0)
+{
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white fw-bold"><i class="bi bi-bar-chart"></i> فیلدهای پرتکرارِ ناقص</div>
+        <div class="card-body">
+            <HrNameBars Points="dto.MissingByField" />
+        </div>
+    </div>
+}
+
+@if (dto.Rows.Count == 0)
+{
+    <div class="alert alert-success"><i class="bi bi-check-circle"></i> همه‌ی پرونده‌های فعال کامل هستند.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-list-ul"></i> فهرست پرسنل با اطلاعات ناقص</span>
+        <span class="text-muted small">@dto.Rows.Count.Num() نفر</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>کد پرسنلی</th>
+                    <th>نام و نام‌خانوادگی</th>
+                    <th>واحد سازمانی</th>
+                    <th>فیلدهای ناقص</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in dto.Rows)
+                {
+                    <tr>
+                        <td class="num">@r.Code</td>
+                        <td>@r.FullName</td>
+                        <td>@(r.OrgUnitName ?? "—")</td>
+                        <td>
+                            @foreach (var f in r.MissingFields)
+                            {
+                                <span class="badge bg-danger-subtle text-danger border border-danger-subtle me-1 mb-1">@f</span>
+                            }
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary" @onclick="() => GoToProfile(r.EmployeeId)">
+                                <i class="bi bi-person-lines-fill"></i> مشاهده پرونده
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@code {
+    private bool canManage => Auth.Has("HrCore.Manage") || Auth.IsAdmin;
+
+    private bool loading = true;
+    private HrDataQualityReportDto? dto;
+
+    private string completionRate => dto == null || dto.TotalActiveEmployees == 0
+        ? "0"
+        : Math.Round(100.0 * (dto.TotalActiveEmployees - dto.EmployeesWithIssues) / dto.TotalActiveEmployees, 1).ToString();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!canManage) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { dto = await Svc.GetDataQualityReportAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void GoToProfile(int employeeId) => Nav.NavigateTo($"/hr-core/employees/{employeeId}");
+}

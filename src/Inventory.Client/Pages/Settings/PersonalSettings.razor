@@ -1,0 +1,376 @@
+@page "/personal-settings"
+@using Inventory.Shared.Dtos
+@inject IAuthState Auth
+@inject IAuthApi AuthApi
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>پروفایل و تنظیمات شخصی</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1><i class="bi bi-person-gear text-primary me-2"></i>پروفایل و تنظیمات شخصی</h1>
+        <p class="lead">اطلاعات تماس و تنظیمات حساب کاربری خود را مدیریت کنید.</p>
+    </div>
+</div>
+
+<div class="card shadow-sm border-0 mb-3">
+    <div class="card-header fw-bold"><i class="bi bi-person-vcard me-2"></i>اطلاعات حساب و راه‌های تماس</div>
+    <div class="card-body">
+        @if (profileLoading)
+        {
+            <div class="text-center py-4"><span class="spinner-border spinner-border-sm text-primary me-2"></span>در حال دریافت اطلاعات حساب...</div>
+        }
+        else if (!string.IsNullOrWhiteSpace(profileError))
+        {
+            <div class="alert alert-danger mb-0">@profileError</div>
+        }
+        else if (profile is not null)
+        {
+            <div class="row g-3 mb-4">
+                <div class="col-12 col-md-4">
+                    <label class="form-label text-muted">نام</label>
+                    <div class="form-control bg-light" aria-readonly="true">@Display(profile.FirstName)</div>
+                </div>
+                <div class="col-12 col-md-4">
+                    <label class="form-label text-muted">نام خانوادگی</label>
+                    <div class="form-control bg-light" aria-readonly="true">@Display(profile.LastName)</div>
+                </div>
+                <div class="col-12 col-md-4">
+                    <label class="form-label text-muted">نام کاربری</label>
+                    <div class="form-control bg-light" dir="ltr" aria-readonly="true">@profile.Username</div>
+                </div>
+            </div>
+            <div class="alert alert-light border py-2 mb-4">
+                <i class="bi bi-info-circle text-primary ms-1"></i>
+                نام و نام خانوادگی فقط نمایش داده می‌شوند و از این صفحه قابل ویرایش نیستند؛ برای اصلاح آن‌ها با مدیر سامانه تماس بگیرید.
+            </div>
+
+            <div class="row g-4">
+                <div class="col-12 col-lg-6">
+                    <section class="border rounded-3 p-3 h-100" aria-labelledby="mobile-profile-heading">
+                        <div class="d-flex align-items-center gap-2 mb-2">
+                            <i class="bi bi-phone text-primary fs-5"></i>
+                            <h2 id="mobile-profile-heading" class="h6 fw-bold mb-0">شماره موبایل</h2>
+                            @if (profile.MobileVerified)
+                            {
+                                <span class="badge text-bg-success me-auto"><i class="bi bi-patch-check-fill ms-1"></i>تأیید شده</span>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(profile.Mobile))
+                            {
+                                <span class="badge text-bg-warning me-auto">تأیید نشده</span>
+                            }
+                        </div>
+
+                        @if (profile.MobileVerified)
+                        {
+                            <div class="form-control num text-start" dir="ltr" aria-readonly="true">@Display(profile.Mobile)</div>
+                            <div class="form-text">شمارهٔ تأییدشده برای حفظ امنیت حساب از اینجا قابل تغییر نیست.</div>
+                        }
+                        else
+                        {
+                            <label class="form-label" for="profile-mobile">شمارهٔ موبایل</label>
+                            <input id="profile-mobile" class="form-control num text-start" dir="ltr" type="tel" inputmode="tel"
+                                   autocomplete="tel" maxlength="20" placeholder="09123456789"
+                                   @bind="mobileInput" @bind:event="oninput" disabled="@profileBusy" />
+                            <div class="form-text">شماره پس از واردکردن کد پیامک‌شده ثبت و تأیید می‌شود.</div>
+
+                            @if (!profile.MobileVerificationAvailable)
+                            {
+                                <div class="alert alert-warning py-2 mt-2 mb-0">
+                                    درگاه کاوه‌نگار روی سرور فعال نیست؛ تا زمان فعال‌سازی امکان تأیید شماره وجود ندارد.
+                                </div>
+                            }
+                            else
+                            {
+                                <button type="button" class="btn btn-outline-primary btn-sm mt-2" @onclick="RequestMobileOtpAsync"
+                                        disabled="@(profileBusy || string.IsNullOrWhiteSpace(mobileInput))">
+                                    <i class="bi bi-chat-dots ms-1"></i>@(profile.MobileOtpPending ? "ارسال کد جدید" : "ارسال کد تأیید")
+                                </button>
+                            }
+
+                            @if (profile.MobileOtpLocked)
+                            {
+                                <div class="alert alert-danger py-2 mt-2 mb-0">به‌دلیل تلاش‌های ناموفق، درخواست تأیید موقتاً مسدود شده است. کمی بعد دوباره تلاش کنید.</div>
+                            }
+                            else if (profile.MobileOtpPending)
+                            {
+                                <div class="alert alert-info py-2 mt-3 mb-2">
+                                    کد تأیید به <span class="num" dir="ltr">@profile.PendingMobile</span> ارسال شد.
+                                </div>
+                                <label class="form-label" for="mobile-otp">کد پیامک‌شده</label>
+                                <div class="d-flex gap-2">
+                                    <input id="mobile-otp" class="form-control num text-start" dir="ltr" inputmode="numeric"
+                                           autocomplete="one-time-code" maxlength="6" placeholder="کد ۶ رقمی"
+                                           @bind="mobileCode" @bind:event="oninput" disabled="@profileBusy" />
+                                    <button type="button" class="btn btn-success text-nowrap" @onclick="VerifyMobileOtpAsync"
+                                            disabled="@(profileBusy || string.IsNullOrWhiteSpace(mobileCode))">
+                                        <i class="bi bi-check2-circle ms-1"></i>تأیید
+                                    </button>
+                                </div>
+                            }
+                        }
+                    </section>
+                </div>
+
+                <div class="col-12 col-lg-6">
+                    <section class="border rounded-3 p-3 h-100" aria-labelledby="email-profile-heading">
+                        <div class="d-flex align-items-center gap-2 mb-2">
+                            <i class="bi bi-envelope text-primary fs-5"></i>
+                            <h2 id="email-profile-heading" class="h6 fw-bold mb-0">ایمیل (اختیاری)</h2>
+                            @if (profile.EmailVerified)
+                            {
+                                <span class="badge text-bg-success me-auto"><i class="bi bi-patch-check-fill ms-1"></i>تأیید شده</span>
+                            }
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(profile.Email))
+                        {
+                            <div class="small text-muted mb-2">
+                                ایمیل ثبت‌شده:
+                                <span class="num" dir="ltr">@profile.Email</span>
+                                @if (!profile.EmailVerified)
+                                {
+                                    <span class="badge text-bg-warning me-1">تأیید نشده</span>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="small text-muted mb-2">هنوز ایمیلی برای حساب شما ثبت نشده است.</div>
+                        }
+
+                        <label class="form-label" for="profile-email">نشانی ایمیل</label>
+                        <input id="profile-email" class="form-control text-start" dir="ltr" type="email" inputmode="email"
+                               autocomplete="email" maxlength="254" placeholder="name@example.com"
+                               @bind="emailInput" @bind:event="oninput" disabled="@profileBusy" />
+                        <div class="form-text">ایمیل اختیاری است؛ نشانی جدید فقط پس از تأیید کد ارسالی ذخیره می‌شود.</div>
+
+                        @if (!profile.EmailVerificationAvailable)
+                        {
+                            <div class="alert alert-warning py-2 mt-2 mb-0">
+                                ارسال کد ایمیل هنوز روی سرور پیکربندی نشده است؛ با مدیر سامانه تماس بگیرید.
+                            </div>
+                        }
+                        else
+                        {
+                            <button type="button" class="btn btn-outline-primary btn-sm mt-2" @onclick="RequestEmailOtpAsync"
+                                    disabled="@(profileBusy || string.IsNullOrWhiteSpace(emailInput) || IsCurrentVerifiedEmail)">
+                                <i class="bi bi-envelope-check ms-1"></i>@(profile.EmailOtpPending ? "ارسال کد جدید" : "ارسال کد تأیید")
+                            </button>
+                        }
+
+                        @if (profile.EmailOtpLocked)
+                        {
+                            <div class="alert alert-danger py-2 mt-2 mb-0">به‌دلیل تلاش‌های ناموفق، درخواست تأیید موقتاً مسدود شده است. کمی بعد دوباره تلاش کنید.</div>
+                        }
+                        else if (profile.EmailOtpPending)
+                        {
+                            <div class="alert alert-info py-2 mt-3 mb-2">
+                                کد تأیید به <span class="num" dir="ltr">@profile.PendingEmail</span> ارسال شد.
+                            </div>
+                            <label class="form-label" for="email-otp">کد ایمیل‌شده</label>
+                            <div class="d-flex gap-2">
+                                <input id="email-otp" class="form-control num text-start" dir="ltr" inputmode="numeric"
+                                       autocomplete="one-time-code" maxlength="6" placeholder="کد ۶ رقمی"
+                                       @bind="emailCode" @bind:event="oninput" disabled="@profileBusy" />
+                                <button type="button" class="btn btn-success text-nowrap" @onclick="VerifyEmailOtpAsync"
+                                        disabled="@(profileBusy || string.IsNullOrWhiteSpace(emailCode))">
+                                    <i class="bi bi-check2-circle ms-1"></i>تأیید
+                                </button>
+                            </div>
+                        }
+
+                        @if (!string.IsNullOrWhiteSpace(profile.Email) || profile.EmailOtpPending || profile.EmailOtpLocked)
+                        {
+                            <button type="button" class="btn btn-link btn-sm text-danger px-0 mt-2" @onclick="ClearEmailAsync" disabled="@profileBusy">
+                                <i class="bi bi-trash ms-1"></i>@(string.IsNullOrWhiteSpace(profile.Email) ? "لغو ثبت ایمیل" : "حذف ایمیل از حساب")
+                            </button>
+                        }
+                    </section>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="row g-3">
+    <div class="col-12 col-lg-6">
+        <div class="card shadow-sm border-0">
+            <div class="card-header fw-bold"><i class="bi bi-key me-2"></i>تغییر رمز عبور</div>
+            <div class="card-body">
+                <label class="form-label">رمز عبور فعلی</label>
+                <input class="form-control mb-3" type="password" autocomplete="current-password" @bind="currentPassword" />
+                <label class="form-label">رمز عبور جدید</label>
+                <input class="form-control mb-3" type="password" autocomplete="new-password" @bind="newPassword" />
+                <label class="form-label">تکرار رمز عبور جدید</label>
+                <input class="form-control mb-3" type="password" autocomplete="new-password" @bind="confirmPassword" />
+                <button class="btn btn-primary" disabled="@saving" @onclick="ChangePassword">
+                    @(saving ? "در حال ذخیره..." : "تغییر رمز عبور")
+                </button>
+            </div>
+        </div>
+    </div>
+    @if (Auth.Has("PersonalSettings.ManageLetterGroups"))
+    {
+        <div class="col-12 col-lg-6">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header fw-bold"><i class="bi bi-people me-2"></i>گروه‌های گیرندگان نامه</div>
+                <div class="card-body d-flex flex-column">
+                    <p class="text-muted">گروه‌های شخصی خود را برای استفاده سریع در نامه‌ها مدیریت کنید.</p>
+                    <button class="btn btn-outline-primary mt-auto align-self-start" @onclick='() => Nav.NavigateTo("/personal-settings/letter-groups")'>
+                        مدیریت گروه‌های گیرندگان
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private UserProfileDto? profile;
+    private string profileError = "";
+    private string mobileInput = "";
+    private string mobileCode = "";
+    private string emailInput = "";
+    private string emailCode = "";
+    private string currentPassword = "";
+    private string newPassword = "";
+    private string confirmPassword = "";
+    private bool profileLoading = true;
+    private bool profileBusy;
+    private bool saving;
+
+    private bool IsCurrentVerifiedEmail => profile is { EmailVerified: true } current
+        && string.Equals(emailInput.Trim(), current.Email, StringComparison.OrdinalIgnoreCase);
+
+    protected override Task OnInitializedAsync() => LoadProfileAsync();
+
+    private string Display(string? value) => string.IsNullOrWhiteSpace(value) ? "—" : value;
+
+    private async Task LoadProfileAsync()
+    {
+        profileLoading = true;
+        profileError = "";
+        try
+        {
+            profile = await AuthApi.GetMyProfileAsync();
+            mobileInput = profile.PendingMobile ?? profile.Mobile ?? "";
+            emailInput = profile.PendingEmail ?? profile.Email ?? "";
+        }
+        catch (Exception ex)
+        {
+            profile = null;
+            profileError = ex.Message;
+        }
+        finally { profileLoading = false; }
+    }
+
+    private async Task RequestMobileOtpAsync()
+    {
+        if (string.IsNullOrWhiteSpace(mobileInput))
+        {
+            Toast.Error("شمارهٔ موبایل را وارد کنید.");
+            return;
+        }
+        profileBusy = true;
+        try
+        {
+            await AuthApi.RequestMobileOtpAsync(mobileInput);
+            Toast.Success("کد تأیید برای شمارهٔ واردشده ارسال شد.");
+            await LoadProfileAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { profileBusy = false; }
+    }
+
+    private async Task VerifyMobileOtpAsync()
+    {
+        profileBusy = true;
+        try
+        {
+            await AuthApi.VerifyMobileOtpAsync(mobileCode);
+            mobileCode = "";
+            Toast.Success("شمارهٔ موبایل با موفقیت تأیید شد.");
+            await LoadProfileAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { profileBusy = false; }
+    }
+
+    private async Task RequestEmailOtpAsync()
+    {
+        if (string.IsNullOrWhiteSpace(emailInput))
+        {
+            Toast.Error("نشانی ایمیل را وارد کنید.");
+            return;
+        }
+        profileBusy = true;
+        try
+        {
+            await AuthApi.RequestEmailOtpAsync(emailInput);
+            Toast.Success("کد تأیید به نشانی ایمیل واردشده ارسال شد.");
+            await LoadProfileAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { profileBusy = false; }
+    }
+
+    private async Task VerifyEmailOtpAsync()
+    {
+        profileBusy = true;
+        try
+        {
+            await AuthApi.VerifyEmailOtpAsync(emailCode);
+            emailCode = "";
+            Toast.Success("نشانی ایمیل با موفقیت تأیید شد.");
+            await LoadProfileAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { profileBusy = false; }
+    }
+
+    private async Task ClearEmailAsync()
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", "ایمیل ثبت‌شده و کد تأیید در انتظار حذف شود؟");
+        if (!confirmed) return;
+
+        profileBusy = true;
+        try
+        {
+            await AuthApi.ClearMyEmailAsync();
+            emailCode = "";
+            Toast.Success("ایمیل از حساب شما حذف شد.");
+            await LoadProfileAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { profileBusy = false; }
+    }
+
+    private async Task ChangePassword()
+    {
+        if (string.IsNullOrWhiteSpace(currentPassword) || string.IsNullOrWhiteSpace(newPassword))
+        {
+            Toast.Error("رمز فعلی و رمز جدید را وارد کنید.");
+            return;
+        }
+        if (newPassword != confirmPassword)
+        {
+            Toast.Error("رمز جدید و تکرار آن یکسان نیستند.");
+            return;
+        }
+        saving = true;
+        try
+        {
+            await AuthApi.ChangePasswordAsync(new ChangePasswordRequest
+            {
+                CurrentPassword = currentPassword,
+                NewPassword = newPassword
+            });
+            Toast.Success("رمز عبور با موفقیت تغییر کرد.");
+            currentPassword = newPassword = confirmPassword = "";
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+}

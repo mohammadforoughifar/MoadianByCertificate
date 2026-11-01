@@ -1,0 +1,556 @@
+@page "/acc/budgets"
+@inject IBudgetService BudgetSvc
+@inject IAccFiscalYearService YearSvc
+@inject IAccDimensionService DimSvc
+@inject IAccAccountService AccSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>بودجه و کنترل بودجه</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>بودجه و کنترل بودجه</h1>
+        <p class="lead">برنامه‌ریزی سالانه و پایش تعهد/مصرف به تفکیک مرکز هزینه</p>
+    </div>
+    <div class="ms-auto">
+        <button class="btn btn-primary" @onclick="OpenNew">
+            <i class="bi bi-plus-lg"></i> بودجه جدید
+        </button>
+    </div>
+</div>
+
+<!-- کارت‌های آماری -->
+<div class="row g-3 mb-3">
+    <div class="col-6 col-lg-3">
+        <div class="card stat-card">
+            <div class="card-body">
+                <div class="stat-label">تعداد بودجه</div>
+                <div class="stat-value num">@dash.BudgetCount.Num()</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card stat-card">
+            <div class="card-body">
+                <div class="stat-label">برنامه‌ریزی‌شده</div>
+                <div class="stat-value num text-primary">@dash.TotalPlanned.Money()</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card stat-card">
+            <div class="card-body">
+                <div class="stat-label">تعهد</div>
+                <div class="stat-value num text-warning">@dash.TotalCommitted.Money()</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card stat-card">
+            <div class="card-body">
+                <div class="stat-label">مصرف</div>
+                <div class="stat-value num text-danger">@dash.TotalActual.Money()</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (dash.OverLimit.Count > 0 || dash.NearLimit.Count > 0)
+{
+    <div class="row g-3 mb-3">
+        @foreach (var b in dash.OverLimit)
+        {
+            <div class="col-md-6 col-lg-4">
+                <div class="card border-danger">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <i class="bi bi-exclamation-octagon text-danger fs-4"></i>
+                            <div class="ms-2">
+                                <b>@b.Name</b>
+                                <div class="fs-8 text-danger">تجاوز از بودجه! مصرف @b.UsedPercent.Percent()</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+        @foreach (var b in dash.NearLimit)
+        {
+            <div class="col-md-6 col-lg-4">
+                <div class="card border-warning">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <i class="bi bi-exclamation-triangle text-warning fs-4"></i>
+                            <div class="ms-2">
+                                <b>@b.Name</b>
+                                <div class="fs-8 text-warning">نزدیک سقف — @b.UsedPercent.Percent()</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-pie-chart-fill text-primary"></i>
+        <span class="card-title">فهرست بودجه‌ها</span>
+        <div class="ms-auto d-flex align-items-center gap-2">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="onlyActive" @bind="onlyActive" @bind:event="onchange" @bind:after="Load" />
+                <label class="form-check-label fs-8" for="onlyActive">فقط فعال</label>
+            </div>
+            <span class="badge badge-soft-primary">@budgets.Count.Num() بودجه</span>
+        </div>
+    </div>
+    <div class="card-body">
+        @if (loading)
+        {
+            <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (budgets.Count == 0)
+        {
+            <div class="empty-state">
+                <i class="bi bi-pie-chart-fill"></i>
+                <h6>بودجه‌ای تعریف نشده است</h6>
+                <button class="btn btn-primary mt-2" @onclick="OpenNew">
+                    <i class="bi bi-plus-lg"></i> ساخت اولین بودجه
+                </button>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>نام بودجه</th>
+                            <th>سال مالی</th>
+                            <th>مرکز هزینه / شعبه</th>
+                            <th class="text-center">برنامه</th>
+                            <th class="text-center">تعهد</th>
+                            <th class="text-center">مصرف</th>
+                            <th class="text-center" style="min-width:140px">مصرف</th>
+                            <th class="text-center">وضعیت</th>
+                            <th class="text-center" style="width:150px">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var b in budgets)
+                        {
+                            <tr>
+                                <td>
+                                    <b>@b.Name</b>
+                                    @if (b.IsMaster)
+                                    {
+                                        <span class="badge badge-soft-primary ms-1">اصلی</span>
+                                    }
+                                </td>
+                                <td class="text-muted">@b.FiscalYearTitle</td>
+                                <td class="text-muted">@b.DimensionValueName</td>
+                                <td class="text-center num">@b.TotalAmount.Money()</td>
+                                <td class="text-center num text-warning">@b.CommittedAmount.Money()</td>
+                                <td class="text-center num text-danger">@b.ActualAmount.Money()</td>
+                                <td class="text-center">
+                                    <div class="progress" style="height:12px">
+                                        <div class="progress-bar @(b.UsedPercent > 100 ? "bg-danger" : b.UsedPercent >= 80 ? "bg-warning" : "bg-success")"
+                                             style="width:@(Math.Min(b.UsedPercent, 100))%"></div>
+                                    </div>
+                                    <div class="fs-8 num mt-1">@b.UsedPercent.Percent()</div>
+                                </td>
+                                <td class="text-center">
+                                    @if (b.IsActive)
+                                    {
+                                        <span class="badge badge-soft-success">فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-secondary">غیرفعال</span>
+                                    }
+                                </td>
+                                <td class="text-center">
+                                    <button class="btn btn-sm btn-light" title="رویدادها" @onclick="() => OpenTx(b)">
+                                        <i class="bi bi-arrow-left-right text-info"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(b)">
+                                        <i class="bi bi-pencil text-primary"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(b)">
+                                        <i class="bi bi-trash text-danger"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<!-- مودال بودجه -->
+<Modal Visible="showModal" Title="تعریف بودجه" Size="modal-xl" OnClose="CloseModal">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">نام بودجه <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="form.Name" placeholder="مثلاً بودجه عملیاتی ۱۴۰۵" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">سال مالی <span class="text-danger">*</span></label>
+                <select class="form-select" @bind="form.FiscalYearId">
+                    <option value="0">انتخاب سال…</option>
+                    @foreach (var y in years)
+                    {
+                        <option value="@y.Id">@y.Title</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">مرکز هزینه / شعبه</label>
+                <SearchSelect Items="dimLookups" Value="form.DimensionValueId ?? 0"
+                              ValueChanged="OnDimChanged" Placeholder="(اختیاری — بودجه کل)" />
+            </div>
+            <div class="col-12">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="budMaster" @bind="form.IsMaster" />
+                        <label class="form-check-label" for="budMaster">بودجه اصلی (مبنای گزارش کل)</label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="budActive" @bind="form.IsActive" />
+                        <label class="form-check-label" for="budActive">فعال</label>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12">
+                <label class="form-label">اقلام بودجه <span class="text-danger">*</span></label>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th style="width:40%">حساب</th>
+                                <th class="text-center" style="width:25%">مبلغ برنامه</th>
+                                <th style="width:45px"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in form.Items)
+                            {
+                                <tr>
+                                    <td>
+                                        <SearchSelect Items="accLookups" Value="item.AccAccountId"
+                                                      ValueChanged="(val) => item.AccAccountId = val" Placeholder="حساب…" />
+                                    </td>
+                                    <td>
+                                        <input class="form-control form-control-sm num text-center" type="number" @bind="item.PlannedAmount" />
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-sm btn-light" @onclick="() => form.Items.Remove(item)">
+                                            <i class="bi bi-x text-danger"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <button class="btn btn-sm btn-outline-primary" @onclick="() => form.Items.Add(new BudgetItem())">
+                    <i class="bi bi-plus-lg"></i> افزودن قلم
+                </button>
+            </div>
+            <div class="col-12">
+                <label class="form-label">توضیح</label>
+                <textarea class="form-control" rows="2" @bind="form.Description"></textarea>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseModal">انصراف</button>
+        <button class="btn btn-primary" @onclick="Save" disabled="@saving">@(saving ? "در حال ذخیره..." : "ذخیره")</button>
+    </Footer>
+</Modal>
+
+<!-- مودال رویدادها -->
+<Modal Visible="showTxModal" Title="رویدادهای بودجه (تعهد / مصرف)" Size="modal-lg" OnClose="CloseTxModal">
+    <ChildContent>
+        @if (currentBudget is not null)
+        {
+            <div class="alert alert-light border fs-8 mb-3">
+                <b>@currentBudget.Name</b>
+                — برنامه @currentBudget.TotalAmount.Money()
+                | تعهد @currentBudget.CommittedAmount.Money()
+                | مصرف @currentBudget.ActualAmount.Money()
+                | باقیمانده <b class="text-success">@currentBudget.Available.Money()</b>
+            </div>
+
+            <div class="row g-2 align-items-end mb-3">
+                <div class="col-md-3">
+                    <label class="form-label">نوع</label>
+                    <select class="form-select" @bind="txForm.Type">
+                        <option value="@BudgetTransactionType.Commitment">تعهد (+)</option>
+                        <option value="@BudgetTransactionType.Actual">مصرف (+)</option>
+                        <option value="@BudgetTransactionType.Release">آزادسازی تعهد (−)</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">قلم بودجه</label>
+                    <select class="form-select" @bind="txForm.BudgetItemId">
+                        <option value="0">انتخاب قلم…</option>
+                        @foreach (var item in currentBudget.Items)
+                        {
+                            <option value="@item.Id">@item.AccAccountCode — @item.AccAccountName</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">مبلغ</label>
+                    <input class="form-control num" type="number" @bind="txForm.Amount" />
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-primary w-100" @onclick="AddTx">ثبت</button>
+                </div>
+            </div>
+
+            @if (txs.Count == 0)
+            {
+                <div class="empty-state py-3">
+                    <i class="bi bi-arrow-left-right"></i>
+                    <h6>رویدادی ثبت نشده است</h6>
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th>تاریخ</th>
+                                <th>نوع</th>
+                                <th>قلم</th>
+                                <th class="text-center">مبلغ</th>
+                                <th>شرح</th>
+                                <th style="width:45px"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var t in txs)
+                            {
+                                <tr>
+                                    <td class="num">@t.Date.ToFaDate()</td>
+                                    <td>
+                                        <span class="badge @(t.Type switch
+                                        {
+                                            BudgetTransactionType.Actual => "badge-soft-danger",
+                                            BudgetTransactionType.Commitment => "badge-soft-warning",
+                                            _ => "badge-soft-info"
+                                        })">
+                                            @(t.Type switch
+                                            {
+                                                BudgetTransactionType.Actual => "مصرف",
+                                                BudgetTransactionType.Commitment => "تعهد",
+                                                _ => "آزادسازی"
+                                            })
+                                        </span>
+                                    </td>
+                                    <td class="fs-8">@((currentBudget.Items.FirstOrDefault(i => i.Id == t.BudgetItemId)?.AccAccountName) ?? "")</td>
+                                    <td class="text-center num @((t.Type == BudgetTransactionType.Release ? "text-success" : "text-danger"))">
+                                        @((t.Type == BudgetTransactionType.Release ? "−" : "+"))@t.Amount.Money()
+                                    </td>
+                                    <td class="fs-8 text-muted">@t.Description</td>
+                                    <td>
+                                        <button class="btn btn-sm btn-light" @onclick="() => DeleteTx(t)">
+                                            <i class="bi bi-x text-danger"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseTxModal">بستن</button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<Budget> budgets = new();
+    private List<BudgetTransaction> txs = new();
+    private List<LookupItem> dimLookups = new();
+    private List<LookupItem> accLookups = new();
+    private List<AccFiscalYear> years = new();
+    private BudgetDashboard dash = new();
+
+    private bool loading = true, showModal, showTxModal, saving, onlyActive;
+
+    private Budget form = new();
+    private Budget? currentBudget;
+    private BudgetTransaction txForm = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("بودجه و کنترل بودجه");
+        await Load();
+        await LoadLookups();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            budgets = await BudgetSvc.GetAllAsync(onlyActive);
+            dash = await BudgetSvc.GetDashboardAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task LoadLookups()
+    {
+        try
+        {
+            years = await YearSvc.GetAllAsync();
+            accLookups = await AccSvc.GetLookupsAsync();
+            var dims = await DimSvc.GetDimensionsAsync();
+            if (dims.Count > 0)
+                dimLookups = await DimSvc.GetValueLookupsAsync(dims[0].Id);
+        }
+        catch { /* optional */ }
+    }
+
+    private void OnDimChanged(int id) => form.DimensionValueId = id > 0 ? id : null;
+
+    // ---------- بودجه ----------
+    private void OpenNew()
+    {
+        form = new Budget
+        {
+            IsActive = true,
+            FiscalYearId = years.FirstOrDefault(y => y.IsCurrent && !y.IsClosed)?.Id ?? 0,
+            Items = new List<BudgetItem> { new() { PlannedAmount = 0 } }
+        };
+        showModal = true;
+    }
+
+    private void OpenEdit(Budget b)
+    {
+        form = new Budget
+        {
+            Id = b.Id, Name = b.Name, FiscalYearId = b.FiscalYearId,
+            DimensionValueId = b.DimensionValueId, TotalAmount = b.TotalAmount,
+            IsMaster = b.IsMaster, IsActive = b.IsActive, Description = b.Description,
+            Items = b.Items.Select(i => new BudgetItem
+            {
+                Id = i.Id, BudgetId = i.BudgetId, AccAccountId = i.AccAccountId,
+                PlannedAmount = i.PlannedAmount, CommittedAmount = i.CommittedAmount,
+                ActualAmount = i.ActualAmount
+            }).ToList()
+        };
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name))
+        {
+            Toast.Error("نام بودجه را وارد کنید.");
+            return;
+        }
+        if (form.FiscalYearId == 0)
+        {
+            Toast.Error("سال مالی را انتخاب کنید.");
+            return;
+        }
+        saving = true;
+        try
+        {
+            await BudgetSvc.SaveAsync(form);
+            Toast.Success("بودجه ذخیره شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(Budget b)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"آیا از حذف بودجه «{b.Name}» مطمئن هستید؟")) return;
+        try
+        {
+            await BudgetSvc.DeleteAsync(b.Id);
+            Toast.Success("حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    // ---------- رویدادها ----------
+    private async Task OpenTx(Budget b)
+    {
+        currentBudget = b;
+        txForm = new BudgetTransaction { BudgetId = b.Id, Type = BudgetTransactionType.Commitment };
+        await LoadTxs();
+        showTxModal = true;
+    }
+
+    private void CloseTxModal() => showTxModal = false;
+
+    private async Task LoadTxs()
+    {
+        if (currentBudget is null) return;
+        try { txs = await BudgetSvc.GetTransactionsAsync(currentBudget.Id); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task AddTx()
+    {
+        if (currentBudget is null) return;
+        if (txForm.BudgetItemId == 0)
+        {
+            Toast.Error("قلم بودجه را انتخاب کنید.");
+            return;
+        }
+        if (txForm.Amount <= 0)
+        {
+            Toast.Error("مبلغ معتبر وارد کنید.");
+            return;
+        }
+        try
+        {
+            txForm.BudgetId = currentBudget.Id;
+            await BudgetSvc.AddTransactionAsync(txForm);
+            Toast.Success("رویداد ثبت شد.");
+            txForm = new BudgetTransaction { BudgetId = currentBudget.Id, Type = BudgetTransactionType.Commitment };
+            currentBudget = await BudgetSvc.GetAsync(currentBudget.Id);
+            await LoadTxs();
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DeleteTx(BudgetTransaction t)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "این رویداد حذف شود؟ اثر آن برگردانده می‌شود.")) return;
+        try
+        {
+            await BudgetSvc.DeleteTransactionAsync(t.Id);
+            Toast.Success("حذف شد.");
+            if (currentBudget is not null)
+                currentBudget = await BudgetSvc.GetAsync(currentBudget.Id);
+            await LoadTxs();
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

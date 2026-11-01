@@ -1,0 +1,148 @@
+@* اسکنر هوشمند موبایل — Camera + Crop + Enhance — 2025-10-09 *@
+@inject IJSRuntime JS
+@inject IToastService Toast
+@implements IAsyncDisposable
+
+<div class="doc-scanner" dir="rtl">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <h6 class="mb-0 fw-700"><i class="bi bi-camera ms-1"></i> اسکن هوشمند <span class="badge bg-primary">Beta</span></h6>
+    <button class="btn btn-xs btn-light" @onclick="CloseScan">بستن</button>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-2">
+      @if (!isScanning)
+      {
+        <div class="text-center py-4">
+          <button class="btn btn-primary" @onclick="StartCamera"><i class="bi bi-camera-video ms-1"></i> روشن کردن دوربین</button>
+          <div class="fs-9 text-muted mt-2">یا فایل را بکش و رها کن — خودکار صاف و تمیز می‌شود</div>
+          <InputFile OnChange="OnFilePicked" accept="image/*" class="form-control mt-2" />
+        </div>
+      }
+      else
+      {
+        <div class="position-relative bg-black rounded overflow-hidden" style="height:360px">
+          <video id="@videoId" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
+          <canvas id="@overlayId" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas>
+          <div class="position-absolute bottom-0 start-50 translate-middle-x mb-3 d-flex gap-2">
+            <button class="btn btn-light btn-sm" @onclick="StopCamera"><i class="bi bi-x"></i> لغو</button>
+            <button class="btn btn-primary btn-sm px-4" @onclick="Capture"><i class="bi bi-camera"></i> عکس بگیر</button>
+            <button class="btn btn-light btn-sm" @onclick="ToggleFlash"><i class="bi bi-lightning"></i></button>
+          </div>
+        </div>
+        <div class="d-flex gap-2 mt-2 flex-wrap">
+          <span class="fs-9 text-muted">حالت:</span>
+          <button class="btn btn-xs @(mode=="auto"?"btn-primary":"btn-outline-secondary")" @onclick='() => mode="auto"'>خودکار</button>
+          <button class="btn btn-xs @(mode=="gray"?"btn-primary":"btn-outline-secondary")" @onclick='() => mode="gray"'>سیاه‌سفید</button>
+          <button class="btn btn-xs @(mode=="enhance"?"btn-primary":"btn-outline-secondary")" @onclick='() => mode="enhance"'>تقویت</button>
+        </div>
+      }
+
+      @if (!string.IsNullOrEmpty(previewUrl))
+      {
+        <div class="mt-3">
+          <div class="border rounded p-2 bg-light text-center">
+            <img src="@previewUrl" style="max-width:100%;max-height:320px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15)" />
+          </div>
+          <div class="d-flex gap-2 mt-2 flex-wrap">
+            <button class="btn btn-sm btn-outline-secondary" @onclick="Rotate"><i class="bi bi-arrow-clockwise"></i> چرخش ۹۰°</button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="Enhance"><i class="bi bi-magic"></i> صاف و تمیز</button>
+            <button class="btn btn-sm btn-outline-danger" @onclick="Discard"><i class="bi bi-trash"></i> حذف</button>
+            <button class="btn btn-sm btn-success me-auto" @onclick="ConfirmScan"><i class="bi bi-check-lg"></i> تایید و افزودن به مدرک</button>
+          </div>
+          <div class="fs-9 text-muted mt-1">خروجی: <b>@fileName</b> — برای OCR خودکار، بعد از تایید متن استخراج می‌شود</div>
+        </div>
+      }
+    </div>
+  </div>
+</div>
+
+@code {
+  [Parameter] public EventCallback<(string dataUrl, string fileName)> OnScanned { get; set; }
+  [Parameter] public EventCallback OnClose { get; set; }
+  private string videoId = $"scan-v-{Guid.NewGuid():N}";
+  private string overlayId = $"scan-o-{Guid.NewGuid():N}";
+  private bool isScanning;
+  private string? previewUrl;
+  private string mode = "auto";
+  private string fileName = $"scan-{DateTime.Now:yyyyMMdd-HHmmss}.jpg";
+  private DotNetObjectReference<DocSmartScanner>? selfRef;
+  private bool disposed;
+
+  private async Task StartCamera()
+  {
+    isScanning = true;
+    try
+    {
+      // یک مرجع برای همهٔ دورهای اسکن؛ ساخت مرجع تازه در هر شروع، مرجع قبلی را بی‌صاحب می‌کرد.
+      selfRef ??= DotNetObjectReference.Create(this);
+      await JS.InvokeVoidAsync("smartScanner.start", videoId, overlayId, selfRef);
+    }
+    catch (Exception ex) { Toast.Error(ex.Message); isScanning = false; }
+  }
+  private async Task StopCamera()
+  {
+    try { await JS.InvokeVoidAsync("smartScanner.stop", videoId); } catch {}
+    isScanning = false;
+  }
+  private async Task Capture()
+  {
+    try
+    {
+      var url = await JS.InvokeAsync<string>("smartScanner.capture", videoId, mode);
+      if (!string.IsNullOrEmpty(url)) { previewUrl = url; fileName = $"scan-{DateTime.Now:yyyyMMdd-HHmmss}.jpg"; await StopCamera(); }
+    }
+    catch (Exception ex) { Toast.Error(ex.Message); }
+  }
+  private async Task ToggleFlash() { try { await JS.InvokeVoidAsync("smartScanner.flash", videoId); } catch {} }
+
+  private async Task OnFilePicked(InputFileChangeEventArgs e)
+  {
+    try
+    {
+      var f = e.File;
+      if (f.Size > 12 * 1024 * 1024) { Toast.Error("حجم تا ۱۲ مگ"); return; }
+      using var ms = new MemoryStream();
+      await f.OpenReadStream(12 * 1024 * 1024).CopyToAsync(ms);
+      var b64 = Convert.ToBase64String(ms.ToArray());
+      var mime = f.ContentType ?? "image/jpeg";
+      var dataUrl = $"data:{mime};base64,{b64}";
+      previewUrl = await JS.InvokeAsync<string>("smartScanner.enhanceDataUrl", dataUrl, mode);
+      fileName = f.Name;
+    }
+    catch (Exception ex) { Toast.Error(ex.Message); }
+  }
+
+  private async Task Rotate()
+  {
+    if (previewUrl == null) return;
+    previewUrl = await JS.InvokeAsync<string>("smartScanner.rotate", previewUrl);
+  }
+  private async Task Enhance()
+  {
+    if (previewUrl == null) return;
+    previewUrl = await JS.InvokeAsync<string>("smartScanner.enhanceDataUrl", previewUrl, "enhance");
+    Toast.Success("تصویر تمیز شد.");
+  }
+  private void Discard() => previewUrl = null;
+  private async Task ConfirmScan()
+  {
+    if (previewUrl == null) return;
+    await OnScanned.InvokeAsync((previewUrl, fileName));
+    previewUrl = null;
+    Toast.Success("اسکن به پیوست‌ها اضافه شد — بعد از ذخیره OCR می‌شود.");
+  }
+  private async Task CloseScan()
+  {
+    await StopCamera();
+    await OnClose.InvokeAsync();
+  }
+  public async ValueTask DisposeAsync()
+  {
+      if (disposed) return;
+      disposed = true;
+      try { await JS.InvokeVoidAsync("smartScanner.stop", videoId); } catch { }
+      try { selfRef?.Dispose(); } catch { }
+      selfRef = null;
+  }
+}

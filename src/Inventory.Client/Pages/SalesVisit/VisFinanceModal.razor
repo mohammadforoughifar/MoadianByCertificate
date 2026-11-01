@@ -1,0 +1,590 @@
+@namespace Inventory.Client.Pages
+@* =====================================================================
+   تأیید مالی سفارش ویزیتور — همان تجربهٔ «بخش فروش»:
+   نقدی (صندوق/بانک) ← چک (ردیف‌های چک) ← اقساط (دفترچهٔ اقساط) ← نسیه (سررسید)
+   با ثبت، سند فروش فروشگاه ساخته می‌شود و سفارش «فروش‌شده» می‌گردد.
+   ===================================================================== *@
+@inject ISalesVisitApi Api
+@inject ITrsAccountService AccountSvc
+@inject IToastService Toast
+
+<Modal Visible="Visible" Title="@($"تأیید مالی سفارش {Order?.Number}")" Size="modal-xl" OnClose="Close">
+    <ChildContent>
+        @if (Order is null)
+        {
+            <div class="text-muted py-3">سفارشی انتخاب نشده است.</div>
+        }
+        else
+        {
+            <div class="row g-2 mb-3 fs-8">
+                <div class="col-6 col-md-3"><span class="text-muted">مشتری:</span> <b>@Order.PartyName</b></div>
+                <div class="col-6 col-md-3"><span class="text-muted">ویزیتور:</span> <b>@Order.ReferrerName</b></div>
+                <div class="col-6 col-md-3"><span class="text-muted">انبار:</span> <b>@Order.WarehouseName</b></div>
+                <div class="col-6 col-md-3">
+                    <span class="text-muted">مبلغ سفارش:</span>
+                    <b class="num text-primary" data-fin-total>@Fa.Money(Total)</b> ریال
+                </div>
+            </div>
+
+            @if (Order.StockWarnings.Count > 0)
+            {
+                <div class="alert alert-warning py-2 px-3 fs-8" data-fin-stock-warning>
+                    <b><i class="bi bi-exclamation-triangle"></i> موجودی انبار برای این اقلام کافی نیست:</b>
+                    @foreach (var w in Order.StockWarnings)
+                    {
+                        <div class="fs-9">
+                            @w.ProductName — موجودی @Fa.Number(w.Available)، نیاز @Fa.Number(w.Required)
+                        </div>
+                    }
+                    <div class="fs-9 mt-1">
+                        ثبت فروش، موجودی را از انبار کم می‌کند؛ پیش از تأیید، از «خرید» یا «موجودی اول دوره» تأمین کنید.
+                    </div>
+                </div>
+            }
+
+            <div class="pay-box">
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                    <span class="fw-700"><i class="bi bi-credit-card-2-front text-primary ms-1"></i>روش پرداخت نهایی (ترکیبی)</span>
+                    <span class="fs-8 text-muted">
+                        چند جزء را هم‌زمان فعال کنید؛ باقی‌ماندهٔ هر سطر از مبلغ سفارش و سطرهای قبلی محاسبه می‌شود.
+                    </span>
+                </div>
+                <div class="pay-tabs">
+                    <button type="button" class="pay-tab @(useCash ? "active" : "")"
+                            data-pay="cash" @onclick="ToggleCash">
+                        <i class="bi bi-cash-coin"></i> نقدی
+                    </button>
+                    <button type="button" class="pay-tab @(useCheque ? "active" : "")"
+                            data-pay="cheque" @onclick="ToggleCheque">
+                        <i class="bi bi-bank"></i> چک
+                    </button>
+                    <button type="button" class="pay-tab @(useInstallment ? "active" : "")"
+                            data-pay="installment" @onclick="ToggleInstallment">
+                        <i class="bi bi-journal-check"></i> اقساطی
+                    </button>
+                    <button type="button" class="pay-tab @(useCredit ? "active" : "")"
+                            data-pay="credit" @onclick="ToggleCredit">
+                        <i class="bi bi-hourglass-split"></i> نسیه
+                    </button>
+                </div>
+
+                @* ---------- خلاصهٔ پرداخت ---------- *@
+                <div class="pay-summary mt-3" data-fin-summary>
+                    <div>مبلغ سفارش: <b class="num text-primary" data-fin-total2>@Fa.Money(Total)</b> ریال</div>
+                    <div>نقد: <b class="num text-success" data-fin-cash>@Fa.Money(CashPart)</b></div>
+                    <div>چک: <b class="num" data-fin-cheques-sum>@Fa.Money(ChequeSum)</b></div>
+                    <div>اقساط: <b class="num" data-fin-insts-sum>@Fa.Money(InstSum)</b></div>
+                    <div class="fw-700 @(FinalRemaining < -1 ? "text-warning" : FinalRemaining > 1 ? "text-danger" : "text-success")">
+                        @if (FinalRemaining < -1)
+                        {
+                            <span>مازاد (سود مدت‌دار): <b class="num" data-fin-remain>@Fa.Money(-FinalRemaining)</b></span>
+                        }
+                        else
+                        {
+                            <span>باقی‌مانده: <b class="num" data-fin-remain>@Fa.Money(FinalRemaining)</b>@(FinalRemaining > 1 ? " (به نسیه می‌رود)" : "")</span>
+                        }
+                    </div>
+                </div>
+
+                @* ---------- جزء نقدی ---------- *@
+                @if (useCash)
+                {
+                    <div class="mt-3" data-fin-cash-box>
+                        <div class="row g-2 align-items-end">
+                            @if (HasNonCash)
+                            {
+                                <div class="col-6 col-md-3">
+                                    <label class="form-label fs-8">پیش‌دریافت نقدی (بخشی از مبلغ)</label>
+                                    <input class="form-control form-control-sm num" value="@cashAmountText"
+                                           @oninput="OnCashAmountInput"
+                                           inputmode="numeric" dir="ltr" placeholder="0" data-fin-cash-input />
+                                </div>
+                            }
+                            <div class="col-6 col-md-3">
+                                <label class="form-label fs-8">نوع دریافت نقدی</label>
+                                <select class="form-select form-select-sm" value="@cashTypeStr" @onchange="OnCashTypeSelect" data-fin-cashtype>
+                                    <option value="0">وجه نقد</option>
+                                    <option value="1">کارت‌خوان (POS)</option>
+                                    <option value="2">کارت به کارت</option>
+                                </select>
+                            </div>
+                            <div class="col-6 col-md-4">
+                                <label class="form-label fs-8">صندوق/بانک</label>
+                                <select class="form-select form-select-sm" @bind="trsAccountId">
+                                    <option value="0">— انتخاب حساب —</option>
+                                    @foreach (var a in accountsForCashType)
+                                    {
+                                        <option value="@a.Id">@a.DisplayName</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-2 fs-8 pb-1">
+                                @if (HasNonCash)
+                                {
+                                    <span>باقی‌مانده پس از نقد: <b class="num text-primary" data-fin-remain-cash>@Fa.Money(RemainingAfterCash)</b></span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">تمام مبلغ نقدی است.</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @* ---------- جزء چک ---------- *@
+                @if (useCheque)
+                {
+                    <div class="mt-3" data-fin-cheques>
+                        @for (var i = 0; i < cheques.Count; i++)
+                        {
+                            var idx = i;
+                            <div class="row g-2 align-items-end mb-2" data-fin-cheque-row="@idx">
+                                <div class="col-6 col-md-2">
+                                    <label class="form-label fs-8">شماره چک *</label>
+                                    <input class="form-control form-control-sm" @bind="cheques[idx].Number" dir="ltr" />
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <label class="form-label fs-8">بانک</label>
+                                    <input class="form-control form-control-sm" @bind="cheques[idx].BankName" placeholder="نام بانک…" />
+                                </div>
+                                <div class="col-6 col-md-2">
+                                    <label class="form-label fs-8">صاحب چک</label>
+                                    <input class="form-control form-control-sm" @bind="cheques[idx].OwnerName" />
+                                </div>
+                                <div class="col-6 col-md-2">
+                                    <label class="form-label fs-8">مبلغ (ریال) *</label>
+                                    <input class="form-control form-control-sm num" value="@chequeAmounts[idx]"
+                                           @oninput="e => chequeAmounts[idx] = Fa.FormatTyping(e.Value?.ToString())"
+                                           inputmode="numeric" dir="ltr" />
+                                </div>
+                                <div class="col-6 col-md-2">
+                                    <label class="form-label fs-8">سررسید *</label>
+                                    <DatePicker @bind-Value="chequeDates[idx]" />
+                                </div>
+                                <div class="col-6 col-md-1 text-center">
+                                    <button type="button" class="btn btn-sm btn-light" data-fin-remove-cheque="@idx" @onclick="() => RemoveCheque(idx)">
+                                        <i class="bi bi-x-lg text-danger"></i>
+                                    </button>
+                                </div>
+                                <div class="col-12 fs-9">
+                                    <span class="text-muted">باقی‌مانده پس از این چک:</span>
+                                    <b class="num text-primary" data-fin-rem-cheque="@idx">@Fa.Money(RemainingAfterCheque(idx))</b> ریال
+                                </div>
+                            </div>
+                        }
+                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                            <button type="button" class="btn btn-sm btn-outline-primary" data-fin-add-cheque @onclick="AddCheque">
+                                <i class="bi bi-plus-lg"></i> افزودن چک
+                            </button>
+                            <span class="fs-8 text-muted">مبلغ سطر جدید به‌صورت خودکار برابر باقی‌ماندهٔ فعلی پر می‌شود.</span>
+                        </div>
+                    </div>
+                }
+
+                @* ---------- جزء اقساط ---------- *@
+                @if (useInstallment)
+                {
+                    <div class="mt-3" data-fin-installments>
+                        <div class="row g-2 align-items-end mb-2">
+                            <div class="col-6 col-md-2">
+                                <label class="form-label fs-8">تعداد قسط</label>
+                                <input class="form-control form-control-sm num" type="number" min="1" max="60"
+                                       @bind="instCount" dir="ltr" />
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label fs-8">تاریخ اولین قسط</label>
+                                <DatePicker @bind-Value="instFirstDue" />
+                            </div>
+                            <div class="col-6 col-md-2">
+                                <label class="form-label fs-8">فاصله (روز)</label>
+                                <input class="form-control form-control-sm num" type="number" min="1"
+                                       @bind="instIntervalDays" dir="ltr" />
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <button type="button" class="btn btn-sm btn-primary w-100" data-fin-build-inst @onclick="() => BuildInstallments()">
+                                    <i class="bi bi-journal-plus"></i> ساخت دفترچه
+                                </button>
+                            </div>
+                        </div>
+
+                        @if (installments.Count > 0)
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle mb-1">
+                                    <thead>
+                                        <tr>
+                                            <th>قسط</th><th>سررسید</th><th class="text-start">مبلغ (ریال)</th>
+                                            <th class="text-start">باقی‌مانده پس از این قسط</th><th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @for (var i = 0; i < installments.Count; i++)
+                                        {
+                                            var idx = i;
+                                            <tr data-fin-inst-row="@idx">
+                                                <td class="num">قسط @Fa.Digits(idx + 1)</td>
+                                                <td style="max-width:170px"><DatePicker @bind-Value="instDates[idx]" /></td>
+                                                <td class="text-start">
+                                                    <input class="form-control form-control-sm num" value="@instAmounts[idx]"
+                                                           @oninput="e => instAmounts[idx] = Fa.FormatTyping(e.Value?.ToString())"
+                                                           inputmode="numeric" dir="ltr" />
+                                                </td>
+                                                <td class="text-start"><b class="num text-primary" data-fin-rem-inst="@idx">@Fa.Money(RemainingAfterInstallment(idx))</b></td>
+                                                <td>
+                                                    <button type="button" class="btn btn-sm btn-light" data-fin-remove-inst="@idx" @onclick="() => RemoveInstallment(idx)">
+                                                        <i class="bi bi-x-lg text-danger"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="fs-8">
+                                جمع اقساط: <b class="num">@Fa.Money(InstSum)</b> —
+                                باقی‌ماندهٔ تجمعی: <b class="num text-primary" data-fin-remain-inst>@Fa.Money(FinalRemaining)</b>
+                            </div>
+                        }
+                    </div>
+                }
+
+                @* ---------- جزء نسیه ---------- *@
+                @if (useCredit)
+                {
+                    <div class="row g-2 align-items-end mt-3" data-fin-credit-box>
+                        <div class="col-6 col-md-4">
+                            <label class="form-label fs-8">تاریخ سررسید نسیه *</label>
+                            <DatePicker @bind-Value="dueDate" />
+                        </div>
+                        <div class="col-12 col-md-8 fs-8 pb-1">
+                            مبلغ نسیه (باقی‌ماندهٔ نهایی): <b class="num text-danger" data-fin-credit-amount>@Fa.Money(Math.Max(0, FinalRemaining))</b> ریال
+                            — در حساب دریافتنی طرف حساب می‌نشیند.
+                        </div>
+                    </div>
+                }
+
+                <div class="mt-3">
+                    <label class="form-label fs-8">یادداشت مالی (اختیاری)</label>
+                    <input class="form-control form-control-sm" @bind="comment" placeholder="مثلاً: چک به ضمانت مدیرعامل…" />
+                </div>
+            </div>
+
+            <div class="alert alert-info py-2 fs-8 mt-3 mb-0">
+                با این تأیید، سند فروش در فهرست «فروش» سامانه فروشگاهی ثبت می‌شود، موجودی انبار کم می‌شود
+                و سند حسابداری خودکار صادر می‌گردد.
+            </div>
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="btn btn-light" @onclick="Close">انصراف</button>
+        <button class="btn btn-primary" disabled="@(busy || Order is null)" data-fin-submit @onclick="SubmitAsync">
+            @if (busy)
+            {
+                <span class="spinner-border spinner-border-sm ms-1"></span>
+            }
+            else
+            {
+                <i class="bi bi-check2-circle ms-1"></i>
+            }
+            تأیید مالی و ثبت فروش
+        </button>
+    </Footer>
+</Modal>
+
+<style>
+    .pay-box { border: 1px solid #e2e8f0; border-radius: 14px; padding: .8rem; background: #f8fafc; }
+    .pay-tabs { display: flex; flex-wrap: wrap; gap: .4rem; }
+    .pay-tab { border: 1px solid #cbd5e1; background: #fff; border-radius: 10px; padding: .35rem .7rem; font-size: .8rem; }
+    .pay-tab.active { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+    .pay-tab.active { font-weight: 700; }
+    .pay-summary {
+        display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: center;
+        padding: .45rem .7rem; border: 1px dashed #cbd5e1; border-radius: 10px;
+        background: #fff; font-size: .8rem;
+    }
+    .pay-summary b { font-variant-numeric: tabular-nums; }
+    .fs-8 { font-size: .8rem; }
+    .fs-9 { font-size: .72rem; }
+</style>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public VisOrderDto? Order { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<VisOrderDto> OnDone { get; set; }
+
+    private bool busy;
+    private List<TrsAccount> accounts = new();
+
+    // ---------------- پرداخت ترکیبی: نقد + چک + اقساط + نسیه ----------------
+    private bool useCash = true, useCheque, useInstallment, useCredit;
+    private string cashTypeStr = "0";
+    private int trsAccountId;
+    private string cashAmountText = "";
+    private DateTime? dueDate;
+    private string comment = "";
+
+    private List<ChequeDto> cheques = new();
+    private List<string> chequeAmounts = new();
+    private List<DateTime?> chequeDates = new();
+
+    private List<InstallmentDto> installments = new();
+    private List<string> instAmounts = new();
+    private List<DateTime?> instDates = new();
+    private int instCount = 3;
+    private int instIntervalDays = 30;
+    private DateTime? instFirstDue;
+
+    private decimal Total => Order?.TotalNet ?? 0;
+    private CashType CashTypeValue => int.TryParse(cashTypeStr, out var v) ? (CashType)v : CashType.Cash;
+    private bool HasNonCash => useCheque || useInstallment || useCredit;
+
+    /// <summary>جزء نقدی — اگر تنها جزء باشد تمام مبلغ سفارش است.</summary>
+    private decimal CashPart => !HasNonCash ? Total : Fa.ParseDecimal(cashAmountText);
+    /// <summary>جمع چک‌ها — اگر جزء چک خاموش باشد صفر (سطرها برای فعال‌سازی مجدد نگه داشته می‌شوند).</summary>
+    private decimal ChequeSum => useCheque
+        ? cheques.Select((c, i) => Fa.ParseDecimal(chequeAmounts.ElementAtOrDefault(i))).Sum() : 0;
+    /// <summary>جمع اقساط — اگر جزء اقساط خاموش باشد صفر.</summary>
+    private decimal InstSum => useInstallment
+        ? installments.Select((c, i) => Fa.ParseDecimal(instAmounts.ElementAtOrDefault(i))).Sum() : 0;
+
+    /// <summary>باقی‌ماندهٔ نهایی = مبلغ سفارش − (نقد + چک‌ها + اقساط) — همان مبلغ نسیه.</summary>
+    private decimal FinalRemaining => Total - CashPart - ChequeSum - InstSum;
+    private decimal RemainingAfterCash => Total - CashPart;
+
+    /// <summary>باقی‌ماندهٔ پس از این چک = مبلغ سفارش − (نقد + جمع چک‌ها تا این سطر).</summary>
+    private decimal RemainingAfterCheque(int i)
+    {
+        if (cheques.Count == 0) return RemainingAfterCash;
+        var upto = Math.Min(i, chequeAmounts.Count - 1);
+        decimal sum = CashPart;
+        for (var k = 0; k <= upto; k++) sum += Fa.ParseDecimal(chequeAmounts[k]);
+        return Total - sum;
+    }
+
+    /// <summary>باقی‌ماندهٔ پس از این قسط = مبلغ سفارش − (نقد + چک‌ها + جمع اقساط تا این سطر).</summary>
+    private decimal RemainingAfterInstallment(int i)
+    {
+        if (installments.Count == 0) return RemainingAfterCash - ChequeSum;
+        var upto = Math.Min(i, instAmounts.Count - 1);
+        decimal sum = CashPart + ChequeSum;
+        for (var k = 0; k <= upto; k++) sum += Fa.ParseDecimal(instAmounts[k]);
+        return Total - sum;
+    }
+
+    /// <summary>روش پرداخت اعلامی به سرور (سرور ترکیبی/تک‌جزء را خودش استخراج می‌کند).</summary>
+    private PaymentMethod DeclaredMethod => !HasNonCash
+        ? PaymentMethod.Cash
+        : useCheque ? PaymentMethod.Cheque
+        : useInstallment ? PaymentMethod.Installment
+        : PaymentMethod.Credit;
+
+    private void ToggleCash()
+    {
+        useCash = !useCash;
+        if (!useCash && !HasNonCash) useCash = true;
+    }
+
+    private void ToggleCheque()
+    {
+        useCheque = !useCheque;
+        if (useCheque && cheques.Count == 0) AddCheque();
+    }
+
+    private void ToggleInstallment()
+    {
+        useInstallment = !useInstallment;
+        if (useInstallment && installments.Count == 0) BuildInstallments(silent: true);
+    }
+
+    private void ToggleCredit()
+    {
+        useCredit = !useCredit;
+        if (useCredit && dueDate is null) dueDate = DateTime.Now.Date.AddMonths(1);
+    }
+
+    private void OnCashAmountInput(ChangeEventArgs e)
+        => cashAmountText = Fa.FormatTyping(e.Value?.ToString());
+
+    private void OnCashTypeSelect(ChangeEventArgs e)
+    {
+        cashTypeStr = e.Value?.ToString() ?? "0";
+        var valid = accountsForCashType;
+        if (trsAccountId > 0 && !valid.Any(a => a.Id == trsAccountId))
+            trsAccountId = valid.FirstOrDefault(a => a.IsDefault)?.Id ?? valid.FirstOrDefault()?.Id ?? 0;
+    }
+
+    private List<TrsAccount> accountsForCashType => CashTypeValue switch
+    {
+        CashType.Cash => accounts.Where(a => a.Kind is TreasuryAccountKind.Cash or TreasuryAccountKind.PettyCash).ToList(),
+        CashType.CardReader => accounts.Where(a => a.Kind is TreasuryAccountKind.Pos or TreasuryAccountKind.Bank).ToList(),
+        CashType.CardTransfer => accounts.Where(a => a.Kind is TreasuryAccountKind.Bank or TreasuryAccountKind.Pos).ToList(),
+        _ => accounts
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Visible || Order is null) return;
+
+        // پیش‌فرض‌ها از انتخاب ویزیتور — اجزای پرداخت
+        useCheque = Order.PaymentMethod == PaymentMethod.Cheque;
+        useInstallment = Order.PaymentMethod == PaymentMethod.Installment;
+        useCredit = Order.PaymentMethod == PaymentMethod.Credit;
+        useCash = !HasNonCash;
+        cashTypeStr = "0";
+        dueDate = useCredit ? DateTime.Now.Date.AddMonths(1) : null;
+        comment = "";
+        cashAmountText = "";
+        cheques.Clear(); chequeAmounts.Clear(); chequeDates.Clear();
+        installments.Clear(); instAmounts.Clear(); instDates.Clear();
+        instFirstDue = DateTime.Now.Date.AddMonths(1);
+
+        if (accounts.Count == 0)
+        {
+            try { accounts = await AccountSvc.GetAllAsync(activeOnly: true); }
+            catch (Exception ex) { Toast.Error(ex.Message); }
+        }
+        var def = accounts.FirstOrDefault(a => a.IsDefault) ?? accounts.FirstOrDefault();
+        trsAccountId = def?.Id ?? 0;
+
+        if (useCheque && cheques.Count == 0) AddCheque();
+        if (useInstallment && installments.Count == 0) BuildInstallments(silent: true);
+    }
+
+    /// <summary>سطر چک جدید — مبلغ پیش‌فرض = باقی‌ماندهٔ فعلی.</summary>
+    private void AddCheque()
+    {
+        var rest = FinalRemaining;
+        cheques.Add(new ChequeDto { Number = "", DueDate = DateTime.Now.Date.AddMonths(2) });
+        chequeAmounts.Add(rest > 0 ? Fa.FormatTyping(rest.ToString("0")) : "");
+        chequeDates.Add(DateTime.Now.Date.AddMonths(2));
+    }
+
+    private void RemoveCheque(int i)
+    {
+        cheques.RemoveAt(i); chequeAmounts.RemoveAt(i); chequeDates.RemoveAt(i);
+    }
+
+    private void RemoveInstallment(int i)
+    {
+        installments.RemoveAt(i); instAmounts.RemoveAt(i); instDates.RemoveAt(i);
+    }
+
+    private void BuildInstallments(bool silent = false)
+    {
+        if (instCount < 1) { if (!silent) Toast.Error("تعداد قسط را وارد کنید."); return; }
+        if (instFirstDue is null) { if (!silent) Toast.Error("تاریخ اولین قسط را وارد کنید."); return; }
+
+        // مبلغ قابل تقسیم = باقی‌مانده پس از نقد و چک‌ها
+        var payable = Math.Max(0, Total - CashPart - ChequeSum);
+        if (payable <= 0) { if (!silent) Toast.Error("مبلغ قابل قسط‌بندی باقی نمانده است."); return; }
+
+        installments.Clear(); instAmounts.Clear(); instDates.Clear();
+        var per = Math.Round(payable / instCount);
+        for (var i = 0; i < instCount; i++)
+        {
+            var amount = i == instCount - 1 ? payable - per * (instCount - 1) : per;
+            var due = instFirstDue!.Value.Date.AddDays(instIntervalDays * i);
+            installments.Add(new InstallmentDto { No = i + 1, Amount = amount, DueDate = due });
+            instAmounts.Add(Fa.FormatTyping(amount.ToString("0")));
+            instDates.Add(due);
+        }
+        if (!silent) Toast.Info($"{Fa.Digits(instCount)} قسط ساخته شد.");
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (Order is null) return;
+
+        // ---------- جزء نقدی ----------
+        if (HasNonCash && CashPart > 0 && CashPart >= Total)
+        {
+            Toast.Error("پیش‌دریافت نقدی نمی‌تواند برابر یا بیشتر از مبلغ سفارش باشد؛ در این صورت فقط «نقدی» را فعال کنید.");
+            return;
+        }
+        if (useCash && trsAccountId == 0 && accounts.Count > 0)
+        {
+            Toast.Error("صندوق/بانک دریافت را انتخاب کنید.");
+            return;
+        }
+        var cash = HasNonCash ? CashPart : Total;
+
+        var cmd = new VisFinanceCommand
+        {
+            Id = Order.Id,
+            PaymentMethod = DeclaredMethod,
+            CashType = CashTypeValue,
+            TrsAccountId = trsAccountId > 0 ? trsAccountId : null,
+            CashAmount = HasNonCash ? cash : 0,
+            DueDate = dueDate,
+            Comment = string.IsNullOrWhiteSpace(comment) ? null : comment.Trim()
+        };
+
+        // ---------- جزء چک ----------
+        var chequeList = new List<ChequeDto>();
+        if (useCheque)
+        {
+            if (cheques.Count == 0) { Toast.Error("حداقل یک چک ثبت کنید."); return; }
+            for (var i = 0; i < cheques.Count; i++)
+            {
+                if (string.IsNullOrWhiteSpace(cheques[i].Number)) { Toast.Error($"شماره چک ردیف {i + 1} را وارد کنید."); return; }
+                if (chequeDates[i] is null) { Toast.Error($"سررسید چک ردیف {i + 1} را وارد کنید."); return; }
+                var amount = Fa.ParseDecimal(chequeAmounts[i]);
+                if (amount <= 0) { Toast.Error($"مبلغ چک ردیف {i + 1} را وارد کنید."); return; }
+                cheques[i].Amount = amount;
+                cheques[i].DueDate = chequeDates[i]!.Value;
+            }
+            chequeList = cheques;
+        }
+        cmd.Cheques = chequeList;
+
+        // ---------- جزء اقساط ----------
+        var instList = new List<InstallmentDto>();
+        if (useInstallment)
+        {
+            if (installments.Count == 0) { Toast.Error("ابتدا دفترچه اقساط را بسازید."); return; }
+            for (var i = 0; i < installments.Count; i++)
+            {
+                if (instDates[i] is null) { Toast.Error($"سررسید قسط {i + 1} را وارد کنید."); return; }
+                var amount = Fa.ParseDecimal(instAmounts[i]);
+                if (amount <= 0) { Toast.Error($"مبلغ قسط {i + 1} را وارد کنید."); return; }
+                installments[i].Amount = amount;
+                installments[i].DueDate = instDates[i]!.Value;
+            }
+            instList = installments;
+        }
+        cmd.Installments = instList;
+
+        // ---------- ماندهٔ نهایی = نسیه ----------
+        var paid = cash + chequeList.Sum(c => c.Amount) + instList.Sum(i => i.Amount);
+        var remainder = Total - paid;
+        if (remainder > 1)
+        {
+            if (!useCredit || dueDate is null)
+            {
+                Toast.Error($"جمع پرداخت‌ها ({Fa.Money(paid)}) کمتر از مبلغ سفارش ({Fa.Money(Total)}) است؛ " +
+                            $"باقی‌ماندهٔ {Fa.Money(remainder)} ریال به نسیه می‌رود — جزء «نسیه» را فعال و تاریخ سررسید را وارد کنید.");
+                return;
+            }
+            cmd.DueDate = dueDate;
+        }
+        else
+        {
+            cmd.DueDate = null;
+        }
+
+        busy = true;
+        try
+        {
+            var res = await Api.FinanceApproveAsync(Order.Id, cmd);
+            Toast.Success($"فروش {res.SaleNumber} ثبت شد و سفارش {res.Number} به فروش فروشگاه منتقل شد.");
+            await OnDone.InvokeAsync(res);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private Task Close() => OnClose.InvokeAsync();
+}

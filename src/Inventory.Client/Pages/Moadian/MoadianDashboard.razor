@@ -1,0 +1,395 @@
+@page "/moadian"
+@inject IMoadianClientService Mdn
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+
+<PageTitle>سامانه مودیان — نمای کلی</PageTitle>
+
+<MoadianSubNav />
+
+<div class="page-head">
+    <div>
+        <h1>سامانه مودیان مالیاتی (مبتنی بر گواهی امضا)</h1>
+        <p class="lead">ارسال صورتحساب الکترونیکی، استعلام وضعیت به‌روز کارپوشه و ثبت پرداخت با کتابخانه رسمی نسخه ۲.۰.۲۹</p>
+    </div>
+    <div class="ms-auto d-flex flex-wrap gap-2">
+        @if (Auth.Has("Moadian.InvoiceInquiry") || Auth.Has("Moadian.FolderStatus"))
+        {
+            <button class="btn btn-outline-primary" disabled="@busy" @onclick="RefreshStatusesAsync">
+                @if (busyAction == "refresh")
+                {
+                    <span class="spinner-border spinner-border-sm me-1"></span>
+                }
+                else
+                {
+                    <i class="bi bi-arrow-repeat me-1"></i>
+                }
+                استعلام هم‌زمان درگاه و کارپوشه
+            </button>
+        }
+        @if (Auth.Has("Moadian.InvoiceCreate"))
+        {
+            <a class="btn btn-primary" href="moadian/invoices/new">
+                <i class="bi bi-plus-lg me-1"></i>صدور صورتحساب جدید
+            </a>
+        }
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else if (data is not null)
+{
+    var p = data.Profile;
+
+    <!-- نوار وضعیت پرونده مالیاتی و گواهی امضای الکترونیکی -->
+    <div class="card mb-3 border-start border-4 @(p.IsReadyForSigning ? "border-success" : "border-warning")">
+        <div class="card-body py-3">
+            <div class="row g-3 align-items-center">
+                <div class="col-12 col-lg-7">
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                        <span class="fw-bold fs-6">@(string.IsNullOrWhiteSpace(p.TradeName) ? p.CompanyName : p.TradeName)</span>
+                        <span class="badge @(p.Environment == MdnEnvironment.Production ? "bg-success" : "bg-warning text-dark")">
+                            @(p.Environment == MdnEnvironment.Production ? "محیط عملیاتی (TP)" : "محیط آزمایشی (RC)")
+                        </span>
+                        @if (!string.IsNullOrWhiteSpace(p.MemoryId))
+                        {
+                            <span class="badge bg-dark font-monospace">حافظه: @p.MemoryId</span>
+                        }
+                        @if (p.IsReadyForSigning)
+                        {
+                            <span class="badge bg-success-subtle text-success">
+                                <i class="bi bi-shield-check me-1"></i>گواهی امضا آماده است
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-warning-subtle text-warning-emphasis">
+                                <i class="bi bi-exclamation-triangle me-1"></i>نیازمند تکمیل گواهی / شناسه حافظه
+                            </span>
+                        }
+                    </div>
+
+                    <div class="small text-muted d-flex flex-wrap gap-3">
+                        <span>کد اقتصادی: <strong class="text-body num">@(string.IsNullOrWhiteSpace(p.EconomicCode) ? "ثبت‌نشده" : p.EconomicCode.FaDigits())</strong></span>
+                        <span>سریال بعدی: <strong class="text-body num">@p.NextSerial.FaDigits()</strong></span>
+                        @if (p.CertificateNotAfter.HasValue)
+                        {
+                            <span class="@(p.IsCertificateExpired ? "text-danger fw-bold" : p.CertificateDaysRemaining <= 30 ? "text-warning-emphasis fw-bold" : "")">
+                                اعتبار گواهی امضا: @p.CertificateNotAfter.Value.ToFaDate()
+                                @if (p.CertificateDaysRemaining.HasValue)
+                                {
+                                    <span>(@(p.IsCertificateExpired ? "منقضی شده!" : $"{p.CertificateDaysRemaining.Value.FaDigits()} روز باقی‌مانده"))</span>
+                                }
+                            </span>
+                        }
+                    </div>
+                </div>
+
+                <div class="col-12 col-lg-5 d-flex flex-wrap justify-content-lg-end gap-2">
+                    @if (Auth.Has("Moadian.Diagnose") || Auth.Has("Moadian.Certificate"))
+                    {
+                        <button class="btn btn-sm btn-outline-success" disabled="@busy" @onclick="TestConnectionAsync">
+                            @if (busyAction == "test")
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                            }
+                            else
+                            {
+                                <i class="bi bi-plug me-1"></i>
+                            }
+                            تست اتصال با گواهی امضا
+                        </button>
+                    }
+                    @if (Auth.Has("Moadian.Certificate"))
+                    {
+                        <a class="btn btn-sm btn-outline-secondary" href="moadian/profile">
+                            <i class="bi bi-key me-1"></i>تنظیمات پرونده و گواهی
+                        </a>
+                    }
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(p.LastConnectionStatus))
+            {
+                <div class="mt-2 pt-2 border-top small text-muted">
+                    <i class="bi bi-activity me-1"></i>آخرین تست اتصال (@(p.LastConnectionTestAt?.ToFaDateTime() ?? "—")):
+                    <strong class="text-body">@p.LastConnectionStatus</strong>
+                    @if (!string.IsNullOrWhiteSpace(p.LastFiscalStatus))
+                    {
+                        <span class="badge bg-info-subtle text-info-emphasis ms-2">وضعیت حافظه: @p.LastFiscalStatus</span>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ردیف اول کارت‌های آماری: وضعیت ارسال و کارپوشه -->
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-xl-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-primary"><i class="bi bi-files text-primary"></i></div>
+                <div>
+                    <div class="stat-label">کل صورتحساب‌ها</div>
+                    <div class="stat-value num">@data.TotalInvoices.Num()</div>
+                    <div class="fs-8 text-muted num">پیش‌نویس: @data.DraftCount.Num() | در جریان: @data.InProgressCount.Num()</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-6 col-xl-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-success"><i class="bi bi-check2-circle text-success"></i></div>
+                <div>
+                    <div class="stat-label">ثبت موفق در درگاه</div>
+                    <div class="stat-value num text-success">@data.SubmissionSuccessCount.Num()</div>
+                    <div class="fs-8 text-muted num">تأیید کارپوشه: @data.FolderApprovedCount.Num()</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-6 col-xl-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-warning"><i class="bi bi-hourglass-split text-warning"></i></div>
+                <div>
+                    <div class="stat-label">در انتظار واکنش کارپوشه</div>
+                    <div class="stat-value num text-warning">@data.FolderPendingCount.Num()</div>
+                    <div class="fs-8 text-muted num">ردشده: @data.FolderRejectedCount.Num() | خطای ارسال: @data.SubmissionFailedCount.Num()</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-6 col-xl-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-danger"><i class="bi bi-slash-circle text-danger"></i></div>
+                <div>
+                    <div class="stat-label">ابطالی / باطل‌شده</div>
+                    <div class="stat-value num text-danger">@data.CancelledCount.Num()</div>
+                    <div class="fs-8 text-muted">خارج از جمع فروش قطعی</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ردیف دوم کارت‌های مالی: فروش تاییدشده، ارزش افزوده و پرداخت‌های مودیان -->
+    <div class="row g-3 mb-3">
+        <div class="col-12 col-md-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="text-muted small mb-1">جمع کل صورتحساب‌های تأییدشده (ریال)</div>
+                    <div class="fs-4 fw-bold text-success num">@data.ApprovedTotalAmount.Money()</div>
+                    <div class="small text-muted mt-1 num">مالیات بر ارزش افزوده: <strong>@data.ApprovedTotalVat.Money()</strong> ریال</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-md-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="text-muted small mb-1">پرداخت‌های ثبت‌شده در مودیان (ریال)</div>
+                    <div class="fs-4 fw-bold text-primary num">@data.TotalRegisteredPayments.Money()</div>
+                    <div class="small text-muted mt-1">شامل تسویه نقدی و ثبت پرداخت نسیه</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-md-4">
+            <div class="card h-100">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-muted small mb-1">مانده نسیه باز صورتحساب‌ها (ریال)</div>
+                        <div class="fs-4 fw-bold text-warning-emphasis num">@data.TotalUnpaidCreditAmount.Money()</div>
+                        <div class="small text-muted mt-1">قابل ثبت از طریق سرویس RegisterPayment</div>
+                    </div>
+                    <a class="btn btn-sm btn-outline-primary" href="moadian/status-payments">
+                        مدیریت پرداخت
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <!-- آخرین صورتحساب‌ها -->
+        <div class="col-12 col-xl-7">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-receipt me-1"></i>آخرین صورتحساب‌های الکترونیکی</h6>
+                    <a class="btn btn-sm btn-link text-decoration-none" href="moadian/invoices">مشاهده همه</a>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>شماره / تاریخ</th>
+                                <th>خریدار</th>
+                                <th>مبلغ کل (ریال)</th>
+                                <th>درگاه / کارپوشه</th>
+                                <th>پرداخت</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (data.RecentInvoices.Count == 0)
+                            {
+                                <tr>
+                                    <td colspan="5" class="text-center text-muted py-4">هنوز صورتحسابی ثبت نشده است.</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                @foreach (var inv in data.RecentInvoices)
+                                {
+                                    <tr style="cursor:pointer" @onclick='() => Nav.NavigateTo($"moadian/invoices/{inv.Id}")'>
+                                        <td>
+                                            <div class="fw-semibold">@inv.InternalNumber</div>
+                                            <div class="small text-muted">@inv.IssueDate.ToFaDate()</div>
+                                        </td>
+                                        <td>
+                                            <div>@(inv.BuyerName ?? "مصرف‌کننده نهایی")</div>
+                                            @if (!string.IsNullOrWhiteSpace(inv.TaxId))
+                                            {
+                                                <div class="small font-monospace text-muted">@inv.TaxId</div>
+                                            }
+                                        </td>
+                                        <td class="num fw-semibold">@inv.TotalAmount.Money()</td>
+                                        <td>
+                                            <span class="badge @SubmissionBadge(inv.SubmissionStatus) me-1">@MdnUiLabels.SubmissionTitle(inv.SubmissionStatus)</span>
+                                            @if (inv.FolderStatus != MdnFolderStatus.Unknown)
+                                            {
+                                                <span class="badge @FolderBadge(inv.FolderStatus)">@MdnUiLabels.FolderTitle(inv.FolderStatus)</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            <span class="badge @PaymentBadge(inv.PaymentStatus)">@MdnUiLabels.PaymentStatusTitle(inv.PaymentStatus)</span>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- آخرین رخدادها و لاگ‌های ارتباطی با سامانه مودیان -->
+        <div class="col-12 col-xl-5">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-clock-history me-1"></i>آخرین تبادلات با سامانه مودیان</h6>
+                </div>
+                <div class="card-body p-0">
+                    @if (data.RecentLogs.Count == 0)
+                    {
+                        <div class="text-center text-muted py-4">هنوز تبادلی ثبت نشده است.</div>
+                    }
+                    else
+                    {
+                        <div class="list-group list-group-flush">
+                            @foreach (var log in data.RecentLogs)
+                            {
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <span class="badge @(log.IsSuccess ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger")">
+                                            @log.ActionType — @log.StatusCode
+                                        </span>
+                                        <span class="small text-muted">@log.CreatedAt.ToFaDateTime()</span>
+                                    </div>
+                                    <div class="small">@log.Summary</div>
+                                    @if (!string.IsNullOrWhiteSpace(log.TaxId) || !string.IsNullOrWhiteSpace(log.ReferenceNumber))
+                                    {
+                                        <div class="small text-muted font-monospace mt-1">
+                                            @if (!string.IsNullOrWhiteSpace(log.TaxId)) { <span class="me-2">TaxId: @log.TaxId</span> }
+                                            @if (!string.IsNullOrWhiteSpace(log.ReferenceNumber)) { <span>Ref: @log.ReferenceNumber</span> }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private MdnDashboardDto? data;
+    private bool loading = true;
+    private bool busy;
+    private string busyAction = "";
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            data = await Mdn.GetDashboardAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task TestConnectionAsync()
+    {
+        busy = true;
+        busyAction = "test";
+        try
+        {
+            var res = await Mdn.TestConnectionAsync();
+            if (res.Success) Toast.Success(res.Summary);
+            else Toast.Warning(res.Summary);
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; busyAction = ""; }
+    }
+
+    private async Task RefreshStatusesAsync()
+    {
+        busy = true;
+        busyAction = "refresh";
+        try
+        {
+            var res = await Mdn.RefreshAllAsync(new List<int>());
+            Toast.Info(res.Message);
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; busyAction = ""; }
+    }
+
+    private static string SubmissionBadge(MdnSubmissionStatus s) => s switch
+    {
+        MdnSubmissionStatus.Success => "bg-success-subtle text-success",
+        MdnSubmissionStatus.Sent or MdnSubmissionStatus.InProgress => "bg-info-subtle text-info-emphasis",
+        MdnSubmissionStatus.Failed or MdnSubmissionStatus.Timeout => "bg-danger-subtle text-danger",
+        _ => "bg-secondary-subtle text-secondary"
+    };
+
+    private static string FolderBadge(MdnFolderStatus s) => s switch
+    {
+        MdnFolderStatus.Approved or MdnFolderStatus.SystemApproved => "bg-primary-subtle text-primary",
+        MdnFolderStatus.Pending => "bg-warning-subtle text-warning-emphasis",
+        MdnFolderStatus.Rejected or MdnFolderStatus.Cancelled => "bg-danger-subtle text-danger",
+        _ => "bg-light text-muted"
+    };
+
+    private static string PaymentBadge(MdnPaymentStatus s) => s switch
+    {
+        MdnPaymentStatus.Paid => "bg-success-subtle text-success",
+        MdnPaymentStatus.PartiallyPaid => "bg-warning-subtle text-warning-emphasis",
+        MdnPaymentStatus.Unpaid => "bg-secondary-subtle text-secondary",
+        _ => "bg-light text-muted"
+    };
+}

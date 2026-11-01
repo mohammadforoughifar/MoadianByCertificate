@@ -1,0 +1,27 @@
+@inject IDocArchiveService Svc
+@inject IToastService Toast
+@implements IDisposable
+<Modal Visible="Visible" Title="صف پردازش فایل‌ها" OnClose="OnClose">
+    <ChildContent>
+        <div class="d-flex flex-wrap gap-3 mb-3"><span>در انتظار: @queue.Pending.Num()</span><span>در حال پردازش: @queue.Working.Num()</span><span>تکمیل: @queue.Done.Num()</span><span class="text-danger">ناموفق: @queue.Failed.Num()</span></div>
+        @foreach(var failure in queue.Failures)
+        {
+            <div class="d-flex align-items-center justify-content-between gap-2 border-top py-2">
+                <div>@failure.FileName<div class="small text-muted">@failure.Error</div></div>
+                <button class="btn btn-sm btn-outline-primary" @onclick="() => Retry(failure.AttachmentId)">تلاش مجدد</button>
+            </div>
+        }
+    </ChildContent>
+    <Footer><button class="btn btn-light" @onclick="OnClose">بستن</button><button class="btn btn-primary" @onclick="Load">به‌روزرسانی</button></Footer>
+</Modal>
+@code {
+    [Parameter]public bool Visible{get;set;}
+    [Parameter]public EventCallback OnClose{get;set;}
+    private DocIndexQueueDto queue=new();
+    private CancellationTokenSource? poll;
+    protected override async Task OnParametersSetAsync(){if(Visible && poll==null){poll=new();await Load();_ = Poll(poll.Token);}else if(!Visible){poll?.Cancel();poll?.Dispose();poll=null;}}
+    private async Task Load(){try{queue=await Svc.GetIndexQueueAsync();}catch(Exception ex){Toast.Error(ex.Message);}}
+    private async Task Retry(int id){try{await Svc.RetryIndexAsync(id);await Load();}catch(Exception ex){Toast.Error(ex.Message);}}
+    private async Task Poll(CancellationToken ct){try{while(!ct.IsCancellationRequested){await Task.Delay(5000,ct);await Load();if(!ct.IsCancellationRequested)await InvokeAsync(StateHasChanged);}}catch(OperationCanceledException){}}
+    public void Dispose(){poll?.Cancel();poll?.Dispose();}
+}

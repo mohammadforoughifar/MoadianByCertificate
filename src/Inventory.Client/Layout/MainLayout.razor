@@ -1,0 +1,1716 @@
+@inherits LayoutComponentBase
+@using Microsoft.AspNetCore.SignalR.Client
+@inject LayoutState Layout
+@inject IReportService ReportSvc
+@inject IAuthState Auth
+@inject IAuthApi AuthApi
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject RealtimeService Rt
+@inject IChatClientService Chat
+@inject TabService Tabs
+@implements IDisposable
+
+@if (!Auth.IsLoggedIn)
+{
+    <LoginView />
+}
+else
+{
+    <div class="app-shell @(collapsed ? "sidebar-collapsed" : "") @(mobileOpen ? "sidebar-open" : "") @(isMobile ? "app-mobile" : "")">
+        <div class="sidebar-backdrop" @onclick="CloseMobile"></div>
+
+        <aside class="app-sidebar">
+            <div class="sidebar-brand">
+                <div class="logo"><i class="bi bi-box2-fill"></i></div>
+                <div>
+                    <div class="brand-text">نرم افزار یکپارچه فروغ آریا</div>
+                    <div class="brand-sub">مدیریت یکپارچه سازمان</div>
+                </div>
+            </div>
+
+            @if (Auth.IsReferrer)
+            {
+                <div class="sidebar-nav">
+                    <NavLink class="nav-link" href="" Match="NavLinkMatch.All" @onclick="OnNavigate">
+                        <i class="bi bi-speedometer2"></i><span>داشبورد من</span>
+                    </NavLink>
+                    @if (Auth.Has("ReferrerPanel.MyWallet"))
+                    {
+                        <NavLink class="nav-link" href="my-wallet" @onclick="OnNavigate">
+                            <i class="bi bi-wallet2"></i><span>کیف پول من</span>
+                        </NavLink>
+                    }
+                    @if (Auth.Has("ReferrerPanel.MyProducts"))
+                    {
+                        <NavLink class="nav-link" href="my-products" @onclick="OnNavigate">
+                            <i class="bi bi-box-seam"></i><span>کالاهای موجود</span>
+                        </NavLink>
+                    }
+                    @if (Auth.Has("ReferrerPanel.MyCard"))
+                    {
+                        <NavLink class="nav-link" href="my-card" @onclick="OnNavigate">
+                            <i class="bi bi-person-vcard"></i><span>کارت ویزیت من</span>
+                        </NavLink>
+                    }
+                    <a class="nav-link" style="cursor:pointer" @onclick="OpenPwFromMenu">
+                        <i class="bi bi-key"></i><span>تغییر رمز عبور</span>
+                    </a>
+                    @if (Auth.Has("PersonalSettings.Read"))
+                    {
+                        <NavLink class="nav-link" href="personal-settings" @onclick="OnNavigate">
+                            <i class="bi bi-person-gear"></i><span>پروفایل و تنظیمات شخصی</span>
+                        </NavLink>
+                    }
+                </div>
+            }
+            else
+            {
+                <NavMenu ReorderCount="reorderCount" NewSystemsCount="newSystemsCount" LettersUnreadCount="lettersUnread" OnNavigate="OnNavigate" />
+            }
+
+            <div class="sidebar-footer">
+                نسخه ۱.۰ — دات‌نت ۸ و Blazor WebAssembly
+            </div>
+        </aside>
+
+        <div class="app-main">
+            <header class="app-topbar">
+                <button class="btn-burger" title="باز/بسته کردن منو" @onclick="Toggle">
+                    <i class="bi bi-list"></i>
+                </button>
+                <div>
+                    <div class="topbar-title">@TopbarTitle()</div>
+                    <div class="topbar-sub">مدیریت انبار، خرید و فروش</div>
+                </div>
+                <div class="topbar-date d-none d-md-flex">
+                    <i class="bi bi-calendar3"></i>
+                    <span>@PersianDate.ToLong(DateTime.Now)</span>
+                </div>
+                <div class="topbar-actions d-flex align-items-center gap-2 me-2">
+                    @* ================== دکمه پیام‌رسان سازمانی (Chat) ================== *@
+                    @if (Auth.CanSee("Chat"))
+                    {
+                        <a href="chat" class="btn btn-sm btn-light ntf-bell" title="پیام‌رسان سازمانی">
+                            <i class="bi bi-chat-dots-fill text-primary"></i>
+                            @if (chatUnreadCount > 0)
+                            {
+                                <span class="ntf-badge bg-danger">@(chatUnreadCount > 99 ? "99+" : chatUnreadCount.ToString())</span>
+                            }
+                        </a>
+                    }
+
+                    @* ================== زنگ اعلان‌ها ================== *@
+                    <div class="ntf-bell-wrap">
+                        <button class="btn btn-sm btn-light ntf-bell" title="اعلان‌ها" @onclick="ToggleNtfPanel">
+                            <i class="bi bi-bell-fill text-warning"></i>
+                            @if (unreadCount > 0)
+                            {
+                                <span class="ntf-badge">@(unreadCount > 99 ? "99+" : unreadCount.ToString())</span>
+                            }
+                        </button>
+                        @if (showNtfPanel)
+                        {
+                            <div class="ntf-panel shadow-lg">
+                                <div class="ntf-panel-head">
+                                    <span class="fw-700">
+                                        اعلان‌ها
+                                        @if (ntfTotal > 0)
+                                        {
+                                            <span class="fs-9 text-muted fw-normal">— @ntfTotal.FaDigits() مورد، @unreadCount.FaDigits() نخوانده</span>
+                                        }
+                                    </span>
+                                    <div class="d-flex gap-2 align-items-center">
+                                        <button type="button" class="btn-close btn-close-sm ms-1" title="بستن اعلان‌ها" aria-label="بستن اعلان‌ها" @onclick="ToggleNtfPanel"></button>
+                                        @if (unreadCount > 0)
+                                        {
+                                            <button class="btn btn-link btn-sm p-0 fs-8" @onclick="MarkAllRead">همه خوانده شد</button>
+                                        }
+                                        @if (ntfList.Count > 0)
+                                        {
+                                            <button class="btn btn-link btn-sm p-0 fs-8 text-danger" title="حذف همه اعلان‌ها" @onclick="ClearAllNtf">
+                                                <i class="bi bi-trash"></i> پاک کردن همه
+                                            </button>
+                                        }
+                                    </div>
+                                </div>
+                                @* ================== نوتیفیکیشن گوشی/تبلت (Web Push) ================== *@
+                                <div class="ntf-push-row">
+                                    <div class="d-flex align-items-center gap-2 flex-grow-1 min-w-0">
+                                        <div class="ntf-push-icon"><i class="bi bi-phone-vibrate"></i></div>
+                                        <div class="min-w-0">
+                                            <div class="fs-8 fw-700">نوتیفیکیشن گوشی/تبلت</div>
+                                            <div class="fs-9 text-muted ntf-push-msg">@pushStatusText</div>
+                                        </div>
+                                    </div>
+                                    @if (pushSupported || pushEnabled)
+                                    {
+                                    <button class="btn btn-sm @(pushEnabled ? "btn-outline-danger" : "btn-primary")" @onclick="TogglePush" disabled="@pushBusy" title="تنظیم اعلان این دستگاه">
+                                        @if (pushBusy)
+                                        {
+                                            <span class="spinner-border spinner-border-sm"></span>
+                                        }
+                                        else if (pushEnabled)
+                                        {
+                                            <i class="bi bi-bell-slash"></i><span>غیرفعال‌سازی</span>
+                                        }
+                                        else
+                                        {
+                                            <i class="bi bi-bell"></i><span>فعال‌سازی</span>
+                                        }
+                                    </button>
+                                    }
+                                </div>
+                                <div class="d-flex justify-content-end gap-2 px-2 pb-2">
+                                    <button type="button" class="btn btn-sm btn-light" @onclick="InitPushStateAsync" disabled="@pushBusy">بررسی وضعیت</button>
+                                    @if (pushEnabled)
+                                    {
+                                        <button type="button" class="btn btn-sm btn-outline-primary" @onclick="TestPush" disabled="@pushBusy">آزمایش</button>
+                                    }
+                                    @if (Auth.IsAdmin)
+                                    {
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="OpenVapidPanel" title="تولید و راهنمای کلیدهای VAPID">کلیدهای اعلان</button>
+                                    }
+                                </div>
+                                @if (pushInsecure)
+                                {
+                                    <div class="px-2 pb-2">
+                                        <button type="button" class="btn btn-sm btn-warning w-100" @onclick="OpenHttpsSetupFromPanel">
+                                            <i class="bi bi-shield-lock"></i><span>راه‌اندازی HTTPS برای اعلان اندروید</span>
+                                        </button>
+                                    </div>
+                                }
+
+                                @* «مدت نمایش اعلان‌ها و پیام‌ها» از این پنل حذف شد و به
+                                   «تنظیمات ← تنظیمات اصلی نرم‌افزار» منتقل شد (سراسری، فقط مدیر سامانه). *@
+
+                                @* ================== اعلان در پیام‌رسان‌های بله و ایتا ================== *@
+                                <div class="ntf-push-row">
+                                    <div class="d-flex align-items-center gap-2 flex-grow-1 min-w-0">
+                                        <div class="ntf-push-icon"><i class="bi bi-chat-dots"></i></div>
+                                        <div class="min-w-0">
+                                            <div class="fs-8 fw-700">اعلان در بله و ایتا</div>
+                                            <div class="fs-9 text-muted ntf-push-msg">@msgStatusText</div>
+                                        </div>
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="OpenMsgPanel" disabled="@msgBusy" title="اتصال و تنظیم اعلان‌های بله و ایتا">
+                                        <i class="bi bi-link-45deg"></i><span>اتصال</span>
+                                    </button>
+                                </div>
+
+                                @* ===== پنل اتصال پیام‌رسان‌ها (بله و ایتا) ===== *@
+                                @if (msgPanel)
+                                {
+                                    <div class="vapid-overlay" @onclick="CloseMsgPanel">
+                                        <div class="vapid-card" @onclick:stopPropagation>
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <h6 class="fw-bold mb-0"><i class="bi bi-chat-dots text-primary"></i> اعلان در بله و ایتا</h6>
+                                                <button type="button" class="btn-close" @onclick="CloseMsgPanel"></button>
+                                            </div>
+
+                                            @if (msgBusy && msgStatus == null)
+                                            {
+                                                <div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span></div>
+                                            }
+                                            else
+                                            {
+                                                @* ---------- بله ---------- *@
+                                                <div class="border rounded-3 p-2 mb-2">
+                                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                                        <span class="fw-700 fs-8"><i class="bi bi-send-check text-success"></i> پیام‌رسان بله</span>
+                                                        @if (msgStatus?.baleLinked == true)
+                                                        {
+                                                            <span class="badge text-bg-success">متصل</span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="badge text-bg-secondary">متصل نیست</span>
+                                                        }
+                                                    </div>
+                                                    @if (msgStatus?.baleLinked == true)
+                                                    {
+                                                        <div class="fs-9 text-muted">اعلان‌های سامانه در بله برای شما ارسال می‌شود.</div>
+                                                    }
+                                                    else if (msgStatus?.baleConfigured != true)
+                                                    {
+                                                        <div class="fs-9 text-muted">ربات بله هنوز روی سرور تنظیم نشده است؛ مدیر سامانه باید توکن ربات را در «تنظیمات ← پیام‌رسان‌ها» وارد کند.</div>
+                                                    }
+                                                    else if (msgStatus?.hasMobile != true)
+                                                    {
+                                                        <div class="fs-9 text-muted">برای تطبیق خودکار، شماره موبایل در پرونده‌ی کاربری شما ثبت نشده است؛ از مدیر سامانه بخواهید شماره را ثبت کند.</div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <div class="fs-9 text-muted">
+                                                            برای اتصال: در بله ربات سامانه را باز کنید، دکمه‌ی «شروع/Start» را بزنید و شماره‌ی خود را ارسال کنید —
+                                                            اتصال به‌صورت خودکار انجام می‌شود (حتی می‌توانید شماره را از منوی پیوست ← «مخاطب» بفرستید).
+                                                        </div>
+                                                    }
+                                                    <div class="d-flex gap-2 mt-2">
+                                                        <button type="button" class="btn btn-sm btn-outline-primary" @onclick="TestMessengerAsync" disabled="@msgBusy">
+                                                            <i class="bi bi-send"></i> ارسال آزمایشی
+                                                        </button>
+                                                        @if (msgStatus?.isAdmin == true)
+                                                        {
+                                                            <button type="button" class="btn btn-sm btn-outline-success" @onclick="SyncBaleAsync" disabled="@msgBusy">
+                                                                <i class="bi bi-arrow-repeat"></i> همگام‌سازی بله
+                                                            </button>
+                                                        }
+                                                    </div>
+                                                </div>
+
+                                                @* ---------- ایتا ---------- *@
+                                                <div class="border rounded-3 p-2 mb-2">
+                                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                                        <span class="fw-700 fs-8"><i class="bi bi-send-check text-success"></i> پیام‌رسان ایتا</span>
+                                                        @if (msgStatus?.eitaaLinked == true)
+                                                        {
+                                                            <span class="badge text-bg-success">متصل</span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="badge text-bg-secondary">متصل نیست</span>
+                                                        }
+                                                    </div>
+                                                    @if (msgStatus?.eitaaLinked == true)
+                                                    {
+                                                        <div class="fs-9 text-muted">اعلان‌های سامانه در ایتا برای شما ارسال می‌شود.</div>
+                                                    }
+                                                    else if (msgStatus?.eitaaConfigured != true)
+                                                    {
+                                                        <div class="fs-9 text-muted">برنامه‌ی ایتا هنوز روی سرور تنظیم نشده است؛ مدیر سامانه باید توکن برنامه (developer.eitaa.com) را در «تنظیمات ← پیام‌رسان‌ها» وارد کند.</div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <div class="fs-9 text-muted">
+                                                            برای اتصال: دکمه‌ی «دریافت کد اتصال» را بزنید، سپس در ایتا برنامه‌ی سامانه را باز کنید و همان کد را وارد کنید.
+                                                        </div>
+                                                    }
+
+                                                    @if (eitaaCode != null)
+                                                    {
+                                                        <div class="alert alert-light border py-2 my-2">
+                                                            <div class="fs-9 text-muted mb-1">کد اتصال شما (۱۵ دقیقه اعتبار):</div>
+                                                            <div class="d-flex align-items-center gap-2">
+                                                                <span class="fs-4 fw-bold text-primary" style="letter-spacing:.25em" dir="ltr">@eitaaCode</span>
+                                                                <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => CopyText(eitaaCode)" title="کپی کد"><i class="bi bi-clipboard"></i></button>
+                                                            </div>
+                                                            <div class="fs-9 text-muted mt-1">
+                                                                ایتا ← منوی «برنامه‌ها» ← برنامه‌ی سامانه ← وارد کردن همین کد و زدن دکمه‌ی «اتصال».
+                                                            </div>
+                                                        </div>
+                                                    }
+
+                                                    <div class="d-flex gap-2 mt-2">
+                                                        @if (msgStatus?.eitaaLinked != true)
+                                                        {
+                                                            <button type="button" class="btn btn-sm btn-primary" @onclick="GetEitaaCodeAsync" disabled="@msgBusy">
+                                                                <i class="bi bi-key"></i> دریافت کد اتصال
+                                                            </button>
+                                                        }
+                                                        <button type="button" class="btn btn-sm btn-outline-primary" @onclick="TestMessengerAsync" disabled="@msgBusy">
+                                                            <i class="bi bi-send"></i> ارسال آزمایشی
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                @if (!string.IsNullOrWhiteSpace(msgResultText))
+                                                {
+                                                    <div class="alert alert-light border py-2 mb-2 fs-8">@msgResultText</div>
+                                                }
+
+                                                <div class="fs-9 text-muted">
+                                                    پس از تنظیم توکن‌ها توسط مدیر، اعلان‌های سامانه‌ای که برای شما ثبت می‌شود، علاوه بر نرم‌افزار،
+                                                    به بله و ایتای شما هم ارسال می‌گردد. (در ایتا، اعتبار ارسال روزانه‌ی برنامه بر اساس تعامل کاربران تعیین می‌شود.)
+                                                </div>
+
+                                                <div class="d-flex justify-content-end gap-2 mt-2">
+                                                    <button type="button" class="btn btn-sm btn-light" @onclick="LoadMsgStatusAsync" disabled="@msgBusy">بررسی وضعیت</button>
+                                                </div>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+
+                                @* ===== پنل مدیریت کلیدهای VAPID (مدیر) ===== *@
+                                @if (vapidPanel)
+                                {
+                                    <div class="vapid-overlay" @onclick="CloseVapidPanel">
+                                        <div class="vapid-card" @onclick:stopPropagation>
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <h6 class="fw-bold mb-0"><i class="bi bi-key text-primary"></i> کلیدهای اعلان (VAPID)</h6>
+                                                <button type="button" class="btn-close" @onclick="CloseVapidPanel"></button>
+                                            </div>
+                                            @if (vapidBusy)
+                                            {
+                                                <div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span></div>
+                                            }
+                                            else
+                                            {
+                                                <div class="alert @(vapidConfigured ? "alert-success" : "alert-warning") py-2 small">
+                                                    @if (!vapidConfigured) { @("کلیدهای اعلان هنوز تنظیم نشده — با دکمه‌ی «ساخت و فعال‌سازی کلید» بسازید.") }
+                                                    else if (vapidSource == "settings") { @("کلیدهای اعلان در همین نرم‌افزار ساخته و فعال شده‌اند (بدون نیاز به فایل سرور).") }
+                                                    else { @("کلیدهای اعلان از فایل/متغیرهای محیطی سرور خوانده می‌شوند.") }
+                                                </div>
+                                                @if (vapidConfigured)
+                                                {
+                                                    <div class="alert alert-danger py-2 small mb-2">تولید کلید جدید، اشتراک همه‌ی دستگاه‌ها را باطل می‌کند و کاربران باید اعلان را دوباره فعال کنند.</div>
+                                                }
+                                                <div class="mb-2">
+                                                    <label class="form-label small mb-1">کلید عمومی (PublicKey)</label>
+                                                    <div class="input-group input-group-sm" dir="ltr">
+                                                        <input class="form-control" readonly value="@vapidPublicKey" />
+                                                        @if (!string.IsNullOrWhiteSpace(vapidPublicKey))
+                                                        {
+                                                            <button class="btn btn-outline-secondary" @onclick="() => CopyText(vapidPublicKey)" title="کپی"><i class="bi bi-clipboard"></i></button>
+                                                        }
+                                                    </div>
+                                                </div>
+                                                @if (!string.IsNullOrWhiteSpace(vapidPrivateKey))
+                                                {
+                                                    <div class="mb-2">
+                                                        <label class="form-label small mb-1">کلید خصوصی (PrivateKey) — فقط همین لحظه نمایش داده می‌شود و در سرور ذخیره شده است</label>
+                                                        <div class="input-group input-group-sm" dir="ltr">
+                                                            <input class="form-control" readonly value="@vapidPrivateKey" />
+                                                            <button class="btn btn-outline-secondary" @onclick="() => CopyText(vapidPrivateKey)" title="کپی"><i class="bi bi-clipboard"></i></button>
+                                                        </div>
+                                                    </div>
+                                                    <div class="mb-2">
+                                                        <label class="form-label small mb-1">Subject پیشنهادی</label>
+                                                        <div class="input-group input-group-sm" dir="ltr">
+                                                            <input class="form-control" readonly value="@vapidSubject" />
+                                                            <button class="btn btn-outline-secondary" @onclick="() => CopyText(vapidSubject)" title="کپی"><i class="bi bi-clipboard"></i></button>
+                                                        </div>
+                                                    </div>
+                                                }
+                                                <div class="alert alert-light border py-2 small mb-2" dir="rtl">
+                                                    <b>فعال‌سازی:</b> با زدن دکمه‌ی «ساخت و فعال‌سازی کلید»، کلید ساخته و <b>همان لحظه</b> روی سرور فعال می‌شود؛
+                                                    نه ویرایش <span dir="ltr">appsettings.json</span> لازم است و نه ری‌استارت سرویس.
+                                                    بعد از آن هر کاربر از پنجره‌ی «اعلان‌ها» دکمه‌ی «فعال‌سازی» را می‌زند تا اعلان‌ها مثل اعلان اندروید
+                                                    روی گوشی/دسکتاپ نشان داده شود — هم وقتی نرم‌افزار باز است و هم وقتی بسته است.
+                                                    اعلان سیستمی فقط روی <b>HTTPS</b> (یا localhost) کار می‌کند: Chrome/Edge در اندروید و ویندوز؛
+                                                    در iPhone باید نرم‌افزار را به صفحه‌ی اصلی اضافه کرد (iOS 16.4+).
+                                                </div>
+                                                <div class="d-flex justify-content-between gap-2">
+                                                    <div>
+                                                        @if (vapidConfigured && vapidSource == "settings")
+                                                        {
+                                                            <button type="button" class="btn btn-sm btn-outline-danger" @onclick="ResetVapidAsync" disabled="@vapidBusy"
+                                                                    title="حذف کلیدهای ساخته‌شده در نرم‌افزار و بازگشت به کلیدهای فایل سرور">
+                                                                <i class="bi bi-arrow-counterclockwise"></i> حذف کلیدهای نرم‌افزار
+                                                            </button>
+                                                        }
+                                                    </div>
+                                                    <button type="button" class="btn btn-sm btn-primary" @onclick="GenerateVapidAsync" disabled="@vapidBusy">
+                                                        <i class="bi bi-magic"></i> @(vapidConfigured ? "ساخت و فعال‌سازی کلید جدید" : "ساخت و فعال‌سازی کلید")
+                                                    </button>
+                                                </div>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                                <div class="ntf-panel-body">
+                                    @if (ntfList.Count == 0)
+                                    {
+                                        <div class="text-center text-muted py-4 fs-8"><i class="bi bi-bell-slash d-block fs-3 mb-1"></i>اعلانی ندارید</div>
+                                    }
+                                    @foreach (var n in ntfList)
+                                    {
+                                        <div class="ntf-item @(n.IsRead ? "" : "unread")" @onclick="() => OpenNtf(n)">
+                                            <div class="d-flex justify-content-between gap-2">
+                                                <span class="fw-600 fs-8">@n.Title</span>
+                                                <span class="fs-9 text-muted text-nowrap">@n.CreatedAt.ToFa()</span>
+                                            </div>
+                                            @if (!string.IsNullOrWhiteSpace(n.Body))
+                                            {
+                                                <div class="fs-8 text-muted mt-1">@n.Body</div>
+                                            }
+                                            <div class="fs-9 mt-1"><span class="badge bg-light text-secondary">@n.FormName</span> <span class="text-muted">از: @n.FromName</span></div>
+                                        </div>
+                                    }
+
+                                    @* صفحه‌بندی: شمارندهٔ زنگوله همهٔ نخوانده‌ها را می‌شمارد؛ پس فهرست هم
+                                       باید کامل قابل دیدن باشد، نه فقط چند ردیف اول. *@
+                                    @if (ntfList.Count > 0)
+                                    {
+                                        <div class="ntf-panel-more">
+                                            <span class="fs-9 text-muted">
+                                                @ntfList.Count.FaDigits() از @ntfTotal.FaDigits() اعلان
+                                            </span>
+                                            @if (ntfHasMore)
+                                            {
+                                                <button type="button" class="btn btn-sm btn-outline-primary fs-9"
+                                                        disabled="@ntfLoadingMore" @onclick="LoadMoreNtfAsync">
+                                                    @if (ntfLoadingMore)
+                                                    {
+                                                        <span class="spinner-border spinner-border-sm ms-1"></span>
+                                                    }
+                                                    <i class="bi bi-chevron-double-down"></i> نمایش اعلان‌های بیشتر
+                                                </button>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                    @if (companyOptions.Count > 0)
+                    {
+                        <select class="form-select form-select-sm company-switcher" value="@activeCompanyId" @onchange="SwitchCompany" title="شرکت فعال">
+                            @foreach (var company in companyOptions)
+                            {
+                                <option value="@company.Id">@company.Name</option>
+                            }
+                        </select>
+                    }
+                    <span class="badge badge-soft-primary d-none d-sm-inline d-inline-flex align-items-center gap-1" style="border-radius:999px;padding:.3rem .7rem .3rem .35rem;">
+                        <UserAvatar LoginUserId="Auth.UserId" Size="26" CssClass="user-avatar-sm" />
+                        @Auth.DisplayName
+                    </span>
+                    <button class="btn btn-sm btn-light" title="تغییر رمز عبور" @onclick="OpenChangePassword">
+                        <i class="bi bi-key text-primary"></i>
+                    </button>
+                    <button class="btn btn-sm btn-light" title="خروج" @onclick="Logout">
+                        <i class="bi bi-box-arrow-left text-danger"></i>
+                    </button>
+                </div>
+            </header>
+
+            @* ================== توست اعلان بلادرنگ — پایین چپ ================== *@
+            <div class="ntf-toasts">
+                @foreach (var t in liveToasts)
+                {
+                    <div class="ntf-toast" @onclick="() => OpenToast(t)">
+                        <div class="ntf-toast-icon"><i class="bi bi-bell-fill"></i></div>
+                        <div class="flex-grow-1 min-w-0">
+                            <div class="fw-700 fs-8">@t.Title</div>
+                            @if (!string.IsNullOrWhiteSpace(t.Body))
+                            {
+                                <div class="fs-8 text-muted ntf-toast-body">@t.Body</div>
+                            }
+                            <div class="fs-9 mt-1"><span class="badge bg-primary-subtle text-primary">@t.FormName</span> <span class="text-muted">از: @t.FromName</span></div>
+                        </div>
+                        <button class="btn-close btn-close-sm" @onclick:stopPropagation="true" @onclick="() => liveToasts.Remove(t)"></button>
+                    </div>
+                }
+            </div>
+
+            <TabBar />
+
+            <main class="app-content">
+                @if (RouteAllowed(out var deniedTitle))
+                {
+                    @* هر تب صفحه‌ی خود را نگه می‌دارد؛ پوسته‌ی فضای کاریِ منابع انسانی
+                       درون خودِ هر تب اعمال می‌شود (TabPages) تا تب‌های دیگر دربر گرفته نشوند *@
+                    @Body
+                }
+                else
+                {
+                    <div class="alert alert-warning mt-4 d-flex align-items-center gap-2">
+                        <i class="bi bi-shield-exclamation fs-3"></i>
+                        <div>
+                            <strong>دسترسی غیرمجاز</strong>
+                            <div class="fs-8">شما به بخش «@deniedTitle» دسترسی ندارید. برای دریافت دسترسی با مدیر سیستم تماس بگیرید.</div>
+                        </div>
+                    </div>
+                }
+            </main>
+        </div>
+
+        @* نوار پایین اندرویدی — فقط در حالت موبایل (صفحه کوچک‌تر از ~۱۲ اینچ) *@
+        @if (isMobile)
+        {
+            <nav class="app-bottom-nav">
+                @if (Auth.IsReferrer)
+                {
+                    <NavLink class="bottom-nav-item" href="" Match="NavLinkMatch.All">
+                        <i class="bi bi-speedometer2"></i><span>داشبورد</span>
+                    </NavLink>
+                    @if (Auth.Has("ReferrerPanel.MyWallet"))
+                    {
+                        <NavLink class="bottom-nav-item" href="my-wallet">
+                            <i class="bi bi-wallet2"></i><span>کیف پول</span>
+                        </NavLink>
+                    }
+                    @if (Auth.Has("ReferrerPanel.MyProducts"))
+                    {
+                        <NavLink class="bottom-nav-item" href="my-products">
+                            <i class="bi bi-box-seam"></i><span>کالاها</span>
+                        </NavLink>
+                    }
+                    @if (Auth.Has("ReferrerPanel.MyCard"))
+                    {
+                        <NavLink class="bottom-nav-item" href="my-card">
+                            <i class="bi bi-person-vcard"></i><span>کارت من</span>
+                        </NavLink>
+                    }
+                    <a class="bottom-nav-item" @onclick="Logout">
+                        <i class="bi bi-box-arrow-left"></i><span>خروج</span>
+                    </a>
+                }
+                else
+                {
+                    <NavLink class="bottom-nav-item" href="" Match="NavLinkMatch.All">
+                        <i class="bi bi-speedometer2"></i><span>داشبورد</span>
+                    </NavLink>
+                    @if (Auth.CanSee("Orders"))
+                    {
+                        <NavLink class="bottom-nav-item" href="orders/purchase">
+                            <i class="bi bi-bag-plus"></i><span>خرید</span>
+                        </NavLink>
+                        <NavLink class="bottom-nav-item" href="orders/sale">
+                            <i class="bi bi-cart3"></i><span>فروش</span>
+                        </NavLink>
+                    }
+                    @if (Auth.CanSee("Repairs"))
+                    {
+                        <NavLink class="bottom-nav-item" href="repairs">
+                            <i class="bi bi-tools"></i><span>تعمیرات</span>
+                        </NavLink>
+                    }
+                    <a class="bottom-nav-item" @onclick="OpenMobileMenu">
+                        <i class="bi bi-grid-3x3-gap"></i><span>منو</span>
+                    </a>
+                }
+            </nav>
+        }
+
+        <ToastHost />
+
+        <Modal Visible="showPwModal" Title="تغییر رمز عبور" OnClose="ClosePwModal">
+            <ChildContent>
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label">رمز عبور فعلی <span class="text-danger">*</span></label>
+                        <input type="password" class="form-control" @bind="pwCurrent" dir="ltr" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">رمز عبور جدید <span class="text-danger">*</span></label>
+                        <input type="password" class="form-control" @bind="pwNew" dir="ltr" />
+                        <div class="fs-8 text-muted mt-1">حداقل ۴ کاراکتر</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">تکرار رمز عبور جدید <span class="text-danger">*</span></label>
+                        <input type="password" class="form-control" @bind="pwConfirm" dir="ltr" />
+                    </div>
+                </div>
+            </ChildContent>
+            <Footer>
+                <button class="btn btn-light" @onclick="ClosePwModal">انصراف (Esc)</button>
+                <button class="btn btn-primary" data-hotkey="f1" @onclick="SavePassword" disabled="@pwSaving">
+                    @if (pwSaving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                    ذخیره (F1)
+                </button>
+            </Footer>
+        </Modal>
+
+        @* ویجت شناور «فروغ آریا» (دکمه‌ی گرد گوشه‌ی پایین-چپ) حذف شد. *@
+    </div>
+}
+
+@code {
+    private bool collapsed;
+    private bool mobileOpen;
+    private int reorderCount;
+    private int newSystemsCount;
+    private int? activeCompanyId;
+    private List<CompanyOption> companyOptions = new();
+    private int companyContextVersion;
+    private sealed class CompanyOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+
+    /// <summary>
+    /// بارگذاری زمینهٔ شرکت فقط پس از آماده‌شدن نشست انجام می‌شود. نسخهٔ قبلی این متد
+    /// هم‌زمان با ورود، پیش از قراردادن Bearer Token اجرا می‌شد؛ پاسخ 401 در catch پنهان
+    /// می‌شد و انتخاب‌گر شرکت تا یک کلیک تصادفی دوباره ظاهر نمی‌شد.
+    /// </summary>
+    private async Task LoadCompanyContextAsync()
+    {
+        var version = ++companyContextVersion;
+        if (!Auth.IsLoggedIn)
+        {
+            ClearCompanyContext();
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        SetAuthHeader();
+        Http.DefaultRequestHeaders.Remove("X-Company-Id");
+        try
+        {
+            var saved = await JS.InvokeAsync<string?>("localStorage.getItem", "activeCompanyId");
+            if (int.TryParse(saved, out var savedId) && savedId > 0)
+                Http.DefaultRequestHeaders.TryAddWithoutValidation("X-Company-Id", savedId.ToString());
+
+            // یک retry محدود برای شروع هم‌زمان برنامه/شبکه؛ هرگز با نشستِ بدون Token درخواست نمی‌زنیم.
+            CompanyContextResponse? context = null;
+            for (var attempt = 0; attempt < 2 && context is null; attempt++)
+            {
+                try { context = await Http.GetFromJsonAsync<CompanyContextResponse>("api/company-context"); }
+                catch when (attempt == 0)
+                {
+                    await Task.Delay(150);
+                }
+            }
+            if (version != companyContextVersion || !Auth.IsLoggedIn) return;
+
+            companyOptions = context?.Companies ?? new();
+            var returnedId = context?.ActiveCompanyId;
+            activeCompanyId = returnedId is > 0 && companyOptions.Any(c => c.Id == returnedId.Value)
+                ? returnedId
+                : companyOptions.FirstOrDefault()?.Id;
+
+            Http.DefaultRequestHeaders.Remove("X-Company-Id");
+            if (activeCompanyId is > 0)
+            {
+                Http.DefaultRequestHeaders.TryAddWithoutValidation("X-Company-Id", activeCompanyId.Value.ToString());
+                await JS.InvokeVoidAsync("localStorage.setItem", "activeCompanyId", activeCompanyId.Value.ToString());
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("localStorage.removeItem", "activeCompanyId");
+            }
+        }
+        catch
+        {
+            if (version != companyContextVersion) return;
+            ClearCompanyContext();
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ClearCompanyContext()
+    {
+        ++companyContextVersion;
+        activeCompanyId = null;
+        companyOptions = new();
+        Http.DefaultRequestHeaders.Remove("X-Company-Id");
+    }
+
+    private async Task SwitchCompany(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var id) || id <= 0 || !companyOptions.Any(c => c.Id == id)) return;
+        activeCompanyId = id;
+        Http.DefaultRequestHeaders.Remove("X-Company-Id");
+        Http.DefaultRequestHeaders.TryAddWithoutValidation("X-Company-Id", id.ToString());
+        await JS.InvokeVoidAsync("localStorage.setItem", "activeCompanyId", id.ToString());
+        Nav.NavigateTo(Nav.Uri, forceLoad: true);
+    }
+
+    private sealed class CompanyContextResponse { public int? ActiveCompanyId { get; set; } public List<CompanyOption> Companies { get; set; } = new(); }
+
+    /// <summary>
+    /// عنوان نوار بالا: صفحات «منابع انسانی فروغ آریا» (برنامهٔ پیشین) عنوان خودشان را
+    /// می‌گیرند، سپس صفحات منوی اصلی منابع انسانی، و در پایان عنوان صفحهٔ جاری.
+    /// </summary>
+    private string TopbarTitle()
+    {
+        var p = Nav.ToBaseRelativePath(Nav.Uri);
+        if (ForoughAryaHrNavigation.IsWorkspace(p)) return ForoughAryaHrNavigation.Title(p);
+        if (HrNavigation.IsWorkspace(p)) return HrNavigation.Title(p);
+        return Layout.Title;
+    }
+
+    // حالت موبایل/اندروید: صفحه کوچک‌تر از ~۱۲ اینچ
+    private bool isMobile;
+    private DotNetObjectReference<MainLayout>? selfRef;
+
+    protected override void OnInitialized()
+    {
+        Layout.Changed += OnLayoutChanged;
+        Auth.Changed += OnAuthChanged;
+        Chat.OnMessageReceived += OnChatMessage;
+        Chat.OnMessageDeleted += OnChatDeleted;
+        Chat.OnMessagesRead += OnChatRead;
+        Chat.OnConversationChanged += OnChatConversation;
+        Chat.OnSyncRequested += OnChatSync;
+    }
+
+    private async void OnAuthChanged()
+    {
+        if (!Auth.IsLoggedIn)
+        {
+            ClearCompanyContext();
+            try { await JS.InvokeVoidAsync("localStorage.removeItem", "activeCompanyId"); } catch { }
+            ntfList.Clear();
+            liveToasts.Clear();
+            unreadCount = 0;
+            chatUnreadCount = 0;
+            ++chatSummaryVersion;
+            try { await Chat.StopAsync(); await Rt.StopAsync(); } catch { }
+        }
+        else
+        {
+            ntfList.Clear();
+            liveToasts.Clear();
+            unreadCount = 0;
+
+            // زمینهٔ شرکت باید قبل از هر درخواست/اتصال پس از ورود آماده باشد.
+            // این ترتیب، نمایش انتخاب‌گر و X-Company-Id را مستقل از کلیک روی پیام‌رسان می‌کند.
+            await LoadCompanyContextAsync();
+            await InitNotificationsAsync();
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // ================== اعلان‌ها (نوتیفیکیشن سراسری) ==================
+    private int unreadCount;
+    private int chatUnreadCount;
+    private int chatSummaryVersion;
+    private bool layoutDisposed;
+    private bool showNtfPanel;
+    private List<NtfItem> ntfList = new();
+    // صفحه‌بندی اعلان‌ها: شمارندهٔ زنگوله همهٔ نخوانده‌ها را می‌شمارد، پس فهرست هم باید
+    // بتواند تا آخر باز شود؛ وگرنه کاربر «+۹۹» می‌بیند و فقط ۲۵/۵۰ اعلان اول را.
+    private const int NtfPageSize = 25;
+    private int ntfTotal;
+    private bool ntfHasMore;
+    private bool ntfLoadingMore;
+    private List<NtfItem> liveToasts = new();
+
+    // ================== نوتیفیکیشن گوشی/تبلت (Web Push) ==================
+    private bool pushEnabled;
+    private bool pushBusy;
+    private bool pushSupportChecked;
+    private bool pushSupported;
+    private string pushStatusText = "بررسی وضعیت…";
+    private string PushApiRoot => Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+    private void ApplyPushState(PushState result)
+    {
+        pushSupportChecked = true; pushSupported = result.supported; pushEnabled = result.enabled;
+        pushInsecure = result.insecureOrigin;
+        pushStatusText = result.message ?? "وضعیت اعلان مشخص نیست.";
+    }
+    private async Task InitPushStateAsync()
+    {
+        if (pushBusy) return;
+        pushBusy = true;
+        try { ApplyPushState(await JS.InvokeAsync<PushState>("appPush.state", PushApiRoot, Auth.Token, Auth.UserId)); }
+        catch { pushEnabled = false; pushStatusText = "بررسی اعلان ناموفق بود؛ صفحه را تازه کنید."; }
+        finally { pushBusy = false; }
+    }
+    private async Task TogglePush()
+    {
+        if (pushBusy) return;
+        pushBusy = true;
+        try
+        {
+            var action = pushEnabled ? "appPush.disable" : "appPush.enable";
+            ApplyPushState(await JS.InvokeAsync<PushState>(action, PushApiRoot, Auth.Token, Auth.UserId));
+        }
+        catch { pushStatusText = "تنظیم اعلان ناموفق بود؛ صفحه را تازه کنید."; }
+        finally { pushBusy = false; }
+    }
+    private async Task TestPush()
+    {
+        if (pushBusy) return;
+        pushBusy = true;
+        try
+        {
+            var result = await JS.InvokeAsync<PushState>("appPush.test", PushApiRoot, Auth.Token);
+            pushStatusText = result.message ?? "درخواست آزمایش ثبت شد.";
+        }
+        catch { pushStatusText = "ارسال آزمایشی انجام نشد؛ ۳۰ ثانیه صبر کنید و وضعیت سرور را بررسی کنید."; }
+        finally { pushBusy = false; }
+    }
+    private class PushState { public bool supported { get; set; } public bool enabled { get; set; } public bool insecureOrigin { get; set; } public string? message { get; set; } }
+
+    private bool pushInsecure;
+    private async Task OpenHttpsSetupFromPanel()
+    {
+        var url = $"{PushApiRoot}/https-setup";
+        try { await JS.InvokeVoidAsync("open", url, "_blank"); }
+        catch { Toast.Info($"این نشانی را در مرورگر باز کنید: {url}"); }
+    }
+
+    // ===== کلیدهای VAPID (مدیر) =====
+    private bool vapidPanel, vapidBusy, vapidConfigured;
+    private string? vapidPublicKey, vapidPrivateKey, vapidSubject;
+    private string vapidSource = "none";
+
+    private async Task OpenVapidPanel()
+    {
+        vapidPanel = true;
+        vapidPrivateKey = null;
+        vapidSubject = null;
+        await LoadVapidStateAsync();
+    }
+    private void CloseVapidPanel() => vapidPanel = false;
+
+    private async Task LoadVapidStateAsync()
+    {
+        vapidBusy = true;
+        try
+        {
+            SetAuthHeader();
+            var st = await Http.GetFromJsonAsync<VapidState>($"{PushApiRoot}/api/notifications/push-vapid-key");
+            vapidConfigured = st?.configured ?? false;
+            vapidPublicKey = st?.publicKey;
+            vapidSource = st?.source ?? "none";
+        }
+        catch { vapidConfigured = false; vapidPublicKey = null; vapidSource = "none"; }
+        finally { vapidBusy = false; }
+    }
+
+    private async Task GenerateVapidAsync()
+    {
+        vapidBusy = true;
+        try
+        {
+            SetAuthHeader();
+            using var resp = await Http.PostAsJsonAsync($"{PushApiRoot}/api/notifications/push-vapid-generate", new { });
+            var r = resp.IsSuccessStatusCode ? await resp.Content.ReadFromJsonAsync<VapidKeysResult>() : null;
+            if (r == null) { Toast.Error("ساخت کلید انجام نشد."); return; }
+            vapidPublicKey = r.publicKey; vapidPrivateKey = r.privateKey; vapidSubject = r.subject;
+            vapidConfigured = r.applied;
+            vapidSource = r.source ?? (r.applied ? "settings" : "none");
+            Toast.Success(r.message ?? "کلید اعلان ساخته و فعال شد.");
+            if (pushEnabled) await InitPushStateAsync(); // اشتراک دستگاه‌ها پس از تغییر کلید باید دوباره ثبت شود
+        }
+        catch { Toast.Error("ساخت کلید انجام نشد؛ دسترسی مدیر را بررسی کنید."); }
+        finally { vapidBusy = false; }
+    }
+
+    private async Task ResetVapidAsync()
+    {
+        if (vapidBusy) return;
+        vapidBusy = true;
+        try
+        {
+            SetAuthHeader();
+            using var resp = await Http.PostAsJsonAsync($"{PushApiRoot}/api/notifications/push-vapid-reset", new { });
+            var r = resp.IsSuccessStatusCode ? await resp.Content.ReadFromJsonAsync<VapidResetResult>() : null;
+            if (r == null) { Toast.Error("حذف کلیدها انجام نشد."); return; }
+            vapidConfigured = r.configured;
+            vapidSource = r.source ?? "none";
+            vapidPublicKey = r.publicKey;
+            vapidPrivateKey = null; vapidSubject = null;
+            Toast.Success(r.message ?? "کلیدها حذف شد.");
+            if (pushEnabled) await InitPushStateAsync();
+        }
+        catch { Toast.Error("حذف کلیدها انجام نشد؛ دسترسی مدیر را بررسی کنید."); }
+        finally { vapidBusy = false; }
+    }
+
+    private async Task CopyText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+        try { await JS.InvokeVoidAsync("navigator.clipboard.writeText", text); Toast.Success("کپی شد."); }
+        catch { Toast.Error("کپی نشد — به‌صورت دستی انتخاب و کپی کنید."); }
+    }
+
+    private class VapidState { public string? publicKey { get; set; } public bool configured { get; set; } public string? source { get; set; } }
+    private class VapidKeysResult
+    {
+        public string publicKey { get; set; } = ""; public string privateKey { get; set; } = ""; public string subject { get; set; } = "";
+        public bool applied { get; set; } public string? source { get; set; } public int cleared { get; set; } public string? message { get; set; }
+    }
+    private class VapidResetResult { public bool configured { get; set; } public string? publicKey { get; set; } public string? source { get; set; } public int cleared { get; set; } public string? message { get; set; } }
+
+    // ================== اعلان در پیام‌رسان‌های بله و ایتا ==================
+    private bool msgPanel, msgBusy;
+    private MsgStatus? msgStatus;
+    private string msgStatusText = "برای اتصال، دکمه‌ی «اتصال» را بزنید.";
+    private string msgResultText = "";
+    private string? eitaaCode;
+
+    private void OpenMsgPanel()
+    {
+        msgPanel = true;
+        _ = LoadMsgStatusAsync();
+    }
+    private void CloseMsgPanel() => msgPanel = false;
+
+    /// <summary>
+    /// خواندن مدت نمایش سراسری اعلان‌ها/پیام‌ها از سرور (AppSettings).
+    /// این مقدار را «مدیر سامانه» از صفحهٔ «تنظیمات» تعیین می‌کند و برای همهٔ کاربران یکسان است.
+    /// </summary>
+    private async Task LoadTimingAsync()
+    {
+        try
+        {
+            // endpoint سبک و امن: فقط دو عددِ مدت نمایش را برمی‌گرداند و برای همهٔ کاربران باز است
+            // (برخلاف GET /api/settings که محدود به مدیر/اپراتور است و توکن‌های حساس را هم دارد).
+            var t = await Http.GetFromJsonAsync<NotifyTimingResult>("api/settings/notify-timing");
+            if (t is not null) NotificationTiming.LoadServer(t.bannerMs, t.toastMs);
+        }
+        catch { /* مقدار پیش‌فرض (۲ دقیقه / ۲۰ ثانیه) استفاده می‌شود */ }
+    }
+
+    private class NotifyTimingResult { public int bannerMs { get; set; } public int toastMs { get; set; } }
+
+    private async Task LoadMsgStatusAsync()
+    {
+        if (!Auth.IsLoggedIn) return;
+        msgBusy = true;
+        try
+        {
+            SetAuthHeader();
+            msgStatus = await Http.GetFromJsonAsync<MsgStatus>("api/notifications/messenger-status");
+            msgStatusText = DescribeMsgStatus();
+        }
+        catch { msgStatusText = "دریافت وضعیت پیام‌رسان‌ها ناموفق بود."; }
+        finally { msgBusy = false; }
+    }
+
+    private string DescribeMsgStatus()
+    {
+        if (msgStatus == null) return msgStatusText;
+        var parts = new List<string>();
+        if (msgStatus.baleLinked) parts.Add("بله: متصل");
+        if (msgStatus.eitaaLinked) parts.Add("ایتا: متصل");
+        if (parts.Count > 0) return string.Join(" • ", parts);
+        return msgStatus.baleConfigured || msgStatus.eitaaConfigured
+            ? "هنوز به بله/ایتا متصل نشده‌اید — دکمه‌ی «اتصال» را بزنید."
+            : "پیام‌رسان‌ها هنوز روی سرور تنظیم نشده‌اند (تنظیمات ← پیام‌رسان‌ها).";
+    }
+
+    private async Task TestMessengerAsync()
+    {
+        if (msgBusy) return;
+        msgBusy = true; msgResultText = "در حال ارسال پیام آزمایشی…";
+        try
+        {
+            SetAuthHeader();
+            using var resp = await Http.PostAsJsonAsync("api/notifications/test-messenger", new { });
+            var r = await resp.Content.ReadFromJsonAsync<MsgTestRes>();
+            msgResultText = r?.message ?? "پاسخ نامشخص از سرور.";
+        }
+        catch { msgResultText = "ارسال آزمایشی ناموفق بود؛ اتصال شبکه را بررسی کنید."; }
+        finally { msgBusy = false; }
+    }
+
+    private async Task SyncBaleAsync()
+    {
+        if (msgBusy) return;
+        msgBusy = true; msgResultText = "در حال همگام‌سازی بله…";
+        try
+        {
+            SetAuthHeader();
+            using var resp = await Http.PostAsJsonAsync("api/notifications/sync-bale", new { });
+            var r = resp.IsSuccessStatusCode ? await resp.Content.ReadFromJsonAsync<MsgSyncRes>() : null;
+            msgResultText = r?.message ?? "همگام‌سازی انجام نشد (دسترسی مدیر لازم است).";
+            await LoadMsgStatusAsync();
+        }
+        catch { msgResultText = "همگام‌سازی بله ناموفق بود."; }
+        finally { msgBusy = false; }
+    }
+
+    private async Task GetEitaaCodeAsync()
+    {
+        if (msgBusy) return;
+        msgBusy = true; msgResultText = "در حال ساخت کد اتصال…";
+        try
+        {
+            SetAuthHeader();
+            using var resp = await Http.PostAsJsonAsync("api/notifications/eitaa-link-code", new { });
+            var r = await resp.Content.ReadFromJsonAsync<MsgCodeRes>();
+            if (!string.IsNullOrWhiteSpace(r?.code))
+            {
+                eitaaCode = r!.code;
+                msgResultText = r.message ?? "کد ساخته شد.";
+            }
+            else msgResultText = r?.message ?? "ساخت کد اتصال ناموفق بود.";
+            msgStatusText = DescribeMsgStatus();
+        }
+        catch { msgResultText = "ساخت کد اتصال ناموفق بود."; }
+        finally { msgBusy = false; }
+    }
+
+    private class MsgStatus
+    {
+        public bool baleConfigured { get; set; }
+        public bool eitaaConfigured { get; set; }
+        public bool baleLinked { get; set; }
+        public bool eitaaLinked { get; set; }
+        public bool hasMobile { get; set; }
+        public bool isAdmin { get; set; }
+        public bool eitaaCodeActive { get; set; }
+        public string? ackEitaaUserId { get; set; }
+        public string? senderNumber { get; set; }
+    }
+    private class MsgTestRes { public bool posted { get; set; } public string? message { get; set; } public string? bale { get; set; } public string? eitaa { get; set; } }
+    private class MsgSyncRes { public int matched { get; set; } public string? message { get; set; } }
+    private class MsgCodeRes { public string? code { get; set; } public DateTime? expiresAt { get; set; } public bool configured { get; set; } public string? message { get; set; } }
+
+    public class NtfItem
+    {
+        public int Id { get; set; }
+        public string Title { get; set; } = "";
+        public string? Body { get; set; }
+        public string FromName { get; set; } = "";
+        public string FormName { get; set; } = "";
+        public string? Link { get; set; }
+        public bool IsRead { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    /// <summary>پاسخ صفحه‌بندی‌شدهٔ اعلان‌ها — همراه با شمارش کل/نخوانده.</summary>
+    public class NtfPage
+    {
+        public List<NtfItem> Items { get; set; } = new();
+        public int Total { get; set; }
+        public int Unread { get; set; }
+        public int FilteredTotal { get; set; }
+        public int Skip { get; set; }
+        public int Take { get; set; }
+        public bool HasMore { get; set; }
+    }
+
+    private void SetAuthHeader()
+    {
+        // HttpClient در WASM در طول نشست مشترک است؛ هنگام خروج نباید Bearer نشست قبلی روی آن بماند.
+        Http.DefaultRequestHeaders.Authorization = string.IsNullOrWhiteSpace(Auth.Token)
+            ? null
+            : new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Auth.Token);
+    }
+
+    private async Task InitNotificationsAsync()
+    {
+        if (!Auth.IsLoggedIn) return;
+        SetAuthHeader();
+        // مدت نمایش اعلان‌ها و پیام‌ها (سراسری از تنظیمات سرور — مدیر سامانه)
+        await LoadTimingAsync();
+        // اتصال چت در همهٔ صفحات فعال است، نه فقط پس از باز کردن صفحهٔ پیام‌رسان.
+        await Chat.EnsureHubConnectedAsync();
+        await RefreshChatSummaryAsync();
+        await RefreshNtf();
+
+        // اتصال بلادرنگ سراسری — از طریق سرویس مشترک RealtimeService
+        var uid = Auth.UserId > 0 ? Auth.UserId : GetUserIdFromToken(Auth.Token);
+        Rt.NotifyReceived -= OnRtNotify;
+        Rt.NotifyReceived += OnRtNotify;
+        Rt.DataChanged -= OnRtDataChanged;
+        Rt.DataChanged += OnRtDataChanged;
+        await Rt.EnsureStartedAsync(Http.BaseAddress?.ToString() ?? "", uid, Auth.Role);
+
+        // شمارنده‌ی نامه‌های نخوانده (اتوماسیون اداری)
+        await RefreshLettersUnreadAsync();
+
+        // وضعیت نوتیفیکیشن گوشی/تبلت (Web Push)
+        await InitPushStateAsync();
+
+        // وضعیت اتصال پیام‌رسان‌ها (بله و ایتا)
+        await LoadMsgStatusAsync();
+    }
+
+    // ==================== اتوماسیون اداری: شمارنده نامه‌های نخوانده ====================
+    private int lettersUnread;
+
+    private void OnRtDataChanged(string scope)
+    {
+        if (scope != "letters") return;
+        _ = InvokeAsync(async () => { await RefreshLettersUnreadAsync(); StateHasChanged(); });
+    }
+
+    private async Task RefreshLettersUnreadAsync()
+    {
+        if (!Auth.IsLoggedIn || Auth.IsReferrer) return;
+        try
+        {
+            SetAuthHeader();
+            var stats = await Http.GetFromJsonAsync<LetterStatsRes>("api/letters/stats");
+            lettersUnread = stats?.InboxUnread ?? 0;
+        }
+        catch { /* دسترسی ندارد یا خطای شبکه — نادیده */ }
+    }
+
+    private class LetterStatsRes { public int InboxUnread { get; set; } }
+
+    private async void OnRtNotify(RtNotification rn)
+    {
+        var n = new NtfItem { Id = rn.Id, Title = rn.Title, Body = rn.Body, FromName = rn.FromName, FormName = rn.FormName, Link = rn.Link, CreatedAt = rn.CreatedAt };
+        unreadCount++;
+        ntfList.Insert(0, n);
+        liveToasts.Insert(0, n);
+        if (liveToasts.Count > 6) liveToasts.RemoveAt(liveToasts.Count - 1);
+        await InvokeAsync(StateHasChanged);
+        if (!pushEnabled)
+        {
+            // اعلان سیستمی (Web Push) خاموش است → همان حس اعلان اندروید را داخل خود نرم‌افزار بساز:
+            // نوار اعلان بالای صفحه + صدای کوتاه و لرزش در گوشی
+            try { await JS.InvokeVoidAsync("attLocalNotify", n.Title, n.Body ?? ""); } catch { }
+            try { await JS.InvokeVoidAsync("attNotifyAlert"); } catch { }
+        }
+        // مدت نمایش اعلان از تنظیمات کاربر می‌آید (پیش‌فرض ۲ دقیقه، قبلاً ۱۵ ثانیه بود).
+        // مقدار صفر یعنی اعلان تا بستن دستی توسط کاربر روی صفحه می‌ماند.
+        var hideAfterMs = NotificationTiming.BannerMs;
+        if (hideAfterMs > 0)
+        {
+            _ = Task.Delay(hideAfterMs).ContinueWith(async _ =>
+            {
+                liveToasts.Remove(n);
+                await InvokeAsync(StateHasChanged);
+            });
+        }
+    }
+
+    private static int GetUserIdFromToken(string? token)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(token)) return 0;
+            var payload = token.Split('.')[1].Replace('-', '+').Replace('_', '/');
+            switch (payload.Length % 4) { case 2: payload += "=="; break; case 3: payload += "="; break; }
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            foreach (var prop in doc.RootElement.EnumerateObject())
+                if (prop.Name.EndsWith("nameidentifier") || prop.Name == "nameid" || prop.Name == "sub")
+                    return int.TryParse(prop.Value.GetString(), out var v) ? v : 0;
+        }
+        catch { }
+        return 0;
+    }
+
+    private async Task RefreshNtf()
+    {
+        if (!Auth.IsLoggedIn) { ntfList.Clear(); unreadCount = 0; chatUnreadCount = 0; return; }
+        SetAuthHeader();
+        try
+        {
+            var page = await Http.GetFromJsonAsync<NtfPage>($"/api/notifications/page?take={NtfPageSize}&skip=0");
+            ntfList = page?.Items ?? new();
+            ntfTotal = page?.Total ?? 0;
+            ntfHasMore = page?.HasMore ?? false;
+            // شمارنده همان چیزی است که سرور می‌شمارد (کل نخوانده‌ها) — نه تعداد ردیف‌های فهرست
+            unreadCount = page?.Unread ?? 0;
+            await RefreshChatSummaryAsync();
+        }
+        catch { }
+    }
+
+    /// <summary>بارگذاری صفحهٔ بعدِ اعلان‌ها و افزودن به انتهای فهرست پنل.</summary>
+    private async Task LoadMoreNtfAsync()
+    {
+        if (ntfLoadingMore || !ntfHasMore) return;
+        ntfLoadingMore = true;
+        try
+        {
+            SetAuthHeader();
+            var page = await Http.GetFromJsonAsync<NtfPage>(
+                $"/api/notifications/page?take={NtfPageSize}&skip={ntfList.Count}");
+            if (page != null)
+            {
+                var known = ntfList.Select(x => x.Id).ToHashSet();
+                foreach (var item in page.Items.Where(x => !known.Contains(x.Id)))
+                    ntfList.Add(item);
+
+                ntfTotal = page.Total;
+                unreadCount = page.Unread;
+                ntfHasMore = page.HasMore;
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { ntfLoadingMore = false; }
+    }
+
+    private void OnChatMessage(ChatMessageDto message) => OnChatSync();
+    private void OnChatDeleted(int conversationId, int messageId) => OnChatSync();
+    private void OnChatRead(int conversationId, int readerId, int lastId) => OnChatSync();
+    private void OnChatConversation(int id) => OnChatSync();
+    private void OnChatSync()
+    {
+        if (layoutDisposed) return;
+        _ = InvokeAsync(async () =>
+        {
+            await RefreshChatSummaryAsync();
+            if (!layoutDisposed) StateHasChanged();
+        });
+    }
+
+    private async Task RefreshChatSummaryAsync()
+    {
+        if (!Auth.IsLoggedIn || layoutDisposed) return;
+        var version = ++chatSummaryVersion;
+        var userId = Auth.UserId;
+        try
+        {
+            var summary = await Chat.GetSummaryAsync();
+            if (!layoutDisposed && version == chatSummaryVersion && userId == Auth.UserId)
+                chatUnreadCount = summary.TotalUnreadMessages;
+        }
+        catch { }
+    }
+    private class UnreadRes { public int Count { get; set; } }
+
+    private async Task ToggleNtfPanel()
+    {
+        showNtfPanel = !showNtfPanel;
+        if (showNtfPanel)
+        {
+            SetAuthHeader();
+            await RefreshNtf();
+        }
+    }
+
+    private async Task ClearAllNtf()
+    {
+        try { await Http.DeleteAsync("/api/notifications/clear-all"); } catch { }
+        ntfList.Clear();
+        ntfTotal = 0;
+        ntfHasMore = false;
+        unreadCount = 0;
+        liveToasts.Clear();
+    }
+
+    private async Task MarkAllRead()
+    {
+        try { await Http.PostAsync("/api/notifications/read-all", null); } catch { }
+        unreadCount = 0;
+        foreach (var n in ntfList) n.IsRead = true;
+        // شمارش سرور هم باید صفر شود؛ وگرنه با بستن/باز کردن پنل «+۹۹» برمی‌گردد
+        await RefreshNtf();
+    }
+
+    private async Task OpenNtf(NtfItem n)
+    {
+        if (!n.IsRead)
+        {
+            n.IsRead = true;
+            if (unreadCount > 0) unreadCount--;
+            try { await Http.PostAsync($"/api/notifications/{n.Id}/read", null); } catch { }
+        }
+        showNtfPanel = false;
+        if (!string.IsNullOrWhiteSpace(n.Link)) Nav.NavigateTo(n.Link);
+    }
+
+    private async Task OpenToast(NtfItem t)
+    {
+        liveToasts.Remove(t);
+        await OpenNtf(t);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Nav.LocationChanged += OnLocationChanged;
+
+        // در بازیابی نشست از storage، رویداد Auth.Changed ممکن است پیش از ساخته‌شدن Layout رخ داده باشد.
+        // بنابراین در نخستین renderِ نشستِ معتبر نیز صریح و با Bearer Token زمینهٔ شرکت را می‌گیریم.
+        if (Auth.IsLoggedIn)
+        {
+            await LoadCompanyContextAsync();
+
+            // توست خوش‌آمد بعد از ورود موفق
+            try
+            {
+                var justIn = await JS.InvokeAsync<string?>("sessionStorage.getItem", "justLoggedIn");
+                if (!string.IsNullOrWhiteSpace(justIn))
+                {
+                    await JS.InvokeVoidAsync("sessionStorage.removeItem", "justLoggedIn");
+                    Toast.Success($"خوش آمدید، {justIn} 👋 — ورود با موفقیت انجام شد.");
+                }
+            }
+            catch { }
+        }
+
+        await InitNotificationsAsync();
+        if (Auth.IsLoggedIn && !Auth.IsReferrer)
+        {
+            try
+            {
+                var list = await ReportSvc.GetReorderAsync();
+                reorderCount = list.Count;
+            }
+            catch { /* نادیده گرفته می‌شود */ }
+
+            await RefreshNewSystemsCount();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            // تشخیص اندازه صفحه هنگام ورود + رصد تغییر اندازه/چرخش صفحه
+            isMobile = await JS.InvokeAsync<bool>("appShell.isMobile");
+            selfRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("appShell.watch", selfRef);
+            if (isMobile) StateHasChanged();
+        }
+        catch { /* JS در دسترس نیست */ }
+    }
+
+    [JSInvokable]
+    public void OnScreenChanged(bool mobile)
+    {
+        if (isMobile == mobile) return;
+        isMobile = mobile;
+        // هنگام چرخش/تغییر اندازه، منوی موبایل نباید در دسکتاپ ناخواسته روی محتوا بیفتد.
+        mobileOpen = false;
+        if (!mobile) collapsed = true;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnLayoutChanged() => InvokeAsync(StateHasChanged);
+
+    /// <summary>همبرگری: در موبایل باز/بسته و در دسکتاپ جمع/باز می‌کند.</summary>
+    private void Toggle()
+    {
+        if (isMobile)
+        {
+            mobileOpen = !mobileOpen;
+        }
+        else
+        {
+            mobileOpen = !mobileOpen;
+            collapsed = !collapsed;
+        }
+    }
+
+    private void OpenMobileMenu() => mobileOpen = true;
+
+    private void OnNavigate()
+    {
+        mobileOpen = false;
+        _ = RefreshNewSystemsCount();
+    }
+
+    private async Task RefreshNewSystemsCount()
+    {
+        try
+        {
+            var systems = await Http.GetFromJsonAsync<List<NewSystemCountItem>>("/api/SystemInfo");
+            // آلارم منو: سیستم جدیدِ تاییدنشده + سیستم موجود با تغییرات در انتظار
+            var n = systems?.Count(s => !s.IsApproved || !string.IsNullOrEmpty(s.PendingPayloadJson)) ?? 0;
+            if (n != newSystemsCount)
+            {
+                newSystemsCount = n;
+                StateHasChanged();
+            }
+        }
+        catch { /* در دسترس نیست */ }
+    }
+
+    private class NewSystemCountItem
+    {
+        public bool IsApproved { get; set; }
+        public string? PendingPayloadJson { get; set; }
+    }
+
+    private void CloseMobile() => mobileOpen = false;
+
+    private async Task Logout()
+    {
+        try { await JS.InvokeAsync<PushState>("appPush.logout", PushApiRoot, Auth.Token); } catch { }
+        await Rt.StopAsync();
+        try { await Tabs.CloseAllAsync(); } catch { }
+        await Auth.SignOutAsync();
+        // مستقل از زمان‌بندی رویداد Auth.Changed، نشست و زمینهٔ قبلی را فوراً از HttpClient پاک کن.
+        ClearCompanyContext();
+        SetAuthHeader();
+        try { await JS.InvokeVoidAsync("localStorage.removeItem", "activeCompanyId"); } catch { }
+        Nav.NavigateTo("/", forceLoad: true);
+    }
+
+    // ---------------- تغییر رمز عبور توسط خود کاربر ----------------
+    private bool showPwModal, pwSaving;
+    private string pwCurrent = "", pwNew = "", pwConfirm = "";
+
+    private void OpenChangePassword()
+    {
+        pwCurrent = pwNew = pwConfirm = "";
+        showPwModal = true;
+    }
+
+    private void OpenPwFromMenu()
+    {
+        mobileOpen = false;
+        OpenChangePassword();
+    }
+
+    private void ClosePwModal() => showPwModal = false;
+
+    private async Task SavePassword()
+    {
+        if (string.IsNullOrWhiteSpace(pwCurrent) || string.IsNullOrWhiteSpace(pwNew))
+        {
+            Toast.Error("رمز فعلی و رمز جدید را وارد کنید.");
+            return;
+        }
+        if (pwNew != pwConfirm)
+        {
+            Toast.Error("رمز جدید و تکرار آن یکسان نیستند.");
+            return;
+        }
+        pwSaving = true;
+        try
+        {
+            await AuthApi.ChangePasswordAsync(new ChangePasswordRequest { CurrentPassword = pwCurrent, NewPassword = pwNew });
+            Toast.Success("رمز عبور با موفقیت تغییر کرد.");
+            showPwModal = false;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { pwSaving = false; }
+    }
+
+    public void Dispose()
+    {
+        layoutDisposed = true;
+        ++chatSummaryVersion;
+        Layout.Changed -= OnLayoutChanged;
+        Auth.Changed -= OnAuthChanged;
+        Chat.OnMessageReceived -= OnChatMessage;
+        Chat.OnMessageDeleted -= OnChatDeleted;
+        Chat.OnMessagesRead -= OnChatRead;
+        Chat.OnConversationChanged -= OnChatConversation;
+        Chat.OnSyncRequested -= OnChatSync;
+        Nav.LocationChanged -= OnLocationChanged;
+        Rt.NotifyReceived -= OnRtNotify;
+        Rt.DataChanged -= OnRtDataChanged;
+        // ابتدا شنوندهٔ تغییر اندازه در JS جدا می‌شود تا دیگر به مرجعِ در حال آزادشدن فراخوانی نکند.
+        try { _ = JS.InvokeVoidAsync("appShell.unwatch"); } catch { }
+        try { selfRef?.Dispose(); } catch { }
+        selfRef = null;
+    }
+
+    // ================== گارد مرکزی مسیرها بر اساس دسترسی‌های RBAC ==================
+    // هر مسیر به پرمیشن لازم نگاشت می‌شود؛ "Module." یعنی داشتن حداقل یک دسترسی از آن ماژول کافی است.
+    private static readonly (string Prefix, string Perm, string Title)[] RouteGuards =
+    {
+        ("cartable",            "MyCartable.View",         "کارتابل من"),
+        ("my-archive",          "MyArchive.View",          "بایگانی شخصی"),
+        ("my-dashboards",       "MyDashboards.View",       "داشبورد من"),
+        ("chat",                "Chat.View",               "پیام‌رسان سازمانی"),
+        ("personal-settings",   "PersonalSettings.Read",   "پروفایل و تنظیمات شخصی"),
+        ("dashboard-cctv",      "Dashboards.Management",   "داشبورد مدیریت"),
+        ("dashboard-hardware",  "Dashboards.Hardware",     "داشبورد سخت‌افزار"),
+        ("operations/reports/kardex-quantity", "ReportPages.Kardex", "کاردکس تعداد کالاها"),
+        ("operations/reports/kardex-rial",     "ReportPages.Kardex", "کاردکس ریالی کالاها"),
+        ("orders",              "Orders.",                 "خرید و فروش"),
+        ("stock",               "Stock.",                  "موجودی انبار"),
+        ("repairs",             "Repairs.",                "تعمیرات"),
+        ("expenses",            "Expenses.",               "هزینه‌ها"),
+        ("reports/kardex",      "ReportPages.Kardex",      "کاردکس کالا"),
+        ("reports/reorder",     "ReportPages.Reorder",     "نقطه سفارش"),
+        ("products",            "Products.",               "کالاها"),
+        ("categories",          "Products.",               "گروه‌های کالا"),
+        ("units",               "Products.",               "واحدهای شمارش"),
+        ("warehouses",          "Warehouses.",             "انبارها"),
+        // طرف حساب‌ها: مشتری و تأمین‌کننده دسترسی مستقل دارند؛ داشتن یکی از این سه کافی است.
+        // (گارد عمومی «Parties.» ویزیتورِ فقط‌مشتری را از تعریف مشتری محروم می‌کرد.)
+        ("parties",             "Parties.Customers.Suppliers.", "طرف حساب‌ها"),
+        ("referrer-wallets",    "ReferrerWallets.",        "کیف پول معرف‌ها"),
+        ("referrers",           "Referrers.",              "معرف‌ها"),
+        // مسیرهای ماژول ویزیتوری تفکیک‌شده‌اند: ویزیتور «مشاهده/ثبت» دارد ولی نباید
+        // صفحهٔ تأیید مدیر یا صف مالی را باز کند (گارد عمومی «sales/» فقط وجود
+        // یکی از مجوزهای ماژول را می‌سنجید و همهٔ زیرمسیرها را باز می‌گذاشت).
+        ("sales/approvals",     "SalesVisit.Approve",      "تأیید سفارش‌های ویزیتور"),
+        ("sales/finance-queue", "SalesVisit.FinanceView",  "صف مالی سفارش‌های ویزیتور"),
+        ("sales/visits/new",    "SalesVisit.Create",       "ثبت سفارش ویزیتوری"),
+        ("sales/requests",      "SalesVisit.Approve",      "همهٔ درخواست‌های سفارش"),
+        ("sales/",              "SalesVisit.",             "فروش و ویزیتوری"),
+        ("system-company",      "SystemCompanies.",        "کمپانی‌ها"),
+        ("system-department",   "SystemDepartments.",      "واحدها"),
+        ("users",               "SystemUsers.",            "کاربران"),
+        ("settings",            "Settings.",               "تنظیمات"),
+        ("moadian",             "Moadian.View",            "سامانه مودیان"),
+        ("shop-guide",          "ShopGuide.View",          "راهنمای سامانه فروشگاهی"),
+        ("my-wallet",           "ReferrerPanel.MyWallet",  "کیف پول من"),
+        ("my-products",         "ReferrerPanel.MyProducts","کالاهای موجود"),
+        ("my-card",             "ReferrerPanel.MyCard",    "کارت ویزیت من"),
+        ("it-requests",         "ItRequests.",             "درخواست خدمت IT"),
+        ("it-vault",            "ItVault.View",            "گاوصندوق رمزها"),
+        ("servers",             "Servers.View",            "مدیریت سرورها"),
+        ("ip-management",       "Ipam.View",               "مدیریت آی‌پی"),
+        ("settings/it-client-companies", "Settings.ItClientCompanies.", "شرکت‌های راه‌دور"),
+        ("settings/it-remote",  "Settings.ItRemoteSettings.", "اتصال به واحد IT مرکزی"),
+        ("work-projects",       "WorkProjects.View",        "پروژه‌های کاری"),
+        ("work-orders",         "WorkOrders.View",         "دستور کار"),
+        ("work-calendar",       "Attendance.ManageShifts", "تقویم کاری"),
+        ("letters",             "InnerLetters.",           "کارتابل نامه‌های داخلی"),
+        ("incoming-letters",    "IncomingLetters.",        "کارتابل نامه وارده"),
+        ("outgoing-letters/dabirkhane", "OutgoingLetters.Dabirkhane", "دبیرخانه یکپارچه اتوماسیون اداری"),
+        ("outgoing-letters",    "OutgoingLetters.",        "کارتابل نامه صادره"),
+        ("office/email",        "Email.",                  "ایمیل سازمانی"),
+        ("cctv-nvrs",           "CctvNvrs.",               "دستگاه‌های NVR"),
+        ("cctv",                "CctvCameras.",            "دوربین‌ها"),
+        ("office-machines",     "SystemUsers.",            "ماشین‌های اداری"),
+        ("network-scan",        "SystemUsers.",            "اسکن شبکه"),
+        ("system-",             "SystemUsers.",            "مدیریت سیستم"),
+        ("hr-main",              "HrMain.",                 "منابع انسانی اصلی")
+    };
+
+    private bool RouteAllowed(out string deniedTitle)
+    {
+        deniedTitle = "";
+        if (!Auth.IsLoggedIn) return true;
+
+        var p = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/').ToLowerInvariant();
+        var q = p.IndexOf('?');
+        if (q >= 0) p = p[..q];
+        if (p == "") return true; // صفحه‌ی اصلی خودش دسترسی داشبورد مالی را کنترل می‌کند
+
+        if (p.StartsWith("operations/reports/orders"))
+        {
+            var allowed = Auth.CanSee("Orders");
+            if (!allowed) deniedTitle = "گزارش خرید و فروش";
+            return allowed;
+        }
+
+        if (p.StartsWith("operations/reports/dashboard"))
+        {
+            var allowed = Auth.CanSee("Orders") || Auth.CanSee("Repairs");
+            if (!allowed) deniedTitle = "داشبورد جامع عملیات";
+            return allowed;
+        }
+
+        // نگار ذهنی دو مسیر دارد: نگاشت پروژه‌ها (با مجوز بخشی WorkProjects.MindFlow) و
+        // نگاشت‌های مستقل (با ماژول MindFlow). این بررسی باید «پیش از» گارد
+        // work-projects بیاید، وگرنه کاربری که فقط مجوز نگار ذهنی دارد رد می‌شود.
+        if (p.StartsWith("work-projects/mindflow"))
+        {
+            // تب نگار ذهنی پروژه‌ها با مجوز بخشی، صفحهٔ مستقل با ماژول نگار ذهنی.
+            var allowed = Auth.Has("MindFlow.View") || Auth.Has("WorkProjects.MindFlow");
+            if (!allowed) deniedTitle = "نگار ذهنی";
+            return allowed;
+        }
+        if (p.StartsWith("mindflows"))
+        {
+            var allowed = Auth.Has("MindFlow.View");
+            if (!allowed) deniedTitle = "نگار ذهنی";
+            return allowed;
+        }
+
+        // گروه‌های گیرندگان نامه هم از تنظیمات شخصی و هم از صفحهٔ ثبت نامه قابل
+        // مدیریت‌اند؛ مسیر خاص باید پیش از گارد عمومی personal-settings بررسی شود.
+        if (p.StartsWith("personal-settings/letter-groups"))
+        {
+            var allowed = Auth.Has("PersonalSettings.ManageLetterGroups") || Auth.Has("InnerLetters.Create");
+            if (!allowed) deniedTitle = "گروه‌های گیرندگان نامه";
+            return allowed;
+        }
+
+        foreach (var (prefix, perm, title) in RouteGuards)
+        {
+            if (!p.StartsWith(prefix)) continue;
+            bool allowed;
+            if (perm == "Parties.Customers.Suppliers.")
+            {
+                // «مشتری» و «تأمین‌کننده» تفکیک‌شده‌اند: هر کدام مجوز مستقل دارد
+                allowed = Auth.HasModule("Parties") || Auth.HasModule("Customers") || Auth.HasModule("Suppliers");
+            }
+            else if (perm.EndsWith("."))
+            {
+                allowed = Auth.HasModule(perm.TrimEnd('.'));
+            }
+            else
+            {
+                allowed = Auth.Has(perm);
+            }
+            if (!allowed) { deniedTitle = title; return false; }
+            return true;
+        }
+        return true; // مسیرهای بدون نگاشت (مثل تغییر رمز) آزادند
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+        => StateHasChanged();
+}
+
+
+<style>
+    /* ================== زنگ اعلان ================== */
+    .company-switcher { width: 150px; min-width: 110px; font-size: .75rem; }
+    .ntf-bell-wrap { position: relative; }
+    .ntf-bell { position: relative; }
+    .ntf-badge {
+        position: absolute; top: -6px; left: -6px;
+        background: #dc3545; color: #fff; border-radius: 999px;
+        font-size: .62rem; font-weight: 700; min-width: 17px; height: 17px;
+        display: flex; align-items: center; justify-content: center; padding: 0 4px;
+        box-shadow: 0 0 0 2px #fff; animation: ntfPulse 2s infinite;
+    }
+    @@keyframes ntfPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+    .ntf-panel {
+        position: absolute; top: calc(100% + 8px); left: 0; z-index: 1080;
+        width: 340px; max-width: 92vw; max-height: calc(100dvh - 72px);
+        display: flex; flex-direction: column; background: #fff;
+        border: 1px solid #e2e8f0; border-radius: 14px; overflow: hidden;
+    }
+    .ntf-panel-head { display: flex; justify-content: space-between; align-items: center; padding: .6rem .9rem; border-bottom: 1px solid #eef2f7; background: #f8fafc; }
+    .ntf-panel-body {
+        flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto;
+        overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+    }
+    .ntf-panel-more {
+        position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between;
+        gap: .5rem; padding: .5rem .9rem; background: #f8fafc; border-top: 1px solid #e2e8f0;
+    }
+    .ntf-item { padding: .6rem .9rem; border-bottom: 1px solid #f1f5f9; cursor: pointer; transition: background .12s; }
+    .ntf-item:hover { background: #f8fafc; }
+    .ntf-item.unread { background: #eff6ff; border-right: 3px solid #2563eb; }
+    .fs-9 { font-size: .7rem; }
+
+    /* ================== توست اعلان — بالای صفحه (شبیه نوتیف گوشی) ================== */
+    /* اعلان‌ها مثل نوتیف گوشی از بالای صفحه می‌آیند و بالای گوشی می‌مانند */
+    .ntf-toasts {
+        position: fixed; top: 1rem; right: 1rem; z-index: 1090;
+        display: flex; flex-direction: column; gap: .55rem; max-width: 360px; width: calc(100vw - 2rem);
+        pointer-events: none;
+    }
+    .ntf-toast {
+        pointer-events: auto;
+        display: flex; gap: .65rem; align-items: flex-start;
+        background: #fff; border: 1px solid #dbe7ff; border-radius: 14px;
+        padding: .75rem .9rem; box-shadow: 0 12px 32px rgba(15,23,42,.22);
+        cursor: pointer; animation: ntfIn .32s cubic-bezier(.21,1.02,.73,1);
+        border-right: 4px solid #2563eb;
+    }
+    @@keyframes ntfIn { from { transform: translateY(-16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .ntf-toast-icon {
+        width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0;
+        background: linear-gradient(135deg, #2563eb, #38bdf8); color: #fff;
+        display: flex; align-items: center; justify-content: center; font-size: 1.1rem;
+        box-shadow: 0 4px 12px rgba(37,99,235,.35);
+    }
+    .ntf-toast-body { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+    /* ردیف فعال‌سازی نوتیفیکیشن گوشی/تبلت در پنل زنگ */
+    .ntf-push-row {
+        display: flex; align-items: center; gap: .6rem;
+        padding: .6rem .9rem; border-bottom: 1px solid #eef2f7;
+        background: linear-gradient(180deg, #f0f7ff, #f8fbff);
+    }
+    .ntf-push-row.flex-wrap { flex-direction: row; }
+    .ntf-push-row .btn-sm { font-size: .72rem; padding: .15rem .5rem; white-space: nowrap; }
+    .ntf-push-icon {
+        width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+        background: #e8f1ff; color: #2563eb; display: flex; align-items: center; justify-content: center;
+    }
+    .ntf-push-msg { line-height: 1.5; }
+
+    /* در موبایل: تمام‌عرض بالا، دقیقاً مثل نوتیف گوشی */
+    @@media (max-width: 575.98px) {
+        .ntf-toasts { top: .6rem; right: .5rem; left: .5rem; width: auto; max-width: none; }
+        .ntf-toast { border-radius: 12px; }
+        .ntf-panel {
+            position: fixed; top: .5rem; left: .5rem; right: .5rem;
+            width: auto; max-width: none; max-height: calc(100dvh - 1rem);
+        }
+        .ntf-panel-head { flex-wrap: wrap; gap: .45rem; }
+        .ntf-panel-head > .d-flex { flex-wrap: wrap; justify-content: flex-end; }
+        .ntf-item { padding: .7rem .8rem; }
+        .ntf-item .fs-8 { overflow-wrap: anywhere; }
+    }
+
+    /* فرم‌های بررسی وضعیت و کلیدهای اعلان در موبایل/دسکتاپ */
+    .vapid-card { max-height: min(90vh, 760px); overflow-y: auto; }
+    .vapid-card .d-flex { flex-wrap: wrap; }
+    .ntf-panel .ntf-push-row { flex-wrap: wrap; }
+    .ntf-panel .ntf-push-row > * { min-width: 0; }
+    @@media (max-width: 575.98px) {
+        .ntf-panel .ntf-push-row { align-items: flex-start; }
+        .ntf-panel .ntf-push-row .d-flex { width: 100%; flex-wrap: wrap; }
+        .ntf-panel .ntf-push-row .btn-sm { flex: 1 1 auto; min-height: 34px; }
+        .vapid-overlay { align-items: flex-start; padding: .5rem; overflow-y: auto; }
+        .vapid-card { width: 100%; max-height: calc(100vh - 1rem); border-radius: .75rem; padding: .8rem; }
+        .vapid-card .form-control[readonly] { font-size: .62rem; }
+    }
+
+    /* پنل کلیدهای VAPID */
+    .vapid-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, .55); z-index: 2100; display: flex; align-items: center; justify-content: center; padding: 1rem; }
+    .vapid-card { background: #fff; border-radius: 1rem; max-width: 600px; width: 100%; padding: 1.1rem; box-shadow: 0 20px 50px rgba(0,0,0,.25); max-height: 90vh; overflow: auto; }
+    .vapid-card .form-control[readonly] { font-family: monospace; font-size: .72rem; direction: ltr; }
+</style>

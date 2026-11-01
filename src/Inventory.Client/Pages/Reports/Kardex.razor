@@ -1,0 +1,209 @@
+@page "/reports/kardex"
+@page "/operations/reports/kardex-quantity"
+@inject IAuthState Auth
+@inject IReportService ReportSvc
+@inject IProductService ProductSvc
+@inject IWarehouseService WarehouseSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+@if (!Auth.Has("ReportPages.Kardex"))
+{
+    <div class="alert alert-warning mt-3">
+        <i class="bi bi-shield-exclamation"></i>
+        شما به «گزارش کاردکس کالا» دسترسی ندارید. برای دریافت دسترسی با مدیر سیستم تماس بگیرید.
+    </div>
+}
+else
+{
+<PageTitle>کاردکس کالا</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>کاردکس کالا</h1>
+        <p class="lead">ریز گردش ورود و خروج کالا در بازه زمانی دلخواه</p>
+    </div>
+    @if (rows.Count > 0)
+    {
+        <button class="btn btn-outline-primary ms-auto no-print" @onclick="Print">
+            <i class="bi bi-printer"></i> چاپ
+        </button>
+    }
+</div>
+
+<div class="card mb-3 no-print">
+    <div class="card-body">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label">کالا <span class="text-danger">*</span></label>
+                <SearchSelect Items="productLookup" Value="productId" ValueChanged="v => productId = v" Placeholder="جستجوی کالا…" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">انبار</label>
+                <SearchSelect Items="whLookup" Value="warehouseId" ValueChanged="v => warehouseId = v" Placeholder="همه انبارها" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">از تاریخ</label>
+                <DatePicker @bind-Value="from" AllowClear="true" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">تا تاریخ</label>
+                <DatePicker @bind-Value="to" AllowClear="true" />
+            </div>
+            <div class="col-md-auto">
+                <button class="btn btn-primary" @onclick="Load" disabled="@(productId == 0)">
+                    <i class="bi bi-search"></i> نمایش کاردکس
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else if (productId == 0)
+{
+    <div class="card">
+        <div class="empty-state"><i class="bi bi-journal-text"></i><h5>برای مشاهده کاردکس، یک کالا انتخاب کنید</h5></div>
+    </div>
+}
+else if (rows.Count == 0)
+{
+    <div class="card">
+        <div class="empty-state"><i class="bi bi-journal-text"></i><h5>گردشی برای این کالا در بازه انتخاب‌شده ثبت نشده است</h5></div>
+    </div>
+}
+else
+{
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-journal-text text-primary"></i>
+            <span class="card-title">کاردکس: @productName</span>
+            @if (!string.IsNullOrEmpty(warehouseName))
+            {
+                <span class="badge badge-soft-primary ms-auto">@warehouseName</span>
+            }
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>تاریخ</th>
+                            <th>نوع</th>
+                            <th>شماره سند</th>
+                            <th>طرف حساب</th>
+                            <th>شرح</th>
+                            <th class="text-start">ورودی</th>
+                            <th class="text-start">خروجی</th>
+                            <th class="text-start">مانده</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in PagedRows)
+                        {
+                            <tr>
+                                <td class="text-muted fs-8">@r.Date.ToFaDateTime()</td>
+                                <td>@TypeBadge(r.Type)</td>
+                                <td class="doc-number">@r.DocumentNo</td>
+                                <td>@(string.IsNullOrEmpty(r.PartyName) ? "—" : r.PartyName)</td>
+                                <td class="text-muted">@r.Description</td>
+                                <td class="text-start num @(r.InQty > 0 ? "text-success" : "text-muted")">@(r.InQty > 0 ? r.InQty.Num() : "—")</td>
+                                <td class="text-start num @(r.OutQty > 0 ? "text-danger" : "text-muted")">@(r.OutQty > 0 ? r.OutQty.Num() : "—")</td>
+                                <td class="text-start num fw-700">@r.Balance.Num()</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <Pager Page="page" PageCount="PageCount" OnPageChanged="p => page = p" />
+
+            <div class="d-flex flex-wrap gap-3 p-3 border-top">
+                <div>
+                    <div class="fs-8 text-muted">جمع ورودی</div>
+                    <div class="fw-700 num text-success">@totalIn.Num()</div>
+                </div>
+                <div>
+                    <div class="fs-8 text-muted">جمع خروجی</div>
+                    <div class="fw-700 num text-danger">@totalOut.Num()</div>
+                </div>
+                <div class="ms-auto">
+                    <div class="fs-8 text-muted">مانده نهایی</div>
+                    <div class="fw-800 fs-5 num text-primary">@finalBalance.Num() <span class="fs-8 text-muted">@unit</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+}
+
+@code {
+    private List<KardexRow> rows = new();
+
+    // ---------- صفحه‌بندی ----------
+    private int page = 1;
+    private const int PageSize = 15;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(rows.Count / (double)PageSize));
+    private List<KardexRow> PagedRows
+    {
+        get
+        {
+            if (page > PageCount) page = PageCount;
+            return rows.Skip((page - 1) * PageSize).Take(PageSize).ToList();
+        }
+    }
+    private List<LookupItem> productLookup = new();
+    private List<LookupItem> whLookup = new();
+    private int productId, warehouseId;
+    private DateTime? from, to;
+    private bool loading;
+    private string productName = "", warehouseName = "", unit = "";
+
+    private decimal totalIn => rows.Sum(r => r.InQty);
+    private decimal totalOut => rows.Sum(r => r.OutQty);
+    private decimal finalBalance => rows.Count > 0 ? rows[^1].Balance : 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("کاردکس کالا");
+        try
+        {
+            productLookup = await ProductSvc.GetLookupsAsync();
+            whLookup = await WarehouseSvc.GetLookupsAsync();
+        }
+        catch { }
+    }
+
+    private async Task Load()
+    {
+        if (productId == 0) return;
+        loading = true;
+        rows = new();
+        try
+        {
+            rows = await ReportSvc.GetKardexAsync(productId, warehouseId, from, to);
+            page = 1;
+
+            var sel = productLookup.FirstOrDefault(p => p.Id == productId);
+            productName = sel?.Name ?? "";
+            var wh = whLookup.FirstOrDefault(w => w.Id == warehouseId);
+            warehouseName = wh?.Name ?? "";
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task Print() => await JS.InvokeVoidAsync("print");
+
+    private static RenderFragment TypeBadge(TransactionType type) => type switch
+    {
+        TransactionType.Sale => @<span class="badge badge-out">فروش</span>,
+        TransactionType.Purchase => @<span class="badge badge-in">خرید</span>,
+        _ => @<span class="badge badge-adjust">اصلاح موجودی</span>
+    };
+}

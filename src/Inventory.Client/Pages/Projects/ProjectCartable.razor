@@ -1,0 +1,496 @@
+@page "/project-cartable"
+@inject IProjectCartableService CartSvc
+@inject IToastService Toast
+@inject IAuthState Auth
+@inject RealtimeService Rt
+@inject NavigationManager Nav
+@inject HttpClient Http
+@implements IDisposable
+
+<PageTitle>کارتابل پروژه</PageTitle>
+
+<style>
+    /* ================== کارتابل پروژه — طراحی کارتی دونقش (مدیر/کارشناس) ================== */
+    .crt-head { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .crt-title { font-size: 1.2rem; font-weight: 800; color: #1e293b; margin: 0; }
+    .crt-title i { color: #6366f1; }
+    .crt-sub { color: #64748b; font-size: .8rem; }
+    .crt-count {
+        display: inline-flex; align-items: center; gap: .3rem; font-size: .72rem; font-weight: 800;
+        padding: .25rem .7rem; border-radius: 999px;
+    }
+    .crt-count.m { background: #fff7ed; color: #c2410c; }
+    .crt-count.e { background: #eff6ff; color: #1d4ed8; }
+    .crt-count.c { background: #fdf2f8; color: #be185d; }
+
+    .crt-tabs { display: flex; gap: .5rem; margin-bottom: 1.1rem; flex-wrap: wrap; }
+    .crt-tab {
+        border: 2px solid #e2e8f0; background: #fff; color: #475569; cursor: pointer;
+        border-radius: 14px; padding: .55rem 1.2rem; font-weight: 800; font-size: .85rem;
+        display: inline-flex; align-items: center; gap: .5rem; transition: all .15s;
+    }
+    .crt-tab .crt-n { background: #e2e8f0; color: #334155; border-radius: 999px; padding: .05rem .55rem; font-size: .75rem; font-weight: 900; }
+    .crt-tab:hover { border-color: #c7d2fe; }
+    .crt-tab.active.manager { border-color: #f59e0b; background: linear-gradient(180deg,#fffbeb,#fff); color: #b45309; }
+    .crt-tab.active.manager .crt-n { background: #fde68a; color: #92400e; }
+    .crt-tab.active.expert { border-color: #6366f1; background: linear-gradient(180deg,#eef2ff,#fff); color: #4338ca; }
+    .crt-tab.active.expert .crt-n { background: #c7d2fe; color: #3730a3; }
+    .crt-tab.active.changes { border-color: #db2777; background: linear-gradient(180deg,#fdf2f8,#fff); color: #be185d; }
+    .crt-tab.active.changes .crt-n { background: #fbcfe8; color: #9d174d; }
+
+    .crt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: .9rem; }
+    .crt-card {
+        background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: .9rem 1rem;
+        box-shadow: 0 2px 10px rgba(15,23,42,.05); display: flex; flex-direction: column; gap: .55rem;
+        border-right: 4px solid transparent;
+    }
+    .crt-card.manager { border-right-color: #f59e0b; }
+    .crt-card.expert { border-right-color: #6366f1; }
+    .crt-card.changes { border-right-color: #db2777; }
+    .crt-kind { font-size: .7rem; font-weight: 900; border-radius: 999px; padding: .15rem .6rem; }
+    .crt-kind.edit { background: #eff6ff; color: #1d4ed8; }
+    .crt-kind.del { background: #fef2f2; color: #dc2626; }
+    .crt-summary {
+        font-size: .76rem; color: #334155; background: #f8fafc; border: 1px dashed #e2e8f0;
+        border-radius: 10px; padding: .45rem .6rem; line-height: 1.9; max-height: 160px; overflow: auto;
+    }
+    .crt-card-top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+    .crt-code { background: #eff6ff; color: #1d4ed8; border-radius: 9px; padding: 2px 10px; font-size: .78rem; font-weight: 800; }
+    .crt-wait { font-size: .7rem; font-weight: 800; border-radius: 999px; padding: .15rem .6rem; }
+    .crt-wait.ok { background: #ecfdf5; color: #059669; }
+    .crt-wait.warn { background: #fff7ed; color: #c2410c; }
+    .crt-wait.bad { background: #fef2f2; color: #dc2626; }
+    .crt-name { font-weight: 800; color: #1e293b; font-size: .95rem; }
+    .crt-rows { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem .8rem; font-size: .76rem; color: #475569; }
+    .crt-rows b { color: #1e293b; font-weight: 700; }
+    .crt-rows .bi { color: #94a3b8; margin-left: .2rem; }
+    .crt-foot { display: flex; gap: .5rem; margin-top: .2rem; border-top: 1px dashed #f1f5f9; padding-top: .55rem; }
+    .crt-btn {
+        flex: 1; border: 0; border-radius: 10px; padding: .45rem .5rem; font-weight: 800; font-size: .78rem;
+        cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: .3rem;
+    }
+    .crt-btn.ok { background: #ecfdf5; color: #059669; }
+    .crt-btn.ok:hover { background: #d1fae5; }
+    .crt-btn.no { background: #fef2f2; color: #dc2626; flex: .6; }
+    .crt-btn.no:hover { background: #fee2e2; }
+    .crt-empty {
+        text-align: center; padding: 3rem 1rem; color: #64748b;
+        background: #fff; border: 1px dashed #e2e8f0; border-radius: 16px;
+    }
+    .crt-empty i { font-size: 2.4rem; color: #10b981; display: block; margin-bottom: .5rem; }
+    .crt-live { font-size: .68rem; color: #10b981; font-weight: 700; display: inline-flex; align-items: center; gap: .25rem; }
+    .crt-live::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #10b981; animation: crtPulse 1.6s infinite; }
+    @@keyframes crtPulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+    @@media (max-width: 576px) { .crt-grid { grid-template-columns: 1fr; } }
+</style>
+
+<div class="page-shell">
+    <div class="crt-head">
+        <h3 class="crt-title"><i class="bi bi-inboxes"></i> کارتابل مدیریت پروژه</h3>
+        <span class="crt-sub">گردش‌کار: ثبت پروژه ← کارتابل مدیر ← کارتابل کارشناسی ← نهایی</span>
+        <span class="crt-count m"><i class="bi bi-person-badge"></i> مدیر: @FaDigits(counts?.Manager ?? 0)</span>
+        <span class="crt-count e"><i class="bi bi-clipboard2-check"></i> کارشناسی: @FaDigits(counts?.Expert ?? 0)</span>
+        @if (canManager)
+        {
+            <span class="crt-count c"><i class="bi bi-pencil-square"></i> ویرایش/حذف: @FaDigits(counts?.Changes ?? 0)</span>
+        }
+        @if (Rt.IsConnected)
+        {
+            <span class="crt-live">متصل زنده</span>
+        }
+        <button class="btn btn-outline-secondary btn-sm ms-auto" @onclick="() => Reload()" title="به‌روزرسانی">
+            <i class="bi bi-arrow-clockwise"></i> به‌روزرسانی
+        </button>
+    </div>
+
+    <div class="crt-tabs">
+        @if (canManager || !(canExpert || canManager))
+        {
+            <button class="crt-tab manager @(queue == "manager" ? "active" : "")" @onclick='() => SetQueue("manager")'>
+                <i class="bi bi-person-badge"></i> کارتابل مدیر <span class="crt-n">@FaDigits(counts?.Manager ?? 0)</span>
+            </button>
+        }
+        @if (canExpert || !(canExpert || canManager))
+        {
+            <button class="crt-tab expert @(queue == "expert" ? "active" : "")" @onclick='() => SetQueue("expert")'>
+                <i class="bi bi-clipboard2-check"></i> کارتابل کارشناسی <span class="crt-n">@FaDigits(counts?.Expert ?? 0)</span>
+            </button>
+        }
+        @if (canManager)
+        {
+            <button class="crt-tab changes @(queue == "changes" ? "active" : "")" @onclick='() => SetQueue("changes")'>
+                <i class="bi bi-pencil-square"></i> درخواست ویرایش/حذف <span class="crt-n">@FaDigits(counts?.Changes ?? 0)</span>
+            </button>
+        }
+    </div>
+
+    @if (loading)
+    {
+        <div class="crt-empty"><i class="bi bi-arrow-repeat"></i> در حال دریافت…</div>
+    }
+    else if (queue == "changes")
+    {
+        @if (changes.Count == 0)
+        {
+            <div class="crt-empty">
+                <i class="bi bi-check2-circle"></i>
+                <b>درخواست ویرایش/حذفی در انتظار تایید نیست</b>
+                <div class="mt-1 small">هر بار کاربری پروژه‌ای را ویرایش یا حذف کند، درخواستش اینجا برای تایید شما می‌نشیند.</div>
+            </div>
+        }
+        else
+        {
+            <div class="crt-grid">
+                @foreach (var c in changes)
+                {
+                    <div class="crt-card changes">
+                        <div class="crt-card-top">
+                            <span class="crt-code">@c.CodeProject.FaDigits()</span>
+                            <span class="crt-kind @(c.Kind == 2 ? "del" : "edit")">
+                                <i class="bi @(c.Kind == 2 ? "bi-trash" : "bi-pencil")"></i>
+                                @(c.Kind == 2 ? "درخواست حذف" : "درخواست ویرایش")
+                            </span>
+                            <span class="crt-wait @WaitCss(c.DaysWaiting)">@WaitText(c.DaysWaiting)</span>
+                        </div>
+                        <div class="crt-name">@c.ProjectName</div>
+                        <div class="crt-rows">
+                            <span><i class="bi bi-briefcase"></i>کارفرما: <b>@c.KarFarmaName</b></span>
+                            <span><i class="bi bi-person"></i>درخواست‌دهنده: <b>@c.RequestedByName</b></span>
+                            <span><i class="bi bi-clock"></i>زمان: <b dir="ltr">@DateFa(c.RequestedAt)</b></span>
+                        </div>
+                        <div class="crt-summary">
+                            @if (string.IsNullOrWhiteSpace(c.Summary))
+                            {
+                                <span class="text-muted">—</span>
+                            }
+                            else
+                            {
+                                @foreach (var line in c.Summary.Split(" | ", StringSplitOptions.RemoveEmptyEntries))
+                                {
+                                    <div><i class="bi bi-dot"></i>@Inventory.Shared.Fa.Digits(line)</div>
+                                }
+                            }
+                        </div>
+                        <div class="crt-foot">
+                            <button class="crt-btn ok" @onclick='() => OpenChangeAction(c, "approve")'>
+                                <i class="bi bi-check2-circle"></i> تایید و اعمال
+                            </button>
+                            <button class="crt-btn no" @onclick='() => OpenChangeAction(c, "reject")'>
+                                <i class="bi bi-x-circle"></i> رد
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+    else if (items.Count == 0)
+    {
+        <div class="crt-empty">
+            <i class="bi bi-check2-circle"></i>
+            <b>@(queue == "manager" ? "کارتابل مدیر" : "کارتابل کارشناسی") خالی است</b>
+            <div class="mt-1 small">@(queue == "manager" ? "پروژهٔ تازه‌ای ثبت نشده که منتظر بررسی شما باشد." : "پروژه‌ای در انتظار کارشناسی نیست — موارد تاییدشدهٔ مدیر اینجا ظاهر می‌شوند.")</div>
+        </div>
+    }
+    else
+    {
+        <div class="crt-grid">
+            @foreach (var p in items)
+            {
+                <div class="crt-card @queue">
+                    <div class="crt-card-top">
+                        <span class="crt-code">@p.CodeProject.FaDigits() @(p.ReturnProjectId > 0 ? "▲" : "")</span>
+                        <span class="crt-wait @WaitCss(p.DaysWaiting)">@WaitText(p.DaysWaiting)</span>
+                    </div>
+                    <div class="crt-name">@p.ProjectName</div>
+                    <div class="crt-rows">
+                        <span><i class="bi bi-upc-scan"></i>سریال: <b>@p.SerialNumber.FaDigits()</b></span>
+                        <span><i class="bi bi-briefcase"></i>کارفرما: <b>@p.KarFarmaName</b></span>
+                        <span><i class="bi bi-box-arrow-in-right"></i>ورود: <b dir="ltr">@DateFa(p.EntryDate)</b></span>
+                        <span><i class="bi bi-box-arrow-right"></i>خروج: <b dir="ltr">@DateFa(p.ExitDate)</b></span>
+                        <span><i class="bi bi-person"></i>ثبت‌کننده: <b>@p.RegisterUser</b></span>
+                        <span><i class="bi bi-paperclip"></i>پیوست: <b>@FaDigits(p.AttachCount)</b></span>
+                    </div>
+                    @if ((queue == "manager" && canManager) || (queue == "expert" && canExpert))
+                    {
+                        <div class="crt-foot">
+                            @if (queue == "manager")
+                            {
+                                <button class="crt-btn ok" @onclick='() => OpenAction(p, "approve")'><i class="bi bi-check2-circle"></i> تایید مدیر</button>
+                                <button class="crt-btn no" @onclick='() => OpenAction(p, "reject")'><i class="bi bi-x-circle"></i> رد</button>
+                            }
+                            else
+                            {
+                                <button class="crt-btn ok" @onclick='() => OpenAction(p, "done")'><i class="bi bi-clipboard2-check"></i> اتمام کارشناسی</button>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@* ================== مودال تایید/رد «درخواست ویرایش یا حذف پروژه» ================== *@
+@if (chgItem is not null)
+{
+    <Modal Visible="true" Title="@(chgKind == "approve" ? (chgItem.Kind == 2 ? "تایید حذف پروژه" : "تایید ویرایش پروژه") : "رد درخواست")" OnClose="CloseChangeAction">
+        <ChildContent>
+            <div class="mb-2 small" style="color:#475569">
+                <b>@chgItem.ProjectName</b> <span class="crt-code">@chgItem.CodeProject.FaDigits()</span>
+                <span class="crt-kind @(chgItem.Kind == 2 ? "del" : "edit")">@(chgItem.Kind == 2 ? "حذف" : "ویرایش")</span>
+            </div>
+            <div class="crt-summary mb-2">
+                @if (string.IsNullOrWhiteSpace(chgItem.Summary))
+                {
+                    <span class="text-muted">—</span>
+                }
+                else
+                {
+                    @foreach (var line in chgItem.Summary.Split(" | ", StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        <div><i class="bi bi-dot"></i>@Inventory.Shared.Fa.Digits(line)</div>
+                    }
+                }
+            </div>
+            @if (chgKind == "approve" && chgItem.Kind == 2)
+            {
+                <div class="alert alert-danger py-2 px-3 small">
+                    <i class="bi bi-exclamation-triangle ms-1"></i>
+                    با تایید شما، پروژه به‌همراه گزارش‌های کار و پیوست‌هایش حذف می‌شود.
+                </div>
+            }
+            <label class="form-label small fw-bold">
+                @(chgKind == "reject" ? "دلیل رد" : "یادداشت (اختیاری)")
+                @if (chgKind == "reject") { <span class="text-danger">(الزامی — برای درخواست‌دهنده اعلان می‌شود)</span> }
+            </label>
+            <textarea class="form-control" rows="3" @bind="chgNote" maxlength="500"
+                      placeholder="@(chgKind == "reject" ? "مثلاً: تغییر تاریخ خروج مورد تایید نیست…" : "مثلاً: تایید شد.")"></textarea>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-outline-secondary btn-sm" @onclick="CloseChangeAction" disabled="@chgActing">انصراف</button>
+            @if (chgKind == "reject")
+            {
+                <button class="btn btn-danger btn-sm" @onclick="DoChangeAction" disabled="@chgActing"><i class="bi bi-x-circle"></i> ثبت رد</button>
+            }
+            else
+            {
+                <button class="btn btn-success btn-sm" @onclick="DoChangeAction" disabled="@chgActing">
+                    <i class="bi bi-check2-circle"></i> @(chgItem.Kind == 2 ? "تایید و حذف" : "تایید و اعمال ویرایش")
+                </button>
+            }
+        </Footer>
+    </Modal>
+}
+
+@* ================== مودال اقدام (تایید/رد/اتمام) با یادداشت ================== *@
+@if (actItem is not null)
+{
+    <Modal Visible="true" Title="@actTitle" OnClose="CloseAction">
+        <ChildContent>
+            <div class="mb-2 small" style="color:#475569">
+                <b>@actItem.ProjectName</b> <span class="crt-code">@actItem.CodeProject.FaDigits()</span>
+            </div>
+            <label class="form-label small fw-bold">
+                @actNoteLabel
+                @if (actKind == "reject") { <span class="text-danger">(الزامی — برای ثبت‌کننده اعلان می‌شود)</span> }
+            </label>
+            <textarea class="form-control" rows="3" @bind="actNote" placeholder="@actNotePlaceholder" maxlength="500"></textarea>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-outline-secondary btn-sm" @onclick="CloseAction" disabled="@acting">انصراف</button>
+            @if (actKind == "reject")
+            {
+                <button class="btn btn-danger btn-sm" @onclick="DoAction" disabled="@acting"><i class="bi bi-x-circle"></i> ثبت رد</button>
+            }
+            else
+            {
+                <button class="btn btn-success btn-sm" @onclick="DoAction" disabled="@acting"><i class="bi bi-check2-circle"></i> @actConfirmText</button>
+            }
+        </Footer>
+    </Modal>
+}
+
+@code {
+    private List<ProjectCartableItem> items = new();
+    private List<ProjectChangeRequestDto> changes = new();
+    private ProjectCartableCountsDto? counts;
+    private string queue = "manager";
+    private bool loading = true;
+    private bool canManager, canExpert;
+    private string apiBase = "";
+
+    // مودال «درخواست ویرایش/حذف»
+    private ProjectChangeRequestDto? chgItem;
+    private string chgKind = "approve";
+    private string? chgNote;
+    private bool chgActing;
+
+    // مودال اقدام
+    private ProjectCartableItem? actItem;
+    private string actKind = "approve";
+    private string? actNote;
+    private bool acting;
+
+    private string actTitle => actKind switch
+    {
+        "approve" => "تایید مدیر — ارسال به کارتابل کارشناسی",
+        "reject" => "رد پروژه توسط مدیر",
+        _ => "اتمام کارشناسی — نهایی شدن پروژه"
+    };
+    private string actConfirmText => actKind == "approve" ? "تایید و ارسال به کارشناسی" : "ثبت اتمام کارشناسی";
+    private string actNoteLabel => actKind switch
+    {
+        "approve" => "یادداشت برای کارشناس/ثبت‌کننده (اختیاری)",
+        "reject" => "دلیل رد",
+        _ => "یادداشت/خلاصهٔ کارشناسی (اختیاری)"
+    };
+    private string actNotePlaceholder => actKind switch
+    {
+        "approve" => "مثلاً: اولویت بالا بررسی شود…",
+        "reject" => "مثلاً: اطلاعات فاکتور ناقص است…",
+        _ => "مثلاً: کارشناسی اولیه انجام و تایید شد…"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        apiBase = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+        canManager = Auth.Has("ProjectCartable.Manager");
+        canExpert = Auth.Has("ProjectCartable.Expert");
+
+        // تب پیش‌فرض از QueryString، وگرنه اولین تب مجاز
+        var uri = new Uri(Nav.Uri);
+        var qs = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        var q = qs["queue"];
+        queue = string.Equals(q, "expert", StringComparison.OrdinalIgnoreCase) ? "expert"
+              : string.Equals(q, "manager", StringComparison.OrdinalIgnoreCase) ? "manager"
+              : string.Equals(q, "changes", StringComparison.OrdinalIgnoreCase) && canManager ? "changes"
+              : canManager || !canExpert ? "manager" : "expert";
+
+        // رفرش زنده با SignalR — هر تغییری در پروژه‌ها (ثبت/تایید/رد/اتمام/ویرایش) کارتابل را تازه می‌کند
+        Rt.DataChanged += OnRtDataChanged;
+
+        await Reload();
+    }
+
+    private async void OnRtDataChanged(string scope)
+    {
+        if (scope != "projects") return;
+        await Reload(silent: true);
+    }
+
+    private async Task SetQueue(string q)
+    {
+        queue = q;
+        await Reload();
+    }
+
+    private async Task Reload(bool silent = false)
+    {
+        if (!silent) { loading = true; StateHasChanged(); }
+        try
+        {
+            counts = await CartSvc.GetCountsAsync();
+            if (queue == "changes")
+            {
+                changes = await CartSvc.GetChangeRequestsAsync() ?? new();
+                items = new();
+            }
+            else
+            {
+                items = await CartSvc.GetQueueAsync(queue) ?? new();
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!silent) Toast.Error(ex.Message);
+            items = new();
+            if (queue == "changes") changes = new();
+        }
+        loading = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OpenAction(ProjectCartableItem p, string kind)
+    {
+        actItem = p;
+        actKind = kind;
+        actNote = null;
+        acting = false;
+    }
+
+    private void CloseAction() { actItem = null; acting = false; }
+
+    private async Task DoAction()
+    {
+        if (actItem is null) return;
+        if (actKind == "reject" && string.IsNullOrWhiteSpace(actNote))
+        {
+            Toast.Error("دلیل رد را بنویسید — بدون دلیل امکان‌پذیر نیست.");
+            return;
+        }
+        acting = true;
+        try
+        {
+            if (actKind == "approve") await CartSvc.ApproveAsync(actItem.Id, actNote);
+            else if (actKind == "reject") await CartSvc.RejectAsync(actItem.Id, actNote!);
+            else await CartSvc.ExpertDoneAsync(actItem.Id, actNote);
+
+            Toast.Success(actKind switch
+            {
+                "approve" => $"پروژه تایید و به کارتابل کارشناسی ارسال شد.",
+                "reject" => "پروژه رد شد و به ثبت‌کننده اعلان رسید.",
+                _ => "کارشناسی ثبت شد — پروژه نهایی است."
+            });
+            actItem = null;
+            await Reload(silent: true);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        acting = false;
+    }
+
+    // ==================== اقدام روی درخواست ویرایش/حذف ====================
+
+    private void OpenChangeAction(ProjectChangeRequestDto c, string kind)
+    {
+        chgItem = c;
+        chgKind = kind;
+        chgNote = null;
+        chgActing = false;
+    }
+
+    private void CloseChangeAction() { chgItem = null; chgActing = false; }
+
+    private async Task DoChangeAction()
+    {
+        if (chgItem is null) return;
+        if (chgKind == "reject" && string.IsNullOrWhiteSpace(chgNote))
+        {
+            Toast.Error("دلیل رد را بنویسید — بدون دلیل امکان‌پذیر نیست.");
+            return;
+        }
+        chgActing = true;
+        try
+        {
+            var isDelete = chgItem.Kind == 2;
+            if (chgKind == "approve") await CartSvc.ApproveChangeAsync(chgItem.Id, chgNote);
+            else await CartSvc.RejectChangeAsync(chgItem.Id, chgNote!);
+
+            Toast.Success(chgKind == "approve"
+                ? (isDelete ? "پروژه حذف شد." : "ویرایش روی پروژه اعمال شد.")
+                : "درخواست رد شد و به درخواست‌دهنده اعلان رسید.");
+            chgItem = null;
+            await Reload(silent: true);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        chgActing = false;
+    }
+
+    private static string WaitCss(int days) => days >= 3 ? "bad" : days >= 1 ? "warn" : "ok";
+    private string WaitText(int days) => days <= 0 ? "ثبت امروز" : $"{FaDigits(days)} روز در انتظار";
+    private static string DateFa(DateTime? dt) => dt.HasValue ? PersianDate.ToShortFa(dt.Value) : "—";
+    private static string DateFa(DateTime dt) => PersianDate.ToShortFa(dt);
+    private static string FaDigits(int n) => Inventory.Shared.Fa.Digits(n);
+
+    public void Dispose() => Rt.DataChanged -= OnRtDataChanged;
+}

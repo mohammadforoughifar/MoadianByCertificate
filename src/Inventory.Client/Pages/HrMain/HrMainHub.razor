@@ -1,0 +1,119 @@
+@namespace Inventory.Client.Pages
+@page "/hr-main"
+@inject IHrMainService Svc
+@inject IAuthState Auth
+<PageTitle>خانه منابع انسانی</PageTitle>
+
+@if (!HrNavigation.CanEnter(Auth.Has, Auth.IsAdmin))
+{
+    <div class="alert alert-warning" role="alert">دسترسی منابع انسانی برای شما فعال نیست.</div>
+}
+else
+{
+    <div class="hr-home-heading">
+        <div class="hr-home-identity">
+            <span class="hr-home-mark"><i class="bi bi-people" aria-hidden="true"></i></span>
+            <div><h1>خانه منابع انسانی</h1>@if (!string.IsNullOrWhiteSpace(overview?.CompanyName)) { <span class="hr-company-name">@overview.CompanyName</span> }</div>
+        </div>
+        <div class="hr-home-actions">
+            @if (Can("HrCore.Create"))
+            {
+                <a href="hr-main/employees/new" class="hr-primary"><i class="bi bi-person-plus" aria-hidden="true"></i> ثبت پرسنل</a>
+            }
+            else if (myGroup is not null)
+            {
+                <a href="hr-main/section/my" class="hr-primary"><i class="bi bi-inbox" aria-hidden="true"></i> کارتابل من</a>
+            }
+            @if (groups.Any(s => s.Id == "setup"))
+            {
+                <a href="hr-main/settings" class="hr-secondary" title="سازمان و تنظیمات"><i class="bi bi-gear" aria-hidden="true"></i></a>
+            }
+        </div>
+    </div>
+    @if (loading)
+    {
+        <div class="hr-loading" role="status"><span class="spinner-border spinner-border-sm"></span> دریافت وضعیت سازمان…</div>
+    }
+    else if (loadError)
+    {
+        <div class="hr-error" role="alert"><span>وضعیت سازمان دریافت نشد. اتصال یا دسترسی خود را بررسی کنید.</span><button class="btn btn-sm btn-outline-secondary" @onclick="LoadOverview">تلاش مجدد</button></div>
+    }
+    @if (overview is not null)
+    {
+        <div class="hr-stat-grid" aria-label="وضعیت سازمان">
+            @if (Can("HrCore.Read")) { <a href="hr-main/employees"><i class="bi bi-people" aria-hidden="true"></i><strong>@overview.ActiveEmployees.Num()</strong><span>پرسنل فعال</span></a> }
+            <a href="hr-main/org"><i class="bi bi-diagram-3" aria-hidden="true"></i><strong>@overview.ActiveNodes.Num()</strong><span>واحد سازمانی فعال</span></a>
+            <a href="hr-main/positions"><i class="bi bi-person-badge" aria-hidden="true"></i><strong>@overview.ActivePositions.Num()</strong><span>پست فعال</span></a>
+            <a href="hr-main/branches"><i class="bi bi-building" aria-hidden="true"></i><strong>@overview.ActiveBranches.Num()</strong><span>شعبه و دفتر فعال</span></a>
+            @if (overview.VacantPositions > 0)
+            {
+                <a href="hr-main/positions" class="hr-stat-warning"><i class="bi bi-person-fill-exclamation" aria-hidden="true"></i><strong>@overview.VacantPositions.Num()</strong><span>ظرفیت خالی پست</span></a>
+            }
+        </div>
+        @if (SetupSteps.Any(s => !s.Done) && (Can("HrMain.Create") || Can("HrMain.Update")))
+        {
+            <details class="hr-setup" open>
+                <summary><span><i class="bi bi-check2-square" aria-hidden="true"></i> راه‌اندازی اولیه</span><span>@SetupSteps.Count(s => s.Done).Num() از @SetupSteps.Length.Num()</span></summary>
+                <ol>
+                    @foreach (var step in SetupSteps)
+                    {
+                        <li class="@(step.Done ? "done" : "")">
+                            <span class="hr-step-status"><i class="bi @(step.Done ? "bi-check2" : "bi-circle")" aria-hidden="true"></i><span class="visually-hidden">@(step.Done ? "تکمیل" : "تکمیل‌نشده")</span></span>
+                            @if (step.Href is not null) { <a href="@step.Href">@step.Title</a> } else { <span>@step.Title</span> }
+                        </li>
+                    }
+                </ol>
+                <a class="hr-setup-next" href="hr-main/section/org">تقویم و قواعد سازمان <i class="bi bi-arrow-left" aria-hidden="true"></i></a>
+            </details>
+        }
+    }
+    @if (myGroup is not null)
+    {
+        <section class="hr-shortcuts" aria-labelledby="hr-shortcuts-title">
+            <div class="hr-section-head"><h2 id="hr-shortcuts-title">کارهای من</h2><a href="hr-main/section/my">همه <i class="bi bi-arrow-left" aria-hidden="true"></i></a></div>
+            <div class="hr-shortcut-row">@foreach (var item in myGroup.Items.Take(4)) { <a href="@item.Href"><i class="bi @item.Icon" aria-hidden="true"></i>@item.Title</a> }</div>
+        </section>
+    }
+    <section aria-labelledby="hr-sections-title">
+        <div class="hr-section-head"><h2 id="hr-sections-title">بخش‌های منابع انسانی</h2></div>
+        <div class="hr-section-grid">
+            @foreach (var area in groups)
+            {
+                <a class="hr-area" href="@("hr-main/section/" + area.Id)">
+                    <span class="hr-area-icon"><i class="bi @area.Icon" aria-hidden="true"></i></span>
+                    <span class="hr-area-content"><b>@area.Title</b><small>@string.Join(" · ", area.Items.Where(i => i.Href != "hr-main/settings").Take(2).Select(i => i.Title))</small></span>
+                    <i class="bi bi-arrow-left" aria-hidden="true"></i>
+                </a>
+            }
+        </div>
+    </section>
+}
+@code {
+    private HrMainOverviewDto? overview;
+    private bool loading, loadError;
+    private HrNavigation.Section[] groups = [];
+    private HrNavigation.Section? myGroup;
+    private bool Can(string permission) => Auth.IsAdmin || Auth.Has(permission);
+    private bool CanAny(params string[] permissions) => Auth.IsAdmin || permissions.Any(Auth.Has);
+    private record SetupStep(string Title, string? Href, bool Done);
+    private SetupStep[] SetupSteps => overview is null ? [] : [
+        new("اطلاعات شرکت", "hr-main/company", !string.IsNullOrWhiteSpace(overview.CompanyName)),
+        new("ساختار سازمانی", "hr-main/org", overview.ActiveNodes > 0),
+        new("پست‌های سازمانی", "hr-main/positions", overview.ActivePositions > 0),
+        new("پرونده پرسنل", Can("HrCore.Read") ? "hr-main/employees" : null, overview.ActiveEmployees > 0)
+    ];
+    protected override async Task OnInitializedAsync()
+    {
+        groups = HrNavigation.Visible(Auth.Has, Auth.IsAdmin);
+        myGroup = groups.FirstOrDefault(s => s.Id == "my");
+        await LoadOverview();
+    }
+    private async Task LoadOverview()
+    {
+        if (!CanAny("HrMain.Read", "HrMain.Overview")) return;
+        loading = true; loadError = false; overview = null;
+        try { overview = await Svc.GetOverviewAsync(); loadError = overview is null; }
+        catch { loadError = true; }
+        finally { loading = false; }
+    }
+}

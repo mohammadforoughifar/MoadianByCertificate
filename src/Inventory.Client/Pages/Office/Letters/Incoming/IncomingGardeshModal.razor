@@ -1,0 +1,209 @@
+@inject IIncomingLetterService IncomingSvc
+@inject IToastService Toast
+
+@* ============================================================
+   مدال گردش نامه وارده — نمای لیستی، درختواره و فلوچارتی
+   ============================================================ *@
+
+@if (visible)
+{
+<div class="ltx" style="animation:none;transform:none">
+    <div class="gov">
+        <div class="gmodal" @onclick:stopPropagation="true">
+            <div class="gm-h">
+                <div class="avt" style="width:38px;height:38px"><i class="bi bi-diagram-3"></i></div>
+                <div class="ttl">
+                    <b>گردش نامه وارده — @title</b>
+                    <small class="num">ثبت: # @sabtNumber.FaDigits() · @CountAll().FaDigits() ایستگاه ارجاع</small>
+                </div>
+                <button class="x" @onclick="Close"><i class="bi bi-x-lg"></i></button>
+            </div>
+            <div class="gm-seg">
+                <button class="@(view == 0 ? "on" : "")" @onclick="() => view = 0"><i class="bi bi-list-ul"></i> لیستی</button>
+                <button class="@(view == 1 ? "on" : "")" @onclick="() => view = 1"><i class="bi bi-diagram-2"></i> درختواره</button>
+                <button class="@(view == 2 ? "on" : "")" @onclick="() => view = 2"><i class="bi bi-diagram-3"></i> فلوچارتی</button>
+            </div>
+            <div class="gm-b">
+                @if (loading)
+                {
+                    <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+                }
+                else if (roots.Count == 0)
+                {
+                    <div class="empty"><i class="bi bi-diagram-3"></i> هنوز ارجاعی برای این نامه ثبت نشده است</div>
+                }
+                else if (view == 0)
+                {
+                    <div class="tl">
+                        <div class="tl-i start">
+                            <div class="tl-t">@ferestande (مبدأ)</div>
+                            <div class="tl-s">نامه وارده · ورود به سیستم: @dateErsal.ToFaDate()</div>
+                        </div>
+
+                        @foreach (var r in FlatList(roots))
+                        {
+                            var item = r;
+                            <div class="tl-i">
+                                <div class="tl-t">@item.SenderName <i class="bi bi-arrow-left"></i> @item.ReceiverName</div>
+                                <div class="tl-s">
+                                    ارسال: @item.DateErja.ToFaDateTime()
+                                    @if (!string.IsNullOrWhiteSpace(item.MatnErja))
+                                    {
+                                        <span> · دستور: <b>@item.MatnErja</b></span>
+                                    }
+                                    @if (item.IsRead)
+                                    {
+                                        <span class="text-success ms-2"><i class="bi bi-check2-all"></i> رویت شد (@item.DateRead?.ToFaDateTime())</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted ms-2"><i class="bi bi-check2"></i> رویت نشده</span>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(item.MatnPasokh))
+                                    {
+                                        <div class="mt-1 text-primary">پاسخ/اقدام: @item.MatnPasokh (@item.DatePasokh?.ToFaDateTime())</div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else if (view == 1)
+                {
+                    <div class="gtree">
+                        <ul>
+                            <li>
+                                <div class="tnode">
+                                    <span class="mini"><i class="bi bi-box-arrow-in-left"></i></span>
+                                    <div><b>@ferestande</b><small> — مبدأ نامه وارده · @dateErsal.ToFaDateTime()</small></div>
+                                    <span class="tst p">ورود به دبیرخانه</span>
+                                </div>
+                                <ul>
+                                    @foreach (var n in roots) { @TreeNode(n) }
+                                </ul>
+                            </li>
+                        </ul>
+                    </div>
+                }
+                else
+                {
+                    <div class="fcwrap">
+                        <div class="fc"><ul><li>
+                            <div class="fnode root"><span class="mini"><i class="bi bi-box-arrow-in-left"></i></span><div><b>@ferestande</b><small>ورود به دبیرخانه · @dateErsal.ToFaDate()</small></div></div>
+                            <ul>@foreach (var n in roots) { @FlowNode(n) }</ul>
+                        </li></ul></div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+}
+
+@code {
+    private bool visible = false;
+    private bool loading = false;
+    private int view = 0; // 0=List, 1=Tree, 2=Flow
+
+    private string title = "";
+    private string ferestande = "";
+    private int sabtNumber = 0;
+    private DateTime dateErsal = DateTime.Now;
+
+    private List<ErjaTreeNodeDto> roots = new();
+
+    public async Task Open(int letterId, string title, string ferestande, int sabtNumber, DateTime dateErsal)
+    {
+        this.title = title;
+        this.ferestande = ferestande;
+        this.sabtNumber = sabtNumber;
+        this.dateErsal = dateErsal;
+        visible = true;
+        loading = true;
+        roots.Clear();
+
+        try
+        {
+            roots = await IncomingSvc.GetGardeshAsync(letterId);
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Close() => visible = false;
+
+    private int CountAll() => CountNodes(roots);
+    private int CountNodes(List<ErjaTreeNodeDto> nodes)
+    {
+        int c = nodes.Count;
+        foreach (var n in nodes) c += CountNodes(n.Children);
+        return c;
+    }
+
+    private List<ErjaTreeNodeDto> FlatList(List<ErjaTreeNodeDto> nodes)
+    {
+        var list = new List<ErjaTreeNodeDto>();
+        foreach (var n in nodes)
+        {
+            list.Add(n);
+            list.AddRange(FlatList(n.Children));
+        }
+        return list;
+    }
+
+    private static bool IsDone(ErjaTreeNodeDto n) =>
+        n.IsRead || n.TypeTaeed != 0 || !string.IsNullOrWhiteSpace(n.Answer);
+
+    private static string StLabel(ErjaTreeNodeDto n) =>
+        !string.IsNullOrWhiteSpace(n.Answer) ? "پاسخ داده شد"
+        : n.IsRead ? "رویت شد"
+        : "در انتظار رویت";
+
+    private static string NodeSub(ErjaTreeNodeDto n)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(n.AmalgarTitle)) parts.Add(n.AmalgarTitle!);
+        parts.Add($"ارجاع از {n.Sender}");
+        parts.Add(n.Date.ToFaDateTime());
+        if (n.MohlatPasokh.HasValue) parts.Add($"مهلت: {n.MohlatPasokh.Value.ToFaDate()}");
+        return string.Join(" · ", parts);
+    }
+
+    private RenderFragment FlowNode(ErjaTreeNodeDto n) => @<li>
+        <div class="fnode @(IsDone(n) ? "ok" : "wt")">
+            <span class="mini"><i class="bi bi-person"></i></span>
+            <div><b>@n.Reciver</b><small>@NodeSub(n)</small></div>
+            <span class="fdot" style="background:@(IsDone(n) ? "#22c55e" : "#f59e0b")"></span>
+        </div>
+        @if (n.Children.Count > 0)
+        {
+            <ul>@foreach (var k in n.Children) { @FlowNode(k) }</ul>
+        }
+    </li>;
+
+    // گرهٔ بازگشتی درختواره — معادل الگوی GardeshModal نامه داخلی/صادره
+    private RenderFragment TreeNode(ErjaTreeNodeDto n) => @<li>
+        <div class="tnode">
+            <span class="mini"><i class="bi bi-person"></i></span>
+            <div><b>@n.Reciver</b><small> — @NodeSub(n)</small></div>
+            <span class="tst @(IsDone(n) ? "g" : "w")">@StLabel(n)</span>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(n.Answer))
+        {
+            <div class="tans"><i class="bi bi-reply"></i> @n.Answer</div>
+        }
+        @if (n.Children.Count > 0)
+        {
+            <ul>
+                @foreach (var k in n.Children) { @TreeNode(k) }
+            </ul>
+        }
+    </li>;
+}

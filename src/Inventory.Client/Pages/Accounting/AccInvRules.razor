@@ -1,0 +1,174 @@
+@page "/acc/inv-rules"
+@inject IAccInvRuleService RuleSvc
+@inject IAccAccountService AccountSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+
+<PageTitle>سند خودکار انبار</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>قواعد سند خودکار انبار</h1>
+        <p class="lead">تنظیم و انتساب خودکار حساب‌های معین به رسیدها و حواله‌های انبار</p>
+    </div>
+</div>
+
+<div class="alert alert-info d-flex align-items-start gap-2">
+    <i class="bi bi-info-circle-fill mt-1"></i>
+    <div>
+        در اسناد <b>افزایشی (رسید)</b>، حساب موجودی کالا <b class="text-success">بدهکار</b> و حساب طرف مقابل
+        <b class="text-danger">بستانکار</b> می‌شود؛ در اسناد <b>کاهشی (حواله)</b> عکس آن.
+        اسناد با ماهیت <b>خنثی</b> (مانند انتقال بین انبار) سند حسابداری تولید نمی‌کنند.
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-gear-wide-connected text-primary"></i>
+        <span class="card-title">نگاشت نوع سند انبار به حساب‌ها</span>
+        <span class="badge badge-soft-primary ms-auto num">@rules.Count.Num() قاعده</span>
+    </div>
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (rules.Count == 0)
+        {
+            <div class="empty-state">
+                <i class="bi bi-gear"></i>
+                <h5>قاعده‌ای تعریف نشده است</h5>
+                <p class="text-muted">ابتدا انواع رسید/حواله و کدینگ حساب‌ها را تعریف کنید.</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:44px">#</th>
+                            <th>نوع سند انبار</th>
+                            <th class="text-center">ماهیت</th>
+                            <th style="width:22%">حساب موجودی کالا</th>
+                            <th style="width:22%">حساب طرف مقابل</th>
+                            <th class="text-center">مبنای مبلغ</th>
+                            <th class="text-center">فعال</th>
+                            <th class="text-center" style="width:90px">ثبت</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{ var row = 1; }
+                        @foreach (var r in rules)
+                        {
+                            var rule = r;
+                            <tr class="@(rule.Nature == StockNature.Neutral ? "opacity-75" : "")">
+                                <td class="num text-muted">@((row++).FaDigits())</td>
+                                <td>
+                                    <b>@rule.DocTypeName</b>
+                                    @if (!string.IsNullOrWhiteSpace(rule.Description))
+                                    {
+                                        <div class="fs-8 text-muted">@rule.Description</div>
+                                    }
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge @NatureBadge(rule.Nature)">@NatureTitle(rule.Nature)</span>
+                                </td>
+                                <td>
+                                    <SearchSelect Items="accounts" Value="@(rule.InventoryAccountId ?? 0)"
+                                                  ValueChanged="v => OnInventory(rule, v)" Placeholder="انتخاب حساب…" />
+                                </td>
+                                <td>
+                                    <SearchSelect Items="accounts" Value="@(rule.CounterAccountId ?? 0)"
+                                                  ValueChanged="v => OnCounter(rule, v)" Placeholder="انتخاب حساب…" />
+                                </td>
+                                <td class="text-center">
+                                    <select class="form-select form-select-sm" value="@rule.UseCostValue.ToString()"
+                                            @onchange="e => OnBasis(rule, e)">
+                                        <option value="True">بهای تمام‌شده</option>
+                                        <option value="False">مبلغ سطرهای سند</option>
+                                    </select>
+                                </td>
+                                <td class="text-center">
+                                    <div class="form-check form-switch d-inline-block">
+                                        <input class="form-check-input" type="checkbox" checked="@rule.IsActive"
+                                               disabled="@(rule.Nature == StockNature.Neutral)"
+                                               @onchange="e => OnActive(rule, e)" />
+                                    </div>
+                                </td>
+                                <td class="text-center">
+                                    <button class="btn btn-sm btn-light" title="ذخیره" @onclick="() => Save(rule)">
+                                        <i class="bi bi-save text-primary"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<AccInvRule> rules = new();
+    private List<LookupItem> accounts = new();
+    private bool loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("سند خودکار انبار");
+        loading = true;
+        try
+        {
+            accounts = await AccountSvc.GetLookupsAsync();
+            rules = await RuleSvc.GetAllAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OnInventory(AccInvRule rule, int id) => rule.InventoryAccountId = id > 0 ? id : null;
+
+    private void OnCounter(AccInvRule rule, int id) => rule.CounterAccountId = id > 0 ? id : null;
+
+    private void OnBasis(AccInvRule rule, ChangeEventArgs e)
+        => rule.UseCostValue = (e.Value?.ToString() ?? "True") == "True";
+
+    private async Task OnActive(AccInvRule rule, ChangeEventArgs e)
+    {
+        rule.IsActive = e.Value is bool b && b;
+        await Save(rule);
+    }
+
+    private async Task Save(AccInvRule rule)
+    {
+        if (rule.IsActive && (rule.InventoryAccountId is null || rule.CounterAccountId is null))
+        {
+            Toast.Error("برای فعال کردن قاعده، هر دو حساب را انتخاب کنید.");
+            rule.IsActive = false;
+            return;
+        }
+
+        try
+        {
+            await RuleSvc.SaveAsync(rule);
+            Toast.Success($"قاعده «{rule.DocTypeName}» ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string NatureTitle(StockNature n) => n switch
+    {
+        StockNature.Increase => "افزایشی",
+        StockNature.Decrease => "کاهشی",
+        _ => "خنثی"
+    };
+
+    private static string NatureBadge(StockNature n) => n switch
+    {
+        StockNature.Increase => "badge-nature-inc",
+        StockNature.Decrease => "badge-nature-dec",
+        _ => "badge-nature-neu"
+    };
+}

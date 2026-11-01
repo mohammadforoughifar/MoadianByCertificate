@@ -1,0 +1,1445 @@
+@page "/work-projects"
+@using Inventory.Client.Components.WorkProjects
+@implements IDisposable
+@inject HttpClient Http
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject NavigationManager Nav
+@inject RealtimeService Rt
+@inject IJSRuntime JS
+
+<PageTitle>پروژه‌های کاری</PageTitle>
+
+@if (!accessLoaded)
+{
+    <div class="d-flex align-items-center gap-2 text-muted p-4">
+        <span class="spinner-border spinner-border-sm"></span> در حال بارگذاری…
+    </div>
+}
+else if (!access.CanView)
+{
+    <div class="alert alert-warning m-3">شما به بخش پروژه‌های کاری دسترسی ندارید.</div>
+}
+else
+{
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+        <h4 class="mb-0"><i class="bi bi-briefcase ms-1"></i> پروژه‌های کاری</h4>
+        <div class="d-flex align-items-center gap-2">
+            <div class="btn-group btn-group-sm wp-view" role="group" aria-label="نوع نمایش">
+                <button type="button" class="btn @(view == "cards" ? "active" : "")" title="کارت" aria-pressed="@(view == "cards")" @onclick='() => SetView("cards")'><i class="bi bi-grid-3x2-gap"></i></button>
+                <button type="button" class="btn @(view == "table" ? "active" : "")" title="جدول" aria-pressed="@(view == "table")" @onclick='() => SetView("table")'><i class="bi bi-list-ul"></i></button>
+            </div>
+            @if (access.CanCreate)
+            {
+                <button class="btn btn-primary btn-sm" @onclick="OpenCreate">
+                    <i class="bi bi-plus-lg"></i> پروژه جدید
+                </button>
+            }
+        </div>
+    </div>
+
+    @* ================== فیلترها ================== *@
+    <div class="card mb-3">
+        <div class="card-body py-2">
+            <div class="row g-2 align-items-end">
+                <div class="col-12 col-md-4">
+                    <label class="form-label fs-8 mb-1">جستجو</label>
+                    <input class="form-control form-control-sm" placeholder="عنوان، کد، مدیر یا برچسب…"
+                           value="@fltQ" @oninput="OnSearchInput" />
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label fs-8 mb-1">وضعیت</label>
+                    <select class="form-select form-select-sm" value="@fltStatus" @onchange="OnStatusChanged">
+                        <option value="">همه</option>
+                        <option value="open">باز</option>
+                        <option value="closed">بسته</option>
+                    </select>
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label fs-8 mb-1">نقش من</label>
+                    <select class="form-select form-select-sm" value="@fltMine" @onchange="OnMineChanged">
+                        <option value="">همه</option>
+                        <option value="owner">مدیرم</option>
+                        <option value="member">عضوم</option>
+                    </select>
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label fs-8 mb-1">مرتب‌سازی</label>
+                    <select class="form-select form-select-sm" value="@fltSort" @onchange="OnSortChanged">
+                        <option value="due">مهلت نزدیک</option>
+                        <option value="newest">تازه‌ترین</option>
+                        <option value="progressAsc">کمترین پیشرفت</option>
+                        <option value="progressDesc">بیشترین پیشرفت</option>
+                    </select>
+                </div>
+                <div class="col-6 col-md-2">
+                    <div class="form-check mt-4">
+                        <input id="wp-overdue" class="form-check-input" type="checkbox" checked="@fltOverdue" @onchange="OnOverdueChanged" />
+                        <label class="form-check-label fs-8" for="wp-overdue">فقط گذشته‌ازمهلت</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* ================== لیست ================== *@
+    @if (loading)
+    {
+        <div class="text-muted"><span class="spinner-border spinner-border-sm"></span> در حال بارگذاری لیست…</div>
+    }
+    else if (items.Count == 0)
+    {
+        <div class="alert alert-light border text-center">پروژه‌ای یافت نشد.</div>
+    }
+    else if (view == "cards")
+    {
+        <div class="wp-grid">
+            @foreach (var p in items)
+            {
+                var tone = CardTone(p);
+                var pct = p.Progress ?? 0;
+                <div class="wp-card wp-tone-@tone" @onclick="() => OpenDetail(p.Id)">
+                    <div class="wp-top">
+                        <span class="wp-num num">@p.Number</span>
+                        <div class="wp-tags">
+                            @WpPriority(p.Priority)
+                            @if (p.Status == "Closed") { <span class="wp-tag wp-tag-mute">بسته</span> }
+                            else if (p.IsOverdue) { <span class="wp-tag wp-tag-red">گذشته از مهلت</span> }
+                        </div>
+                    </div>
+
+                    <div class="wp-title" title="@p.Title">@p.Title</div>
+
+                    <div class="wp-due num">
+                        <i class="bi bi-calendar3"></i>
+                        <span>@p.DueAt.ToFa()</span>
+                        @if (p.Status == "Open") { <span class="wp-days wp-days-@DaysTone(p.DaysLeft)">@DaysText(p.DaysLeft)</span> }
+                    </div>
+
+                    <div class="wp-prog">
+                        <div class="wp-ring @(p.Progress == 100 ? "is-done" : "")">
+                            <svg viewBox="0 0 36 36" aria-hidden="true">
+                                <circle class="wp-ring-bg" cx="18" cy="18" r="15.915" />
+                                <circle class="wp-ring-fg" cx="18" cy="18" r="15.915" stroke-dasharray="@pct 100" />
+                            </svg>
+                            <span class="num">@(p.Progress == null ? "—" : $"{pct.Num()}٪")</span>
+                        </div>
+                        <div class="wp-prog-txt">
+                            @if (p.Progress == null)
+                            {
+                                <div class="wp-prog-main">هنوز دستوری ثبت نشده</div>
+                            }
+                            else
+                            {
+                                <div class="wp-prog-main num">@p.ClosedOrderCount.Num() از @p.OrderCount.Num() دستور انجام شده</div>
+                                <div class="wp-chips num">
+                                    @if (p.OpenOrderCount > 0) { <span>@p.OpenOrderCount.Num() باز</span> }
+                                    @if (p.OverdueOrderCount > 0) { <span class="is-late">@p.OverdueOrderCount.Num() دیرکرد</span> }
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="wp-people">
+                        <div class="wp-owner">
+                            <UserAvatar LoginUserId="p.OwnerUserId" Size="30" CssClass="wp-owner-img" />
+                            <div class="min-w-0">
+                                <div class="wp-owner-name">@p.OwnerName</div>
+                                <div class="wp-owner-role">مدیر پروژه</div>
+                            </div>
+                        </div>
+                        @if (p.MemberNames.Count > 0)
+                        {
+                            <div class="wp-stack" title="@string.Join("، ", p.MemberNames)">
+                                @foreach (var m in p.MemberNames.Take(3))
+                                {
+                                    <span>@Initial(m)</span>
+                                }
+                                @if (p.MemberCount > 3) { <span class="wp-stack-more num">+@((p.MemberCount - 3).Num())</span> }
+                            </div>
+                        }
+                    </div>
+
+                    <div class="wp-foot">
+                        <span class="wp-activity" title="@p.LastActivityText"><i class="bi bi-clock-history"></i> @(p.LastActivityAt != null ? $"{p.LastActivityText} · {p.LastActivityAt.Value.ToFa()}" : "بدون فعالیت")</span>
+                        <div class="wp-actions" @onclick:stopPropagation="true">
+                            @if (p.CanViewMindFlow)
+                            {
+                                <a href="@($"/work-projects/mindflow?projectId={p.Id}")" target="_blank" rel="noopener noreferrer" title="باز کردن نگار ذهنی همین پروژه"><i class="bi bi-diagram-3"></i></a>
+                            }
+                            @if (p.Status == "Open" && (p.IsMine || access.CanUpdate))
+                            {
+                                <button type="button" title="تمدید مهلت" @onclick="() => OpenExtend(p)"><i class="bi bi-hourglass-split"></i></button>
+                                <button type="button" title="ویرایش" @onclick="() => OpenEdit(p.Id)"><i class="bi bi-pencil"></i></button>
+                                <button type="button" title="بستن پروژه" @onclick="() => OpenClose(p)"><i class="bi bi-lock"></i></button>
+                            }
+                            @if (p.Status == "Closed" && (p.IsMine || access.CanUpdate))
+                            {
+                                <button type="button" title="بازگشایی" @onclick="() => DoReopen(p.Id)"><i class="bi bi-unlock"></i></button>
+                            }
+                            @if (access.CanDelete)
+                            {
+                                <button type="button" class="is-danger" title="حذف" @onclick="() => delId = p.Id"><i class="bi bi-trash"></i></button>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3">
+            <span class="fs-8 text-muted num">@totalCount.Num() پروژه</span>
+            <Pager Page="page" PageCount="pageCount" OnPageChanged="GoToPage" />
+        </div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>پروژه</th>
+                        <th>مدیر</th>
+                        <th style="min-width:130px">پیشرفت</th>
+                        <th>دستورها</th>
+                        <th>اعضا</th>
+                        <th>مهلت</th>
+                        <th>آخرین فعالیت</th>
+                        <th style="width:150px">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var p in items)
+                    {
+                        <tr class="@(p.Status == "Closed" ? "table-light" : "")">
+                            <td>
+                                <div class="fw-bold">
+                                    <a href="javascript:void(0)" @onclick="() => OpenDetail(p.Id)">@p.Title</a>
+                                </div>
+                                <div class="fs-8 text-muted num">@p.Number</div>
+                                @if (p.Status == "Closed")
+                                {
+                                    <span class="badge bg-secondary-subtle text-secondary border">بسته 🔒</span>
+                                }
+                                else if (p.IsOverdue)
+                                {
+                                    <span class="badge bg-danger-subtle text-danger border">⏰ گذشته از مهلت</span>
+                                }
+                                @PriorityBadge(p.Priority)
+                            </td>
+                            <td class="fs-8">@p.OwnerName</td>
+                            <td>@ProgressCell(p.Progress, p.OpenOrderCount, p.ClosedOrderCount, p.OrderCount)</td>
+                            <td class="fs-8 num">
+                                @if (p.OrderCount == 0)
+                                {
+                                    <span class="text-muted">—</span>
+                                }
+                                else
+                                {
+                                    <span title="باز">@p.OpenOrderCount.Num() باز</span>
+                                    <span class="text-muted"> / @p.OrderCount.Num()</span>
+                                    @if (p.OverdueOrderCount > 0)
+                                    {
+                                        <div><span class="badge bg-danger-subtle text-danger border" title="دستورهای گذشته از مهلت">⏰ @p.OverdueOrderCount.Num()</span></div>
+                                    }
+                                }
+                            </td>
+                            <td class="fs-8">
+                                @if (p.MemberCount == 0)
+                                {
+                                    <span class="text-muted">—</span>
+                                }
+                                else
+                                {
+                                    @string.Join("، ", p.MemberNames)
+                                    @if (p.MemberCount > p.MemberNames.Count)
+                                    {
+                                        <span class="text-muted"> +@(p.MemberCount - p.MemberNames.Count) نفر</span>
+                                    }
+                                }
+                            </td>
+                            <td class="fs-8 num">
+                                <div>@p.DueAt.ToFa()</div>
+                                @if (p.Status == "Open")
+                                {
+                                    <div class="@DaysClass(p.DaysLeft)">@DaysText(p.DaysLeft)</div>
+                                }
+                            </td>
+                            <td class="fs-8 text-muted">
+                                @if (p.LastActivityAt != null)
+                                {
+                                    <div>@p.LastActivityText</div>
+                                    <div class="num">@p.LastActivityAt.Value.ToFa()</div>
+                                }
+                                else
+                                {
+                                    <span>—</span>
+                                }
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    @if (p.CanViewMindFlow)
+                                    {
+                                        <a class="btn btn-outline-success" title="نگار ذهنی همین پروژه" href="@($"/work-projects/mindflow?projectId={p.Id}")" target="_blank" rel="noopener noreferrer">
+                                            <i class="bi bi-diagram-3"></i>
+                                        </a>
+                                    }
+                                    <button class="btn btn-outline-primary" title="جزئیات" @onclick="() => OpenDetail(p.Id)">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
+                                    @if (p.Status == "Open" && (p.IsMine || access.CanUpdate))
+                                    {
+                                        <button class="btn btn-outline-secondary" title="تمدید مهلت" @onclick="() => OpenExtend(p)">
+                                            <i class="bi bi-hourglass-split"></i>
+                                        </button>
+                                        <button class="btn btn-outline-secondary" title="ویرایش" @onclick="() => OpenEdit(p.Id)">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        <button class="btn btn-outline-dark" title="بستن پروژه" @onclick="() => OpenClose(p)">
+                                            <i class="bi bi-lock"></i>
+                                        </button>
+                                    }
+                                    @if (p.Status == "Closed" && (p.IsMine || access.CanUpdate))
+                                    {
+                                        <button class="btn btn-outline-success" title="بازگشایی" @onclick="() => DoReopen(p.Id)">
+                                            <i class="bi bi-unlock"></i>
+                                        </button>
+                                    }
+                                    @if (access.CanDelete)
+                                    {
+                                        <button class="btn btn-outline-danger" title="حذف" @onclick="() => delId = p.Id">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span class="fs-8 text-muted num">@totalCount.Num() پروژه</span>
+            <Pager Page="page" PageCount="pageCount" OnPageChanged="GoToPage" />
+        </div>
+    }
+}
+
+@* ================== مودال ساخت/ویرایش ================== *@
+<Modal Visible="showSave" Title="@(saveId > 0 ? "ویرایش پروژه" : "پروژه جدید")" OnClose="() => showSave = false">
+    <ChildContent>
+        @if (!string.IsNullOrWhiteSpace(saveError))
+        {
+            <div class="alert alert-danger py-2">@saveError</div>
+        }
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label">عنوان <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="fTitle" placeholder="مثلاً: راه‌اندازی خط بسته‌بندی" />
+            </div>
+            <div class="col-12">
+                <label class="form-label">شرح</label>
+                <textarea class="form-control" rows="3" @bind="fDesc" placeholder="توضیح کوتاه درباره پروژه (اختیاری)…"></textarea>
+            </div>
+            <div class="col-6">
+                <label class="form-label">تاریخ شروع</label>
+                <DatePicker @bind-Value="fStart" />
+            </div>
+            <div class="col-6">
+                <label class="form-label">مهلت پایان <span class="text-danger">*</span></label>
+                <DatePicker @bind-Value="fDue" />
+            </div>
+            <div class="col-6">
+                <label class="form-label">اولویت</label>
+                <select class="form-select" @bind="fPriority">
+                    <option value="0">کم</option>
+                    <option value="1">عادی</option>
+                    <option value="2">بالا</option>
+                    <option value="3">فوری</option>
+                </select>
+            </div>
+            <div class="col-6">
+                <label class="form-label">برچسب‌ها <span class="text-muted fs-9">(با ویرگول جدا کنید)</span></label>
+                <input class="form-control" @bind="fTagsText" placeholder="مثلاً: تولید، فاز یک" />
+            </div>
+            @if (saveId == 0)
+            {
+                <div class="col-12">
+                    <label class="form-label">اعضای اولیه</label>
+                    <MultiSearchSelect Items="users" Values="fMemberIds" ValuesChanged="(List<int> v) => fMemberIds = v"
+                                       Placeholder="جستجوی همکاران…" />
+                </div>
+            }
+            else
+            {
+                <div class="col-12 fs-8 text-muted">مدیریت اعضا از تب «اعضا» در جزئیات پروژه انجام می‌شود.</div>
+            }
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary btn-sm" @onclick="() => showSave = false">انصراف</button>
+        <button class="btn btn-primary btn-sm" disabled="@saveBusy" @onclick="DoSave">
+            @if (saveBusy)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            else
+            {
+                <i class="bi bi-check-lg"></i>
+            }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+@* ================== مودال جزئیات ================== *@
+<Modal Visible="detail != null" Size="modal-xl" Title="@(detail == null ? "" : $"🏗 {detail.Number} — {detail.Title}")" OnClose="CloseDetail">
+    <ChildContent>
+        @if (detail != null)
+        {
+            var d = detail;
+            <div class="d-flex gap-1 flex-wrap mb-3">
+                <span class="badge @(d.Status == "Closed" ? "bg-secondary" : "bg-success")">@(d.Status == "Closed" ? "بسته 🔒" : "باز")</span>
+                @PriorityBadge(d.Priority)
+                @if (d.IsOverdue)
+                {
+                    <span class="badge bg-danger">⏰ گذشته از مهلت</span>
+                }
+                @if (d.ExtensionCount > 0)
+                {
+                    <span class="badge bg-warning-subtle text-warning border num">تمدید @d.ExtensionCount.Num() از ۵</span>
+                }
+            </div>
+            @* هر تب مجوز مستقل خودش را دارد (تنظیمات ← نقش‌ها ← دستور کار، پروژه‌ها و نگار ذهنی)
+               و پرچم‌ها از سرور می‌آیند تا نقش‌های قدیمی هم درست دیده شوند. *@
+            <ul class="nav nav-tabs mb-3">
+                @if (d.CanViewSummary)
+                {
+                    <li class="nav-item">
+                        <button type="button" class="nav-link @(detailTab == "summary" ? "active" : "")" @onclick='() => detailTab = "summary"'>خلاصه</button>
+                    </li>
+                }
+                @if (d.CanViewOrders)
+                {
+                    <li class="nav-item">
+                        <button type="button" class="nav-link @(detailTab == "orders" ? "active" : "")" @onclick="OpenOrdersTab">
+                            دستورها <span class="badge bg-light text-dark num">@d.OrderCount.Num()</span>
+                        </button>
+                    </li>
+                }
+                @if (d.CanViewMindFlow)
+                {
+                    <li class="nav-item">
+                        <button type="button" class="nav-link @(detailTab == "mindflow" ? "active" : "")" @onclick='() => detailTab = "mindflow"'>
+                            <i class="bi bi-diagram-3"></i> نگار ذهنی
+                        </button>
+                    </li>
+                }
+                @if (d.CanViewMembers)
+                {
+                    <li class="nav-item">
+                        <button type="button" class="nav-link @(detailTab == "members" ? "active" : "")" @onclick='() => detailTab = "members"'>
+                            اعضا <span class="badge bg-light text-dark num">@d.Members.Count.Num()</span>
+                        </button>
+                    </li>
+                }
+                @if (d.CanViewActivity)
+                {
+                    <li class="nav-item">
+                        <button type="button" class="nav-link @(detailTab == "activity" ? "active" : "")" @onclick="OpenActivityTab">فعالیت‌ها</button>
+                    </li>
+                }
+            </ul>
+            @if (!d.CanViewSummary && !d.CanViewOrders && !d.CanViewMindFlow && !d.CanViewMembers && !d.CanViewActivity)
+            {
+                <div class="alert alert-warning py-2">
+                    برای هیچ‌کدام از بخش‌های این پروژه مجوز ندارید. مدیر سامانه می‌تواند از
+                    «تنظیمات ← نقش‌ها ← دستور کار، پروژه‌ها و نگار ذهنی» بخش‌های لازم را بدهد.
+                </div>
+            }
+
+            @if (detailTab == "summary")
+            {
+                @if (!string.IsNullOrWhiteSpace(d.Description))
+                {
+                    <div class="alert alert-light border" style="white-space:pre-wrap">@d.Description</div>
+                }
+                <div class="row g-2 mb-3">
+                    <div class="col-6 col-md-3"><div class="border rounded p-2 text-center"><div class="fs-8 text-muted">مدیر پروژه</div><div class="fw-bold fs-8">@d.OwnerName</div></div></div>
+                    <div class="col-6 col-md-3"><div class="border rounded p-2 text-center"><div class="fs-8 text-muted">شروع</div><div class="fw-bold fs-8 num">@d.StartAt.ToFa()</div></div></div>
+                    <div class="col-6 col-md-3"><div class="border rounded p-2 text-center"><div class="fs-8 text-muted">مهلت</div><div class="fw-bold fs-8 num">@d.DueAt.ToFa()</div></div></div>
+                    <div class="col-6 col-md-3"><div class="border rounded p-2 text-center"><div class="fs-8 text-muted">روزهای مانده</div><div class="fw-bold fs-8 num @DaysClass(d.DaysLeft)">@DaysText(d.DaysLeft)</div></div></div>
+                </div>
+                <div class="mb-3">
+                    <div class="fs-8 text-muted mb-1">پیشرفت پروژه</div>
+                    @ProgressCell(d.Progress, d.OpenOrderCount, d.ClosedOrderCount, d.OrderCount)
+                </div>
+                <div class="row g-2 mb-2">
+                    <div class="col-4"><div class="border rounded p-2 text-center"><div class="fs-7 fw-bold num">@d.OpenOrderCount.Num()</div><div class="fs-8 text-muted">دستور باز</div></div></div>
+                    <div class="col-4"><div class="border rounded p-2 text-center"><div class="fs-7 fw-bold num">@d.ClosedOrderCount.Num()</div><div class="fs-8 text-muted">دستور بسته</div></div></div>
+                    <div class="col-4"><div class="border rounded p-2 text-center"><div class="fs-7 fw-bold num">@d.OverdueOrderCount.Num()</div><div class="fs-8 text-muted">گذشته‌ازمهلت</div></div></div>
+                </div>
+                @if (d.Tags.Count > 0)
+                {
+                    <div class="d-flex gap-1 flex-wrap align-items-center fs-8 mb-2">
+                        <i class="bi bi-tags text-muted"></i>
+                        @foreach (var t in d.Tags)
+                        {
+                            <span class="badge bg-light text-dark border">@t</span>
+                        }
+                    </div>
+                }
+                @if (d.Status == "Closed" && !string.IsNullOrWhiteSpace(d.CloseNote))
+                {
+                    <div class="fs-8"><span class="text-muted">یادداشت بستن:</span> @d.CloseNote</div>
+                }
+            }
+            else if (detailTab == "orders")
+            {
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button class="btn @(ordStatus == "" ? "btn-primary" : "btn-outline-primary")" @onclick='() => SetOrdStatus("")'>همه</button>
+                        <button class="btn @(ordStatus == "open" ? "btn-primary" : "btn-outline-primary")" @onclick='() => SetOrdStatus("open")'>باز</button>
+                        <button class="btn @(ordStatus == "closed" ? "btn-primary" : "btn-outline-primary")" @onclick='() => SetOrdStatus("closed")'>بسته</button>
+                    </div>
+                    <button class="btn btn-sm btn-success" @onclick="GotoNewOrder">
+                        <i class="bi bi-plus-lg"></i> دستور جدید برای این پروژه
+                    </button>
+                </div>
+                @if (d.CanViewMindFlow)
+                {
+                    <section class="border rounded p-3 mb-3 bg-light-subtle">
+                        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                            <strong><i class="bi bi-diagram-3 text-primary"></i> دستورهای متصل به گره‌های نگار ذهنی</strong>
+                            <span class="badge bg-primary-subtle text-primary border">@FilteredMindFlowOrders.Count</span>
+                        </div>
+                        <div class="small text-muted mb-2">همهٔ دستورهای متصل در هر سطح از نقشه؛ از جمله دستورهای پروژه‌های دیگر یا بدون پروژه.</div>
+                        @if (mindFlowOrdersLoading)
+                        {
+                            <div class="small text-muted"><span class="spinner-border spinner-border-sm"></span> در حال بارگذاری دستورهای متصل…</div>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(mindFlowOrdersError))
+                        {
+                            <div class="alert alert-warning py-2 mb-0">@mindFlowOrdersError</div>
+                        }
+                        else if (FilteredMindFlowOrders.Count == 0)
+                        {
+                            <div class="small text-muted">در این نگار ذهنی، دستوری به گره‌ها وصل نشده است.</div>
+                        }
+                        else
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover align-middle mb-0">
+                                    <thead><tr><th>گره</th><th>شماره</th><th>عنوان دستور</th><th>پروژهٔ دستور</th><th>وضعیت</th><th>مهلت</th><th></th></tr></thead>
+                                    <tbody>
+                                        @foreach (var linkedOrder in FilteredMindFlowOrders)
+                                        {
+                                            <tr>
+                                                <td class="small"><a href="@MindFlowNodeHref(linkedOrder)" target="_blank" rel="noopener noreferrer">@linkedOrder.NodeTitle</a></td>
+                                                <td class="num small">@linkedOrder.Number</td>
+                                                <td class="small">@linkedOrder.Title</td>
+                                                <td class="small">@(linkedOrder.ProjectId is null ? "بدون پروژه" : string.IsNullOrWhiteSpace(linkedOrder.ProjectTitle) ? "پروژهٔ دیگر" : $"{linkedOrder.ProjectNumber} — {linkedOrder.ProjectTitle}")</td>
+                                                <td><span class="badge @(linkedOrder.Status == "Closed" ? "bg-secondary-subtle text-secondary border" : "bg-success-subtle text-success border")">@(linkedOrder.Status == "Closed" ? "بسته" : "باز")</span></td>
+                                                <td class="num small">@linkedOrder.DueAt.ToFa()</td>
+                                                <td><a class="btn btn-sm btn-outline-primary" title="بازکردن دستور کار" href="@($"/work-orders?open={linkedOrder.Id}")" target="_blank" rel="noopener noreferrer"><i class="bi bi-box-arrow-up-left"></i></a></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </section>
+                }
+                @if (!string.IsNullOrWhiteSpace(ordersError))
+                {
+                    <div class="alert alert-warning py-2">@ordersError</div>
+                }
+                else if (ordersLoading)
+                {
+                    <div class="text-muted"><span class="spinner-border spinner-border-sm"></span> در حال بارگذاری دستورها…</div>
+                }
+                else if (orders.Count == 0)
+                {
+                    <div class="alert alert-light border text-center">دستوری به این پروژه وصل نیست.</div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover align-middle">
+                            <thead>
+                                <tr><th>شماره</th><th>عنوان</th><th>دستوردهنده</th><th>وضعیت</th><th>وزن</th><th style="min-width:110px">پیشرفت</th><th>مهلت</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var o in orders)
+                                {
+                                    <tr>
+                                        <td class="num fs-8">@o.Number</td>
+                                        <td class="fs-8">@o.Title</td>
+                                        <td class="fs-8">@o.OwnerName</td>
+                                        <td>
+                                            @if (o.Status == "Closed")
+                                            {
+                                                <span class="badge bg-secondary-subtle text-secondary border">بسته</span>
+                                            }
+                                            else if (o.DueAt < DateTime.Now)
+                                            {
+                                                <span class="badge bg-danger-subtle text-danger border">⏰ گذشته</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge bg-success-subtle text-success border">باز</span>
+                                            }
+                                        </td>
+                                        <td class="num fs-8" title="@(o.Weight == 0 ? "در پیشرفت حساب نمی‌شود" : $"وزن {o.Weight}")">
+                                            @o.Weight.Num()
+                                        </td>
+                                        <td>
+                                            <div class="d-flex align-items-center gap-1">
+                                                <div class="progress flex-grow-1" style="height:8px">
+                                                    <div class="progress-bar @(o.OrderProgress == 100 ? "bg-success" : "")" style="width:@o.OrderProgress%"></div>
+                                                </div>
+                                                <span class="fs-9 num">@o.OrderProgress.Num()٪</span>
+                                            </div>
+                                        </td>
+                                        <td class="num fs-8">@o.DueAt.ToFa()</td>
+                                        <td>
+                                            <a class="btn btn-sm btn-outline-primary" title="باز کردن دستور" href="@($"/work-orders?open={o.Id}")" target="_blank">
+                                                <i class="bi bi-box-arrow-up-left"></i>
+                                            </a>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+            else if (detailTab == "mindflow" && d.CanViewMindFlow)
+            {
+                <WorkProjectMindFlow ProjectId="@d.Id" ProjectTitle="@d.Title" CanEdit="@(d.CanManageMindFlow && d.Status == "Open")" CanManageAccess="@(d.CanManageMindFlow && d.Status == "Open")" />
+            }
+            else if (detailTab == "members")
+            {
+                @if (d.Members.Count == 0)
+                {
+                    <div class="alert alert-light border text-center">این پروژه عضوی ندارد.</div>
+                }
+                else
+                {
+                    <ul class="list-group mb-3">
+                        @foreach (var m in d.Members)
+                        {
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span><i class="bi bi-person ms-1"></i> @m.Name</span>
+                                <span class="d-flex align-items-center gap-2">
+                                    <span class="fs-8 text-muted num">@m.AddedAt.ToFa()</span>
+                                    @if (d.CanManage && d.Status == "Open")
+                                    {
+                                        <button class="btn btn-sm btn-outline-danger" title="حذف عضو" @onclick="() => RemoveMember(m.UserId)">
+                                            <i class="bi bi-x-lg"></i>
+                                        </button>
+                                    }
+                                </span>
+                            </li>
+                        }
+                    </ul>
+                }
+                @if (d.CanManage && d.Status == "Open")
+                {
+                    <div class="d-flex gap-2">
+                        <div class="flex-grow-1">
+                            <MultiSearchSelect Items="users" Values="addMemberIds" ValuesChanged="(List<int> v) => addMemberIds = v"
+                                               Placeholder="انتخاب همکاران…" />
+                        </div>
+                        <button class="btn btn-primary btn-sm text-nowrap" disabled="@(addMemberIds.Count == 0 || memberBusy)" @onclick="AddMembers">
+                            @if (memberBusy)
+                            {
+                                <span class="spinner-border spinner-border-sm"></span>
+                            }
+                            else
+                            {
+                                <i class="bi bi-plus-lg"></i>
+                            }
+                            افزودن
+                        </button>
+                    </div>
+                }
+            }
+            else if (detailTab == "activity")
+            {
+                @if (activity.Count == 0 && !activityLoading)
+                {
+                    <div class="alert alert-light border text-center">فعالیتی ثبت نشده است.</div>
+                }
+                else
+                {
+                    <ul class="list-group mb-2">
+                        @foreach (var a in activity)
+                        {
+                            <li class="list-group-item">
+                                <div class="d-flex justify-content-between flex-wrap gap-1">
+                                    <span class="fs-8"><b>@a.ActorName</b> — @a.ActionFa</span>
+                                    <span class="fs-8 text-muted num">@a.CreatedAt.ToFa() @a.CreatedAt.ToString("HH:mm")</span>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(a.Text))
+                                {
+                                    <div class="fs-8 text-muted mt-1">@a.Text</div>
+                                }
+                            </li>
+                        }
+                    </ul>
+                    @if (activityLoading)
+                    {
+                        <div class="text-muted fs-8"><span class="spinner-border spinner-border-sm"></span> …</div>
+                    }
+                    else if (activityHasMore)
+                    {
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="LoadMoreActivity">نمایش بیشتر</button>
+                    }
+                }
+            }
+        }
+    </ChildContent>
+    <Footer>
+        @if (detail != null && detail.CanManage)
+        {
+            @if (detail.Status == "Open")
+            {
+                <button class="btn btn-sm btn-outline-secondary" @onclick="() => OpenExtendFromDetail()">⏳ تمدید</button>
+                <button class="btn btn-sm btn-outline-dark" @onclick="() => OpenCloseFromDetail()">🔒 بستن</button>
+            }
+            else
+            {
+                <button class="btn btn-sm btn-outline-success" @onclick="() => DoReopen(detail.Id)">بازگشایی</button>
+            }
+        }
+        <button class="btn btn-sm btn-secondary" @onclick="CloseDetail">بستن</button>
+    </Footer>
+</Modal>
+
+@* ================== مودال تمدید ================== *@
+<Modal Visible="extId > 0" Title="تمدید مهلت پروژه" OnClose="() => extId = 0">
+    <ChildContent>
+        @if (!string.IsNullOrWhiteSpace(extError))
+        {
+            <div class="alert alert-danger py-2">@extError</div>
+        }
+        <div class="mb-2 fs-8 text-muted num">تمدیدهای استفاده‌شده: @extUsed.Num() از ۵</div>
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label">مهلت جدید <span class="text-danger">*</span></label>
+                <DatePicker @bind-Value="extDue" />
+            </div>
+            <div class="col-12">
+                <label class="form-label">دلیل تمدید <span class="text-danger">*</span></label>
+                <textarea class="form-control" rows="2" @bind="extNote" placeholder="چرا مهلت تمدید می‌شود؟"></textarea>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary btn-sm" @onclick="() => extId = 0">انصراف</button>
+        <button class="btn btn-primary btn-sm" disabled="@extBusy" @onclick="DoExtend">
+            @if (extBusy)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            ثبت تمدید
+        </button>
+    </Footer>
+</Modal>
+
+@* ================== مودال بستن ================== *@
+<Modal Visible="closeId > 0" Title="بستن پروژه" OnClose="() => closeId = 0">
+    <ChildContent>
+        @if (!string.IsNullOrWhiteSpace(closeError))
+        {
+            <div class="alert alert-danger py-2">@closeError</div>
+        }
+        <p class="fs-8 text-muted">بستن فقط وقتی ممکن است که هیچ دستور بازی به پروژه وصل نباشد.</p>
+        <label class="form-label">یادداشت بستن (اختیاری)</label>
+        <textarea class="form-control" rows="2" @bind="closeNote"></textarea>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary btn-sm" @onclick="() => closeId = 0">انصراف</button>
+        <button class="btn btn-dark btn-sm" disabled="@closeBusy" @onclick="DoClose">
+            @if (closeBusy)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            بستن پروژه
+        </button>
+    </Footer>
+</Modal>
+
+@* ================== مودال حذف ================== *@
+<Modal Visible="delId > 0" Title="حذف پروژه" OnClose="() => delId = 0">
+    <ChildContent>
+        @if (!string.IsNullOrWhiteSpace(delError))
+        {
+            <div class="alert alert-danger py-2">@delError</div>
+        }
+        <p>پروژه حذف شود؟ سوابق دستورهای متصل محفوظ می‌ماند. حذف فقط وقتی ممکن است که دستور بازی وصل نباشد.</p>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary btn-sm" @onclick="() => delId = 0">انصراف</button>
+        <button class="btn btn-danger btn-sm" disabled="@delBusy" @onclick="DoDelete">
+            @if (delBusy)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            بله، حذف شود
+        </button>
+    </Footer>
+</Modal>
+
+<style>
+    .wp-view .btn { border: 1px solid #dbe2ea; background: #fff; color: #64748b; }
+    .wp-view .btn.active { background: #eef2ff; border-color: #a5b4fc; color: #3730a3; }
+
+    .wp-grid { --wp-font: 'Vazirmatn', Tahoma, sans-serif; font-family: var(--wp-font); display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 1.1rem; }
+    .wp-card { position: relative; background: #fff; border: 1px solid #e6eaf0; border-radius: 16px; padding: 1.1rem 1.2rem 0; display: flex; flex-direction: column; cursor: pointer; overflow: hidden; min-width: 0; transition: box-shadow .18s, transform .18s, border-color .18s; }
+    .wp-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--wp-accent, #6366f1); }
+    .wp-card:hover { border-color: #d5dbe5; box-shadow: 0 10px 28px -12px rgba(15, 23, 42, .18); transform: translateY(-2px); }
+    .wp-tone-normal { --wp-accent: #6366f1; }
+    .wp-tone-late { --wp-accent: #ef4444; }
+    .wp-tone-soon { --wp-accent: #f59e0b; }
+    .wp-tone-done { --wp-accent: #10b981; }
+    .wp-tone-closed { --wp-accent: #cbd5e1; background: #fbfcfd; }
+    .wp-tone-closed .wp-title { color: #64748b; }
+
+    .wp-top { display: flex; justify-content: space-between; align-items: center; gap: .5rem; min-height: 22px; }
+    .wp-num { font-size: .72rem; font-weight: 500; color: #64748b; background: #f1f5f9; border-radius: 6px; padding: .1rem .5rem; letter-spacing: .02em; }
+    .wp-tags { display: flex; gap: .3rem; flex-shrink: 0; }
+    .wp-tag { font-size: .7rem; font-weight: 600; border-radius: 999px; padding: .12rem .6rem; }
+    .wp-tag-red { color: #b91c1c; background: #fee2e2; }
+    .wp-tag-amber { color: #a16207; background: #fef3c7; }
+    .wp-tag-mute { color: #64748b; background: #eef1f5; }
+
+    .wp-title { margin: .7rem 0 .35rem; font-size: 1.04rem; font-weight: 700; line-height: 1.7; color: #0f172a; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 3.4em; }
+    .wp-due { display: flex; align-items: center; gap: .4rem; font-size: .8rem; color: #475569; }
+    .wp-due .bi { color: #94a3b8; }
+    .wp-days { font-size: .7rem; font-weight: 600; border-radius: 999px; padding: .08rem .5rem; margin-inline-start: auto; }
+    .wp-days-late { color: #b91c1c; background: #fee2e2; }
+    .wp-days-soon { color: #a16207; background: #fef3c7; }
+    .wp-days-ok { color: #475569; background: #f1f5f9; }
+
+    .wp-prog { display: flex; align-items: center; gap: .9rem; margin-top: .9rem; padding: .75rem .85rem; background: #f8fafc; border-radius: 12px; }
+    .wp-ring { position: relative; width: 54px; height: 54px; flex-shrink: 0; }
+    .wp-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+    .wp-ring circle { fill: none; stroke-width: 3.4; }
+    .wp-ring-bg { stroke: #e2e8f0; }
+    .wp-ring-fg { stroke: var(--wp-accent, #6366f1); stroke-linecap: round; transition: stroke-dasharray .4s; }
+    .wp-ring.is-done .wp-ring-fg { stroke: #10b981; }
+    .wp-ring > span { position: absolute; inset: 0; display: grid; place-items: center; font-size: .8rem; font-weight: 800; color: #1e293b; }
+    .wp-prog-txt { min-width: 0; }
+    .wp-prog-main { font-size: .82rem; font-weight: 500; color: #334155; }
+    .wp-chips { display: flex; gap: .35rem; margin-top: .35rem; flex-wrap: wrap; }
+    .wp-chips:empty { display: none; }
+    .wp-chips span { font-size: .7rem; color: #475569; background: #fff; border: 1px solid #e2e8f0; border-radius: 999px; padding: .05rem .5rem; }
+    .wp-chips span.is-late { color: #b91c1c; border-color: #fecaca; background: #fff5f5; }
+
+    .wp-people { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin: .95rem 0; min-width: 0; }
+    .wp-owner { display: flex; align-items: center; gap: .55rem; min-width: 0; }
+    .wp-owner .min-w-0 { min-width: 0; }
+    .wp-owner-img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex-shrink: 0; box-shadow: 0 0 0 2px #fff, 0 0 0 3px #e2e8f0; }
+    .wp-owner-name { font-size: .84rem; font-weight: 600; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .wp-owner-role { font-size: .7rem; color: #94a3b8; }
+    .wp-stack { display: flex; flex-direction: row-reverse; flex-shrink: 0; }
+    .wp-stack span { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: .72rem; font-weight: 700; color: #3730a3; background: #e0e7ff; border: 2px solid #fff; margin-inline-start: -7px; }
+    .wp-stack span:nth-child(2) { background: #dcfce7; color: #166534; }
+    .wp-stack span:nth-child(3) { background: #fde68a; color: #92400e; }
+    .wp-stack span.wp-stack-more { background: #f1f5f9; color: #475569; font-size: .66rem; }
+
+    .wp-foot { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin: auto -1.2rem 0; padding: .55rem 1.2rem; border-top: 1px solid #eef1f5; min-height: 46px; min-width: 0; }
+    .wp-activity { font-size: .72rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .wp-actions { display: flex; gap: .2rem; flex-shrink: 0; }
+    .wp-actions button, .wp-actions a { width: 30px; height: 30px; border: 0; background: transparent; color: #64748b; border-radius: 8px; display: inline-grid; place-items: center; transition: background .15s, color .15s; text-decoration: none; }
+    .wp-actions button:hover, .wp-actions a:hover { background: #eef2ff; color: #4338ca; }
+    .wp-actions button.is-danger:hover, .wp-actions a.is-danger:hover { background: #fee2e2; color: #b91c1c; }
+    .wp-actions button:focus-visible, .wp-actions a:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+    @@media (hover: hover) and (min-width: 768px) {
+        .wp-actions { opacity: .55; transition: opacity .15s; }
+        .wp-card:hover .wp-actions, .wp-actions:focus-within { opacity: 1; }
+    }
+    @@media (max-width: 576px) { .wp-grid { grid-template-columns: 1fr; } }
+</style>
+
+@code {
+    private class Access
+    {
+        public int UserId { get; set; }
+        public bool CanView { get; set; }
+        public bool CanCreate { get; set; }
+        public bool CanUpdate { get; set; }
+        public bool CanDelete { get; set; }
+    }
+
+    private class ProjOrder
+    {
+        public int Id { get; set; }
+        public string Number { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string OwnerName { get; set; } = "";
+        public string Status { get; set; } = "Open";
+        public int Priority { get; set; }
+        public DateTime DueAt { get; set; }
+        public int Weight { get; set; }
+        public int OrderProgress { get; set; }
+    }
+
+    private class ErrObj { public string? Message { get; set; } }
+
+    private Access access = new();
+    private bool accessLoaded, loading;
+    private List<WorkProjectListItemDto> items = new();
+    private int page = 1, totalCount, pageSize = 20;
+    private int pageCount => Math.Max(1, (totalCount + pageSize - 1) / pageSize);
+
+    private string fltQ = "", fltStatus = "", fltMine = "", fltSort = "due";
+    private bool fltOverdue;
+    private string view = "cards";
+    private const string ViewKey = "workprojects.view";
+    private System.Threading.CancellationTokenSource? searchCts;
+
+    private List<LookupItem> users = new();
+    private bool usersLoaded;
+
+    // ---------- مودال ساخت/ویرایش ----------
+    private bool showSave, saveBusy;
+    private string saveError = "";
+    private int saveId;
+    private string fTitle = "", fDesc = "", fTagsText = "";
+    private DateTime? fStart, fDue;
+    private int fPriority = 1;
+    private List<int> fMemberIds = new();
+
+    // ---------- جزئیات ----------
+    private WorkProjectDetailDto? detail;
+    private string detailTab = "summary";
+    private List<ProjOrder> orders = new();
+    private List<WorkProjectMindFlowLinkedOrderDto> mindFlowOrders = new();
+    private bool ordersLoading, mindFlowOrdersLoading;
+    private string ordersError = "", mindFlowOrdersError = "", ordStatus = "";
+    private List<WorkProjectMindFlowLinkedOrderDto> FilteredMindFlowOrders => ordStatus switch
+    {
+        "open" => mindFlowOrders.Where(x => x.Status == "Open").ToList(),
+        "closed" => mindFlowOrders.Where(x => x.Status == "Closed").ToList(),
+        _ => mindFlowOrders
+    };
+    private List<int> addMemberIds = new();
+    private bool memberBusy;
+    private List<WorkProjectLogDto> activity = new();
+    private bool activityLoading, activityHasMore;
+    private int activitySkip;
+
+    // ---------- تمدید/بستن/حذف ----------
+    private int extId, extUsed;
+    private DateTime? extDue;
+    private string extNote = "", extError = "";
+    private bool extBusy;
+    private int closeId;
+    private string closeNote = "", closeError = "";
+    private bool closeBusy;
+    private int delId;
+    private string delError = "";
+    private bool delBusy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Rt.DataChanged += OnRtChanged;
+        try
+        {
+            access = await Http.GetFromJsonAsync<Access>("/api/workprojects/my-access") ?? new();
+        }
+        catch { }
+        accessLoaded = true;
+        if (!access.CanView) return;
+        try
+        {
+            var saved = await JS.InvokeAsync<string?>("localStorage.getItem", ViewKey);
+            if (saved is "cards" or "table") view = saved;
+        }
+        catch { }
+        await LoadList();
+        var qs = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query);
+        if (int.TryParse(qs["open"], out var openId) && openId > 0)
+            await OpenDetail(openId);
+    }
+
+    public void Dispose() => Rt.DataChanged -= OnRtChanged;
+
+    private void OnRtChanged(string scope)
+    {
+        if (scope != "workprojects" && scope != "workorders") return;
+        _ = InvokeAsync(async () =>
+        {
+            await LoadList(silent: true);
+            if (detail != null)
+            {
+                await RefreshDetail(silent: true);
+                if (detailTab == "orders") await Task.WhenAll(LoadOrders(silent: true), LoadMindFlowLinkedOrders(silent: true));
+            }
+            StateHasChanged();
+        });
+    }
+
+    private async Task<string> ErrMsg(HttpResponseMessage r)
+    {
+        try
+        {
+            var t = await r.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(t)) return $"خطای سرور ({(int)r.StatusCode})";
+            try
+            {
+                var m = System.Text.Json.JsonSerializer.Deserialize<ErrObj>(t,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                return string.IsNullOrWhiteSpace(m?.Message) ? t : m.Message;
+            }
+            catch { return t; }
+        }
+        catch { return "خطای ارتباط با سرور."; }
+    }
+
+    // ================== لیست ==================
+
+    private async Task LoadList(bool silent = false)
+    {
+        if (!silent) loading = true;
+        try
+        {
+            var qs = $"page={page}&pageSize={pageSize}";
+            if (!string.IsNullOrWhiteSpace(fltQ)) qs += $"&q={Uri.EscapeDataString(fltQ.Trim())}";
+            if (!string.IsNullOrWhiteSpace(fltStatus)) qs += $"&status={fltStatus}";
+            if (!string.IsNullOrWhiteSpace(fltMine)) qs += $"&mine={fltMine}";
+            if (fltOverdue) qs += "&overdue=true";
+            qs += $"&sort={fltSort}";
+            var res = await Http.GetFromJsonAsync<WorkProjectPageDto>($"/api/workprojects?{qs}") ?? new();
+            items = res.Items;
+            totalCount = res.TotalCount;
+            page = res.Page;
+        }
+        catch (Exception ex) { if (!silent) Toast.Error(ex.Message); }
+        finally { if (!silent) loading = false; }
+    }
+
+    private async Task GoToPage(int p)
+    {
+        if (p < 1 || p > pageCount || p == page) return;
+        page = p;
+        await LoadList();
+    }
+
+    private void OnSearchInput(ChangeEventArgs e)
+    {
+        fltQ = e.Value?.ToString() ?? "";
+        searchCts?.Cancel();
+        searchCts = new System.Threading.CancellationTokenSource();
+        var token = searchCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(450, token);
+                if (token.IsCancellationRequested) return;
+                await InvokeAsync(async () => { page = 1; await LoadList(); StateHasChanged(); });
+            }
+            catch { }
+        });
+    }
+
+    private async Task OnStatusChanged(ChangeEventArgs e) { fltStatus = e.Value?.ToString() ?? ""; page = 1; await LoadList(); }
+    private async Task OnMineChanged(ChangeEventArgs e) { fltMine = e.Value?.ToString() ?? ""; page = 1; await LoadList(); }
+    private async Task OnSortChanged(ChangeEventArgs e) { fltSort = e.Value?.ToString() ?? "due"; page = 1; await LoadList(); }
+    private async Task OnOverdueChanged(ChangeEventArgs e) { fltOverdue = (bool)(e.Value ?? false); page = 1; await LoadList(); }
+
+    private async Task EnsureUsersAsync()
+    {
+        if (usersLoaded) return;
+        try { users = await Http.GetFromJsonAsync<List<LookupItem>>("/api/workprojects/users") ?? new(); }
+        catch { users = new(); }
+        usersLoaded = true;
+    }
+
+    // ================== ساخت/ویرایش ==================
+
+    private async Task OpenCreate()
+    {
+        saveId = 0; saveError = "";
+        fTitle = ""; fDesc = ""; fTagsText = "";
+        fStart = DateTime.Today; fDue = DateTime.Today.AddDays(7);
+        fPriority = 1; fMemberIds = new();
+        await EnsureUsersAsync();
+        showSave = true;
+    }
+
+    private async Task OpenEdit(int id)
+    {
+        saveError = "";
+        try
+        {
+            var d = await Http.GetFromJsonAsync<WorkProjectDetailDto>($"/api/workprojects/{id}");
+            if (d == null) return;
+            saveId = d.Id;
+            fTitle = d.Title; fDesc = d.Description ?? "";
+            fStart = d.StartAt.Date; fDue = d.DueAt.Date;
+            fPriority = d.Priority;
+            fTagsText = string.Join("، ", d.Tags);
+            fMemberIds = new();
+            showSave = true;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DoSave()
+    {
+        saveError = "";
+        if (string.IsNullOrWhiteSpace(fTitle)) { saveError = "عنوان پروژه را وارد کنید."; return; }
+        if (fDue == null) { saveError = "مهلت پایان را انتخاب کنید."; return; }
+        saveBusy = true;
+        try
+        {
+            var payload = new SaveWorkProjectDto
+            {
+                Id = saveId, Title = fTitle.Trim(), Description = fDesc,
+                StartAt = (fStart ?? DateTime.Today).Date, DueAt = fDue.Value.Date,
+                Priority = fPriority, MemberIds = fMemberIds,
+                Tags = fTagsText.Split(new[] { ',', '،', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
+            };
+            var resp = saveId > 0
+                ? await Http.PutAsJsonAsync($"/api/workprojects/{saveId}", payload)
+                : await Http.PostAsJsonAsync("/api/workprojects", payload);
+            if (!resp.IsSuccessStatusCode) { saveError = await ErrMsg(resp); return; }
+            Toast.Success(saveId > 0 ? "تغییرات ذخیره شد." : "پروژه ساخته شد.");
+            showSave = false;
+            page = 1;
+            await LoadList();
+            if (detail != null && saveId == detail.Id) await RefreshDetail();
+        }
+        catch (Exception ex) { saveError = ex.Message; }
+        finally { saveBusy = false; }
+    }
+
+    // ================== ذهن‌نگار مستقیمِ پروژه ==================
+
+    private void OpenMindFlow(int id) => Nav.NavigateTo($"/work-projects/mindflow?projectId={id}");
+
+    // ================== جزئیات ==================
+
+    private async Task OpenDetail(int id)
+    {
+        detailTab = "summary";
+        orders = new(); ordersError = ""; ordStatus = "";
+        mindFlowOrders = new(); mindFlowOrdersError = ""; mindFlowOrdersLoading = false;
+        activity = new(); activitySkip = 0; activityHasMore = false;
+        addMemberIds = new();
+        try
+        {
+            detail = await Http.GetFromJsonAsync<WorkProjectDetailDto>($"/api/workprojects/{id}");
+            if (detail != null)
+            {
+                detailTab = FirstAllowedTab(detail);
+                await EnsureUsersAsync();
+            }
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private void CloseDetail()
+    {
+        detail = null;
+        if (new Uri(Nav.Uri).Query.Contains("open=")) Nav.NavigateTo("/work-projects");
+    }
+
+    private async Task RefreshDetail(bool silent = false)
+    {
+        if (detail == null) return;
+        try
+        {
+            var d = await Http.GetFromJsonAsync<WorkProjectDetailDto>($"/api/workprojects/{detail.Id}");
+            if (d != null) detail = d;
+        }
+        catch (Exception ex) { if (!silent) Toast.Error(ex.Message); }
+    }
+
+    /// <summary>اولین تبی که کاربر مجوز آن را دارد؛ اگر هیچ‌کدام نبود، «summary» می‌ماند و هشدار نشان داده می‌شود.</summary>
+    private static string FirstAllowedTab(WorkProjectDetailDto d)
+    {
+        if (d.CanViewSummary) return "summary";
+        if (d.CanViewOrders) return "orders";
+        if (d.CanViewMindFlow) return "mindflow";
+        if (d.CanViewMembers) return "members";
+        if (d.CanViewActivity) return "activity";
+        return "summary";
+    }
+
+    private async Task OpenOrdersTab()
+    {
+        if (detail is { CanViewOrders: false }) return;
+        detailTab = "orders";
+        await Task.WhenAll(LoadOrders(), LoadMindFlowLinkedOrders());
+    }
+
+    private async Task SetOrdStatus(string s)
+    {
+        ordStatus = s;
+        await Task.WhenAll(LoadOrders(), LoadMindFlowLinkedOrders());
+    }
+
+    private async Task LoadMindFlowLinkedOrders(bool silent = false)
+    {
+        if (detail is null || !detail.CanViewMindFlow)
+        {
+            mindFlowOrders = new(); mindFlowOrdersError = ""; mindFlowOrdersLoading = false;
+            return;
+        }
+        mindFlowOrdersError = "";
+        if (!silent) mindFlowOrdersLoading = true;
+        try
+        {
+            mindFlowOrders = await Http.GetFromJsonAsync<List<WorkProjectMindFlowLinkedOrderDto>>($"/api/workorders/by-project/{detail.Id}/mindflow-linked") ?? new();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException)
+        {
+            mindFlowOrders = new();
+            mindFlowOrdersError = "بارگذاری دستورهای متصل به گره‌های نگار ذهنی انجام نشد.";
+        }
+        finally { if (!silent) mindFlowOrdersLoading = false; }
+    }
+
+    private string MindFlowNodeHref(WorkProjectMindFlowLinkedOrderDto order)
+    {
+        if (detail is null) return "/work-projects/mindflow";
+        var href = $"/work-projects/mindflow?projectId={detail.Id}&nodeId={order.NodeId}";
+        return string.IsNullOrWhiteSpace(order.SubFlowPath) ? href : $"{href}&subFlowPath={Uri.EscapeDataString(order.SubFlowPath)}";
+    }
+
+    private async Task LoadOrders(bool silent = false)
+    {
+        if (detail == null) return;
+        ordersError = "";
+        if (!silent) ordersLoading = true;
+        try
+        {
+            var url = $"/api/workorders/by-project/{detail.Id}";
+            if (!string.IsNullOrWhiteSpace(ordStatus)) url += $"?status={ordStatus}";
+            orders = await Http.GetFromJsonAsync<List<ProjOrder>>(url) ?? new();
+        }
+        catch
+        {
+            orders = new();
+            ordersError = "نمایش دستورها ممکن نیست (دسترسی به دستورهای کار ندارید یا خطای سرور).";
+            if (!silent) StateHasChanged();
+        }
+        finally { if (!silent) ordersLoading = false; }
+    }
+
+    private void GotoNewOrder()
+    {
+        if (detail == null) return;
+        Nav.NavigateTo($"/work-orders?projectId={detail.Id}");
+    }
+
+    private async Task AddMembers()
+    {
+        if (detail == null || addMemberIds.Count == 0) return;
+        memberBusy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/workprojects/{detail.Id}/members",
+                new AddWorkProjectMembersDto { UserIds = addMemberIds });
+            if (!resp.IsSuccessStatusCode) { Toast.Error(await ErrMsg(resp)); return; }
+            Toast.Success("عضو اضافه شد.");
+            addMemberIds = new();
+            await RefreshDetail();
+            await LoadList(silent: true);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { memberBusy = false; }
+    }
+
+    private async Task RemoveMember(int userId)
+    {
+        if (detail == null) return;
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/workprojects/{detail.Id}/members/{userId}");
+            if (!resp.IsSuccessStatusCode) { Toast.Error(await ErrMsg(resp)); return; }
+            Toast.Success("عضو حذف شد.");
+            await RefreshDetail();
+            await LoadList(silent: true);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task OpenActivityTab()
+    {
+        if (detail is { CanViewActivity: false }) return;
+        detailTab = "activity";
+        if (activity.Count == 0)
+        {
+            activitySkip = 0;
+            await LoadActivity(more: false);
+        }
+    }
+
+    private async Task LoadMoreActivity() => await LoadActivity(more: true);
+
+    private async Task LoadActivity(bool more)
+    {
+        if (detail == null) return;
+        activityLoading = true;
+        try
+        {
+            var skip = more ? activitySkip : 0;
+            var rows = await Http.GetFromJsonAsync<List<WorkProjectLogDto>>(
+                $"/api/workprojects/{detail.Id}/activity?skip={skip}&take=20") ?? new();
+            if (more) activity.AddRange(rows);
+            else activity = rows;
+            activitySkip = skip + rows.Count;
+            activityHasMore = rows.Count >= 20;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { activityLoading = false; }
+    }
+
+    // ================== تمدید/بستن/بازگشایی/حذف ==================
+
+    private void OpenExtend(WorkProjectListItemDto p)
+    {
+        extId = p.Id; extUsed = p.ExtensionCount; extError = "";
+        extDue = p.DueAt.Date.AddDays(7); extNote = "";
+    }
+
+    private void OpenExtendFromDetail()
+    {
+        if (detail == null) return;
+        OpenExtend(detail);
+    }
+
+    private async Task DoExtend()
+    {
+        extError = "";
+        if (extDue == null) { extError = "مهلت جدید را انتخاب کنید."; return; }
+        if (string.IsNullOrWhiteSpace(extNote)) { extError = "دلیل تمدید را وارد کنید."; return; }
+        extBusy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/workprojects/{extId}/extend",
+                new ExtendWorkProjectDto { NewDueAt = extDue.Value.Date, Note = extNote });
+            if (!resp.IsSuccessStatusCode) { extError = await ErrMsg(resp); return; }
+            Toast.Success("مهلت پروژه تمدید شد.");
+            extId = 0;
+            await LoadList();
+            if (detail != null) await RefreshDetail();
+        }
+        catch (Exception ex) { extError = ex.Message; }
+        finally { extBusy = false; }
+    }
+
+    private void OpenClose(WorkProjectListItemDto p)
+    {
+        closeId = p.Id; closeNote = ""; closeError = "";
+    }
+
+    private void OpenCloseFromDetail()
+    {
+        if (detail == null) return;
+        OpenClose(detail);
+    }
+
+    private async Task DoClose()
+    {
+        closeError = "";
+        closeBusy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/workprojects/{closeId}/close",
+                new CloseWorkProjectDto { Note = closeNote });
+            if (!resp.IsSuccessStatusCode) { closeError = await ErrMsg(resp); return; }
+            Toast.Success("پروژه بسته شد.");
+            closeId = 0;
+            await LoadList();
+            if (detail != null) await RefreshDetail();
+        }
+        catch (Exception ex) { closeError = ex.Message; }
+        finally { closeBusy = false; }
+    }
+
+    private async Task DoReopen(int id)
+    {
+        try
+        {
+            var resp = await Http.PostAsync($"/api/workprojects/{id}/reopen", null);
+            if (!resp.IsSuccessStatusCode) { Toast.Error(await ErrMsg(resp)); return; }
+            Toast.Success("پروژه بازگشایی شد.");
+            await LoadList();
+            if (detail != null) await RefreshDetail();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task DoDelete()
+    {
+        delError = "";
+        delBusy = true;
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/workprojects/{delId}");
+            if (!resp.IsSuccessStatusCode) { delError = await ErrMsg(resp); return; }
+            Toast.Success("پروژه حذف شد.");
+            var wasDetail = detail?.Id == delId;
+            delId = 0;
+            if (wasDetail) detail = null;
+            await LoadList();
+        }
+        catch (Exception ex) { delError = ex.Message; }
+        finally { delBusy = false; }
+    }
+
+    // ================== نمایشی ==================
+
+    private RenderFragment PriorityBadge(int p) => p switch
+    {
+        0 => @<span class="badge bg-light text-dark border">کم</span>,
+        2 => @<span class="badge bg-warning-subtle text-warning border">بالا</span>,
+        3 => @<span class="badge bg-danger-subtle text-danger border">فوری</span>,
+        _ => @<span></span>
+    };
+
+    private RenderFragment ProgressCell(int? progress, int open, int closed, int total) =>
+        progress == null
+            ? @<span class="fs-8 text-muted">بدون دستور</span>
+            : @<div class="d-flex align-items-center gap-1">
+                <div class="progress flex-grow-1" style="height:10px">
+                    <div class="progress-bar @(progress == 100 ? "bg-success" : "")" style="width:@progress%"></div>
+                </div>
+                <span class="fs-8 num fw-bold">@progress.Value.Num()٪</span>
+            </div>;
+
+    private async Task SetView(string v)
+    {
+        view = v;
+        try { await JS.InvokeVoidAsync("localStorage.setItem", ViewKey, v); } catch { }
+    }
+
+    /// <summary>رنگ حاشیهٔ کارت: بسته، تمام‌شده، گذشته از مهلت، نزدیک مهلت (۳ روز) یا عادی.</summary>
+    private static string CardTone(WorkProjectListItemDto p) =>
+        p.Status == "Closed" ? "closed"
+        : p.IsOverdue ? "late"
+        : p.Progress == 100 ? "done"
+        : p.DaysLeft <= 3 ? "soon"
+        : "normal";
+
+    private static string DaysTone(int days) => days < 0 ? "late" : days <= 3 ? "soon" : "ok";
+    private static string Initial(string name) { var t = (name ?? "").Trim(); return t.Length == 0 ? "؟" : t[..1]; }
+
+    private RenderFragment WpPriority(int p) => p switch
+    {
+        0 => @<span class="wp-tag wp-tag-mute">کم</span>,
+        2 => @<span class="wp-tag wp-tag-amber">بالا</span>,
+        3 => @<span class="wp-tag wp-tag-red">فوری</span>,
+        _ => @<span></span>
+    };
+
+    private static string DaysClass(int days) => days < 0 ? "text-danger" : days == 0 ? "text-warning fw-bold" : days <= 3 ? "text-warning" : "text-muted";
+    private static string DaysText(int days) => days < 0 ? $"{(-days).Num()} روز گذشته" : days == 0 ? "امروز" : $"{days.Num()} روز مانده";
+}

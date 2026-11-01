@@ -1,0 +1,572 @@
+@page "/moadian/basic-info"
+@inject IMoadianClientService Mdn
+@inject IAuthState Auth
+@inject IToastService Toast
+
+<PageTitle>سامانه مودیان — اطلاعات پایه</PageTitle>
+
+<MoadianSubNav />
+
+<div class="page-head">
+    <div>
+        <h1>اطلاعات پایه سامانه مودیان</h1>
+        <p class="lead">مدیریت شناسه‌های ۱۳ رقمی کالا و خدمت (SSTID)، پرونده خریداران، واحدهای سنجش رسمی و همگام‌سازی خودکار با ERP</p>
+    </div>
+</div>
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <button type="button" class="nav-link @(tab == "catalog" ? "active" : "")" @onclick='() => tab = "catalog"'>
+            <i class="bi bi-box-seam me-1"></i>کالاها و خدمات مالیاتی (@catalog.Count.Num())
+        </button>
+    </li>
+    <li class="nav-item">
+        <button type="button" class="nav-link @(tab == "buyers" ? "active" : "")" @onclick='() => tab = "buyers"'>
+            <i class="bi bi-people me-1"></i>خریداران مودیان (@buyers.Count.Num())
+        </button>
+    </li>
+    <li class="nav-item">
+        <button type="button" class="nav-link @(tab == "units" ? "active" : "")" @onclick='() => tab = "units"'>
+            <i class="bi bi-rulers me-1"></i>واحدهای سنجش رسمی (@units.Count.Num())
+        </button>
+    </li>
+</ul>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else if (tab == "catalog")
+{
+    <div class="card">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <input class="form-control form-control-sm" style="max-width:280px" @bind="catSearch" @bind:event="oninput" placeholder="جستجو نام یا شناسه ۱۳ رقمی..." />
+            @if (Auth.Has("Moadian.MasterData"))
+            {
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="SyncCatalogAsync">
+                        <i class="bi bi-arrow-repeat me-1"></i>همگام‌سازی خودکار از کالاهای سیستم
+                    </button>
+                    <button class="btn btn-sm btn-primary" @onclick="OpenNewCatalogModal">
+                        <i class="bi bi-plus-lg me-1"></i>تعریف کالا / خدمت جدید
+                    </button>
+                </div>
+            }
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>کد داخلی</th>
+                        <th>نام کالا / خدمت</th>
+                        <th>شناسه ۱۳ رقمی (SSTID)</th>
+                        <th>واحد سنجش</th>
+                        <th>نرخ VAT</th>
+                        <th>مبلغ پیش‌فرض (ریال)</th>
+                        <th>وضعیت</th>
+                        <th class="text-end">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in FilteredCatalog)
+                    {
+                        <tr>
+                            <td class="font-monospace small">@(c.InternalCode ?? "—")</td>
+                            <td class="fw-semibold">@c.Name</td>
+                            <td><code>@c.Sstid</code></td>
+                            <td>@(c.UnitName ?? c.UnitCode) (@c.UnitCode)</td>
+                            <td class="num">@c.VatRate.Num()٪</td>
+                            <td class="num">@c.DefaultUnitPrice.Money()</td>
+                            <td>
+                                <span class="badge @(c.IsActive ? "bg-success-subtle text-success" : "bg-secondary-subtle text-secondary")">
+                                    @(c.IsActive ? "فعال" : "غیرفعال")
+                                </span>
+                            </td>
+                            <td class="text-end">
+                                @if (Auth.Has("Moadian.MasterData"))
+                                {
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-secondary" @onclick="() => OpenEditCatalogModal(c)"><i class="bi bi-pencil"></i></button>
+                                        <button class="btn btn-outline-danger" disabled="@busy" @onclick="() => DeleteCatalogAsync(c.Id)"><i class="bi bi-trash"></i></button>
+                                    </div>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    @if (!FilteredCatalog.Any())
+                    {
+                        <tr><td colspan="8" class="text-center text-muted py-4">هنوز قلم مالیاتی تعریف نشده است.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+else if (tab == "buyers")
+{
+    <div class="card">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <input class="form-control form-control-sm" style="max-width:280px" @bind="buyerSearch" @bind:event="oninput" placeholder="جستجو نام یا کد اقتصادی خریدار..." />
+            @if (Auth.Has("Moadian.MasterData"))
+            {
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="SyncBuyersAsync">
+                        <i class="bi bi-arrow-repeat me-1"></i>همگام‌سازی خودکار از طرف‌حساب‌های سیستم
+                    </button>
+                    <button class="btn btn-sm btn-primary" @onclick="OpenNewBuyerModal">
+                        <i class="bi bi-plus-lg me-1"></i>تعریف خریدار جدید
+                    </button>
+                </div>
+            }
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>نام خریدار</th>
+                        <th>نوع شخص</th>
+                        <th>شماره اقتصادی (tinb)</th>
+                        <th>شناسه / کد ملی (bid)</th>
+                        <th>کد پستی</th>
+                        <th>وضعیت</th>
+                        <th class="text-end">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var b in FilteredBuyers)
+                    {
+                        <tr>
+                            <td class="fw-semibold">@b.Name</td>
+                            <td>@MdnUiLabels.TaxpayerTypeTitle(b.BuyerType)</td>
+                            <td class="font-monospace">@(b.EconomicCode ?? "—")</td>
+                            <td class="font-monospace">@(b.NationalId ?? "—")</td>
+                            <td class="font-monospace">@(b.PostalCode ?? "—")</td>
+                            <td>
+                                <span class="badge @(b.IsActive ? "bg-success-subtle text-success" : "bg-secondary-subtle text-secondary")">
+                                    @(b.IsActive ? "فعال" : "غیرفعال")
+                                </span>
+                            </td>
+                            <td class="text-end">
+                                @if (Auth.Has("Moadian.MasterData"))
+                                {
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-secondary" @onclick="() => OpenEditBuyerModal(b)"><i class="bi bi-pencil"></i></button>
+                                        <button class="btn btn-outline-danger" disabled="@busy" @onclick="() => DeleteBuyerAsync(b.Id)"><i class="bi bi-trash"></i></button>
+                                    </div>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    @if (!FilteredBuyers.Any())
+                    {
+                        <tr><td colspan="7" class="text-center text-muted py-4">هنوز خریداری ثبت نشده است.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+else
+{
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">کدهای رسمی واحدهای اندازه‌گیری سازمان امور مالیاتی</h6>
+            @if (Auth.Has("Moadian.MasterData"))
+            {
+                <button class="btn btn-sm btn-primary" @onclick="OpenNewUnitModal">
+                    <i class="bi bi-plus-lg me-1"></i>افزودن کد واحد جدید
+                </button>
+            }
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>کد رسمی (mu)</th>
+                        <th>عنوان فارسی واحد</th>
+                        <th>وضعیت</th>
+                        <th class="text-end">ویرایش</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var u in units)
+                    {
+                        <tr>
+                            <td><code>@u.Code</code></td>
+                            <td>@u.Name</td>
+                            <td>@(u.IsActive ? "فعال" : "غیرفعال")</td>
+                            <td class="text-end">
+                                @if (Auth.Has("Moadian.MasterData"))
+                                {
+                                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => OpenEditUnitModal(u)"><i class="bi bi-pencil"></i></button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- مودال کالا/خدمت -->
+<Modal Visible="showCatModal" Title="مشخصات کالا / خدمت مالیاتی (SSTID)" Size="modal-md" OnClose="() => showCatModal = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-8">
+                <label class="form-label">نام کالا یا خدمت *</label>
+                <input class="form-control" @bind="catForm.Name" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">کد داخلی</label>
+                <input class="form-control font-monospace" dir="ltr" @bind="catForm.InternalCode" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">شناسه مالیاتی ۱۳ رقمی (SSTID) *</label>
+                <input class="form-control font-monospace" dir="ltr" maxlength="13" @bind="catForm.Sstid" placeholder="2710000138624" />
+                <div class="form-text">قابل دریافت از سامانه stuffid.tax.gov.ir</div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">واحد سنجش رسمی</label>
+                <select class="form-select" @bind="catForm.UnitCode">
+                    @foreach (var u in units)
+                    {
+                        <option value="@u.Code">@u.Name (@u.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">نرخ ارزش افزوده (٪)</label>
+                <input type="number" step="0.1" min="0" max="100" class="form-control num" @bind="catForm.VatRate" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">قیمت واحد پیش‌فرض (ریال)</label>
+                <input type="number" step="1" min="0" class="form-control num" @bind="catForm.DefaultUnitPrice" />
+            </div>
+            <div class="col-12 d-flex gap-4 mt-2">
+                <div class="form-check">
+                    <input type="checkbox" class="form-check-input" id="chkIsSvc" @bind="catForm.IsService" />
+                    <label class="form-check-label" for="chkIsSvc">خدمت است</label>
+                </div>
+                <div class="form-check">
+                    <input type="checkbox" class="form-check-input" id="chkCatAct" @bind="catForm.IsActive" />
+                    <label class="form-check-label" for="chkCatAct">فعال</label>
+                </div>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => showCatModal = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@busy" @onclick="SaveCatalogModalAsync">ذخیره</button>
+    </Footer>
+</Modal>
+
+<!-- مودال خریدار -->
+<Modal Visible="showBuyerModal" Title="مشخصات خریدار مودیان" Size="modal-md" OnClose="() => showBuyerModal = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-8">
+                <label class="form-label">نام خریدار *</label>
+                <input class="form-control" @bind="buyerForm.Name" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">نوع شخص</label>
+                <select class="form-select" @bind="buyerForm.BuyerType">
+                    <option value="@MdnTaxpayerType.Legal">حقوقی</option>
+                    <option value="@MdnTaxpayerType.Natural">حقیقی</option>
+                    <option value="@MdnTaxpayerType.CivicPartnership">مشارکت مدنی</option>
+                    <option value="@MdnTaxpayerType.ForeignNational">اتباع خارجی</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">شماره اقتصادی (tinb)</label>
+                <div class="input-group">
+                    <input class="form-control font-monospace" dir="ltr" @bind="buyerForm.EconomicCode" />
+                    <button type="button" class="btn btn-outline-secondary" disabled="@busy" @onclick="LookupBuyerModalAsync" title="استعلام آنلاین">
+                        <i class="bi bi-search"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">شناسه ملی / کد ملی (bid)</label>
+                <input class="form-control font-monospace" dir="ltr" @bind="buyerForm.NationalId" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">کد پستی ۱۰ رقمی</label>
+                <input class="form-control font-monospace" dir="ltr" maxlength="10" @bind="buyerForm.PostalCode" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">کد شعبه</label>
+                <input class="form-control font-monospace" dir="ltr" @bind="buyerForm.BranchCode" />
+            </div>
+            <div class="col-12">
+                <label class="form-label">نشانی</label>
+                <input class="form-control" @bind="buyerForm.Address" />
+            </div>
+            <div class="col-12">
+                <div class="form-check">
+                    <input type="checkbox" class="form-check-input" id="chkBuyAct" @bind="buyerForm.IsActive" />
+                    <label class="form-check-label" for="chkBuyAct">فعال</label>
+                </div>
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => showBuyerModal = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@busy" @onclick="SaveBuyerModalAsync">ذخیره</button>
+    </Footer>
+</Modal>
+
+<!-- مودال واحد سنجش -->
+<Modal Visible="showUnitModal" Title="تعریف کد واحد سنجش رسمی" Size="modal-sm" OnClose="() => showUnitModal = false">
+    <ChildContent>
+        <div class="mb-2">
+            <label class="form-label">کد رسمی سازمان امور مالیاتی</label>
+            <input class="form-control font-monospace" dir="ltr" @bind="unitForm.Code" placeholder="164" />
+        </div>
+        <div class="mb-2">
+            <label class="form-label">عنوان فارسی</label>
+            <input class="form-control" @bind="unitForm.Name" placeholder="عدد / فقره" />
+        </div>
+        <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="chkUnitAct" @bind="unitForm.IsActive" />
+            <label class="form-check-label" for="chkUnitAct">فعال</label>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" @onclick="() => showUnitModal = false">انصراف</button>
+        <button class="btn btn-primary" disabled="@busy" @onclick="SaveUnitModalAsync">ذخیره</button>
+    </Footer>
+</Modal>
+
+@code {
+    private string tab = "catalog";
+    private List<MdnCatalogItemDto> catalog = new();
+    private List<MdnBuyerDto> buyers = new();
+    private List<MdnMeasureUnitDto> units = new();
+
+    private string catSearch = "";
+    private string buyerSearch = "";
+
+    private bool showCatModal;
+    private MdnSaveCatalogItemRequest catForm = new();
+
+    private bool showBuyerModal;
+    private MdnSaveBuyerRequest buyerForm = new();
+
+    private bool showUnitModal;
+    private MdnSaveMeasureUnitRequest unitForm = new();
+
+    private bool loading = true;
+    private bool busy;
+
+    private IEnumerable<MdnCatalogItemDto> FilteredCatalog =>
+        string.IsNullOrWhiteSpace(catSearch)
+            ? catalog
+            : catalog.Where(c => c.Name.Contains(catSearch, StringComparison.OrdinalIgnoreCase)
+                              || c.Sstid.Contains(catSearch, StringComparison.OrdinalIgnoreCase)
+                              || (c.InternalCode?.Contains(catSearch, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    private IEnumerable<MdnBuyerDto> FilteredBuyers =>
+        string.IsNullOrWhiteSpace(buyerSearch)
+            ? buyers
+            : buyers.Where(b => b.Name.Contains(buyerSearch, StringComparison.OrdinalIgnoreCase)
+                             || (b.EconomicCode?.Contains(buyerSearch, StringComparison.OrdinalIgnoreCase) ?? false)
+                             || (b.NationalId?.Contains(buyerSearch, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    protected override async Task OnInitializedAsync() => await LoadAllAsync();
+
+    private async Task LoadAllAsync()
+    {
+        loading = true;
+        try
+        {
+            var cTask = Mdn.GetCatalogAsync();
+            var bTask = Mdn.GetBuyersAsync();
+            var uTask = Mdn.GetUnitsAsync();
+            await Task.WhenAll(cTask, bTask, uTask);
+            catalog = cTask.Result;
+            buyers = bTask.Result;
+            units = uTask.Result;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenNewCatalogModal()
+    {
+        catForm = new MdnSaveCatalogItemRequest { UnitCode = "164", VatRate = 10, IsActive = true };
+        showCatModal = true;
+    }
+
+    private void OpenEditCatalogModal(MdnCatalogItemDto c)
+    {
+        catForm = new MdnSaveCatalogItemRequest
+        {
+            Id = c.Id,
+            ProductId = c.ProductId,
+            InternalCode = c.InternalCode,
+            Name = c.Name,
+            Sstid = c.Sstid,
+            UnitCode = c.UnitCode,
+            VatRate = c.VatRate,
+            DefaultUnitPrice = c.DefaultUnitPrice,
+            HsCode = c.HsCode,
+            IsService = c.IsService,
+            IsActive = c.IsActive
+        };
+        showCatModal = true;
+    }
+
+    private async Task SaveCatalogModalAsync()
+    {
+        busy = true;
+        try
+        {
+            await Mdn.SaveCatalogAsync(catForm);
+            showCatModal = false;
+            catalog = await Mdn.GetCatalogAsync();
+            Toast.Success("کالا/خدمت مالیاتی ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task DeleteCatalogAsync(int id)
+    {
+        busy = true;
+        try
+        {
+            await Mdn.DeleteCatalogAsync(id);
+            catalog = await Mdn.GetCatalogAsync();
+            Toast.Success("حذف شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SyncCatalogAsync()
+    {
+        busy = true;
+        try
+        {
+            var res = await Mdn.SyncCatalogFromProductsAsync();
+            Toast.Info(res.Message);
+            catalog = await Mdn.GetCatalogAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private void OpenNewBuyerModal()
+    {
+        buyerForm = new MdnSaveBuyerRequest { BuyerType = MdnTaxpayerType.Legal, IsActive = true };
+        showBuyerModal = true;
+    }
+
+    private void OpenEditBuyerModal(MdnBuyerDto b)
+    {
+        buyerForm = new MdnSaveBuyerRequest
+        {
+            Id = b.Id,
+            PartyId = b.PartyId,
+            Name = b.Name,
+            BuyerType = b.BuyerType,
+            EconomicCode = b.EconomicCode,
+            NationalId = b.NationalId,
+            PostalCode = b.PostalCode,
+            BranchCode = b.BranchCode,
+            PassportNumber = b.PassportNumber,
+            Phone = b.Phone,
+            Address = b.Address,
+            IsActive = b.IsActive
+        };
+        showBuyerModal = true;
+    }
+
+    private async Task LookupBuyerModalAsync()
+    {
+        if (string.IsNullOrWhiteSpace(buyerForm.EconomicCode)) return;
+        busy = true;
+        try
+        {
+            var res = await Mdn.LookupTaxpayerAsync(buyerForm.EconomicCode);
+            if (!string.IsNullOrWhiteSpace(res.NameTrade) || !string.IsNullOrWhiteSpace(res.TaxpayerStatus))
+            {
+                if (!string.IsNullOrWhiteSpace(res.NameTrade)) buyerForm.Name = res.NameTrade;
+                if (!string.IsNullOrWhiteSpace(res.PostalCode)) buyerForm.PostalCode = res.PostalCode;
+                if (!string.IsNullOrWhiteSpace(res.Address)) buyerForm.Address = res.Address;
+                Toast.Success($"دریافت شد: {res.NameTrade}");
+            }
+            else Toast.Warning("یافت نشد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SaveBuyerModalAsync()
+    {
+        busy = true;
+        try
+        {
+            await Mdn.SaveBuyerAsync(buyerForm);
+            showBuyerModal = false;
+            buyers = await Mdn.GetBuyersAsync();
+            Toast.Success("مشخصات خریدار ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task DeleteBuyerAsync(int id)
+    {
+        busy = true;
+        try
+        {
+            await Mdn.DeleteBuyerAsync(id);
+            buyers = await Mdn.GetBuyersAsync();
+            Toast.Success("حذف شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SyncBuyersAsync()
+    {
+        busy = true;
+        try
+        {
+            var res = await Mdn.SyncBuyersFromPartiesAsync();
+            Toast.Info(res.Message);
+            buyers = await Mdn.GetBuyersAsync();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+
+    private void OpenNewUnitModal()
+    {
+        unitForm = new MdnSaveMeasureUnitRequest { IsActive = true };
+        showUnitModal = true;
+    }
+
+    private void OpenEditUnitModal(MdnMeasureUnitDto u)
+    {
+        unitForm = new MdnSaveMeasureUnitRequest { Id = u.Id, Code = u.Code, Name = u.Name, IsActive = u.IsActive };
+        showUnitModal = true;
+    }
+
+    private async Task SaveUnitModalAsync()
+    {
+        busy = true;
+        try
+        {
+            await Mdn.SaveUnitAsync(unitForm);
+            showUnitModal = false;
+            units = await Mdn.GetUnitsAsync();
+            Toast.Success("واحد سنجش ذخیره شد.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { busy = false; }
+    }
+}

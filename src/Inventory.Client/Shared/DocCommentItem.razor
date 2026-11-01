@@ -1,0 +1,56 @@
+@* آیتم نظر — recursive *@
+@inject IDocArchiveService Svc
+@inject IToastService Toast
+<div class="card mb-2 @(Comment.IsResolved ? "border-success" : "")">
+  <div class="card-body p-2">
+    <div class="d-flex justify-content-between align-items-start">
+      <div class="d-flex gap-2 align-items-center">
+        <span class="bg-light border rounded-circle d-grid place-items-center" style="width:28px;height:28px;font-size:11px">@(Comment.AuthorName.Length>0?Comment.AuthorName.Substring(0,1):"?")</span>
+        <div>
+          <div class="fw-700 fs-8">@Comment.AuthorName <span class="text-muted fw-400 fs-9">@Comment.CreatedAt.ToString("yyyy/MM/dd HH:mm")</span></div>
+          @if (Comment.MentionedUserNames.Count > 0)
+          {
+            <div class="fs-9 text-primary">@(string.Join(" ", Comment.MentionedUserNames.Select(n => "@" + n)))</div>
+          }
+        </div>
+      </div>
+      <div class="d-flex gap-1">
+        @if (Comment.IsResolved) { <span class="badge bg-success fs-9">حل شد ✓</span> }
+        <button class="btn btn-xs btn-light" @onclick="() => OnReply.InvokeAsync(Comment.Id)">پاسخ</button>
+        <button class="btn btn-xs btn-outline-success" @onclick="ToggleResolve">@(Comment.IsResolved ? "باز کن" : "حل شد")</button>
+        <button class="btn btn-xs btn-outline-danger" @onclick="Delete"><i class="bi bi-trash"></i></button>
+      </div>
+    </div>
+    <div class="mt-2 fs-8" style="white-space:pre-wrap">@Comment.Body</div>
+    @if (Comment.Replies.Count > 0)
+    {
+      <div class="mt-2 ps-3 border-start border-2">
+        @foreach (var r in Comment.Replies)
+        {
+          <DocCommentItem Comment="@r" DocumentId="@DocumentId" Users="@Users" OnReply="OnReply" OnRefresh="OnRefresh" />
+        }
+      </div>
+    }
+  </div>
+</div>
+@code {
+  [Parameter] public DocCommentDto Comment { get; set; } = new();
+  [Parameter] public int DocumentId { get; set; }
+  [Parameter] public List<LookupItem> Users { get; set; } = new();
+  [Parameter] public EventCallback<int> OnReply { get; set; }
+  [Parameter] public EventCallback OnRefresh { get; set; }
+  private async Task ToggleResolve()
+  {
+    try { await Svc.ToggleCommentResolveAsync(DocumentId, Comment.Id); await OnRefresh.InvokeAsync(); } catch (Exception ex) { Toast.Error(ex.Message); }
+  }
+  private async Task Delete()
+  {
+    if (!await JSRuntimeConfirm()) return;
+    try { await Svc.DeleteCommentAsync(DocumentId, Comment.Id); await OnRefresh.InvokeAsync(); } catch (Exception ex) { Toast.Error(ex.Message); }
+  }
+  [Inject] IJSRuntime JS { get; set; } = default!;
+  private async Task<bool> JSRuntimeConfirm()
+  {
+    try { return await JS.InvokeAsync<bool>("confirm", "حذف شود؟"); } catch { return true; }
+  }
+}

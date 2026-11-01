@@ -1,0 +1,293 @@
+@page "/stk/sessions"
+@inject IStkSessionService SessionSvc
+@inject IInvWarehouseService WarehouseSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject NavigationManager Nav
+
+<PageTitle>انبارگردانی</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>انبارگردانی</h1>
+        <p class="lead">شمارش فیزیکی موجودی انبار، بررسی مغایرت و اصلاح خودکار موجودی</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-primary" @onclick="NewSession"><i class="bi bi-plus-lg"></i> دوره جدید</button>
+    </div>
+</div>
+
+<!-- ---------- تب وضعیت ---------- -->
+<div class="mtabs mb-3">
+    <button class="mtab @(status is null ? "active" : "")" @onclick="() => SetStatus(null)">همه</button>
+    <button class="mtab @(status == StocktakeStatus.Draft ? "active" : "")" @onclick="() => SetStatus(StocktakeStatus.Draft)">
+        <i class="bi bi-pencil"></i> پیش‌نویس
+    </button>
+    <button class="mtab @(status == StocktakeStatus.Counting ? "active" : "")" @onclick="() => SetStatus(StocktakeStatus.Counting)">
+        <i class="bi bi-upc-scan"></i> در حال شمارش
+    </button>
+    <button class="mtab @(status == StocktakeStatus.Review ? "active" : "")" @onclick="() => SetStatus(StocktakeStatus.Review)">
+        <i class="bi bi-clipboard-check"></i> بررسی مغایرت
+    </button>
+    <button class="mtab @(status == StocktakeStatus.Applied ? "active" : "")" @onclick="() => SetStatus(StocktakeStatus.Applied)">
+        <i class="bi bi-check2-circle"></i> اعمال شده
+    </button>
+</div>
+
+<!-- ---------- فیلترها ---------- -->
+<div class="card mb-3">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-4">
+                <label class="form-label">جستجو</label>
+                <input class="form-control" placeholder="شماره یا عنوان دوره…"
+                       @bind="search" @bind:event="oninput" @onkeyup="OnSearchKey" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">انبار</label>
+                <select class="form-select" value="@(warehouseId?.ToString() ?? "")" @onchange="OnWarehouse">
+                    <option value="">همه انبارها</option>
+                    @foreach (var w in warehouses)
+                    {
+                        <option value="@w.Id">@w.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">از تاریخ</label>
+                <DatePicker Value="from" ValueChanged="OnFrom" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">تا تاریخ</label>
+                <DatePicker Value="to" ValueChanged="OnTo" AllowClear="true" />
+            </div>
+            <div class="col-6 col-md-1">
+                <button class="btn btn-outline-secondary w-100" @onclick="ClearFilters" title="پاک کردن فیلترها">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="card"><div class="card-body text-center py-5"><div class="spinner-border text-primary"></div></div></div>
+}
+else if (rows.Count == 0)
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="bi bi-clipboard-data"></i>
+                <h5>هنوز دوره انبارگردانی ثبت نشده است</h5>
+                <p>با ساخت یک دوره، موجودی سیستم قفل می‌شود و می‌توانید شمارش فیزیکی را شروع کنید.</p>
+                <button class="btn btn-primary" @onclick="NewSession"><i class="bi bi-plus-lg"></i> ساخت دوره جدید</button>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <!-- ---------- جدول دسکتاپ ---------- -->
+    <div class="card grid-desktop">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:70px">شماره</th>
+                        <th>عنوان</th>
+                        <th style="width:140px">انبار</th>
+                        <th style="width:100px">تاریخ</th>
+                        <th style="width:170px">پیشرفت شمارش</th>
+                        <th style="width:90px" class="text-center">مغایرت</th>
+                        <th style="width:130px" class="text-end">اثر ریالی</th>
+                        <th style="width:120px">وضعیت</th>
+                        <th style="width:130px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var s in rows)
+                    {
+                        <tr>
+                            <td class="num">@s.Number.ToString().FaDigits()</td>
+                            <td>
+                                <div class="fw-500">@s.Title</div>
+                                <div class="fs-8 text-muted">@s.ScopeTitle</div>
+                            </td>
+                            <td>@s.WarehouseName</td>
+                            <td class="num fs-8">@s.Date.ToFaDate()</td>
+                            <td>
+                                <div class="d-flex align-items-center gap-2">
+                                    <div class="progress flex-grow-1" style="height:6px">
+                                        <div class="progress-bar @ProgressClass(s)" style="width:@(s.Progress)%"></div>
+                                    </div>
+                                    <span class="fs-8 num text-muted" style="min-width:64px">
+                                        @s.CountedLines.ToString().FaDigits() / @s.TotalLines.ToString().FaDigits()
+                                    </span>
+                                </div>
+                            </td>
+                            <td class="text-center">
+                                @if (s.DiffLines > 0)
+                                {
+                                    <span class="badge badge-soft-warning num">@s.DiffLines.ToString().FaDigits()</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted fs-8">—</span>
+                                }
+                            </td>
+                            <td class="text-end num @(s.NetValue < 0 ? "text-danger" : s.NetValue > 0 ? "text-success" : "text-muted")">
+                                @(s.NetValue == 0 ? "—" : s.NetValue.Money())
+                            </td>
+                            <td><span class="badge badge-soft-@StatusColor(s.Status)">@s.StatusTitle</span></td>
+                            <td class="text-end">
+                                <a class="btn btn-sm btn-outline-primary" href="/stk/sessions/@s.Id" title="باز کردن">
+                                    <i class="bi bi-box-arrow-in-left"></i>
+                                </a>
+                                @if (s.Status == StocktakeStatus.Counting)
+                                {
+                                    <a class="btn btn-sm btn-outline-success" href="/stk/scan/@s.Id" title="اسکنر">
+                                        <i class="bi bi-upc-scan"></i>
+                                    </a>
+                                }
+                                @if (s.Status != StocktakeStatus.Applied)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(s)" title="حذف">
+                                        <i class="bi bi-trash3"></i>
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ---------- کارت موبایل ---------- -->
+    <div class="cards-mobile">
+        @foreach (var s in rows)
+        {
+            <div class="m-card st-@StripeClass(s.Status)">
+                <div class="m-card-head">
+                    <div class="m-card-icon bg-soft-@StatusColor(s.Status)"><i class="bi bi-clipboard-data"></i></div>
+                    <div class="flex-grow-1">
+                        <div class="fw-500">@s.Title</div>
+                        <div class="fs-8 text-muted">شماره @s.Number.ToString().FaDigits() • @s.WarehouseName</div>
+                    </div>
+                    <span class="badge badge-soft-@StatusColor(s.Status)">@s.StatusTitle</span>
+                </div>
+                <div class="m-card-body">
+                    <div class="m-card-row"><span>تاریخ</span><span class="num">@s.Date.ToFaDate()</span></div>
+                    <div class="m-card-row">
+                        <span>شمارش</span>
+                        <span class="num">@s.CountedLines.ToString().FaDigits() از @s.TotalLines.ToString().FaDigits()</span>
+                    </div>
+                    <div class="m-card-row"><span>اقلام مغایر</span><span class="num">@s.DiffLines.ToString().FaDigits()</span></div>
+                    <div class="m-card-row m-card-money"><span>اثر ریالی</span><span class="num">@s.NetValue.Money()</span></div>
+                </div>
+                <div class="m-card-actions">
+                    <a class="btn btn-sm btn-outline-primary" href="/stk/sessions/@s.Id">باز کردن</a>
+                    @if (s.Status == StocktakeStatus.Counting)
+                    {
+                        <a class="btn btn-sm btn-outline-success" href="/stk/scan/@s.Id"><i class="bi bi-upc-scan"></i> اسکنر</a>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    <Pager Page="page" PageCount="pageCount" OnPageChanged="OnPage" />
+}
+
+@code {
+    private List<StkSession> rows = new();
+    private List<InvWarehouse> warehouses = new();
+
+    private bool loading = true;
+    private string? search;
+    private int? warehouseId;
+    private StocktakeStatus? status;
+    private DateTime? from, to;
+    private int page = 1, pageSize = 15, pageCount = 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("انبارگردانی");
+        warehouses = await WarehouseSvc.GetAllAsync(true);
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var res = await SessionSvc.GetAllAsync(warehouseId, status, search, from, to, page, pageSize);
+            rows = res.Items;
+            pageCount = Math.Max(1, (int)Math.Ceiling(res.TotalCount / (double)pageSize));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task NewSession()
+    {
+        Nav.NavigateTo("/stk/sessions/new");
+        await Task.CompletedTask;
+    }
+
+    private async Task SetStatus(StocktakeStatus? s) { status = s; page = 1; await Load(); }
+    private async Task OnWarehouse(ChangeEventArgs e)
+    {
+        warehouseId = int.TryParse(e.Value?.ToString(), out var v) ? v : null;
+        page = 1; await Load();
+    }
+    private async Task OnFrom(DateTime? d) { from = d; page = 1; await Load(); }
+    private async Task OnTo(DateTime? d) { to = d; page = 1; await Load(); }
+    private async Task OnPage(int p) { page = p; await Load(); }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") { page = 1; await Load(); }
+    }
+
+    private async Task ClearFilters()
+    {
+        search = null; warehouseId = null; from = null; to = null; page = 1;
+        await Load();
+    }
+
+    private async Task Delete(StkSession s)
+    {
+        try
+        {
+            await SessionSvc.DeleteAsync(s.Id);
+            Toast.Success($"دوره «{s.Title}» حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string StatusColor(StocktakeStatus s) => s switch
+    {
+        StocktakeStatus.Draft => "secondary",
+        StocktakeStatus.Counting => "info",
+        StocktakeStatus.Review => "warning",
+        StocktakeStatus.Applied => "success",
+        _ => "danger"
+    };
+
+    private static string StripeClass(StocktakeStatus s) => s switch
+    {
+        StocktakeStatus.Draft => "received",
+        StocktakeStatus.Counting => "progress",
+        StocktakeStatus.Review => "ready",
+        StocktakeStatus.Applied => "delivered",
+        _ => "cancelled"
+    };
+
+    private static string ProgressClass(StkSession s)
+        => s.Progress >= 100 ? "bg-success" : s.Progress > 0 ? "bg-info" : "bg-secondary";
+}

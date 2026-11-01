@@ -1,0 +1,161 @@
+@page "/my-products"
+@inject IAuthState Auth
+@inject IAuthApi AuthApi
+@inject IToastService Toast
+@inject LayoutState Layout
+
+<PageTitle>کالاهای موجود</PageTitle>
+
+@if (!Auth.IsReferrer)
+{
+    <div class="alert alert-warning">این صفحه مخصوص معرف‌هاست.</div>
+}
+else if (Auth.ReferrerId is not > 0)
+{
+    <div class="alert alert-info mt-3">
+        <i class="bi bi-info-circle"></i>
+        هنوز معرفی به حساب کاربری شما متصل نشده است. برای اتصال معرف با مدیر سیستم تماس بگیرید.
+    </div>
+}
+else if (noAccess)
+{
+    <div class="empty-state py-5">
+        <i class="bi bi-lock"></i>
+        <h5>دسترسی مشاهده کالاها برای شما فعال نشده است</h5>
+        <div class="fs-8 text-muted">برای فعال‌سازی با مدیر مجموعه تماس بگیرید.</div>
+    </div>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>کالاهای موجود</h1>
+            <p class="lead">فهرست کالاهای دارای موجودی — قیمت فروش روز</p>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body py-2">
+            <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input class="form-control" placeholder="جستجو در نام، کد یا گروه کالا…" value="@search" @oninput="OnSearch" />
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body p-0">
+            @if (loading)
+            {
+                <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+            }
+            else if (items.Count == 0)
+            {
+                <div class="empty-state"><i class="bi bi-box-seam"></i><h5>کالای موجودی یافت نشد</h5></div>
+            }
+            else
+            {
+                <div class="table-responsive grid-desktop">
+                    <table class="table table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th>کد</th>
+                                <th>نام کالا</th>
+                                <th>گروه</th>
+                                <th>واحد</th>
+                                <th>وضعیت</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var p in Paged)
+                            {
+                                <tr>
+                                    <td class="doc-number text-muted">@p.Code</td>
+                                    <td class="fw-500">@p.Name</td>
+                                    <td>@(p.Category ?? "—")</td>
+                                    <td>@p.Unit</td>
+                                    <td><span class="badge badge-soft-success"><i class="bi bi-check2"></i> موجود</span></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                @* ---------- نمای کارتی (موبایل) ---------- *@
+                <div class="cards-mobile">
+                    @foreach (var p in Paged)
+                    {
+                        <div class="m-card st-ready">
+                            <div class="m-card-head">
+                                <div class="m-card-icon"><i class="bi bi-box-seam"></i></div>
+                                <div class="flex-grow-1 min-w-0">
+                                    <div class="fw-700 text-truncate">@p.Name</div>
+                                    <div class="fs-8 text-muted text-truncate">@p.Code — @(p.Category ?? "بدون گروه") — @p.Unit</div>
+                                </div>
+                                <div class="text-end">
+                                    <span class="badge badge-soft-success"><i class="bi bi-check2"></i> موجود</span>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <Pager Page="page" PageCount="PageCount" OnPageChanged="ChangePage" />
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private List<ReferrerProductItem> items = new();
+    private bool loading = true, noAccess;
+    private string search = "";
+    private System.Timers.Timer? timer;
+
+    private int page = 1;
+    private const int PageSize = 15;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+    private List<ReferrerProductItem> Paged => items;
+    private int total, loadVersion;
+    private async Task ChangePage(int value) { page = value; await Load(); }
+    private async Task SearchChanged() { page = 1; await Load(); }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.IsReferrer) { loading = false; return; }
+        Layout.SetTitle("کالاهای موجود");
+        if (Auth.ReferrerId is not > 0) { loading = false; return; } // معرفی متصل نیست
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        var version = ++loadVersion;
+        loading = true;
+        try
+        {
+            var result = await AuthApi.GetMyProductsPagedAsync((page - 1) * PageSize, PageSize, search);
+            if (version != loadVersion) return;
+            items = result.Items;
+            total = result.TotalCount;
+            if (page > PageCount) { page = PageCount; await Load(); }
+            noAccess = false;
+        }
+        catch (Exception ex)
+        {
+            if (version != loadVersion) return;
+            if (ex.Message.Contains("فعال نشده")) noAccess = true;
+            else Toast.Error(ex.Message);
+        }
+        finally { if (version == loadVersion) loading = false; }
+    }
+
+    private void OnSearch(ChangeEventArgs e)
+    {
+        search = e.Value?.ToString() ?? "";
+        timer?.Stop();
+        timer = new System.Timers.Timer(400) { AutoReset = false };
+        timer.Elapsed += async (_, _) => { page = 1; await InvokeAsync(async () => { await Load(); StateHasChanged(); }); };
+        timer.Start();
+    }
+}

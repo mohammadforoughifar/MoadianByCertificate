@@ -1,0 +1,667 @@
+@namespace Inventory.Client.Pages
+@page "/products"
+@inject IProductService ProductSvc
+@inject ICategoryService CategorySvc
+@inject IUnitService UnitSvc
+@inject IWarehouseService WarehouseSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>کالاها</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>کالاها</h1>
+        <p class="lead">تعریف کالا، قیمت و نقطه سفارش</p>
+    </div>
+    <div class="ms-auto d-flex flex-wrap gap-2">
+        <ExportButtons ReportKey="inv-products"
+                       Query="@ProductExportQuery"
+                       PdfLabel="چاپ فهرست"
+                       PdfTitle="دریافت نسخه چاپی از همه کالاهای فهرست"
+                       ExcelLabel="خروجی اکسل"
+                       ExcelTitle="خروجی اکسل از همه کالاهای فهرست"
+                       ButtonClass="btn-sm btn-outline-secondary" />
+        <button class="btn btn-outline-primary" @onclick="OpenImport">
+            <i class="bi bi-file-earmark-excel"></i> ورود از اکسل
+        </button>
+        <button class="btn btn-primary" @onclick="OpenNew">
+            <i class="bi bi-plus-lg"></i> کالای جدید
+        </button>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="row g-2 align-items-center mb-3">
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" placeholder="جستجوی نام، کد، گروه یا بارکد…" @bind="search" @onkeydown="OnSearchKey" />
+                    <button class="btn btn-primary" @onclick="OnSearch">جستجو</button>
+                </div>
+            </div>
+            <div class="col-md-auto">
+                <div class="form-check ms-2">
+                    <input class="form-check-input" type="checkbox" id="belowChk" checked="@belowOnly" @onchange="OnBelowChanged" />
+                    <label class="form-check-label" for="belowChk">فقط زیر نقطه سفارش</label>
+                </div>
+            </div>
+            <div class="col-auto ms-auto fs-8 text-muted">@total.Num() کالا</div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (items.Count == 0)
+        {
+            <div class="empty-state"><i class="bi bi-box-seam"></i><h5>کالایی یافت نشد</h5></div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>کد</th>
+                            <th>نام کالا</th>
+                            <th>گروه</th>
+                            <th>انبار</th>
+                            <th>واحد</th>
+                            <th class="text-start">قیمت خرید</th>
+                            <th class="text-start">قیمت فروش</th>
+                            <th class="text-start">موجودی کل</th>
+                            <th class="text-start">نقطه سفارش</th>
+                            <th>زمان ورود</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in items)
+                        {
+                            <tr>
+                                <td class="doc-number text-muted">@p.Code</td>
+                                <td>
+                                    <div class="fw-500">@p.Name</div>
+                                    @if (!p.IsActive)
+                                    {
+                                        <span class="badge badge-soft-muted fs-8">غیرفعال</span>
+                                    }
+                                </td>
+                                <td>@(p.Category ?? "—")</td>
+                                <td>
+                                    @if (p.IsService)
+                                    {
+                                        <span class="text-muted fs-8">—</span>
+                                    }
+                                    else if (string.IsNullOrEmpty(p.WarehouseName))
+                                    {
+                                        <span class="badge badge-soft-muted fs-8">همه انبارها</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-primary fs-8">@p.WarehouseName</span>
+                                    }
+                                </td>
+                                <td>@p.Unit</td>
+                                <td class="text-start num">@p.PurchasePrice.Money()</td>
+                                <td class="text-start num fw-500">@p.SalePrice.Money()</td>
+                                <td class="text-start num">@p.TotalStock.Num()</td>
+                                <td class="text-start num">@p.ReorderPoint.Num()</td>
+                                <td class="num fs-8">@p.CreatedAt.ToFa()</td>
+                                <td>
+                                    @if (p.BelowReorder)
+                                    {
+                                        <span class="badge badge-soft-danger"><i class="bi bi-exclamation-triangle"></i> زیر نقطه سفارش</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-success"><i class="bi bi-check2"></i> موجود</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(p)"><i class="bi bi-pencil text-primary"></i></button>
+                                    <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(p)"><i class="bi bi-trash text-danger"></i></button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var p in items)
+                {
+                    <div class="m-card @(p.BelowReorder ? "st-cancelled" : "st-ready")">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi @(p.IsService ? "bi-wrench-adjustable" : "bi-box-seam")"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <span class="doc-number text-muted fs-8">@p.Code</span>
+                                    @if (p.IsService)
+                                    {
+                                        <span class="badge badge-soft-primary fs-8">خدمات</span>
+                                    }
+                                    @if (!p.IsActive)
+                                    {
+                                        <span class="badge badge-soft-muted fs-8">غیرفعال</span>
+                                    }
+                                </div>
+                                <div class="fw-700 text-truncate">@p.Name</div>
+                                <div class="fs-8 text-muted text-truncate">@(p.Category ?? "بدون گروه") — @p.Unit@(string.IsNullOrEmpty(p.WarehouseName) ? "" : $" — {p.WarehouseName}")</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            <div class="m-card-row">
+                                <span><i class="bi bi-boxes text-muted"></i> موجودی</span>
+                                <b class="num">@p.TotalStock.Num()</b>
+                            </div>
+                            <div class="m-card-money">
+                                <div>
+                                    <div class="fs-8 text-muted">قیمت خرید</div>
+                                    <div class="num fw-500">@p.PurchasePrice.Money()</div>
+                                </div>
+                                <div class="text-end">
+                                    <div class="fs-8 text-muted">قیمت فروش</div>
+                                    <div class="num fw-800 text-primary">@p.SalePrice.Money()</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="m-card-actions">
+                            <button class="btn btn-light text-primary" @onclick="() => OpenEdit(p)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            <button class="btn btn-light text-danger" @onclick="() => Delete(p)"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <Pager Page="page" PageCount="pageCount" OnPageChanged="GoToPage" />
+        }
+    </div>
+</div>
+
+<Modal Visible="showModal" Title="@ModalTitle" Size="modal-lg" OnClose="CloseModal">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-md-4">
+            <label class="form-label d-block">نوع</label>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="prodKind" id="prodGoods"
+                       checked="@(!form.IsService)" @onchange="@(() => form.IsService = false)" />
+                <label class="form-check-label" for="prodGoods">کالا</label>
+            </div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="prodKind" id="prodService"
+                       checked="@form.IsService" @onchange="@(() => form.IsService = true)" />
+                <label class="form-check-label" for="prodService">خدمات</label>
+            </div>
+            <div class="fs-8 text-muted">خدمات موجودی انبار ندارد و فقط در فروش انتخاب می‌شود</div>
+        </div>
+        <div class="col-md-5">
+            <label class="form-label">@(form.IsService ? "نام خدمت" : "نام کالا") <span class="text-danger">*</span></label>
+            <input class="form-control" @bind="form.Name" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">@(form.IsService ? "کد خدمت" : "کد کالا")</label>
+            <input class="form-control" @bind="form.Code" placeholder="خودکار" />
+        </div>
+        @if (!form.IsService)
+        {
+            <div class="col-md-3">
+                <label class="form-label">بارکد</label>
+                <input class="form-control" @bind="form.Barcode" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">گروه / دسته‌بندی</label>
+                <select class="form-select" @bind="form.Category">
+                    <option value="">— بدون گروه —</option>
+                    @foreach (var c in categories)
+                    {
+                        <option value="@c.Name">@(new string('\u00A0', c.Depth * 4))@(c.Depth > 0 ? "└ " : "")@c.Name</option>
+                    }
+                </select>
+                <div class="fs-8 text-muted mt-1">
+                    <a href="categories" target="_blank">مدیریت گروه‌ها <i class="bi bi-box-arrow-up-left"></i></a>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">واحد شمارش</label>
+                <select class="form-select" @bind="form.Unit">
+                    @if (!string.IsNullOrWhiteSpace(form.Unit) && !units.Any(u => u.Name == form.Unit))
+                    {
+                        <option value="@form.Unit">@form.Unit</option>
+                    }
+                    @foreach (var u in units)
+                    {
+                        <option value="@u.Name">@u.Name</option>
+                    }
+                </select>
+                <div class="fs-8 text-muted mt-1">
+                    <a href="units" target="_blank">مدیریت واحدها <i class="bi bi-box-arrow-up-left"></i></a>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">قیمت خرید (ریال)</label>
+                <input class="form-control num" value="@fPurchase" @oninput="@(e => fPurchase = FormatMoney(e.Value))" inputmode="decimal" dir="ltr" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">قیمت فروش (ریال)</label>
+                <input class="form-control num" value="@fSale" @oninput="@(e => fSale = FormatMoney(e.Value))" inputmode="decimal" dir="ltr" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">نقطه سفارش (حداقل موجودی)</label>
+                <input class="form-control num" value="@fReorder" @oninput="@(e => fReorder = FormatMoney(e.Value))" inputmode="decimal" dir="ltr" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">حداکثر موجودی مطلوب</label>
+                <input class="form-control num" value="@fMax" @oninput="@(e => fMax = FormatMoney(e.Value))" inputmode="decimal" dir="ltr" />
+            </div>
+        }
+        else
+        {
+            <div class="col-md-4">
+                <label class="form-label">قیمت خدمات (ریال) <span class="text-danger">*</span></label>
+                <input class="form-control num" value="@fSale" @oninput="@(e => fSale = FormatMoney(e.Value))" inputmode="decimal" dir="ltr" />
+            </div>
+        }
+        <div class="col-md-6">
+            <label class="form-label">شناسه مالیاتی @(form.IsService ? "خدمت" : "کالا")</label>
+            <input class="form-control font-monospace" @bind="form.TaxCode" dir="ltr" maxlength="20" placeholder="شناسه رسمی کالا/خدمت" />
+            <div class="fs-8 text-muted mt-1">برای استفاده در پیش‌نویس‌های سامانه مودیان؛ شناسه را با مرجع مالیاتی معتبر تطبیق دهید.</div>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label d-block">وضعیت</label>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="prodStatus" id="prodActive"
+                       checked="@form.IsActive" @onchange="@(() => form.IsActive = true)" />
+                <label class="form-check-label" for="prodActive">فعال</label>
+            </div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="prodStatus" id="prodInactive"
+                       checked="@(!form.IsActive)" @onchange="@(() => form.IsActive = false)" />
+                <label class="form-check-label" for="prodInactive">غیرفعال</label>
+            </div>
+        </div>
+        @if (!form.IsService)
+        {
+            <div class="col-md-4">
+                <label class="form-label">انبار اختصاصی</label>
+                <select class="form-select" @bind="prodWarehouseIdStr">
+                    <option value="0">— همه انبارها —</option>
+                    @foreach (var w in whLookup)
+                    {
+                        <option value="@w.Id">@w.Name</option>
+                    }
+                </select>
+                <div class="fs-8 text-muted mt-1">در صورت انتخاب، این کالا فقط در همان انبار قابل خرید/فروش است</div>
+            </div>
+        }
+        @if (editing)
+        {
+            <div class="col-12 fs-8 text-muted">
+                <i class="bi bi-clock-history"></i>
+                زمان ورود کالا: @form.CreatedAt.ToFaDateTime()
+            </div>
+        }
+        <div class="col-12">
+            <label class="form-label">توضیحات</label>
+            <textarea class="form-control" rows="2" @bind="form.Description"></textarea>
+        </div>
+    </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseModal">انصراف (Esc)</button>
+        <button class="btn btn-primary" data-hotkey="f1" title="کلید میانبر: F1" @onclick="Save" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+<Modal Visible="showImport" Title="ورود کالا از اکسل" OnClose="CloseImport">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-12">
+            <div class="alert alert-info fs-8 mb-0">
+                <i class="bi bi-info-circle ms-1"></i>
+                ابتدا
+                <button type="button" class="btn btn-link p-0 fw-500 align-baseline" @onclick="DownloadTemplate" disabled="@downloadingTemplate">
+                    @if (downloadingTemplate) { <span class="spinner-border spinner-border-sm"></span> }
+                    else { <i class="bi bi-download"></i> }
+                    فایل اکسل نمونه
+                </button>
+                را دانلود کنید، کالاها را مطابق آن وارد کرده و سپس فایل را بارگذاری نمایید.
+                گروه یا واحد جدید به‌صورت خودکار در اطلاعات پایه ساخته می‌شود.
+            </div>
+        </div>
+        <div class="col-12">
+            <label class="form-label fw-bold">انبار مقصد <span class="text-danger">*</span></label>
+            <select class="form-select @(importWarehouseId == 0 ? "border-danger" : "")" @bind="importWarehouseId">
+                <option value="0">— انتخاب انبار جهت ورود کالاها (الزامی) —</option>
+                @foreach (var w in whLookup)
+                {
+                    <option value="@w.Id">@w.Name</option>
+                }
+            </select>
+            @if (importWarehouseId == 0)
+            {
+                <div class="fs-8 text-danger mt-1">
+                    <i class="bi bi-exclamation-circle ms-1"></i>انتخاب انبار برای ورود اکسل الزامی است تا کالاها به تفکیک انبار مدیریت شوند.
+                </div>
+            }
+        </div>
+        <div class="col-12">
+            <label class="form-label">فایل اکسل (xlsx) <span class="text-danger">*</span></label>
+            <InputFile class="form-control" OnChange="OnFileSelected" accept=".xlsx" />
+        </div>
+        @if (importResult is not null)
+        {
+            <div class="col-12">
+                <div class="alert @(importResult.Failed == 0 ? "alert-success" : "alert-warning") fs-8 mb-0">
+                    <div class="fw-500 mb-1">
+                        <i class="bi bi-check-circle ms-1"></i>
+                        @importResult.Imported.Num() کالا ثبت شد
+                        @if (importResult.Failed > 0)
+                        {
+                            <span> — @importResult.Failed.Num() سطر رد شد:</span>
+                        }
+                    </div>
+                    @foreach (var err in importResult.Errors.Take(8))
+                    {
+                        <div>• @err</div>
+                    }
+                    @if (importResult.Errors.Count > 8)
+                    {
+                        <div>… و @((importResult.Errors.Count - 8).Num()) خطای دیگر</div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseImport">بستن</button>
+        <button class="btn btn-primary" @onclick="DoImport" disabled="@(importing || importFile is null || importWarehouseId <= 0)">
+            @if (importing) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            بارگذاری و ثبت
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<Product> items = new();
+    private int total, page = 1, pageCount = 1;
+    private const int PageSize = 12;
+    private string search = "";
+    private bool belowOnly, loading = true;
+
+    // خروجی گزارش همه ردیف‌های منطبق با فیلترها را می‌گیرد، نه فقط صفحهٔ فعلی.
+    private Dictionary<string, object?> ProductExportQuery => new()
+    {
+        ["search"] = search,
+        ["below"] = belowOnly,
+        ["maxRows"] = 50000
+    };
+
+    private Product form = new();
+    private bool showModal, saving;
+    private string fSale = "", fPurchase = "", fReorder = "", fMax = "";
+    private bool editing => form.Id != 0;
+
+    private string ModalTitle => form.IsService
+        ? (editing ? "ویرایش خدمت" : "خدمت جدید")
+        : (editing ? "ویرایش کالا" : "کالای جدید");
+    private List<ProductCategory> categories = new();
+    private List<MeasureUnit> units = new();
+    private List<LookupItem> whLookup = new();
+    private string prodWarehouseIdStr = "0";
+
+    // ---------- ورود اکسل ----------
+    private bool showImport, importing, downloadingTemplate;
+    private int importWarehouseId;
+    private IBrowserFile? importFile;
+    private ExcelImportResult? importResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("کالاها");
+        await LoadLookups();
+        await Load();
+    }
+
+    private async Task LoadLookups()
+    {
+        try
+        {
+            categories = await CategorySvc.GetAllAsync(activeOnly: true);
+            units = await UnitSvc.GetAllAsync(activeOnly: true);
+            whLookup = await WarehouseSvc.GetLookupsAsync();
+        }
+        catch { /* عدم دسترسی به اطلاعات پایه مانع کار صفحه نمی‌شود */ }
+    }
+
+    private void OpenImport()
+    {
+        importFile = null;
+        importResult = null;
+        importWarehouseId = 0;
+        downloadingTemplate = false;
+        showImport = true;
+    }
+
+    private async Task DownloadTemplate()
+    {
+        if (downloadingTemplate) return;
+        downloadingTemplate = true;
+        try
+        {
+            var (data, fileName, contentType) = await ProductSvc.DownloadTemplateAsync();
+            if (data is null || data.Length == 0)
+            {
+                Toast.Error("فایل نمونه خالی برگشت.");
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(fileName) || !fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+                fileName = "Products-Template.xlsx";
+
+            var ok = await JS.InvokeAsync<bool>("downloadBlob",
+                fileName, contentType, Convert.ToBase64String(data));
+            if (ok) Toast.Success("فایل نمونه اکسل دانلود شد.");
+            else Toast.Error("دانلود فایل انجام نشد. مسدودکننده پاپ‌آپ را بررسی کنید.");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { downloadingTemplate = false; }
+    }
+
+    private void CloseImport() => showImport = false;
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        importFile = e.File;
+        importResult = null;
+    }
+
+    private async Task DoImport()
+    {
+        if (importWarehouseId <= 0)
+        {
+            Toast.Error("لطفاً ابتدا انبار موردنظر را انتخاب کنید. ورود اکسل بدون انتخاب انبار امکان‌پذیر نیست.");
+            return;
+        }
+        if (importFile is null)
+        {
+            Toast.Error("ابتدا فایل اکسل را انتخاب کنید.");
+            return;
+        }
+
+        importing = true;
+        try
+        {
+            await using var stream = importFile.OpenReadStream(long.MaxValue);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            ms.Position = 0;
+
+            importResult = await ProductSvc.ImportExcelAsync(ms, importFile.Name, importWarehouseId);
+
+            if (importResult.Imported > 0)
+                Toast.Success($"{importResult.Imported} کالا با موفقیت ثبت شد.");
+            if (importResult.Failed > 0)
+                Toast.Error($"{importResult.Failed} سطر رد شد؛ جزئیات در پنجره ورود.");
+
+            await LoadLookups();
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { importing = false; }
+    }
+
+    /// <summary>قالب‌بندی زنده ورودی عددی با جداکننده سه‌رقمی (هزارگان).</summary>
+    private static string FormatMoney(object? value)
+    {
+        var raw = Fa.ToEn(value?.ToString() ?? "").Replace(",", "");
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+
+        // بخش اعشاری (در صورت وجود) جدا نگه داشته می‌شود
+        var parts = raw.Split('.', 2);
+        var intPart = new string(parts[0].Where(char.IsDigit).ToArray());
+        if (intPart.Length == 0) intPart = "0";
+
+        var formatted = decimal.Parse(intPart).ToString("#,##0");
+        if (parts.Length == 2)
+        {
+            var frac = new string(parts[1].Where(char.IsDigit).ToArray());
+            return $"{formatted}.{frac}";
+        }
+        return formatted;
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            var res = await ProductSvc.GetProductsAsync(search, belowOnly, page, PageSize);
+            items = res.Items;
+            total = res.TotalCount;
+            pageCount = Math.Max(1, (int)Math.Ceiling(total / (double)PageSize));
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnSearch() { page = 1; await Load(); }
+
+    private async Task OnBelowChanged(ChangeEventArgs e)
+    {
+        belowOnly = e.Value is bool b && b;
+        page = 1;
+        await Load();
+    }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") { page = 1; await Load(); }
+    }
+
+    private async Task OpenNew()
+    {
+        await LoadLookups();
+        form = new Product { IsActive = true, Unit = "عدد" };
+        fSale = fPurchase = fReorder = fMax = "";
+        prodWarehouseIdStr = "0";
+        showModal = true;
+    }
+
+    private void OpenEdit(Product p)
+    {
+        form = new Product
+        {
+            Id = p.Id, Code = p.Code, Name = p.Name, Category = p.Category, Barcode = p.Barcode,
+            Unit = p.Unit, SalePrice = p.SalePrice, PurchasePrice = p.PurchasePrice,
+            TaxCode = p.TaxCode, ReorderPoint = p.ReorderPoint, MaxStock = p.MaxStock, Description = p.Description,
+            IsActive = p.IsActive, IsService = p.IsService, WarehouseId = p.WarehouseId, CreatedAt = p.CreatedAt
+        };
+        prodWarehouseIdStr = (p.WarehouseId ?? 0).ToString();
+
+        // اگر گروه کالای فعلی در فهرست گروه‌های فعال نبود، موقتاً اضافه می‌شود تا انتخاب حفظ شود
+        if (!string.IsNullOrWhiteSpace(p.Category) && !categories.Any(c => c.Name == p.Category))
+            categories.Add(new ProductCategory { Name = p.Category });
+        fSale = Fa.Money(p.SalePrice); fPurchase = Fa.Money(p.PurchasePrice);
+        fReorder = Fa.Money(p.ReorderPoint); fMax = Fa.Money(p.MaxStock);
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name))
+        {
+            Toast.Error(form.IsService ? "نام خدمت را وارد کنید." : "نام کالا را وارد کنید.");
+            return;
+        }
+
+        if (form.IsService)
+        {
+            // خدمات: فقط نام، کد و قیمت — بقیه فیلدها پاک می‌شوند
+            form.SalePrice = Fa.ParseDecimal(fSale);
+            if (form.SalePrice <= 0) { Toast.Error("قیمت خدمات را وارد کنید."); return; }
+            form.PurchasePrice = 0;
+            form.ReorderPoint = 0;
+            form.MaxStock = 0;
+            form.Category = null;
+            form.Barcode = null;
+            form.Unit = "خدمت";
+            form.WarehouseId = null;
+        }
+        else
+        {
+            form.SalePrice = Fa.ParseDecimal(fSale);
+            form.PurchasePrice = Fa.ParseDecimal(fPurchase);
+            form.ReorderPoint = Fa.ParseDecimal(fReorder);
+            form.MaxStock = Fa.ParseDecimal(fMax);
+            form.WarehouseId = int.TryParse(prodWarehouseIdStr, out var pw) && pw > 0 ? pw : null;
+        }
+
+        saving = true;
+        try
+        {
+            await ProductSvc.SaveAsync(form);
+            Toast.Success(form.IsService
+                ? (editing ? "خدمت ویرایش شد." : "خدمت ثبت شد.")
+                : (editing ? "کالا ویرایش شد." : "کالا ثبت شد."));
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(Product p)
+    {
+        var ok = await JS.InvokeAsync<bool>("confirm", $"آیا از حذف «{p.Name}» مطمئن هستید؟");
+        if (!ok) return;
+        try
+        {
+            await ProductSvc.DeleteAsync(p.Id);
+            Toast.Success("کالا حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task GoToPage(int p)
+    {
+        page = p;
+        await Load();
+    }
+}

@@ -1,0 +1,272 @@
+@inject ILetterService LetterSvc
+@inject IToastService Toast
+
+@* ============================================================
+   مودال گردش نامه — سه نمای مصوب: لیستی | درختواره | فلوچارتی
+   کلیک روی هر ایستگاه (در هر سه نما) ⇐ پنل جزئیات کامل ارجاع:
+   نوع (گیرنده/ارجاع/هامش)، وضعیت خواندن، متن ارجاع (پاراف)،
+   عملگر، مهلت، پاسخ، تایید/رد و تاریخ‌ها
+   ============================================================ *@
+
+@if (visible)
+{
+<div class="ltx" style="animation:none;transform:none">
+    <div class="gov">
+        <div class="gmodal" @onclick:stopPropagation="true">
+            <div class="gm-h">
+                <div class="avt" style="width:38px;height:38px"><i class="bi bi-diagram-3"></i></div>
+                <div class="ttl">
+                    <b>گردش نامه — @title</b>
+                    <small class="num"># @letterNumber.FaDigits() · @CountAll().FaDigits() ایستگاه</small>
+                </div>
+                <button class="x" @onclick="Close"><i class="bi bi-x-lg"></i></button>
+            </div>
+            <div class="gm-seg">
+                <button class="@(view == 0 ? "on" : "")" @onclick="() => view = 0"><i class="bi bi-list-ul"></i> لیستی</button>
+                <button class="@(view == 1 ? "on" : "")" @onclick="() => view = 1"><i class="bi bi-diagram-2"></i> درختواره</button>
+                <button class="@(view == 2 ? "on" : "")" @onclick="() => view = 2"><i class="bi bi-diagram-3"></i> فلوچارتی</button>
+            </div>
+            <div class="gm-b">
+                @if (loading)
+                {
+                    <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+                }
+                else if (roots.Count == 0)
+                {
+                    <div class="empty"><i class="bi bi-diagram-3"></i>گردشی ثبت نشده است</div>
+                }
+                else if (view == 0)
+                {
+                    <div class="tl">
+                        <div class="tl-i start">
+                            <div class="tl-t">@senderName</div>
+                            <div class="tl-s">فرستنده · ثبت نامه @letterDate.ToFaDateTime() · شروع گردش</div>
+                        </div>
+                        @foreach (var n in Flat())
+                        {
+                            var nn = n;
+                            <div class="tl-i @(IsDone(nn) ? "done" : "") gnode-click" @onclick="() => SelectNode(nn)">
+                                <div class="tl-t">@nn.Reciver @(selectedNode == nn ? "◀" : "")</div>
+                                <div class="tl-s">@NodeSub(nn) · @StLabel(nn)</div>
+                                @if (!string.IsNullOrWhiteSpace(nn.Answer))
+                                {
+                                    <div class="tl-ans"><i class="bi bi-reply"></i> @nn.Answer @(nn.DateAnswer is { } da ? "— " + da.ToFaDateTime() : "")</div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+                else if (view == 1)
+                {
+                    <div class="gtree">
+                        <ul>
+                            <li>
+                                <div class="tnode">
+                                    <span class="mini"><i class="bi bi-person"></i></span>
+                                    <div><b>@senderName</b><small> — فرستنده · @letterDate.ToFaDateTime()</small></div>
+                                    <span class="tst p">شروع گردش</span>
+                                </div>
+                                <ul>
+                                    @foreach (var n in roots) { @TreeNode(n) }
+                                </ul>
+                            </li>
+                        </ul>
+                    </div>
+                }
+                else
+                {
+                    <div class="fcwrap">
+                        <div class="fc">
+                            <ul>
+                                <li>
+                                    <div class="fnode root">
+                                        <span class="mini"><i class="bi bi-person"></i></span>
+                                        <div><b>@senderName</b><small>فرستنده</small></div>
+                                        <span class="fdot p"></span>
+                                    </div>
+                                    <ul>
+                                        @foreach (var n in roots) { @FlowNode(n) }
+                                    </ul>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="fleg">
+                        <span><span class="fdot p"></span> شروع گردش</span>
+                        <span><span class="fdot g"></span> انجام‌شده</span>
+                        <span><span class="fdot w"></span> در انتظار</span>
+                        <span style="opacity:.7"><i class="bi bi-hand-index"></i> برای جزئیات روی هر ایستگاه کلیک کنید</span>
+                    </div>
+                }
+
+                @* ---------- پنل جزئیات ایستگاه انتخاب‌شده ---------- *@
+                @if (selectedNode is { } sn)
+                {
+                    <div class="gdetail">
+                        <h4>
+                            <i class="bi bi-info-circle-fill"></i>
+                            جزئیات ایستگاه — @sn.Reciver
+                            <button class="x2" @onclick="() => selectedNode = null"><i class="bi bi-x-lg"></i></button>
+                        </h4>
+                        <div class="gkv"><b>نوع دریافت</b>
+                            <span>
+                                @if (sn.Type == "ارجاع") { <span class="tg purple"><i class="bi bi-arrow-left-circle"></i> ارجاع</span> }
+                                else if (sn.Type == "هامش") { <span class="tg gray"><i class="bi bi-people"></i> هامش (رونوشت)</span> }
+                                else { <span class="tg green"><i class="bi bi-person-check"></i> گیرنده اصلی</span> }
+                            </span>
+                        </div>
+                        <div class="gkv"><b>از طرف</b><span>@sn.Sender</span></div>
+                        <div class="gkv"><b>تاریخ ارجاع</b><span class="num">@sn.Date.ToFaDateTime()</span></div>
+                        <div class="gkv"><b>وضعیت خواندن</b>
+                            <span>
+                                @if (sn.IsRead)
+                                {
+                                    <span class="tg green"><i class="bi bi-check2-all"></i> خوانده شده@(sn.DateRead is { } dr ? " — " + dr.ToFaDateTime() : "")</span>
+                                }
+                                else
+                                {
+                                    <span class="tg amber"><i class="bi bi-hourglass-split"></i> هنوز خوانده نشده</span>
+                                }
+                            </span>
+                        </div>
+                        @if (sn.Type == "ارجاع")
+                        {
+                            <div class="gkv"><b>عملگر</b><span class="tg purple"><i class="bi bi-lightning-charge"></i> @(sn.AmalgarTitle ?? "—")</span></div>
+                        }
+                        @if (sn.MohlatPasokh is { } mp)
+                        {
+                            <div class="gkv"><b>مهلت پاسخ</b>
+                                <span class="tg @(mp < DateTime.Now ? "red" : "amber")"><i class="bi bi-clock"></i> @mp.ToFa() @(mp < DateTime.Now ? "(گذشته)" : "")</span>
+                            </div>
+                        }
+                        <div class="gkv"><b>وضعیت اقدام</b>
+                            <span>
+                                @if (sn.TypeTaeed == 1) { <span class="tg green"><i class="bi bi-check-lg"></i> تایید شد</span> }
+                                else if (sn.TypeTaeed == 2) { <span class="tg red"><i class="bi bi-x-lg"></i> رد شد</span> }
+                                else if (!string.IsNullOrWhiteSpace(sn.Answer)) { <span class="tg green"><i class="bi bi-reply"></i> پاسخ داده شد</span> }
+                                else { <span class="tg gray">بدون اقدام</span> }
+                            </span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(sn.MatnErja))
+                        {
+                            <div class="gkv" style="flex-direction:column;align-items:stretch">
+                                <b>متن @(sn.Type == "هامش" ? "هامش" : "ارجاع") (پاراف)</b>
+                                <div class="gtxt">@sn.MatnErja</div>
+                            </div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(sn.Answer))
+                        {
+                            <div class="gkv" style="flex-direction:column;align-items:stretch">
+                                <b>پاسخ @(sn.DateAnswer is { } da2 ? "— " + da2.ToFaDateTime() : "")</b>
+                                <div class="gtxt" style="border-color:#a7f3d0;background:#f0fdf7">@sn.Answer</div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+}
+
+@code {
+    private bool visible;
+    private bool loading;
+    private int view;
+
+    private string title = "", letterNumber = "", senderName = "";
+    private DateTime letterDate;
+    private List<ErjaTreeNodeDto> roots = new();
+
+    /// <summary>ایستگاه انتخاب‌شده برای نمایش جزئیات</summary>
+    private ErjaTreeNodeDto? selectedNode;
+
+    public async Task Open(int letterId, string letterTitle, string number, string sender, DateTime date)
+    {
+        title = letterTitle; letterNumber = number; senderName = sender; letterDate = date;
+        view = 0; visible = true; loading = true; selectedNode = null;
+        StateHasChanged();
+        try { roots = await LetterSvc.GetGardeshAsync(letterId); }
+        catch (Exception ex) { Toast.Error(ex.Message); roots = new(); }
+        finally { loading = false; StateHasChanged(); }
+    }
+
+    private void Close() => visible = false;
+
+    private void SelectNode(ErjaTreeNodeDto n) =>
+        selectedNode = selectedNode == n ? null : n;
+
+    // ---------- کمکی ----------
+
+    private static bool IsDone(ErjaTreeNodeDto n) => n.IsRead || n.TypeTaeed != 0 || !string.IsNullOrWhiteSpace(n.Answer);
+
+    private static string StLabel(ErjaTreeNodeDto n) =>
+        n.TypeTaeed == 1 ? "تایید شد" :
+        n.TypeTaeed == 2 ? "رد شد" :
+        !string.IsNullOrWhiteSpace(n.Answer) ? "پاسخ داده شد" :
+        n.IsRead ? "خوانده شد" : "در انتظار";
+
+    private static string NodeSub(ErjaTreeNodeDto n)
+    {
+        var s = n.Type == "ارجاع" ? $"ارجاع «{n.AmalgarTitle ?? "—"}»"
+              : n.Type == "هامش" ? "هامش «جهت اطلاع»"
+              : "گیرنده اصلی";
+        if (!string.IsNullOrWhiteSpace(n.MatnErja)) s += " · پاراف: " + (n.MatnErja.Length > 40 ? n.MatnErja[..40] + "…" : n.MatnErja);
+        if (n.MohlatPasokh is { } mp) s += " · مهلت: " + mp.ToFa();
+        s += " · از طرف " + n.Sender;
+        return s;
+    }
+
+    private int CountAll()
+    {
+        int C(List<ErjaTreeNodeDto> l) => l.Sum(x => 1 + C(x.Children));
+        return 1 + C(roots);
+    }
+
+    private IEnumerable<ErjaTreeNodeDto> Flat()
+    {
+        IEnumerable<ErjaTreeNodeDto> Dfs(ErjaTreeNodeDto n)
+        {
+            yield return n;
+            foreach (var k in n.Children)
+                foreach (var x in Dfs(k)) yield return x;
+        }
+        return roots.SelectMany(Dfs);
+    }
+
+    // ---------- رندر بازگشتی ----------
+
+    private RenderFragment TreeNode(ErjaTreeNodeDto n) => @<li>
+        <div class="tnode gnode-click @(selectedNode == n ? "sel" : "")" style="@(selectedNode == n ? "border-color:var(--p);box-shadow:0 0 0 3px rgba(79,70,229,.12)" : "")"
+             @onclick="() => SelectNode(n)">
+            <span class="mini"><i class="bi bi-person"></i></span>
+            <div><b>@n.Reciver</b><small> — @NodeSub(n)</small></div>
+            <span class="tst @(IsDone(n) ? "g" : "w")">@StLabel(n)</span>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(n.Answer))
+        {
+            <div class="tans"><i class="bi bi-reply"></i> @n.Answer</div>
+        }
+        @if (n.Children.Count > 0)
+        {
+            <ul>
+                @foreach (var k in n.Children) { @TreeNode(k) }
+            </ul>
+        }
+    </li>;
+
+    private RenderFragment FlowNode(ErjaTreeNodeDto n) => @<li>
+        <div class="fnode @(IsDone(n) ? "ok" : "wt") gnode-click" style="@(selectedNode == n ? "border-color:var(--p);box-shadow:0 0 0 3px rgba(79,70,229,.15)" : "")"
+             @onclick="() => SelectNode(n)">
+            <span class="mini"><i class="bi bi-person"></i></span>
+            <div><b>@n.Reciver</b><small>@(NodeSub(n).Length > 34 ? NodeSub(n)[..34] + "…" : NodeSub(n))</small></div>
+            <span class="fdot @(IsDone(n) ? "g" : "w")"></span>
+        </div>
+        @if (n.Children.Count > 0)
+        {
+            <ul>
+                @foreach (var k in n.Children) { @FlowNode(k) }
+            </ul>
+        }
+    </li>;
+}

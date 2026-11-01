@@ -1,0 +1,213 @@
+@namespace Inventory.Client.Pages
+@page "/fa-pay"
+@inject IFaPayClientService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>دوره‌های حقوق</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-cash-stack"></i> دوره‌های حقوق و دستمزد</h1>
+            <div class="lead">دوره ماهانه و دوره عیدی و سنوات اسفند — محاسبه خودکار از حضور، مرخصی، وام و معوقات</div>
+        </div>
+        @if (faManage)
+        {
+            <button class="btn btn-success" @onclick="() => OpenCreate()"><i class="bi bi-plus-lg"></i> دوره جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faRead)
+{
+    <div class="alert alert-warning">به این بخش دسترسی ندارید.</div>
+    return;
+}
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    return;
+}
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>دوره</th>
+                        <th>نوع</th>
+                        <th>وضعیت</th>
+                        <th class="text-center">تعداد فیش</th>
+                        <th>جمع خالص پرداختی (ریال)</th>
+                        <th>ایجادکننده</th>
+                        <th>یادداشت</th>
+                        <th style="width:260px">عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in runs)
+                    {
+                        <tr>
+                            <td><strong>@FaPayUi.RunName(r)</strong></td>
+                            <td><span class="badge @FaPayUi.RunKindBadge(r.Kind)">@FaPayUi.RunKind(r.Kind)</span></td>
+                            <td><span class="badge @FaPayUi.RunBadge(r.Status)">@FaPayUi.RunStatus(r.Status)</span></td>
+                            <td class="text-center">@FaPayUi.Num(r.SlipsCount)</td>
+                            <td>@FaPayUi.Money(r.TotalNet)</td>
+                            <td class="small text-muted">@r.CreatedByName</td>
+                            <td class="small text-muted">@r.Note</td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button class="btn btn-outline-primary" title="مشاهده" @onclick="() => GoRun(r.Id)"><i class="bi bi-eye"></i></button>
+                                    @if (faManage)
+                                    {
+                                        @if (r.Status == 0)
+                                        {
+                                            <button class="btn btn-outline-success" title="@(r.Kind == 1 ? "محاسبه عیدی و سنوات" : "محاسبه")" @onclick="() => Calc(r)"><i class="bi bi-calculator"></i></button>
+                                            <button class="btn btn-outline-dark" title="نهایی‌سازی" @onclick="() => Finalize(r.Id)"><i class="bi bi-lock"></i></button>
+                                            <button class="btn btn-outline-danger" title="حذف" @onclick="() => Del(r)"><i class="bi bi-trash"></i></button>
+                                        }
+                                        else
+                                        {
+                                            <button class="btn btn-outline-warning" title="بازگشایی" @onclick="() => Reopen(r.Id)"><i class="bi bi-unlock"></i></button>
+                                            <button class="btn btn-outline-info" title="ارسال گروهی فیش" @onclick="() => SendAll(r.Id)"><i class="bi bi-envelope"></i></button>
+                                        }
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                    @if (runs.Count == 0)
+                    {
+                        <tr><td colspan="8" class="text-center text-muted py-4">هنوز دوره‌ای ساخته نشده است.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@if (faManage)
+{
+    <Modal Visible="showCreate" Title="دوره جدید حقوق" OnClose="() => showCreate = false">
+    <ChildContent>
+        <div class="row g-2">
+            <div class="col-md-4"><label class="form-label">سال</label><input class="form-control" type="number" @bind="form.Year" /></div>
+            <div class="col-md-4">
+                <label class="form-label">ماه</label>
+                <select class="form-select" @bind="form.Month">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        <option value="@m">@FaPayUi.MonthName(m)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">نوع دوره</label>
+                <select class="form-select" @bind="form.Kind">
+                    <option value="0">ماهانه</option>
+                    <option value="1">عیدی و سنوات (اسفند)</option>
+                </select>
+            </div>
+            <div class="col-12"><label class="form-label">یادداشت</label><input class="form-control" @bind="form.Note" /></div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <div class="d-flex justify-content-end gap-2 mt-3">
+            <button class="btn btn-secondary" @onclick="() => showCreate = false">انصراف</button>
+            <button class="btn btn-success" @onclick="SaveCreate"><i class="bi bi-check-lg"></i> ایجاد دوره</button>
+        </div>
+    </Footer>
+</Modal>
+}
+
+@code {
+    private bool faRead => Auth.Has("FaPay.Read") || faManage;
+    private bool faManage => Auth.Has("FaPay.Manage") || Auth.IsAdmin;
+    private bool loading = true;
+    private List<FaPayRunDto> runs = new();
+    private bool showCreate;
+    private FaPayRunSaveDto form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faRead) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { runs = await Svc.ListRunsAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        loading = false;
+    }
+
+    private void GoRun(int id) => Nav.NavigateTo(FaPayUi.RunUrl(id));
+
+    private void OpenCreate()
+    {
+        form = new FaPayRunSaveDto { Year = FaPayUi.CurrentYear, Month = FaPayUi.CurrentMonth };
+        showCreate = true;
+    }
+
+    private async Task SaveCreate()
+    {
+        if (form.Kind == 1) form.Month = 12;
+        try
+        {
+            await Svc.CreateRunAsync(form);
+            showCreate = false;
+            Toast.Success("دوره ایجاد شد؛ حالا «محاسبه» را بزنید.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Calc(FaPayRunDto r)
+    {
+        try
+        {
+            var n = r.Kind == 1 ? await Svc.CalculateYearEndAsync(r.Id) : await Svc.CalculateRunAsync(r.Id);
+            Toast.Success($"محاسبه انجام شد: {Fa.Digits(n.ToString())} فیش.");
+            await Reload();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Finalize(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "دوره نهایی شود؟ پس از نهایی‌سازی، ثبت‌های ماه امکان تغییر ندارند.")) return;
+        try { await Svc.FinalizeRunAsync(id); Toast.Success("دوره نهایی شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Reopen(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "دوره به پیش‌نویس برگردد؟")) return;
+        try { await Svc.ReopenRunAsync(id); Toast.Info("دوره بازگشایی شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Del(FaPayRunDto r)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"دوره {FaPayUi.RunName(r)} حذف شود؟")) return;
+        try { await Svc.DeleteRunAsync(r.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task SendAll(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "فیش همه پرسنل ایمیل شود؟")) return;
+        try
+        {
+            var r = await Svc.SendRunEmailsAsync(id);
+            Toast.Success($"ارسال شد: {Fa.Digits(r.Sent.ToString())} — رد شد: {Fa.Digits(r.Skipped.ToString())}");
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

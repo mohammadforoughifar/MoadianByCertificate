@@ -1,0 +1,129 @@
+@namespace Inventory.Client.Pages
+@page "/fa-att/devices"
+@inject IFaAttService Svc
+@inject IAuthState Auth
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>دستگاه‌های تردد</PageTitle>
+
+<div class="page-head mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1><i class="bi bi-fingerprint"></i> دستگاه‌های تردد</h1>
+            <div class="lead">تعریف دستگاه اثر انگشت / تشخیص چهره / کارتی + محل نصب</div>
+        </div>
+        @if (faManage)
+        {
+            <button class="btn btn-success" @onclick="() => OpenEdit(null)"><i class="bi bi-plus-lg"></i> دستگاه جدید</button>
+        }
+    </div>
+</div>
+
+@if (!faManage)
+{
+    <div class="alert alert-warning">این صفحه مخصوص واحد منابع انسانی است.</div>
+    return;
+}
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center text-muted py-5"><span class="spinner-border"></span></div>
+        }
+        else if (devices.Count == 0)
+        {
+            <div class="text-center text-muted py-5">دستگاهی ثبت نشده است.</div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>کد</th><th>نام</th><th>نوع</th><th>محل</th><th>سریال / IP</th><th>تردد ثبت‌شده</th><th>وضعیت</th><th style="width:100px"></th></tr></thead>
+                <tbody>
+                    @foreach (var d in devices)
+                    {
+                        <tr class="@(!d.IsActive ? "opacity-50" : "")">
+                            <td class="num fw-bold">@d.Code</td>
+                            <td><b>@d.Name</b></td>
+                            <td>@FaAttUi.DeviceType(d.Type)</td>
+                            <td>@(d.Location ?? "—")</td>
+                            <td class="num small" dir="ltr">@(d.SerialNo ?? "—")<br />@(d.IpAddress ?? "")</td>
+                            <td class="num">@FaAttUi.Num(d.LogsCount)</td>
+                            <td>@if (d.IsActive){<span class="badge text-bg-success">فعال</span>}else{<span class="badge text-bg-secondary">غیرفعال</span>}</td>
+                            <td class="text-end">
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-secondary" @onclick="() => OpenEdit(d)"><i class="bi bi-pencil"></i></button>
+                                    <button class="btn btn-outline-danger" @onclick="() => Delete(d)"><i class="bi bi-trash"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        }
+    </div>
+</div>
+
+<Modal Visible="showEdit" Title="دستگاه تردد" OnClose="() => showEdit = false">
+    <ChildContent>
+    <div class="row g-2">
+        <div class="col-md-4"><label class="form-label">کد *</label><input class="form-control num" @bind="form.Code" /></div>
+        <div class="col-md-8"><label class="form-label">نام *</label><input class="form-control" @bind="form.Name" /></div>
+        <div class="col-md-6"><label class="form-label">نوع</label><select class="form-select" @bind="form.Type"><option value="0">اثر انگشت</option><option value="1">تشخیص چهره</option><option value="2">کارتی</option></select></div>
+        <div class="col-md-6"><label class="form-label">محل نصب</label><input class="form-control" @bind="form.Location" /></div>
+        <div class="col-md-6"><label class="form-label">سریال</label><input class="form-control" dir="ltr" @bind="form.SerialNo" /></div>
+        <div class="col-md-6"><label class="form-label">IP</label><input class="form-control" dir="ltr" @bind="form.IpAddress" /></div>
+        <div class="col-12"><div class="form-check"><input type="checkbox" class="form-check-input" @bind="form.IsActive" /><label class="form-check-label">فعال</label></div></div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-secondary" @onclick="() => showEdit = false">انصراف</button>
+        <button class="btn btn-success" @onclick="Save">ذخیره</button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private bool faManage => Auth.Has("FaAtt.Manage") || Auth.IsAdmin;
+    private bool loading = true, showEdit;
+    private List<FaAttDeviceDto> devices = new();
+    private int? editId;
+    private FaAttDeviceSaveDto form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!faManage) { loading = false; return; }
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        loading = true;
+        try { devices = await Svc.GetDevicesAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenEdit(FaAttDeviceDto? d)
+    {
+        editId = d?.Id;
+        form = d == null ? new FaAttDeviceSaveDto()
+            : new FaAttDeviceSaveDto { Code = d.Code, Name = d.Name, Type = d.Type, Location = d.Location, SerialNo = d.SerialNo, IpAddress = d.IpAddress, IsActive = d.IsActive };
+        showEdit = true;
+    }
+
+    private async Task Save()
+    {
+        try { await Svc.SaveDeviceAsync(editId, form); Toast.Success("ذخیره شد."); showEdit = false; await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private async Task Delete(FaAttDeviceDto d)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "دستگاه حذف شود؟")) return;
+        try { await Svc.DeleteDeviceAsync(d.Id); Toast.Success("حذف شد."); await Reload(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+}

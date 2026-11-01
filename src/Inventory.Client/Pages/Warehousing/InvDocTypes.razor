@@ -1,0 +1,519 @@
+@page "/inv/doc-types"
+@inject IInvDocTypeService DocTypeSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+@inject IAuthState Auth
+
+<PageTitle>مدیریت نوع رسید و حواله</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>مدیریت نوع رسید و حواله</h1>
+        <p class="lead">هر نوع سند یک «ماهیت» دارد که اثر آن بر موجودی انبار را تعیین می‌کند: افزایشی، کاهشی یا خنثی</p>
+    </div>
+    <button class="btn btn-primary ms-auto" @onclick="OpenNew">
+        <i class="bi bi-plus-lg"></i> نوع سند جدید
+    </button>
+</div>
+
+@* ---------- توضیح ماهیت‌ها ---------- *@
+<div class="row g-2 mb-3">
+    <div class="col-12 col-lg-4">
+        <div class="mini-kpi">
+            <i class="bi bi-box-arrow-in-down bg-soft-success text-success"></i>
+            <div>
+                <div class="k-val num">@items.Count(t => t.Nature == StockNature.Increase).Num() نوع</div>
+                <div class="k-lbl">افزایشی — رسید: موجودی را زیاد می‌کند</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-lg-4">
+        <div class="mini-kpi">
+            <i class="bi bi-box-arrow-up bg-soft-danger text-danger"></i>
+            <div>
+                <div class="k-val num">@items.Count(t => t.Nature == StockNature.Decrease).Num() نوع</div>
+                <div class="k-lbl">کاهشی — حواله: موجودی را کم می‌کند</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-lg-4">
+        <div class="mini-kpi">
+            <i class="bi bi-arrow-left-right bg-soft-info text-info"></i>
+            <div>
+                <div class="k-val num">@items.Count(t => t.Nature == StockNature.Neutral).Num() نوع</div>
+                <div class="k-lbl">خنثی — انتقال یا سند یادداشتی</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@* ---------- فیلتر ماهیت ---------- *@
+<div class="mtabs mb-3">
+    <button class="mtab @(fNature is null ? "active" : "")" @onclick="() => SetNature(null)">
+        <i class="bi bi-collection"></i> همه
+        <span class="mtab-num num">@items.Count.Num()</span>
+    </button>
+    @foreach (var n in Natures)
+    {
+        <button class="mtab @(fNature == n ? "active" : "")" @onclick="() => SetNature(n)">
+            <i class="bi @NatureIcon(n)"></i> @NatureShort(n)
+            <span class="mtab-num num">@items.Count(t => t.Nature == n).Num()</span>
+        </button>
+    }
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <div class="empty-state">
+                <i class="bi bi-journals"></i>
+                <h5>نوع سندی یافت نشد</h5>
+                <p class="text-muted">انواع پیش‌فرض (رسید خرید، حواله فروش، انتقال و …) هنگام راه‌اندازی ایجاد می‌شوند.</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive grid-desktop">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th style="width:8px"></th>
+                            <th>نوع سند</th>
+                            @if (CanSeeCode)
+                            {
+                                <th>کد</th>
+                            }
+                            <th>ماهیت</th>
+                            <th>پیش‌شماره</th>
+                            <th>الزامات</th>
+                            <th class="text-center">اسناد</th>
+                            <th>وضعیت</th>
+                            <th class="text-end">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var t in Filtered)
+                        {
+                            <tr>
+                                <td class="p-0"><div class="nature-strip @NatureCls(t.Nature)" style="height:44px"></div></td>
+                                <td>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="stat-icon" style="width:38px;height:38px;font-size:1.05rem;background:@SoftColor(t);color:@(t.Color ?? DefaultColor(t.Nature))">
+                                            <i class="bi @(string.IsNullOrWhiteSpace(t.Icon) ? NatureIcon(t.Nature) : t.Icon)"></i>
+                                        </span>
+                                        <div>
+                                            <div class="fw-500">
+                                                @t.Name
+                                                @if (t.IsSystem)
+                                                {
+                                                    <span class="badge badge-soft-muted fs-8">سیستمی</span>
+                                                }
+                                            </div>
+                                            @if (!string.IsNullOrWhiteSpace(t.Description))
+                                            {
+                                                <div class="text-muted" style="font-size:.74rem">@t.Description</div>
+                                            }
+                                        </div>
+                                    </div>
+                                </td>
+                                @if (CanSeeCode)
+                                {
+                                    <td class="num text-muted">@t.Code</td>
+                                }
+                                <td><span class="badge @NatureBadge(t.Nature)">@t.NatureTitle</span></td>
+                                <td class="num text-muted">@(string.IsNullOrWhiteSpace(t.NumberPrefix) ? "—" : t.NumberPrefix)</td>
+                                <td>
+                                    @if (t.RequiresParty)
+                                    {
+                                        <span class="badge badge-soft-primary fs-8">طرف حساب</span>
+                                    }
+                                    @if (t.RequiresPrice)
+                                    {
+                                        <span class="badge badge-soft-warning fs-8">مبلغ</span>
+                                    }
+                                    @if (!t.RequiresParty && !t.RequiresPrice)
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td class="text-center"><span class="badge badge-soft-primary num">@t.DocCount.Num()</span></td>
+                                <td>
+                                    @if (t.IsActive)
+                                    {
+                                        <span class="badge badge-soft-success">فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-soft-muted">غیرفعال</span>
+                                    }
+                                </td>
+                                <td class="text-end text-nowrap">
+                                    <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(t)"><i class="bi bi-pencil text-primary"></i></button>
+                                    <button class="btn btn-sm btn-light" title="حذف" disabled="@t.IsSystem" @onclick="() => Delete(t)"><i class="bi bi-trash @(t.IsSystem ? "text-muted" : "text-danger")"></i></button>
+                                    <button class="btn btn-sm btn-outline-secondary" title="شابلون سند حسابداری" @onclick="() => ShowTemplateNotice(t)"><i class="bi bi-file-earmark-spreadsheet me-1"></i> شابلون سند حسابداری</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ---------- نمای کارتی (موبایل) ---------- *@
+            <div class="cards-mobile">
+                @foreach (var t in Filtered)
+                {
+                    <div class="m-card @(t.Nature == StockNature.Increase ? "st-ready" : t.Nature == StockNature.Decrease ? "st-cancelled" : "st-received")">
+                        <div class="m-card-head">
+                            <div class="m-card-icon"><i class="bi @(string.IsNullOrWhiteSpace(t.Icon) ? NatureIcon(t.Nature) : t.Icon)"></i></div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-700 text-truncate">@t.Name</span>
+                                    @if (t.IsSystem)
+                                    {
+                                        <span class="badge badge-soft-muted fs-8">سیستمی</span>
+                                    }
+                                </div>
+                                <div class="fs-8 text-muted">@t.NatureTitle</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="fs-8 text-muted">اسناد</div>
+                                <div class="num fw-800 text-primary">@t.DocCount.Num()</div>
+                            </div>
+                        </div>
+                        <div class="m-card-body">
+                            @if (CanSeeCode)
+                            {
+                                <div class="m-card-row"><span><i class="bi bi-upc text-muted"></i> کد</span><b class="num">@t.Code</b></div>
+                            }
+                            <div class="m-card-row"><span><i class="bi bi-hash text-muted"></i> پیش‌شماره</span><b class="num">@(string.IsNullOrWhiteSpace(t.NumberPrefix) ? "—" : t.NumberPrefix)</b></div>
+                        </div>
+                        <div class="m-card-actions">
+                            <button class="btn btn-light text-primary" @onclick="() => OpenEdit(t)"><i class="bi bi-pencil"></i> ویرایش</button>
+                            <button class="btn btn-light text-danger" disabled="@t.IsSystem" @onclick="() => Delete(t)"><i class="bi bi-trash"></i></button>
+                            <button class="btn btn-light text-secondary" @onclick="() => ShowTemplateNotice(t)"><i class="bi bi-file-earmark-spreadsheet"></i> شابلون سند حسابداری</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@* ================= مودال افزودن/ویرایش نوع سند ================= *@
+<Modal Visible="showModal" Title="@(editing.Id == 0 ? "نوع سند جدید" : "ویرایش نوع سند")" Size="modal-lg" OnClose="Close">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label">عنوان نوع سند <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="editing.Name" @bind:event="oninput" placeholder="مثلاً: رسید خرید" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">کد <span class="text-danger">*</span></label>
+                <input class="form-control num" @bind="editing.Code" dir="ltr" placeholder="PRC" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">ترتیب نمایش</label>
+                <input type="number" class="form-control" @bind="editing.SortOrder" />
+            </div>
+
+            @* ---------- انتخاب ماهیت ---------- *@
+            <div class="col-12">
+                <label class="form-label">ماهیت سند نسبت به موجودی <span class="text-danger">*</span></label>
+                <div class="row g-2">
+                    @foreach (var n in Natures)
+                    {
+                        <div class="col-12 col-md-4">
+                            <button type="button" class="w-100 text-start border rounded-3 p-2 bg-white @(editing.Nature == n ? "border-primary shadow-sm" : "")"
+                                    style="cursor:pointer" @onclick="() => SetEditNature(n)">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="stat-icon @NatureSoft(n)" style="width:34px;height:34px;font-size:.95rem">
+                                        <i class="bi @NatureIcon(n)"></i>
+                                    </span>
+                                    <div>
+                                        <div class="fw-600" style="font-size:.86rem">@NatureShort(n)</div>
+                                        <div class="text-muted" style="font-size:.72rem">@NatureHint(n)</div>
+                                    </div>
+                                    @if (editing.Nature == n)
+                                    {
+                                        <i class="bi bi-check-circle-fill text-primary ms-auto"></i>
+                                    }
+                                </div>
+                            </button>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            @if (editing.Nature == StockNature.Neutral)
+            {
+                <div class="col-12">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="dtTransfer" @bind="editing.IsTransfer" />
+                        <label class="form-check-label" for="dtTransfer">
+                            سند انتقال بین دو انبار (از انبار مبدأ کم و به انبار مقصد اضافه می‌شود)
+                        </label>
+                    </div>
+                </div>
+            }
+
+            <div class="col-6 col-md-3">
+                <label class="form-label">پیش‌شماره سند</label>
+                <input class="form-control num" @bind="editing.NumberPrefix" dir="ltr" placeholder="RC" />
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">رنگ نشان</label>
+                <input type="color" class="form-control form-control-color w-100" value="@(editing.Color ?? DefaultColor(editing.Nature))"
+                       @onchange="e => editing.Color = e.Value?.ToString()" />
+            </div>
+            <div class="col-12 col-md-6">
+                <label class="form-label">آیکن (Bootstrap Icons)</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi @(string.IsNullOrWhiteSpace(editing.Icon) ? NatureIcon(editing.Nature) : editing.Icon)"></i></span>
+                    <input class="form-control" @bind="editing.Icon" @bind:event="oninput" dir="ltr" placeholder="bi-box-arrow-in-down" />
+                </div>
+            </div>
+
+            <div class="col-12">
+                <div class="d-flex flex-wrap gap-4">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="dtParty" @bind="editing.RequiresParty" />
+                        <label class="form-check-label" for="dtParty">ثبت طرف حساب اجباری است</label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="dtPrice" @bind="editing.RequiresPrice" />
+                        <label class="form-check-label" for="dtPrice">ثبت مبلغ واحد اجباری است</label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="dtAct" @bind="editing.IsActive" />
+                        <label class="form-check-label" for="dtAct">فعال</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12">
+                <label class="form-label">توضیحات</label>
+                <textarea class="form-control" rows="2" @bind="editing.Description"></textarea>
+            </div>
+
+            @if (editing.IsSystem)
+            {
+                <div class="col-12">
+                    <div class="alert alert-info py-2 mb-0" style="font-size:.82rem">
+                        <i class="bi bi-info-circle"></i>
+                        این نوع سند، سیستمی است؛ ماهیت آن قابل تغییر نیست و امکان حذف ندارد.
+                    </div>
+                </div>
+            }
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="Close">انصراف</button>
+        <button class="btn btn-primary" data-hotkey="f1" disabled="@saving" @onclick="Save">
+            @if (saving)
+            {
+                <span class="spinner-border spinner-border-sm ms-1"></span>
+            }
+            <i class="bi bi-check-lg"></i> ذخیره
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    private List<InvDocType> items = new();
+    private bool loading = true, saving, showModal;
+    private StockNature? fNature;
+    private InvDocType editing = new();
+
+    private static readonly StockNature[] Natures =
+    {
+        StockNature.Increase, StockNature.Decrease, StockNature.Neutral
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("نوع رسید و حواله");
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            items = await DocTypeSvc.GetAllAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private List<InvDocType> Filtered =>
+        (fNature is null ? items : items.Where(t => t.Nature == fNature))
+        .OrderBy(t => t.Nature).ThenBy(t => t.SortOrder).ThenBy(t => t.Name).ToList();
+
+    private bool CanSeeCode => Auth.Has("InvDocTypes.ViewCode") || Auth.IsAdmin;
+
+    private void ShowTemplateNotice(InvDocType t)
+    {
+        Toast.Info("به زودی دیتا قرار می‌گیرد.");
+    }
+
+    private void SetNature(StockNature? n) => fNature = n;
+
+    private void SetEditNature(StockNature n)
+    {
+        if (editing.IsSystem) return;
+        editing.Nature = n;
+        if (n != StockNature.Neutral) editing.IsTransfer = false;
+    }
+
+    private void OpenNew()
+    {
+        editing = new InvDocType
+        {
+            IsActive = true,
+            Nature = fNature ?? StockNature.Increase,
+            SortOrder = (items.Count == 0 ? 0 : items.Max(t => t.SortOrder)) + 1
+        };
+        showModal = true;
+    }
+
+    private void OpenEdit(InvDocType t)
+    {
+        editing = new InvDocType
+        {
+            Id = t.Id,
+            Code = t.Code,
+            Name = t.Name,
+            Nature = t.Nature,
+            IsTransfer = t.IsTransfer,
+            RequiresParty = t.RequiresParty,
+            RequiresPrice = t.RequiresPrice,
+            NumberPrefix = t.NumberPrefix,
+            Color = t.Color,
+            Icon = t.Icon,
+            IsSystem = t.IsSystem,
+            IsActive = t.IsActive,
+            SortOrder = t.SortOrder,
+            Description = t.Description
+        };
+        showModal = true;
+    }
+
+    private void Close() => showModal = false;
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(editing.Name))
+        {
+            Toast.Error("عنوان نوع سند الزامی است.");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(editing.Code))
+        {
+            Toast.Error("کد نوع سند الزامی است.");
+            return;
+        }
+        saving = true;
+        try
+        {
+            await DocTypeSvc.SaveAsync(editing);
+            Toast.Success("نوع سند ذخیره شد.");
+            showModal = false;
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task Delete(InvDocType t)
+    {
+        if (t.IsSystem) return;
+        if (!await JS.InvokeAsync<bool>("confirm", $"نوع سند «{t.Name}» حذف شود؟"))
+            return;
+        try
+        {
+            await DocTypeSvc.DeleteAsync(t.Id);
+            Toast.Success("نوع سند حذف شد.");
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+    }
+
+    // ---------- کمکی‌های نمایش ----------
+    private static string NatureShort(StockNature n) => n switch
+    {
+        StockNature.Increase => "افزایشی (رسید)",
+        StockNature.Decrease => "کاهشی (حواله)",
+        _ => "خنثی"
+    };
+
+    private static string NatureHint(StockNature n) => n switch
+    {
+        StockNature.Increase => "به موجودی انبار اضافه می‌کند",
+        StockNature.Decrease => "از موجودی انبار کم می‌کند",
+        _ => "انتقال بین انبار یا بدون اثر"
+    };
+
+    private static string NatureIcon(StockNature n) => n switch
+    {
+        StockNature.Increase => "bi-box-arrow-in-down",
+        StockNature.Decrease => "bi-box-arrow-up",
+        _ => "bi-arrow-left-right"
+    };
+
+    private static string NatureBadge(StockNature n) => n switch
+    {
+        StockNature.Increase => "badge-nature-inc",
+        StockNature.Decrease => "badge-nature-dec",
+        _ => "badge-nature-neu"
+    };
+
+    private static string NatureSoft(StockNature n) => n switch
+    {
+        StockNature.Increase => "bg-soft-success text-success",
+        StockNature.Decrease => "bg-soft-danger text-danger",
+        _ => "bg-soft-info text-info"
+    };
+
+    private static string NatureCls(StockNature n) => n switch
+    {
+        StockNature.Increase => "inc",
+        StockNature.Decrease => "dec",
+        _ => "neu"
+    };
+
+    private static string DefaultColor(StockNature n) => n switch
+    {
+        StockNature.Increase => "#059669",
+        StockNature.Decrease => "#dc2626",
+        _ => "#0284c7"
+    };
+
+    private static string SoftColor(InvDocType t) => t.Nature switch
+    {
+        StockNature.Increase => "#d1fae5",
+        StockNature.Decrease => "#fee2e2",
+        _ => "#e0f2fe"
+    };
+}

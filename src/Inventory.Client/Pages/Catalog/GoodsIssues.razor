@@ -1,0 +1,643 @@
+@page "/goods-issues"
+@inject IAuthState Auth
+@inject IGoodsIssueService IssueSvc
+@inject IPartyService PartySvc
+@inject ISettingsService SettingsSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+@* =====================================================================
+   حواله تحویل کالا — سند «فقط مقدار» (بدون هیچ مبلغ/ریالی)
+   • نام کالا آزاد تایپ می‌شود (بدون انتخاب از فهرست کالاها)
+   • Enter = جابه‌جایی بین سطرها | F1 = سطر تازه | F2 = ذخیره
+   • مشتری از فهرست + دکمه «مشتری جدید» برای تعریف سریع همان‌جا
+   • چاپ A4 با طراحی اختصاصی
+   ===================================================================== *@
+
+<PageTitle>بیجک</PageTitle>
+
+<div class="gi-screen">
+    <div class="page-head">
+        <div>
+            <h1>بیجک</h1>
+            <p class="lead">ثبت خروج کالا به مشتری — فقط مقدار، بدون قیمت</p>
+        </div>
+        <button class="btn btn-primary me-auto" @onclick="OpenNew">
+            <i class="bi bi-plus-lg"></i> حواله جدید
+        </button>
+    </div>
+
+    @* ---------- فیلترها ---------- *@
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="d-flex flex-wrap gap-2 align-items-end">
+                <div style="min-width:220px" class="flex-grow-1">
+                    <label class="form-label">مشتری</label>
+                    <SearchSelect Items="partyLookup" Value="filterPartyId" ValueChanged="OnFilterPartyChanged" Placeholder="همه مشتری‌ها" />
+                </div>
+                <div style="min-width:150px">
+                    <label class="form-label">از تاریخ</label>
+                    <DatePicker @bind-Value="from" AllowClear="true" Placeholder="از تاریخ" />
+                </div>
+                <div style="min-width:150px">
+                    <label class="form-label">تا تاریخ</label>
+                    <DatePicker @bind-Value="to" AllowClear="true" Placeholder="تا تاریخ" />
+                </div>
+                <div style="min-width:200px" class="flex-grow-1">
+                    <label class="form-label">جستجو</label>
+                    <input class="form-control" @bind="search" @bind:event="oninput"
+                           @onkeydown="OnSearchKeyDown" placeholder="شماره حواله، مشتری یا کالا…" />
+                </div>
+                <button class="btn btn-primary" @onclick="ApplyFilter"><i class="bi bi-funnel"></i> اعمال فیلتر</button>
+            </div>
+        </div>
+    </div>
+
+    @* ---------- فهرست حواله‌ها ---------- *@
+    <div class="card">
+        <div class="card-body p-0">
+            @if (loading)
+            {
+                <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+            }
+            else if (items.Count == 0)
+            {
+                <div class="empty-state"><i class="bi bi-box-seam"></i><h5>حواله‌ای ثبت نشده است</h5></div>
+            }
+            else
+            {
+                <div class="table-responsive grid-desktop">
+                    <table class="table table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th>شماره حواله</th>
+                                <th>تاریخ</th>
+                                <th>مشتری</th>
+                                <th>اقلام</th>
+                                <th>جمع مقدار</th>
+                                <th>توضیحات</th>
+                                <th class="text-end">عملیات</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var g in items)
+                            {
+                                <tr>
+                                    <td class="doc-number fw-700 text-primary">@g.Number</td>
+                                    <td class="text-muted">@g.Date.ToFa()</td>
+                                    <td class="fw-500">@g.PartyName</td>
+                                    <td><span class="badge badge-soft-primary">@g.LineCount.Num() قلم</span></td>
+                                    <td class="num fw-700">@g.TotalQuantity.Qty()</td>
+                                    <td class="text-muted text-truncate" style="max-width:220px">@(g.Description ?? "—")</td>
+                                    <td class="text-end">
+                                        <button class="btn btn-sm btn-light" title="مشاهده" @onclick="() => View(g)"><i class="bi bi-eye text-primary"></i></button>
+                                        <button class="btn btn-sm btn-light" title="ویرایش" @onclick="() => OpenEdit(g)"><i class="bi bi-pencil text-primary"></i></button>
+                                        <button class="btn btn-sm btn-light" title="چاپ" @onclick="() => Print(g)"><i class="bi bi-printer text-secondary"></i></button>
+                                        @if (CanDelete)
+                                        {
+                                            <button class="btn btn-sm btn-light" title="حذف" @onclick="() => Delete(g)"><i class="bi bi-trash text-danger"></i></button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                @* ---------- نمای کارتی (موبایل) ---------- *@
+                <div class="cards-mobile">
+                    @foreach (var g in items)
+                    {
+                        <div class="m-card st-ready">
+                            <div class="m-card-head">
+                                <div class="m-card-icon"><i class="bi bi-box-seam"></i></div>
+                                <div class="flex-grow-1 min-w-0">
+                                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                                        <span class="doc-number fw-800 text-primary">@g.Number</span>
+                                        <span class="badge badge-soft-primary">@g.LineCount.Num() قلم</span>
+                                    </div>
+                                    <div class="fw-700 text-truncate">@g.PartyName</div>
+                                    <div class="fs-8 text-muted">@g.Date.ToFa() — جمع مقدار: <span class="num">@g.TotalQuantity.Qty()</span></div>
+                                </div>
+                            </div>
+                            <div class="m-card-body">
+                                @if (!string.IsNullOrWhiteSpace(g.Description))
+                                {
+                                    <div class="fs-8 text-muted mb-2">@g.Description</div>
+                                }
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-sm btn-light flex-fill" @onclick="() => View(g)"><i class="bi bi-eye text-primary"></i> مشاهده</button>
+                                    <button class="btn btn-sm btn-light flex-fill" @onclick="() => OpenEdit(g)"><i class="bi bi-pencil text-primary"></i> ویرایش</button>
+                                    <button class="btn btn-sm btn-light flex-fill" @onclick="() => Print(g)"><i class="bi bi-printer text-secondary"></i> چاپ</button>
+                                    @if (CanDelete)
+                                    {
+                                        <button class="btn btn-sm btn-light flex-fill" @onclick="() => Delete(g)"><i class="bi bi-trash text-danger"></i> حذف</button>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@* ==================== فرم حواله ==================== *@
+<Modal Visible="showForm" Title="@FormTitle" Size="modal-xl" OnClose="CloseForm">
+    <ChildContent>
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+        }
+        else
+        {
+            <div class="row g-3 mb-3">
+                @* --- مشتری + دکمه تعریف سریع --- *@
+                <div class="col-md-6">
+                    <label class="form-label">مشتری <span class="text-danger">*</span></label>
+                    @if (viewing)
+                    {
+                        <input class="form-control" value="@form.PartyName" disabled />
+                    }
+                    else
+                    {
+                        <div class="d-flex gap-2">
+                            <div class="flex-grow-1">
+                                <SearchSelect Items="partyLookup" Value="form.PartyId" ValueChanged="OnPartyChanged" Placeholder="انتخاب مشتری…" />
+                            </div>
+                            <button type="button" class="btn btn-outline-primary text-nowrap" @onclick="OpenNewParty"
+                                    title="تعریف مشتری جدید بدون بازکردن صفحه مشتری‌ها">
+                                <i class="bi bi-person-plus"></i> مشتری جدید
+                            </button>
+                        </div>
+                        <div class="fs-8 text-muted mt-1">اگر مشتری در فهرست نیست، با دکمه کنار سریع تعریفش کنید.</div>
+                    }
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">تاریخ <span class="text-danger">*</span></label>
+                    @if (viewing)
+                    {
+                        <input class="form-control" value="@form.Date.ToFa()" disabled />
+                    }
+                    else
+                    {
+                        <DatePicker @bind-Value="date" />
+                    }
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">شماره حواله</label>
+                    <input class="form-control" value="@(editing ? form.Number : "خودکار")" disabled />
+                </div>
+                <div class="col-12">
+                    <label class="form-label">توضیحات</label>
+                    <input class="form-control" @bind="form.Description" disabled="@viewing" placeholder="اختیاری" />
+                </div>
+            </div>
+
+            @* --- اقلام حواله: کالای آزاد + فقط مقدار --- *@
+            <div class="gi-lines-head">
+                <div class="fw-700">
+                    <i class="bi bi-boxes text-primary ms-1"></i>اقلام حواله
+                    <span class="fs-8 fw-400 text-muted">— نام کالا را آزادانه تایپ کنید؛ فقط مقدار ثبت می‌شود</span>
+                </div>
+                @if (!viewing)
+                {
+                    <button type="button" id="btn-add-line" class="btn btn-sm btn-primary" @onclick="AddEmptyLine">
+                        <i class="bi bi-plus-lg"></i> سطر تازه (F1)
+                    </button>
+                }
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-sm align-middle gi-lines">
+                    <thead>
+                        <tr>
+                            <th style="width:46px">#</th>
+                            <th>نام کالا</th>
+                            <th style="width:150px">مقدار</th>
+                            <th style="width:56px" class="text-end">حذف</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @for (var i = 0; i < form.Lines.Count; i++)
+                        {
+                            var idx = i;              // متغیر تازه در هر تکرار تاclosure درست بماند
+                            var line = form.Lines[i];
+                            <tr>
+                                <td class="gi-row-no">@(idx + 1)</td>
+                                <td>
+                                    <input id="gi-name-@idx" class="form-control form-control-sm gi-cell" value="@line.ProductName"
+                                           @oninput="e => SetName(line, e.Value?.ToString())"
+                                           @onkeydown="e => OnNameKey(e, idx)"
+                                           disabled="@viewing" placeholder="نام کالا…" />
+                                </td>
+                                <td>
+                                    <input id="gi-qty-@idx" type="number" min="0" step="any" class="form-control form-control-sm gi-cell num"
+                                           @bind="line.Quantity" @onkeydown="e => OnQtyKey(e, idx)"
+                                           disabled="@viewing" dir="ltr" placeholder="0" />
+                                </td>
+                                <td class="text-end">
+                                    <button type="button" class="btn btn-sm btn-light" title="حذف سطر"
+                                            disabled="@viewing" @onclick="() => RemoveLine(line)">
+                                        <i class="bi bi-trash text-danger"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <th colspan="2" class="text-end">جمع کل مقدار</th>
+                            <th class="num gi-total">@form.TotalQuantity.Qty()</th>
+                            <th></th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            @if (!viewing)
+            {
+                <div class="gi-hints">
+                    <span><kbd>Enter</kbd> سطر بعدی</span>
+                    <span><kbd>F1</kbd> سطر تازه</span>
+                    <span><kbd>F2</kbd> ذخیره</span>
+                    <span><kbd>Esc</kbd> انصراف</span>
+                </div>
+            }
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseForm">@(viewing ? "بستن" : "انصراف (Esc)")</button>
+        @if (viewing)
+        {
+            <button class="btn btn-outline-primary" @onclick="PrintCurrent"><i class="bi bi-printer"></i> چاپ</button>
+        }
+        else
+        {
+            <button class="btn btn-primary" data-hotkey="f2" @onclick="Save" disabled="@saving">
+                @if (saving) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                ذخیره (F2)
+            </button>
+        }
+    </Footer>
+</Modal>
+
+@* ==================== تعریف سریع مشتری ==================== *@
+<Modal Visible="showNewParty" Title="مشتری جدید" OnClose="CloseNewParty">
+    <ChildContent>
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label">نام مشتری <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="newParty.Name" @onkeydown="OnNewPartyKeyDown" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">موبایل</label>
+                <input class="form-control" @bind="newParty.Mobile" inputmode="tel" data-digits="tel" dir="ltr" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">تلفن ثابت</label>
+                <input class="form-control" @bind="newParty.Phone" inputmode="tel" data-digits="tel" dir="ltr" />
+            </div>
+            <div class="col-12">
+                <label class="form-label">آدرس</label>
+                <input class="form-control" @bind="newParty.Address" />
+            </div>
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-light" @onclick="CloseNewParty">انصراف</button>
+        <button class="btn btn-primary" @onclick="SaveNewParty" disabled="@savingParty">
+            @if (savingParty) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+            ذخیره مشتری
+        </button>
+    </Footer>
+</Modal>
+
+<style>
+    /* ---------- سربرگ بخش اقلام + راهنای کلیدها ---------- */
+    .gi-lines-head {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: .75rem; flex-wrap: wrap; margin-bottom: .5rem;
+    }
+    .gi-lines .gi-cell { min-width: 90px; }
+    .gi-lines .gi-row-no { color: #94a3b8; font-weight: 700; font-size: .85rem; }
+    .gi-lines tfoot th { background: #f8fafc; border-top: 2px solid #e2e8f0; }
+    .gi-lines .gi-total { color: #4f46e5; font-size: 1.05rem; }
+    .gi-hints { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: .6rem; font-size: .78rem; color: #64748b; }
+    .gi-hints kbd {
+        background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; border-bottom-width: 2px;
+        border-radius: 5px; padding: 1px 6px; font-size: .72rem; font-family: inherit;
+    }
+
+</style>
+
+@code {
+    // ---------- فهرست ----------
+    private List<GoodsIssueDto> items = new();
+    private List<LookupItem> partyLookup = new();
+    private bool loading = true;
+    private string companyName = "\u0641\u0631\u0648\u063a \u0622\u0631\u06cc\u0627";
+
+    private int filterPartyId;
+    private DateTime? from, to;
+    private string? search;
+
+    // ---------- فرم ----------
+    private bool showForm, saving;
+
+    /// <summary>حالت «فقط مشاهده» — همه فیلدها غیرفعال و دکمه ذخیره پنهان است.</summary>
+    private bool viewing;
+
+    private GoodsIssueDto form = new();
+    private DateTime? date;
+
+    // ---------- تعریف سریع مشتری ----------
+    private bool showNewParty, savingParty;
+    private Party newParty = new();
+
+    private bool editing => form.Id != 0;
+    private string FormTitle => viewing ? $"\u0645\u0634\u0627\u0647\u062f\u0647 \u062d\u0648\u0627\u0644\u0647 {form.Number}"
+        : editing ? $"\u0648\u06cc\u0631\u0627\u06cc\u0634 \u062d\u0648\u0627\u0644\u0647 {form.Number}"
+        : "\u062d\u0648\u0627\u0644\u0647 \u062a\u062d\u0648\u06cc\u0644 \u06a9\u0627\u0644\u0627 \u062c\u062f\u06cc\u062f";
+
+    /// <summary>حذف حواله نیاز به مجوز مستقل دارد.</summary>
+    private bool CanDelete => Auth.Has("GoodsIssues.Delete");
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("بیجک");
+        await LoadLookups();
+        await Load();
+    }
+
+    private async Task LoadLookups()
+    {
+        try
+        {
+            partyLookup = await PartySvc.GetLookupsAsync(PartyType.Customer, activeOnly: true);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+
+        try
+        {
+            var st = await SettingsSvc.GetAsync();
+            if (!string.IsNullOrWhiteSpace(st?.ItCompanyName)) companyName = st.ItCompanyName!;
+        }
+        catch { /* نام شرکت اختیاری است */ }
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try
+        {
+            items = await IssueSvc.GetAsync(filterPartyId > 0 ? filterPartyId : null, from, to, search);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private async Task OnFilterPartyChanged(int v)
+    {
+        filterPartyId = v;
+        await Load();
+    }
+
+    private void ApplyFilter() => _ = Load();
+
+    private async Task OnSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Load();
+    }
+
+    // ============================ فرم ============================
+
+    private void OpenNew()
+    {
+        form = new GoodsIssueDto { Date = DateTime.Today };
+        date = DateTime.Today;
+        // یک سطر خالی آمادهٔ تایپ — ورود سریع بدون کلیک اضافه
+        form.Lines.Add(new GoodsIssueLineDto());
+        viewing = false;
+        showForm = true;
+    }
+
+    private async Task OpenEdit(GoodsIssueDto g)
+    {
+        loading = true;
+        showForm = true;
+        viewing = false;
+        try
+        {
+            var full = await IssueSvc.GetAsync(g.Id);
+            if (full is null) { Toast.Error("حواله یافت نشد."); showForm = false; return; }
+            form = full;
+            date = full.Date;
+            if (form.Lines.Count == 0) form.Lines.Add(new GoodsIssueLineDto());
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); showForm = false; }
+        finally { loading = false; }
+    }
+
+    private async Task View(GoodsIssueDto g)
+    {
+        loading = true;
+        showForm = true;
+        viewing = true;
+        try
+        {
+            var full = await IssueSvc.GetAsync(g.Id);
+            if (full is null) { Toast.Error("حواله یافت نشد."); showForm = false; return; }
+            form = full;
+            date = full.Date;
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); showForm = false; }
+        finally { loading = false; }
+    }
+
+    private void CloseForm()
+    {
+        showForm = false;
+        viewing = false;
+    }
+
+    private void OnPartyChanged(int v)
+    {
+        form.PartyId = v;
+        var name = partyLookup.FirstOrDefault(p => p.Id == v)?.Name;
+        if (!string.IsNullOrEmpty(name)) form.PartyName = name;
+    }
+
+    // ---------- سطرها ----------
+
+    /// <summary>سطر تازه (F1) — فوکوس بعد از رندر روی نام کالای سطر جدید می‌رود.</summary>
+    private void AddEmptyLine()
+    {
+        if (viewing) return;
+        form.Lines.Add(new GoodsIssueLineDto());
+        pendingFocusRow = form.Lines.Count - 1;   // در OnAfterRenderAsync فوکوس می‌شود
+    }
+
+    /// <summary>شماره ردیفی که بعد از رندر باید فوکوس شود.</summary>
+    private int? pendingFocusRow;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (pendingFocusRow is int row)
+        {
+            pendingFocusRow = null;
+            await JS.InvokeVoidAsync("focusById", $"gi-name-{row}", true);
+        }
+    }
+
+    private void RemoveLine(GoodsIssueLineDto line)
+    {
+        if (viewing) return;
+        form.Lines.Remove(line);
+        if (form.Lines.Count == 0) form.Lines.Add(new GoodsIssueLineDto());
+    }
+
+    private void SetName(GoodsIssueLineDto line, string? text) => line.ProductName = text ?? "";
+
+    /// <summary>Enter روی نام کالا → برو به مقدار همان سطر.</summary>
+    private async Task OnNameKey(KeyboardEventArgs e, int idx)
+    {
+        if (e.Key == "Enter") await JS.InvokeVoidAsync("focusById", $"gi-qty-{idx}", true);
+    }
+
+    /// <summary>Enter روی مقدار → سطر بعدی؛ اگر سطر آخر بود، سطر تازه ساخته و فوکوس می‌شود.</summary>
+    private async Task OnQtyKey(KeyboardEventArgs e, int idx)
+    {
+        if (e.Key != "Enter" || viewing) return;
+        if (idx + 1 < form.Lines.Count)
+            await JS.InvokeVoidAsync("focusById", $"gi-name-{idx + 1}", true);
+        else
+            AddEmptyLine();   // سطر آخر: Enter سطر تازه می‌سازد
+    }
+
+    // ---------- ذخیره ----------
+
+    private async Task Save()
+    {
+        if (viewing) { CloseForm(); return; }
+        if (form.PartyId <= 0) { Toast.Error("مشتری را انتخاب کنید."); return; }
+
+        // سطرهای کاملاً خالی (نه نام، نه مقدار) نادیده گرفته می‌شوند تا ورود سریع اذیت نشود
+        var real = form.Lines.Where(l => !string.IsNullOrWhiteSpace(l.ProductName) || l.Quantity > 0).ToList();
+        if (real.Count == 0) { Toast.Error("حداقل یک کالا با مقدار وارد کنید."); return; }
+        for (var i = 0; i < real.Count; i++)
+        {
+            if (string.IsNullOrWhiteSpace(real[i].ProductName)) { Toast.Error($"نام کالای سطر {i + 1} را وارد کنید."); return; }
+            if (real[i].Quantity <= 0) { Toast.Error($"مقدار سطر {i + 1} را وارد کنید."); return; }
+        }
+
+        saving = true;
+        try
+        {
+            await IssueSvc.SaveAsync(new GoodsIssueCommand
+            {
+                Id = form.Id,
+                Date = date ?? DateTime.Today,
+                PartyId = form.PartyId,
+                Description = form.Description,
+                Lines = real.Select(l => new GoodsIssueLineDto
+                {
+                    ProductId = l.ProductId,
+                    ProductName = l.ProductName,
+                    Quantity = l.Quantity,
+                    Note = l.Note
+                }).ToList()
+            });
+            Toast.Success(editing ? "حواله ویرایش شد." : "حواله ثبت شد.");
+            showForm = false;
+            viewing = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    // ==================== تعریف سریع مشتری ====================
+
+    private void OpenNewParty() => showNewParty = true;
+
+    private void CloseNewParty() => showNewParty = false;
+
+    private async Task SaveNewParty()
+    {
+        if (string.IsNullOrWhiteSpace(newParty.Name)) { Toast.Error("نام مشتری را وارد کنید."); return; }
+
+        savingParty = true;
+        try
+        {
+            newParty.Type = PartyType.Customer;
+            newParty.IsActive = true;
+            var saved = await PartySvc.SaveAsync(newParty);
+
+            await LoadLookups();
+            newParty = new Party();
+            showNewParty = false;
+            Toast.Success($"مشتری «{saved.Name}» ثبت شد و در حواله انتخاب شد.");
+            OnPartyChanged(saved.Id);      // مشتری تازه، همان‌جا انتخاب می‌شود
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { savingParty = false; }
+    }
+
+    private void OnNewPartyKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") _ = SaveNewParty();
+    }
+
+    /// <summary>حذف حواله پس از تأییدیه.</summary>
+    private async Task Delete(GoodsIssueDto g)
+    {
+        if (!Auth.Has("GoodsIssues.Delete")) return;
+        loading = true;
+        try
+        {
+            await IssueSvc.DeleteAsync(g.Id);
+            Toast.Success("حواله حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    // ==================== چاپ ====================
+
+    /// <summary>چاپ از فهرست حواله.</summary>
+    private async Task Print(GoodsIssueDto g)
+    {
+        loading = true;
+        try
+        {
+            var full = await IssueSvc.GetAsync(g.Id);
+            if (full is null) { Toast.Error("حواله یافت نشد."); return; }
+            await PrintDoc(full);
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    /// <summary>چاپ از داخل پنجره مشاهده (مشاهده بسته و بازگشت به فهرست).</summary>
+    private async Task PrintCurrent()
+    {
+        showForm = false;
+        viewing = false;
+        await PrintDoc(form);
+    }
+
+    /// <summary>
+    /// سند چاپ را در یک iframe جداگانه می‌سازد تا هیچ استایلی از صفحهٔ برنامه در آن تأثیر نداشد
+    /// (اگر از حالت فرمل، ظهر نمی‌شد و چاپ سفید می‌شد).
+    /// </summary>
+    private async Task PrintDoc(GoodsIssueDto d)
+    {
+        if (d is null) return;
+        var ok = await JS.InvokeAsync<bool>("giPrint", GoodsIssuesPrint.Build(d, companyName));
+        if (!ok) Toast.Error("پنجرهٔ چاپ باز نشد.");
+    }
+}

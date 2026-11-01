@@ -1,0 +1,46 @@
+@* ============================================================
+   نقطه‌ی ورودِ سیستم تب‌ها — جایگزینِ RouteView در App.razor
+
+   • اگر صفحه «لایه‌ی اختصاصی» داشته باشد (مثل فرم عمومی ثبت درخواست)
+     یا جزو صفحاتِ مستثنا باشد (مثل پیام‌رسان)، دقیقاً مثل قبل رندر می‌شود.
+   • در غیر این صورت، لایه‌ی اصلی یک‌بار رندر می‌شود و داخل آن
+     «TabPages» همه‌ی تب‌های باز را نگه می‌دارد (فعال = نمایش، بقیه = مخفی).
+   ============================================================ *@
+@inject TabService Tabs
+@inject NavigationManager Nav
+@inject IAuthState Auth
+
+@if (bypass)
+{
+    <RouteView RouteData="@RouteData" DefaultLayout="@typeof(MainLayout)" />
+}
+else
+{
+    <LayoutView Layout="@typeof(MainLayout)">
+        <TabPages />
+    </LayoutView>
+}
+
+@code {
+    [Parameter] public RouteData RouteData { get; set; } = default!;
+
+    private bool bypass;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // فهرست تب‌های ذخیره‌شده از نشست‌های قبل — باید پیش از ثبتِ مسیر جاری باشد
+        await Tabs.EnsureLoadedAsync();
+    }
+
+    protected override void OnParametersSet()
+    {
+        var rel = Nav.ToBaseRelativePath(Nav.Uri);
+
+        bypass = !Auth.IsLoggedIn
+                 || TabService.IsExcluded(rel)
+                 || TabService.HasOwnLayout(RouteData.PageType);
+
+        if (bypass) Tabs.SetNoActive();
+        else Tabs.Sync(rel, RouteData);
+    }
+}

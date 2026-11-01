@@ -1,0 +1,414 @@
+@page "/trs/accounts"
+@inject ITrsAccountService AccountSvc
+@inject IAccAccountService AccSvc
+@inject IToastService Toast
+@inject LayoutState Layout
+@inject IJSRuntime JS
+
+<PageTitle>صندوق و بانک</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>مدیریت صندوق و بانک</h1>
+        <p class="lead">صندوق نقدی، حساب بانکی، کارتخوان و تنخواه‌گردان</p>
+    </div>
+    <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-primary" @onclick="() => OpenForm(null)"><i class="bi bi-plus-lg"></i> صندوق/بانک جدید</button>
+    </div>
+</div>
+
+@if (loading)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+}
+else
+{
+    <!-- ---------- کارت‌های خلاصه ---------- -->
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-success"><i class="bi bi-wallet2 text-success"></i></div>
+                <div>
+                    <div class="stat-label">جمع مانده</div>
+                    <div class="stat-value num text-success">@items.Sum(a => a.Balance).Money()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-primary"><i class="bi bi-cash-stack text-primary"></i></div>
+                <div>
+                    <div class="stat-label">صندوق‌ها</div>
+                    <div class="stat-value num">@CashBalance.Money()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-info"><i class="bi bi-bank text-info"></i></div>
+                <div>
+                    <div class="stat-label">حساب‌های بانکی</div>
+                    <div class="stat-value num">@BankBalance.Money()</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-soft-warning"><i class="bi bi-list-ol text-warning"></i></div>
+                <div>
+                    <div class="stat-label">تعداد حساب</div>
+                    <div class="stat-value num">@items.Count.Num()</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ---------- تب نوع حساب ---------- -->
+    <div class="mtabs mb-3">
+        <button class="mtab @(kindFilter is null ? "active" : "")" @onclick="() => SetKind(null)">
+            همه <span class="badge badge-soft-muted num">@items.Count.Num()</span>
+        </button>
+        @foreach (var k in AllKinds)
+        {
+            var kind = k;
+            <button class="mtab @(kindFilter == kind ? "active" : "")" @onclick="() => SetKind(kind)">
+                @KindTitle(kind) <span class="badge badge-soft-muted num">@items.Count(a => a.Kind == kind).Num()</span>
+            </button>
+        }
+    </div>
+
+    @if (Filtered.Count == 0)
+    {
+        <div class="card">
+            <div class="card-body">
+                <div class="empty-state">
+                    <i class="bi bi-wallet2"></i>
+                    <h5>صندوق یا حسابی ثبت نشده است</h5>
+                    <p class="text-muted">برای ثبت دریافت و پرداخت، حداقل یک صندوق یا حساب بانکی تعریف کنید.</p>
+                    <button class="btn btn-primary" @onclick="() => OpenForm(null)"><i class="bi bi-plus-lg"></i> صندوق/بانک جدید</button>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="row g-3">
+            @foreach (var a in Filtered)
+            {
+                var acc = a;
+                <div class="col-lg-6 col-xl-4">
+                    <div class="card h-100">
+                        <div class="card-header">
+                            <span class="stat-icon @KindBg(acc.Kind) me-2" style="width:36px;height:36px">
+                                <i class="bi @KindIcon(acc.Kind)"></i>
+                            </span>
+                            <div class="min-w-0">
+                                <div class="card-title text-truncate">@acc.Name</div>
+                                <div class="fs-8 text-muted num">@acc.Code.FaDigits()</div>
+                            </div>
+                            <div class="ms-auto d-flex gap-1 align-items-center">
+                                @if (acc.IsDefault)
+                                {
+                                    <span class="badge badge-soft-success fs-8">پیش‌فرض</span>
+                                }
+                                @if (!acc.IsActive)
+                                {
+                                    <span class="badge badge-soft-muted fs-8">غیرفعال</span>
+                                }
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-baseline mb-3">
+                                <span class="text-muted fs-8">مانده جاری</span>
+                                <span class="fs-4 fw-700 num @(acc.Balance >= 0 ? "text-success" : "text-danger")">
+                                    @acc.Balance.Money()
+                                </span>
+                            </div>
+
+                            <div class="row g-2 fs-8 mb-3">
+                                <div class="col-12 col-sm-6">
+                                    <div class="text-muted">وارده</div>
+                                    <div class="num text-success">@acc.TotalIn.Money()</div>
+                                </div>
+                                <div class="col-12 col-sm-6">
+                                    <div class="text-muted">صادره</div>
+                                    <div class="num text-danger">@acc.TotalOut.Money()</div>
+                                </div>
+                            </div>
+
+                            @if (acc.Kind == TreasuryAccountKind.Bank || acc.Kind == TreasuryAccountKind.Pos)
+                            {
+                                <div class="alert alert-light border py-2 px-2 mb-3 fs-8">
+                                    @if (!string.IsNullOrWhiteSpace(acc.BankName))
+                                    {
+                                        <div><i class="bi bi-bank2 text-muted"></i> @acc.BankName @(string.IsNullOrWhiteSpace(acc.BranchName) ? "" : $"— شعبه {acc.BranchName}")</div>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(acc.AccountNumber))
+                                    {
+                                        <div class="num"><i class="bi bi-credit-card-2-front text-muted"></i> @acc.AccountNumber.FaDigits()</div>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(acc.Iban))
+                                    {
+                                        <div class="num" dir="ltr" style="text-align:right"><i class="bi bi-upc text-muted"></i> IR@acc.Iban</div>
+                                    }
+                                </div>
+                            }
+
+                            <div class="fs-8 text-muted mb-3">
+                                <i class="bi bi-diagram-3"></i>
+                                @if (acc.AccountId is > 0)
+                                {
+                                    <span class="num">@acc.AccountCode</span>
+                                    <span> — @acc.AccountName</span>
+                                }
+                                else
+                                {
+                                    <span class="text-danger">حساب حسابداری متصل نشده — سند خودکار صادر نمی‌شود</span>
+                                }
+                            </div>
+
+                            <div class="d-flex gap-1">
+                                <a class="btn btn-sm btn-outline-primary flex-fill" href="@($"/trs/reports/flow?accountId={acc.Id}")">
+                                    <i class="bi bi-list-columns"></i> گردش
+                                </a>
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => OpenForm(acc)" title="ویرایش">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(acc)" title="حذف">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+<!-- ===================== فرم صندوق/بانک ===================== -->
+<Modal Visible="showForm" Title="@(form.Id == 0 ? "صندوق / بانک جدید" : "ویرایش صندوق / بانک")" Size="lg" OnClose="() => showForm = false">
+    <ChildContent>
+    <div class="row g-3">
+        <div class="col-md-4">
+            <label class="form-label">نوع <span class="text-danger">*</span></label>
+            <select class="form-select" value="@((int)form.Kind)" @onchange="OnKindChange">
+                <option value="0">صندوق</option>
+                <option value="1">بانک</option>
+                <option value="2">کارتخوان</option>
+                <option value="3">تنخواه‌گردان</option>
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">کد</label>
+            <input class="form-control num" @bind="form.Code" placeholder="خودکار" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">ترتیب نمایش</label>
+            <input type="number" class="form-control num" @bind="form.SortOrder" />
+        </div>
+
+        <div class="col-md-6">
+            <label class="form-label">نام <span class="text-danger">*</span></label>
+            <input class="form-control" @bind="form.Name" placeholder="مثلاً صندوق مرکزی" />
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">
+                حساب حسابداری متناظر
+                <span class="fs-8 text-muted">— برای صدور سند خودکار الزامی است</span>
+            </label>
+            <SearchSelect Items="accounts" Value="@(form.AccountId ?? 0)"
+                          ValueChanged="v => form.AccountId = v > 0 ? v : null" Placeholder="انتخاب حساب…" />
+        </div>
+
+        @if (form.Kind is TreasuryAccountKind.Bank or TreasuryAccountKind.Pos)
+        {
+            <div class="col-12"><hr class="my-1" /><div class="fw-600 text-muted fs-8">مشخصات بانکی</div></div>
+
+            <div class="col-md-4">
+                <label class="form-label">نام بانک @(form.Kind == TreasuryAccountKind.Bank ? "*" : "")</label>
+                <input class="form-control" @bind="form.BankName" placeholder="مثلاً بانک ملت" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">شعبه</label>
+                <input class="form-control" @bind="form.BranchName" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">کد شعبه</label>
+                <input class="form-control num" @bind="form.BranchCode" />
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label">شماره حساب</label>
+                <input class="form-control num" @bind="form.AccountNumber" dir="ltr" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">شبا (بدون IR)</label>
+                <input class="form-control num" @bind="form.Iban" dir="ltr" maxlength="24" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">شماره کارت</label>
+                <input class="form-control num" @bind="form.CardNumber" dir="ltr" maxlength="19" />
+            </div>
+        }
+
+        <div class="col-12"><hr class="my-1" /></div>
+
+        <div class="col-md-6">
+            <label class="form-label">مانده ابتدای دوره</label>
+            <input class="form-control num" value="@openingText" @onchange="OnOpeningChange" />
+            <div class="form-text num">@Fa.MoneyWithWords(form.OpeningBalance)</div>
+        </div>
+        <div class="col-md-6 d-flex align-items-center">
+            <div class="w-100 pt-3">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="accActive"
+                           checked="@form.IsActive" @onchange="e => form.IsActive = e.Value is bool b && b" />
+                    <label class="form-check-label" for="accActive">فعال</label>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="accDefault"
+                           checked="@form.IsDefault" @onchange="e => form.IsDefault = e.Value is bool b && b" />
+                    <label class="form-check-label" for="accDefault">حساب پیش‌فرض دریافت و پرداخت</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12">
+            <label class="form-label">توضیحات</label>
+            <textarea class="form-control" rows="2" @bind="form.Description"></textarea>
+        </div>
+    </div>
+    </ChildContent>
+    <Footer>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+        <button class="btn btn-outline-secondary" @onclick="() => showForm = false">انصراف</button>
+        <button class="btn btn-primary" @onclick="Save" disabled="@saving">
+            @if (saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+            <i class="bi bi-save"></i> ذخیره
+        </button>
+    </div>
+    </Footer>
+</Modal>
+
+@code {
+    private List<TrsAccount> items = new();
+    private List<LookupItem> accounts = new();
+    private TreasuryAccountKind? kindFilter;
+    private bool loading = true, showForm, saving;
+
+    private TrsAccount form = new();
+    private string openingText = "";
+
+    private static readonly TreasuryAccountKind[] AllKinds =
+    {
+        TreasuryAccountKind.Cash, TreasuryAccountKind.Bank,
+        TreasuryAccountKind.Pos, TreasuryAccountKind.PettyCash
+    };
+
+    private List<TrsAccount> Filtered =>
+        kindFilter is null ? items : items.Where(a => a.Kind == kindFilter).ToList();
+
+    private decimal CashBalance => items
+        .Where(a => a.Kind is TreasuryAccountKind.Cash or TreasuryAccountKind.PettyCash)
+        .Sum(a => a.Balance);
+
+    private decimal BankBalance => items
+        .Where(a => a.Kind is TreasuryAccountKind.Bank or TreasuryAccountKind.Pos)
+        .Sum(a => a.Balance);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Layout.SetTitle("صندوق و بانک");
+        try { accounts = await AccSvc.GetLookupsAsync(); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        try { items = await AccountSvc.GetAllAsync(false, true); }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void SetKind(TreasuryAccountKind? k) => kindFilter = k;
+
+    private void OpenForm(TrsAccount? a)
+    {
+        form = a is null
+            ? new TrsAccount { IsActive = true, SortOrder = items.Count + 1 }
+            : new TrsAccount
+            {
+                Id = a.Id, Code = a.Code, Name = a.Name, Kind = a.Kind,
+                AccountId = a.AccountId, BankName = a.BankName, BranchName = a.BranchName,
+                BranchCode = a.BranchCode, AccountNumber = a.AccountNumber, Iban = a.Iban,
+                CardNumber = a.CardNumber, OpeningBalance = a.OpeningBalance,
+                IsDefault = a.IsDefault, IsActive = a.IsActive,
+                Description = a.Description, SortOrder = a.SortOrder
+            };
+
+        openingText = form.OpeningBalance == 0 ? "" : form.OpeningBalance.ToString("0.##");
+        showForm = true;
+    }
+
+    private void OnKindChange(ChangeEventArgs e)
+        => form.Kind = (TreasuryAccountKind)int.Parse(e.Value?.ToString() ?? "0");
+
+    private void OnOpeningChange(ChangeEventArgs e)
+    {
+        openingText = e.Value?.ToString() ?? "";
+        form.OpeningBalance = Fa.ParseDecimal(openingText);
+    }
+
+    private async Task Save()
+    {
+        saving = true;
+        try
+        {
+            await AccountSvc.SaveAsync(form);
+            Toast.Success("صندوق/بانک ذخیره شد.");
+            showForm = false;
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Delete(TrsAccount a)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"حساب «{a.Name}» حذف شود؟")) return;
+        try
+        {
+            await AccountSvc.DeleteAsync(a.Id);
+            Toast.Success("حذف شد.");
+            await Load();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static string KindTitle(TreasuryAccountKind k) => k switch
+    {
+        TreasuryAccountKind.Cash => "صندوق",
+        TreasuryAccountKind.Bank => "بانک",
+        TreasuryAccountKind.Pos => "کارتخوان",
+        _ => "تنخواه"
+    };
+
+    private static string KindIcon(TreasuryAccountKind k) => k switch
+    {
+        TreasuryAccountKind.Cash => "bi-cash-stack",
+        TreasuryAccountKind.Bank => "bi-bank",
+        TreasuryAccountKind.Pos => "bi-credit-card",
+        _ => "bi-wallet"
+    };
+
+    private static string KindBg(TreasuryAccountKind k) => k switch
+    {
+        TreasuryAccountKind.Cash => "bg-soft-success",
+        TreasuryAccountKind.Bank => "bg-soft-info",
+        TreasuryAccountKind.Pos => "bg-soft-primary",
+        _ => "bg-soft-warning"
+    };
+}

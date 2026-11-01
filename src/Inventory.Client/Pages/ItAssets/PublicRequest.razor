@@ -1,0 +1,290 @@
+@namespace Inventory.Client.Pages
+@page "/request"
+@layout PublicLayout
+@inject HttpClient Http
+@inject IJSRuntime JS
+
+<PageTitle>ثبت درخواست خدمت IT</PageTitle>
+
+<div class="pubr-container">
+    <div class="pubr-head">
+        <div class="pubr-logo"><i class="bi bi-headset"></i></div>
+        <h1>درخواست خدمت از واحد IT</h1>
+        <p>بدون نیاز به ورود — درخواست خود را ثبت کنید و با شماره پیگیری، وضعیت آن را دنبال کنید</p>
+    </div>
+
+    @* ================== کانفیگ IP سرور (بند ۶) ================== *@
+    <div class="pubr-card pubr-config @(showConfig ? "" : "collapsed")">
+        <div class="pubr-card-title" style="cursor:pointer" @onclick="() => showConfig = !showConfig">
+            <i class="bi bi-hdd-network"></i> تنظیم آدرس سرور مرکزی (کانفیگ IP)
+            <i class="bi bi-chevron-@(showConfig ? "up" : "down") me-auto"></i>
+        </div>
+        @if (showConfig)
+        {
+            <div class="pubr-card-body">
+                <div class="fs-8 text-muted mb-2">
+                    اگر از شرکت/سیستم دیگری متصل می‌شوید، آدرس سرور مرکزی را وارد کنید — مثال: <span class="num" dir="ltr">http://192.168.1.10:5100</span>
+                </div>
+                <div class="d-flex gap-2 flex-wrap">
+                    <input class="form-control" style="max-width:340px" dir="ltr" placeholder="http://server-ip:5100" @bind="serverUrl" />
+                    <button class="btn btn-outline-primary" @onclick="SaveServer"><i class="bi bi-check2"></i> ذخیره</button>
+                    <button class="btn btn-outline-secondary" @onclick="TestServer" disabled="@testing">
+                        @if (testing) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                        <i class="bi bi-wifi"></i> تست اتصال
+                    </button>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(testResult))
+                {
+                    <div class="fs-8 mt-2 @(testOk ? "text-success" : "text-danger")">@testResult</div>
+                }
+            </div>
+        }
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(successNumber))
+    {
+        @* ================== موفقیت + شماره پیگیری ================== *@
+        <div class="pubr-card pubr-success">
+            <div class="text-center py-4">
+                <i class="bi bi-check-circle-fill pubr-success-icon"></i>
+                <h4 class="mt-3">درخواست شما با موفقیت ثبت شد! 🎉</h4>
+                <div class="mt-3 fs-8 text-muted">شماره پیگیری شما:</div>
+                <div class="pubr-track-no num">@successNumber</div>
+                <div class="fs-8 text-muted mt-2">این شماره را نگه دارید — برای پیگیری وضعیت به آن نیاز دارید.</div>
+                <button class="btn btn-primary mt-3" @onclick="ResetForm"><i class="bi bi-plus-lg"></i> ثبت درخواست جدید</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        @* ================== فرم ثبت درخواست ================== *@
+        <div class="pubr-card">
+            <div class="pubr-card-title"><i class="bi bi-pencil-square"></i> ثبت درخواست جدید</div>
+            <div class="pubr-card-body">
+                @if (!string.IsNullOrWhiteSpace(error))
+                {
+                    <div class="alert alert-danger py-2">@error</div>
+                }
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">نام و نام خانوادگی <span class="text-danger">*</span></label>
+                        <input class="form-control" @bind="form.RequesterName" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">نام شرکت <span class="text-danger">*</span></label>
+                        <input class="form-control" @bind="form.CompanyName" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">شماره تماس</label>
+                        <input class="form-control num" dir="ltr" @bind="form.Phone" data-digits="tel" inputmode="tel" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">نوع درخواست</label>
+                        <select class="form-select" @bind="form.RequestType">
+                            <option value="Hardware">سخت‌افزار</option>
+                            <option value="Software">نرم‌افزار</option>
+                            <option value="Network">شبکه و زیرساخت</option>
+                            <option value="Telecom">مخابرات</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">موضوع درخواست <span class="text-danger">*</span></label>
+                        <input class="form-control" @bind="form.Title" placeholder="مثلاً: سیستم حسابداری باز نمی‌شود" />
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">شرح درخواست</label>
+                        <textarea class="form-control" rows="4" @bind="form.Description" placeholder="توضیحات کامل مشکل..."></textarea>
+                    </div>
+                    <div class="col-12 d-grid">
+                        <button class="btn btn-primary btn-lg" disabled="@busy" @onclick="Submit">
+                            @if (busy) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                            <i class="bi bi-send"></i> ارسال به سرور مرکزی
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* ================== پیگیری درخواست ================== *@
+    <div class="pubr-card">
+        <div class="pubr-card-title"><i class="bi bi-search"></i> پیگیری درخواست</div>
+        <div class="pubr-card-body">
+            <div class="d-flex gap-2 flex-wrap">
+                <input class="form-control num" style="max-width:260px" dir="ltr" placeholder="IT/1404/12" @bind="trackNo" />
+                <button class="btn btn-outline-primary" disabled="@tracking" @onclick="Track">
+                    @if (tracking) { <span class="spinner-border spinner-border-sm ms-1"></span> }
+                    پیگیری
+                </button>
+            </div>
+            @if (trackResult != null)
+            {
+                <div class="pubr-track mt-3">
+                    <div class="d-flex justify-content-between flex-wrap gap-2 align-items-center">
+                        <div><span class="fw-700">@trackResult.Title</span> <span class="badge bg-light text-dark border num">@trackResult.Number</span></div>
+                        @if (trackResult.Status == "Completed")
+                        {
+                            <span class="badge bg-success-subtle text-success border">تکمیل شده ✔</span>
+                        }
+                        else if (trackResult.Status == "Rejected")
+                        {
+                            <span class="badge bg-danger-subtle text-danger border">رد شده ✖</span>
+                        }
+                        else if (trackResult.Status == "ManagerApproved")
+                        {
+                            <span class="badge bg-info-subtle text-info border">پاسخ داده شده</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-warning-subtle text-warning border">در حال بررسی…</span>
+                        }
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(trackResult.FinalResponse))
+                    {
+                        <div class="pubr-response mt-2">
+                            <i class="bi bi-chat-left-text text-primary"></i> پاسخ واحد IT: @trackResult.FinalResponse
+                        </div>
+                    }
+                </div>
+            }
+            @if (!string.IsNullOrWhiteSpace(trackError))
+            {
+                <div class="fs-8 text-danger mt-2">@trackError</div>
+            }
+        </div>
+    </div>
+
+    <div class="text-center fs-8 text-muted mt-3">
+        <a href="/" class="text-decoration-none"><i class="bi bi-box-arrow-in-left"></i> ورود به سامانه</a>
+    </div>
+</div>
+
+<style>
+    .pubr-container { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+    .pubr-head { text-align: center; padding: 1rem 0; }
+    .pubr-logo {
+        width: 72px; height: 72px; margin: 0 auto 1rem; border-radius: 22px;
+        background: linear-gradient(135deg, #2563eb, #38bdf8); color: #fff;
+        display: flex; align-items: center; justify-content: center; font-size: 2rem;
+        box-shadow: 0 12px 30px rgba(37, 99, 235, .35);
+    }
+    .pubr-head h1 { font-size: 1.35rem; font-weight: 800; color: #1e293b; }
+    .pubr-head p { color: #64748b; font-size: .85rem; }
+    .pubr-card { background: #fff; border: 1px solid #e8edf3; border-radius: 18px; overflow: hidden; box-shadow: 0 2px 10px rgba(15,23,42,.06); }
+    .pubr-card-title { display: flex; align-items: center; gap: .5rem; padding: .8rem 1.1rem; font-weight: 700; font-size: .9rem; color: #334155; background: #f8fafc; border-bottom: 1px solid #eef2f7; }
+    .pubr-card-title i:first-child { color: #2563eb; }
+    .pubr-card-body { padding: 1.1rem; }
+    .pubr-config.collapsed .pubr-card-title { border-bottom: 0; }
+    .pubr-success { border-color: #bbf7d0; }
+    .pubr-success-icon { font-size: 3.5rem; color: #22c55e; }
+    .pubr-track-no {
+        display: inline-block; font-size: 1.5rem; font-weight: 800; color: #2563eb;
+        background: #eef4ff; border: 2px dashed #93c5fd; border-radius: 14px;
+        padding: .5rem 1.5rem; margin-top: .5rem; direction: ltr;
+    }
+    .pubr-track { background: #f8fafc; border-radius: 12px; padding: .8rem 1rem; }
+    .pubr-response { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 10px; padding: .6rem .8rem; font-size: .85rem; white-space: pre-line; }
+    @@media (max-width: 575.98px) { .pubr-head h1 { font-size: 1.1rem; } }
+</style>
+
+@code {
+    private bool showConfig, busy, testing, testOk, tracking;
+    private string serverUrl = "", testResult = "", error = "", successNumber = "";
+    private string trackNo = "", trackError = "";
+    private TrackRes? trackResult;
+    private ExternalForm form = new();
+
+    public class ExternalForm
+    {
+        public string RequesterName { get; set; } = "";
+        public string CompanyName { get; set; } = "";
+        public string? Phone { get; set; }
+        public string RequestType { get; set; } = "Hardware";
+        public string Title { get; set; } = "";
+        public string Description { get; set; } = "";
+    }
+    public class CreatedRes { public int Id { get; set; } public string Number { get; set; } = ""; }
+    public class TrackRes { public string Number { get; set; } = ""; public string Title { get; set; } = ""; public string RequestType { get; set; } = ""; public string Status { get; set; } = ""; public DateTime CreatedAt { get; set; } public DateTime? CompletedAt { get; set; } public string? FinalResponse { get; set; } }
+
+    /// <summary>آدرس سرور: اول کانفیگ ذخیره‌شده، بعد مبدأ فعلی.</summary>
+    private string ApiBase => string.IsNullOrWhiteSpace(serverUrl)
+        ? (Http.BaseAddress?.ToString().TrimEnd('/') ?? "")
+        : serverUrl.TrimEnd('/');
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { serverUrl = await JS.InvokeAsync<string?>("localStorage.getItem", "itCentralServerUrl") ?? ""; } catch { }
+        if (string.IsNullOrWhiteSpace(serverUrl)) showConfig = false;
+    }
+
+    private async Task SaveServer()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(serverUrl))
+                await JS.InvokeVoidAsync("localStorage.removeItem", "itCentralServerUrl");
+            else
+                await JS.InvokeVoidAsync("localStorage.setItem", "itCentralServerUrl", serverUrl.TrimEnd('/'));
+            testResult = "آدرس سرور ذخیره شد ✅"; testOk = true;
+        }
+        catch { testResult = "خطا در ذخیره"; testOk = false; }
+    }
+
+    private async Task TestServer()
+    {
+        testing = true; testResult = "";
+        try
+        {
+            var resp = await Http.GetAsync($"{ApiBase}/api/itrequests/track?number=TEST");
+            // 404 یعنی سرور در دسترس است (فقط شماره پیدا نشده)
+            testOk = resp.IsSuccessStatusCode || (int)resp.StatusCode == 404 || (int)resp.StatusCode == 400;
+            testResult = testOk ? "اتصال به سرور برقرار است ✅" : $"سرور پاسخ نامعتبر داد ({(int)resp.StatusCode})";
+        }
+        catch (Exception ex) { testOk = false; testResult = "اتصال برقرار نشد ❌ — " + ex.Message; }
+        finally { testing = false; }
+    }
+
+    private async Task Submit()
+    {
+        error = "";
+        if (string.IsNullOrWhiteSpace(form.RequesterName)) { error = "نام و نام خانوادگی را وارد کنید."; return; }
+        if (string.IsNullOrWhiteSpace(form.CompanyName)) { error = "نام شرکت را وارد کنید."; return; }
+        if (string.IsNullOrWhiteSpace(form.Title)) { error = "موضوع درخواست را وارد کنید."; return; }
+
+        busy = true;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"{ApiBase}/api/itrequests/external", form);
+            if (resp.IsSuccessStatusCode)
+            {
+                var res = await resp.Content.ReadFromJsonAsync<CreatedRes>();
+                successNumber = res?.Number ?? "";
+            }
+            else error = $"خطا در ثبت ({(int)resp.StatusCode}): {await resp.Content.ReadAsStringAsync()}";
+        }
+        catch (Exception ex) { error = "ارتباط با سرور برقرار نشد — آدرس سرور را در بخش کانفیگ IP بررسی کنید. (" + ex.Message + ")"; }
+        finally { busy = false; }
+    }
+
+    private void ResetForm()
+    {
+        successNumber = ""; form = new ExternalForm(); error = "";
+    }
+
+    private async Task Track()
+    {
+        trackError = ""; trackResult = null;
+        if (string.IsNullOrWhiteSpace(trackNo)) { trackError = "شماره درخواست را وارد کنید."; return; }
+        tracking = true;
+        try
+        {
+            var resp = await Http.GetAsync($"{ApiBase}/api/itrequests/track?number={Uri.EscapeDataString(trackNo.Trim())}");
+            if (resp.IsSuccessStatusCode)
+                trackResult = await resp.Content.ReadFromJsonAsync<TrackRes>();
+            else
+                trackError = "درخواستی با این شماره پیدا نشد.";
+        }
+        catch (Exception ex) { trackError = "ارتباط با سرور برقرار نشد. (" + ex.Message + ")"; }
+        finally { tracking = false; }
+    }
+}

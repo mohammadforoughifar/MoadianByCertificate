@@ -1,0 +1,806 @@
+@page "/settings/roles"
+@inject HttpClient Http
+@inject IToastService Toast
+@inject IJSRuntime JS
+
+<PageTitle>مدیریت نقش‌ها و دسترسی‌ها</PageTitle>
+
+<div class="page-head mb-4">
+    <div>
+        <h1 class="mb-1">نقش‌ها و دسترسی‌ها</h1>
+        <p class="lead text-muted">مدیریت نقش‌ها و تخصیص دسترسی‌های ماژولار</p>
+    </div>
+    <button class="btn btn-primary btn-lg shadow-sm" @onclick="OpenCreateModal">
+        <i class="bi bi-plus-lg me-2"></i> ایجاد نقش جدید
+    </button>
+</div>
+
+<!-- Stats -->
+<div class="row g-3 mb-4">
+    <div class="col-12 col-sm-6 col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="flex-shrink-0">
+                    <div class="bg-primary bg-opacity-10 text-primary rounded-3 p-3">
+                        <i class="bi bi-shield-lock fs-2"></i>
+                    </div>
+                </div>
+                <div>
+                    <div class="text-muted small">تعداد نقش‌ها</div>
+                    <div class="fs-3 fw-bold">@roles.Count</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-sm-6 col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="flex-shrink-0">
+                    <div class="bg-success bg-opacity-10 text-success rounded-3 p-3">
+                        <i class="bi bi-check2-circle fs-2"></i>
+                    </div>
+                </div>
+                <div>
+                    <div class="text-muted small">نقش‌های فعال</div>
+                    <div class="fs-3 fw-bold">@roles.Count(r => r.IsActive)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-sm-6 col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="flex-shrink-0">
+                    <div class="bg-info bg-opacity-10 text-info rounded-3 p-3">
+                        <i class="bi bi-key fs-2"></i>
+                    </div>
+                </div>
+                <div>
+                    <div class="text-muted small">تعداد دسترسی‌ها</div>
+                    <div class="fs-3 fw-bold">@allPermissions.Count</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Roles Table -->
+<div class="card shadow-sm">
+    <div class="card-header bg-white">
+        <h6 class="mb-0 fw-bold">لیست نقش‌ها</h6>
+    </div>
+    <div class="card-body p-0">
+        @if (loading)
+        {
+            <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+        }
+        else if (roles.Count == 0)
+        {
+            <div class="text-center py-5">
+                <i class="bi bi-shield-slash fs-1 text-muted"></i>
+                <p class="mt-3 text-muted">هیچ نقشی تعریف نشده است</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="ps-4">نام نقش</th>
+                            <th>توضیحات</th>
+                            <th>وضعیت</th>
+                            <th class="text-end pe-4">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var role in roles)
+                        {
+                            <tr>
+                                <td class="ps-4">
+                                    <div class="fw-700">@role.Name</div>
+                                </td>
+                                <td class="text-muted">@role.Description</td>
+                                <td>
+                                    @if (role.IsActive)
+                                    {
+                                        <span class="badge bg-success-subtle text-success px-3 py-2">فعال</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary-subtle text-secondary px-3 py-2">غیرفعال</span>
+                                    }
+                                </td>
+                                <td class="text-end pe-4">
+                                    <div class="d-flex gap-2 justify-content-end">
+                                        <button class="role-btn role-btn-edit" title="ویرایش نقش" @onclick="() => OpenEditModal(role)">
+                                            <i class="bi bi-pencil-fill"></i>
+                                        </button>
+                                        <button class="role-btn role-btn-del" title="حذف نقش" @onclick="() => DeleteRole(role)">
+                                            <i class="bi bi-trash-fill"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+@* Professional Modal *@
+@if (showModal)
+{
+    <div class="modal fade show d-block" style="background:rgba(0,0,0,.6)">
+        <div class="modal-dialog modal-xl modal-dialog-centered" @onclick:stopPropagation="true">
+            <div class="modal-content border-0 shadow-lg" style="border-radius:16px;">
+                <div class="modal-header border-0 pb-0">
+                    <div>
+                        <h5 class="modal-title fw-bold">@(editingRole != null ? "ویرایش نقش" : "ایجاد نقش جدید")</h5>
+                        <p class="text-muted small mb-0">تعیین دسترسی‌های ماژولار</p>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+
+                <div class="modal-body pt-3">
+                    <!-- Role Info -->
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-600">نام نقش <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-lg" @bind="form.Name" placeholder="مثال: مدیر سیستم" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-600">توضیحات</label>
+                            <input class="form-control form-control-lg" @bind="form.Description" placeholder="توضیح مختصر نقش" />
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="isActive" @bind="form.IsActive" />
+                                <label class="form-check-label fw-500" for="isActive">نقش فعال باشد</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border-top pt-4">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h6 class="fw-bold mb-0">دسترسی‌ها</h6>
+                            <span class="badge bg-light text-dark">@selectedPermissionIds.Count از @allPermissions.Count</span>
+                        </div>
+
+                        @if (allPermissions.Any())
+                        {
+                            <div class="perm-toolbar mb-3">
+                                <div class="input-group">
+                                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                    <input class="form-control" placeholder="جستجوی ماژول یا دسترسی…" @bind="permissionSearch" @bind:event="oninput" />
+                                </div>
+                                <div class="d-flex gap-2 mt-2 flex-wrap">
+                                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="ExpandAllPermissionTrees"><i class="bi bi-arrows-expand"></i> باز کردن همه</button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CollapseAllPermissionTrees"><i class="bi bi-arrows-collapse"></i> بستن همه</button>
+                                </div>
+                            </div>
+                            <div class="permission-tree">
+                                @foreach (var cat in VisiblePermissionCategories)
+                                {
+                                    var catGroups = FilterPermissionGroups(allPermissions.Where(p => cat.Modules.Contains(p.Module)).GroupBy(p => p.Module));
+                                    if (!catGroups.Any()) continue;
+                                    <details class="perm-tree-category" open="@IsTreeOpen(cat.Title)">
+                                        <summary><span class="tree-title"><i class="bi @cat.Icon"></i> @cat.Title</span><span class="tree-count">@catGroups.Sum(g => g.Count(PermissionMatches)) مجوز</span></summary>
+                                        <div class="perm-tree-children">
+                                            @foreach (var group in catGroups.OrderBy(g => Array.IndexOf(cat.Modules, g.Key)))
+                                            {
+                                                <details class="perm-tree-module" open="@IsTreeOpen(group.Key)">
+                                                    <summary><span><i class="bi bi-folder2-open text-primary"></i> @(ModuleNames.GetValueOrDefault(group.Key, group.Key)) <small class="text-muted">(@group.Key)</small></span><span class="tree-actions"><span class="badge bg-light text-dark">@group.Count(PermissionMatches)</span><input type="checkbox" title="انتخاب همه این ماژول" checked="@group.Where(PermissionMatches).All(p => selectedPermissionIds.Contains(p.Id))" @onclick:stopPropagation="true" @onchange="e => ToggleModuleAll(group.Key, (bool)e.Value!)" /></span></summary>
+                                                    <div class="perm-leaf-list">
+                                                        @foreach (var perm in group.Where(PermissionMatches).OrderBy(p => p.Action))
+                                                        {
+                                                            <label class="perm-leaf"><input type="checkbox" checked="@selectedPermissionIds.Contains(perm.Id)" @onchange="e => TogglePermission(perm.Id, (bool)e.Value!)" /><span>@GetActionLabel(perm.Module, perm.Action)</span><small>@perm.Action</small></label>
+                                                        }
+                                                    </div>
+                                                </details>
+                                            }
+                                        </div>
+                                    </details>
+                                }
+                                @if (VisibleOtherPermissionGroups.Any())
+                                {
+                                    <details class="perm-tree-category" open="@IsTreeOpen(OtherTreeKey)">
+                                        <summary><span class="tree-title"><i class="bi bi-three-dots"></i> سایر</span><span class="tree-count">@VisibleOtherPermissionGroups.Sum(g => g.Count()) مجوز</span></summary>
+                                        <div class="perm-tree-children">
+                                            @foreach (var group in VisibleOtherPermissionGroups)
+                                            {
+                                                <details class="perm-tree-module" open="@IsTreeOpen(group.Key)">
+                                                    <summary><span><i class="bi bi-folder2-open text-primary"></i> @(ModuleNames.GetValueOrDefault(group.Key, group.Key)) <small class="text-muted">(@group.Key)</small></span><span class="tree-actions"><span class="badge bg-light text-dark">@group.Count(PermissionMatches)</span><input type="checkbox" checked="@group.Where(PermissionMatches).All(p => selectedPermissionIds.Contains(p.Id))" @onclick:stopPropagation="true" @onchange="e => ToggleModuleAll(group.Key, (bool)e.Value!)" /></span></summary>
+                                                    <div class="perm-leaf-list">
+                                                        @foreach (var perm in group.Where(PermissionMatches).OrderBy(p => p.Action))
+                                                        {
+                                                            <label class="perm-leaf"><input type="checkbox" checked="@selectedPermissionIds.Contains(perm.Id)" @onchange="e => TogglePermission(perm.Id, (bool)e.Value!)" /><span>@GetActionLabel(perm.Module, perm.Action)</span><small>@perm.Action</small></label>
+                                                        }
+                                                    </div>
+                                                </details>
+                                            }
+                                        </div>
+                                    </details>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <div class="modal-footer border-0 pt-0">
+                    <button class="btn btn-light px-4" @onclick="CloseModal">انصراف</button>
+                    <button class="btn btn-primary px-4" @onclick="SaveRole" disabled="@saving">
+                        @if (saving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2"></span>
+                        }
+                        ذخیره نقش
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .page-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        flex-wrap: wrap;
+        gap: .75rem;
+    }
+    .modal-xl {
+        max-width: 1100px;
+    }
+    /* ===== دکمه‌های ویرایش/حذف ===== */
+    .role-btn {
+        width: 36px; height: 32px;
+        display: inline-flex; align-items: center; justify-content: center;
+        padding: 0; border-radius: 10px; border: 1px solid transparent;
+        font-size: .85rem; cursor: pointer; transition: all .15s ease;
+    }
+    .role-btn-edit { background: #eef4ff; color: #2563eb; }
+    .role-btn-edit:hover { background: #2563eb; color: #fff; transform: translateY(-1px); box-shadow: 0 4px 10px rgba(37,99,235,.35); }
+    .role-btn-del { background: #fdecec; color: #dc3545; }
+    .role-btn-del:hover { background: #dc3545; color: #fff; transform: translateY(-1px); box-shadow: 0 4px 10px rgba(220,53,69,.35); }
+    /* ===== هدر دسته‌بندی دسترسی‌ها ===== */
+    .perm-cat-head {
+        display: flex; align-items: center; gap: .5rem;
+        font-weight: 700; font-size: .95rem; color: #334155;
+        margin-bottom: .75rem;
+    }
+    .perm-cat-head i { color: var(--bs-primary, #2563eb); font-size: 1.1rem; }
+    .perm-cat-line { flex: 1; height: 1px; background: linear-gradient(to left, #e2e8f0, transparent); }
+    /* ===== درخت دسترسی‌ها ===== */
+    .perm-toolbar { position: sticky; top: 0; z-index: 3; background: #fff; padding-bottom: .65rem; }
+    .permission-tree { display: flex; flex-direction: column; gap: .55rem; }
+    .perm-tree-category, .perm-tree-module { border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; overflow: hidden; }
+    .perm-tree-category > summary { background: linear-gradient(135deg,#f1f5ff,#f8fafc); font-weight: 800; }
+    .perm-tree-module > summary { background: #f8fafc; font-weight: 700; margin: .45rem .65rem 0; border-radius: 9px; }
+    .permission-tree summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: .7rem .85rem; user-select: none; }
+    .permission-tree summary::-webkit-details-marker { display: none; }
+    .permission-tree summary::before { content: '‹'; transform: rotate(-90deg); transition: transform .15s; font-size: 1.1rem; color: #64748b; }
+    .permission-tree details[open] > summary::before { transform: rotate(90deg); }
+    .tree-title { display: inline-flex; align-items: center; gap: .45rem; }
+    .tree-count { color: #64748b; font-size: .75rem; white-space: nowrap; }
+    .tree-actions { display: inline-flex; align-items: center; gap: .55rem; }
+    .perm-tree-children { padding: 0 .65rem .65rem; display: flex; flex-direction: column; gap: .4rem; }
+    .perm-leaf-list { padding: .45rem .9rem .7rem 2.1rem; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .35rem .8rem; }
+    .perm-leaf { display: flex; align-items: center; gap: .5rem; padding: .35rem .45rem; border-radius: 7px; cursor: pointer; min-width: 0; }
+    .perm-leaf:hover { background: #f1f5f9; }
+    .perm-leaf span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .perm-leaf small { color: #94a3b8; margin-right: auto; direction: ltr; }
+    @@media (max-width: 650px) { .perm-leaf-list { grid-template-columns: 1fr; padding-right: 1rem; } .tree-count { display:none; } .permission-tree summary { padding: .6rem; } }
+
+    /* ===== رسپانسیو کارت‌های آمار ===== */
+    @@media (max-width: 575.98px) {
+        .fs-3.fw-bold { font-size: 1.35rem !important; }
+    }
+</style>
+
+@code {
+    private List<RoleDto> roles = new();
+    private List<PermissionDto> allPermissions = new();
+    private bool loading = true;
+    private bool showModal = false;
+    private bool saving = false;
+    private RoleDto? editingRole = null;
+
+    private RoleForm form = new();
+    private HashSet<int> selectedPermissionIds = new();
+    private string permissionSearch = "";
+    private bool expandPermissionTree = false;
+    private const string OtherTreeKey = "سایر";
+
+    private IEnumerable<PermCategory> VisiblePermissionCategories =>
+        ModuleCategories.Where(cat => allPermissions.Any(p => cat.Modules.Contains(p.Module) && PermissionMatches(p)));
+
+    private IEnumerable<IGrouping<string, PermissionDto>> FilterPermissionGroups(IEnumerable<IGrouping<string, PermissionDto>> groups) =>
+        groups.Where(g => g.Any(PermissionMatches));
+
+    private IEnumerable<IGrouping<string, PermissionDto>> VisibleOtherPermissionGroups =>
+        allPermissions.Where(p => !ModuleCategories.SelectMany(c => c.Modules).Contains(p.Module) && PermissionMatches(p))
+            .GroupBy(p => p.Module);
+
+    // دیتابیس‌های قدیمی ممکن است سطح‌های منسوخ Moadian مانند ProviderInvoices، Read،
+    // MasterData یا Configure را نگه داشته باشند. API جدید فقط مجموعهٔ تفکیکی زیر را
+    // مبنای کنترل قرار می‌دهد؛ نمایش گزینه‌های قدیمی باعث می‌شد مدیر نقش اشتباه بسازد.
+    private static readonly HashSet<string> CurrentMoadianActions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "View", "Certificate", "MasterData",
+        "InvoiceCreate", "InvoiceUpdate", "InvoiceDelete",
+        "InvoiceSend", "InvoiceInquiry", "FolderStatus",
+        "PaymentRegister", "Diagnose"
+    };
+
+    private static bool IsVisiblePermission(PermissionDto p) =>
+        !string.Equals(p.Module, "Moadian", StringComparison.OrdinalIgnoreCase)
+        || CurrentMoadianActions.Contains(p.Action);
+
+    private bool PermissionMatches(PermissionDto p) =>
+        IsVisiblePermission(p)
+        && (string.IsNullOrWhiteSpace(permissionSearch)
+            || p.Module.Contains(permissionSearch.Trim(), StringComparison.OrdinalIgnoreCase)
+            || ModuleNames.GetValueOrDefault(p.Module, "").Contains(permissionSearch.Trim(), StringComparison.OrdinalIgnoreCase)
+            || p.Action.Contains(permissionSearch.Trim(), StringComparison.OrdinalIgnoreCase)
+            || GetActionLabel(p.Module, p.Action).Contains(permissionSearch.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private bool IsTreeOpen(string _) => expandPermissionTree || !string.IsNullOrWhiteSpace(permissionSearch);
+    private void ExpandAllPermissionTrees() => expandPermissionTree = true;
+    private void CollapseAllPermissionTrees() => expandPermissionTree = false;
+
+    protected override async Task OnInitializedAsync() => await LoadData();
+
+    private async Task LoadData()
+    {
+        loading = true;
+        try
+        {
+            roles = await Http.GetFromJsonAsync<List<RoleDto>>("/api/roles") ?? new();
+            allPermissions = await Http.GetFromJsonAsync<List<PermissionDto>>("/api/permissions") ?? new();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { loading = false; }
+    }
+
+    private void OpenCreateModal()
+    {
+        editingRole = null;
+        form = new RoleForm { IsActive = true };
+        selectedPermissionIds.Clear();
+        expandPermissionTree = false;
+        permissionSearch = "";
+        showModal = true;
+    }
+
+    private async Task OpenEditModal(RoleDto role)
+    {
+        editingRole = role;
+        form = new RoleForm { Name = role.Name, Description = role.Description, IsActive = role.IsActive };
+
+        try
+        {
+            var perms = await Http.GetFromJsonAsync<List<int>>($"/api/roles/{role.Id}/permissions") ?? new();
+            selectedPermissionIds = new HashSet<int>(perms);
+        }
+        catch { selectedPermissionIds.Clear(); }
+
+        expandPermissionTree = false;
+        permissionSearch = "";
+        showModal = true;
+    }
+
+    private void CloseModal() => showModal = false;
+
+    private void TogglePermission(int id, bool isChecked)
+    {
+        if (isChecked) selectedPermissionIds.Add(id);
+        else selectedPermissionIds.Remove(id);
+    }
+
+    private void ToggleModuleAll(string module, bool isChecked)
+    {
+        var modulePerms = allPermissions.Where(p => p.Module == module && IsVisiblePermission(p)).Select(p => p.Id);
+        if (isChecked)
+        {
+            foreach (var id in modulePerms)
+                selectedPermissionIds.Add(id);
+        }
+        else
+        {
+            foreach (var id in modulePerms)
+                selectedPermissionIds.Remove(id);
+        }
+    }
+
+    private async Task SaveRole()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name))
+        {
+            Toast.Error("نام نقش الزامی است");
+            return;
+        }
+
+        saving = true;
+        try
+        {
+            var payload = new RoleDto
+            {
+                Id = editingRole?.Id ?? 0,
+                Name = form.Name,
+                Description = form.Description,
+                IsActive = form.IsActive,
+                PermissionIds = selectedPermissionIds.ToList()
+            };
+
+            if (editingRole == null)
+                await Http.PostAsJsonAsync("/api/roles", payload);
+            else
+                await Http.PutAsJsonAsync($"/api/roles/{editingRole.Id}", payload);
+
+            Toast.Success("نقش با موفقیت ذخیره شد");
+            CloseModal();
+            await LoadData();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task DeleteRole(RoleDto role)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"آیا از حذف نقش «{role.Name}» مطمئن هستید؟")) return;
+
+        try
+        {
+            await Http.DeleteAsync($"/api/roles/{role.Id}");
+            Toast.Success("نقش حذف شد");
+            await LoadData();
+        }
+        catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private class RoleForm
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class RoleDto
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public bool IsActive { get; set; }
+        public List<int> PermissionIds { get; set; } = new();
+    }
+
+    public class PermissionDto
+    {
+        public int Id { get; set; }
+        public string Module { get; set; } = "";
+        public string Action { get; set; } = "";
+    }
+
+    // ==================== دسته‌بندی ماژول‌ها (برای جلوگیری از اشتباه) ====================
+    private class PermCategory
+    {
+        public string Title { get; set; } = "";
+        public string Icon { get; set; } = "";
+        public string[] Modules { get; set; } = Array.Empty<string>();
+    }
+
+    private static readonly List<PermCategory> ModuleCategories = new()
+    {
+        new() { Title = "سامانه فروشگاهی — فروش، مالی و مودیان", Icon = "bi-cash-coin", Modules = new[] { "Orders", "GoodsIssues", "Expenses", "Parties", "Customers", "Suppliers", "SalesVisit", "Moadian", "ShopGuide" } },
+
+        new() { Title = "معرف‌ها و پنل معرف", Icon = "bi-person-badge", Modules = new[] { "Referrers", "ReferrerWallets", "ReferrerPanel" } },
+        new() { Title = "اطلاعات پایه و انبار", Icon = "bi-box-seam", Modules = new[] { "Products", "Stock", "Warehouses", "SystemCompanies", "SystemDepartments" } },
+        new() { Title = "ERP — انبارداری و حسابداری", Icon = "bi-diagram-3", Modules = new[] { "InvDocs", "InvDocTypes", "AccAccounts", "AccVouchers", "AccDimensions", "FixedAssets", "Budgets", "FacInvoices", "TrsAccounts", "TrsVouchers", "TrsCheques", "StkSessions", "StkBarcodes" } },
+        new() { Title = "آرشیو اسناد و مدارک", Icon = "bi-folder2-open", Modules = new[] { "DocArchive" } },
+        new() { Title = "پیام‌رسان سازمانی", Icon = "bi-chat-dots", Modules = new[] { "Chat" } },
+        new() { Title = "داشبوردها و صفحات شخصی", Icon = "bi-speedometer2", Modules = new[] { "Dashboards", "MyCartable", "MyArchive", "MyDashboards" } },
+        new() { Title = "گزارش‌ها", Icon = "bi-journal-text", Modules = new[] { "ReportPages", "Reports", "ReportStudio" } },
+        new() { Title = "تجهیزات و تعمیرات", Icon = "bi-tools", Modules = new[] { "Repairs", "CctvCameras", "CctvNvrs" } },
+        new() { Title = "منابع انسانی اصلی", Icon = "bi-person-vcard", Modules = new[] { "HrMain", "HrCore", "HrPay", "FaPay", "FaCom", "FaLms" } },
+        new() { Title = "منابع انسانی فروغ آریا", Icon = "bi-stopwatch", Modules = new[] { "FaAtt", "LeaveRequests", "Attendance" } },
+        new() { Title = "منابع انسانی بن‌سازه (هر بخش جداگانه)", Icon = "bi-building", Modules = new[] { "RadisHr" } },
+        new() { Title = "مدیریت سیستم", Icon = "bi-gear", Modules = new[] { "SystemUsers", "Settings", "ItRequests", "ItVault", "Ipam", "Servers" } },
+        // «پروژه‌های کاری» زیرمجموعهٔ دستور کار است و مجوز مستقل خودش را دارد
+        // (View/Create/Update/Delete). پیش‌تر این ماژول در فهرست تنظیمات نبود و مجوزهایش
+        // فقط در گروه «سایر» با نام لاتین دیده می‌شد؛ یعنی مدیر نمی‌توانست آگاهانه و در
+        // جای درست، دسترسی بخش پروژه را به نقش بدهد.
+        new() { Title = "دستور کار، پروژه‌ها و نگار ذهنی", Icon = "bi-list-task", Modules = new[] { "WorkOrders", "WorkProjects", "MindFlow" } },
+        new() { Title = "مدیریت پروژه‌ها", Icon = "bi-kanban", Modules = new[] { "Projects", "ProjectCartable", "ReportWorks", "Karfarmas", "TypeFactors", "ProjectAttach" } },
+        new() { Title = "اتوماسیون اداری", Icon = "bi-envelope-paper", Modules = new[] { "InnerLetters", "OutgoingLetters", "LetterStructures", "Email" } },
+        new() { Title = "فرم‌های متفرقه", Icon = "bi-journal-text", Modules = new[] { "MeetingMinutes" } },
+        new() { Title = "هوش مصنوعی", Icon = "bi-stars", Modules = new[] { "AiAssistant" } }
+    };
+
+    // ==================== ترجمه فارسی ====================
+    private static readonly Dictionary<string, string> ModuleNames = new()
+    {
+        ["Products"] = "کالاها",
+        ["Stock"] = "موجودی انبار",
+        ["Orders"] = "فروش / فاکتورها",
+        ["GoodsIssues"] = "بیجک (بدون قیمت)",
+        ["Repairs"] = "تعمیرات",
+        ["CctvCameras"] = "دوربین‌ها",
+        ["CctvNvrs"] = "دستگاه NVR",
+        ["ItVault"] = "گاوصندوق رمزهای تجهیزات (سرور، سوییچ، میکروتیک، فایروال، سامانه‌ها) 🔐",
+        ["Ipam"] = "مدیریت آی‌پی (رنج‌ها، آی‌پی خالی/اشغال، رزرو) 🌐",
+        ["Servers"] = "مدیریت سرورهای HPE / iLO 🖥",
+        ["Parties"] = "طرف حساب (قدیمی — مشتری و تأمین‌کننده با هم)",
+        ["Customers"] = "مشتریان (تعریف مشتری)",
+        ["Suppliers"] = "تأمین‌کنندگان",
+        ["SalesVisit"] = "فروش و ویزیتوری (سفارش میدانی)",
+        ["Moadian"] = "سامانه مودیان (صورتحساب الکترونیکی)",
+        ["ShopGuide"] = "راهنمای سامانه فروشگاهی (فقط مشاهده)",
+        ["Expenses"] = "هزینه‌ها",
+        ["Reports"] = "گزارشات (عمومی)",
+        ["SystemUsers"] = "کاربران",
+        ["SystemCompanies"] = "کمپانی‌ها",
+        ["ItRequests"] = "درخواست خدمت IT",
+        ["WorkOrders"] = "دستور کار",
+        ["WorkProjects"] = "پروژه‌های کاری (بخش پروژهٔ دستور کار)",
+        ["MindFlow"] = "نگار ذهنی (نقشهٔ ذهنی پروژه‌ها و نگاشت‌های مستقل) 🧠",
+        ["SystemDepartments"] = "واحدها",
+        ["Settings"] = "تنظیمات",
+        ["Warehouses"] = "انبارها",
+        ["Referrers"] = "معرف‌ها",
+        ["ReferrerWallets"] = "کیف پول معرف‌ها",
+        ["ReferrerPanel"] = "پنل معرف (هر بخش)",
+        ["Dashboards"] = "دسترسی به هر داشبورد",
+        ["MyCartable"] = "کارتابل من (صفحهٔ شخصی)",
+        ["MyArchive"] = "بایگانی شخصی",
+        ["MyDashboards"] = "داشبورد من (طراحی‌شده توسط کاربر)",
+        ["ReportStudio"] = "گزارش‌ساز (ساخت گزارش با جوین چند جدول و اشتراک‌گذاری)",
+        ["ReportPages"] = "دسترسی به هر گزارش",
+        ["LeaveRequests"] = "منابع انسانی (مرخصی و ماموریت)",
+        ["Attendance"] = "حضور و غیاب",
+        ["RadisHr"] = "منابع انسانی بن‌سازه",
+        ["Projects"] = "ورود و خروج پروژه‌ها",
+        ["ReportWorks"] = "گزارش‌های کار",
+        ["Karfarmas"] = "کارفرماها",
+        ["TypeFactors"] = "انواع فاکتور",
+        ["ProjectAttach"] = "پیوست‌های پروژه",
+        ["ProjectCartable"] = "کارتابل پروژه",
+        ["InnerLetters"] = "نامه داخلی (اتوماسیون اداری)",
+        ["OutgoingLetters"] = "نامه صادره (اتوماسیون اداری)",
+        ["IncomingLetters"] = "نامه وارده (دبیرخانه)",
+        ["Email"] = "ایمیل سازمانی (پست الکترونیک) ✉",
+        ["LetterStructures"] = "ساختار شماره نامه (اتوماسیون اداری)",
+        ["MeetingMinutes"] = "صورتجلسه",
+        // ==================== ماژول‌های ERP ====================
+        ["InvDocs"] = "اسناد انبار (رسید و حواله)",
+        ["InvDocTypes"] = "انواع سند انبار",
+        ["AccAccounts"] = "کدینگ حساب‌ها و سال مالی",
+        ["AccVouchers"] = "اسناد حسابداری",
+        ["AccDimensions"] = "ابعاد تحلیلی (مرکز هزینه / شعبه)",
+        ["FixedAssets"] = "دارایی ثابت",
+        ["Budgets"] = "بودجه و کنترل بودجه",
+        ["FacInvoices"] = "فاکتور خرید و فروش",
+        ["TrsAccounts"] = "صندوق، بانک و تنخواه",
+        ["TrsVouchers"] = "اسناد خزانه (دریافت / پرداخت / انتقال)",
+        ["TrsCheques"] = "دفتر چک",
+        ["StkSessions"] = "دوره‌های انبارگردانی",
+        ["StkBarcodes"] = "بارکد و برچسب کالا",
+        // ==================== آرشیو اسناد و پیام‌رسان ====================
+        ["DocArchive"] = "آرشیو اسناد و مدارک",
+        ["Chat"] = "پیام‌رسان سازمانی",
+        ["HrMain"] = "اطلاعات پایه سازمانی",
+        ["HrCore"] = "کارگزینی (پرسنل، قراردادها، احکام)",
+        ["HrPay"] = "حقوق و دستمزد (سامانه قبلی)",
+        ["FaAtt"] = "حضور و غیاب",
+        ["FaPay"] = "حقوق و دستمزد",
+        ["FaLms"] = "آموزش و توسعه",
+        ["FaCom"] = "ارتباطات داخلی",
+        ["AiAssistant"] = "دستیار هوش مصنوعی"
+    };
+
+    private static readonly Dictionary<string, string> ActionNames = new()
+    {
+        ["Create"] = "ایجاد",
+        ["Read"] = "مشاهده",
+        ["Update"] = "ویرایش",
+        ["Delete"] = "حذف",
+        ["Export"] = "خروجی اکسل",
+        // فروش
+        ["ViewProfit"] = "مشاهده سود 💰",
+        // درخواست خدمت IT
+        ["ViewCompany"] = "مشاهده سیستم‌های کل شرکت",
+        ["ViewDepartment"] = "مشاهده سیستم‌های واحد خود",
+        ["AssignOthers"] = "دستور کار به دیگران",
+        ["View"] = "مشاهده ماژول",
+        // ERP — اکشن‌های مشترک
+        ["Confirm"] = "قطعی‌سازی / تایید نهایی",
+        ["Cancel"] = "ابطال / لغو",
+        ["Apply"] = "اعمال شمارش (صدور اسناد اصلاح)",
+        ["Send"] = "ارسال / ابطال فاکتور (سامانه مودیان)",
+        ["Print"] = "چاپ رسید",
+        // RADIS-HR و درخواست خدمت IT
+        ["Access"] = "ورود و دسترسی به سامانه کامل",
+        ["Manage"] = "مدیر IT (ارجاع و تایید)",
+        // منابع انسانی
+        ["Request"] = "ثبت درخواست شخصی",
+        ["Approve"] = "تایید / رد درخواست دیگران",
+        ["Report"]  = "گزارش ماهانه منابع انسانی",
+        // حضور و غیاب
+        ["SelfCheckin"] = "ثبت ورود/خروج شخصی",
+        ["ViewAll"] = "مشاهده حضور همه پرسنل",
+        ["ManageShifts"] = "مدیریت شیفت‌ها و تخصیص",
+        // پروژه‌ها
+        ["ViewFactor"] = "رویت ستون‌های فاکتور (شماره/نوع) 👁",
+        ["ViewCode"] = "رویت ستون کد در انواع سند انبار 👁",
+        ["Manager"] = "تایید / رد توسط مدیر",
+        // اتوماسیون اداری
+        ["Erja"] = "ارجاع نامه به دیگران",
+        ["Sign"] = "امضا کننده نامه صادره ✍",
+        ["Dabirkhane"] = "دبیرخانه نامه صادره 📮",
+        // پنل معرف
+        ["MyDashboard"] = "داشبورد من",
+        ["MyProducts"] = "محصولات من",
+        ["MyWallet"] = "کیف پول 👛",
+        ["MyCard"] = "کارت ویزیت من",
+        // داشبوردها
+        ["Financial"] = "داشبورد مالی",
+        ["Management"] = "داشبورد مدیریت",
+        ["Hardware"] = "داشبورد سخت‌افزار",
+        // گزارش‌ها
+        ["Kardex"] = "کاردکس کالا",
+        ["Reorder"] = "نقطه سفارش"
+    };
+
+    // ==================== برچسب‌های اکشنِ خاص هر ماژول ====================
+    // وقتی یک اکشن در چند ماژول معنای متفاوتی دارد (مثل Manage / Expert)،
+    // با کلید «ماژول.اکشن» برچسب دقیق همان ماژول برگردانده می‌شود.
+    private static readonly Dictionary<string, string> ModuleActionNames = new()
+    {
+        ["ItRequests.Expert"] = "کارشناس IT (دریافت ارجاع)",
+        ["ItVault.View"] = "مشاهدهٔ لیست تجهیزات (بدون رمز)",
+        ["ItVault.Reveal"] = "نمایش و کپی رمز (با تأیید دوبارهٔ رمز ورود) 🔑",
+        ["ItVault.ViewLog"] = "مشاهدهٔ لاگ دسترسی به رمزها",
+        ["Ipam.View"] = "مشاهدهٔ رنج‌ها و نقشهٔ آی‌پی",
+        ["Ipam.Create"] = "تعریف رنج جدید",
+        ["Ipam.Update"] = "ویرایش رنج و رزرو/آزاد کردن آی‌پی",
+        ["Ipam.Delete"] = "حذف رنج",
+        ["Ipam.Scan"] = "اسکن رنج و بررسی آی‌پی در شبکه 📡",
+        ["Servers.View"] = "مشاهدهٔ فهرست و وضعیت سلامت سرورها",
+        ["Servers.Collect"] = "تست Redfish و دریافت Health / Inventory از iLO 🔎",
+        ["Moadian.View"] = "مشاهدهٔ داشبورد، صورتحساب‌ها و اطلاعات پایهٔ مودیان",
+        ["Moadian.Certificate"] = "مدیریت پرونده مالیاتی و گواهی امضای الکترونیکی (X.509 / PKCS#11) 🔐",
+        ["Moadian.MasterData"] = "مدیریت کالاها/خدمات مالیاتی (SSTID)، خریداران و واحدهای سنجش",
+        ["Moadian.InvoiceCreate"] = "صدور صورتحساب الکترونیکی جدید و تبدیل از فاکتور فروش",
+        ["Moadian.InvoiceUpdate"] = "ویرایش پیش‌نویس و صدور صورتحساب اصلاحی/ابطالی/برگشت از فروش",
+        ["Moadian.InvoiceDelete"] = "حذف پیش‌نویس صورتحساب‌های ارسال‌نشده",
+        ["Moadian.InvoiceSend"] = "امضا و ارسال صورتحساب به درگاه سامانه مودیان",
+        ["Moadian.InvoiceInquiry"] = "استعلام وضعیت پذیرش درگاه (کد رهگیری و بازه زمانی)",
+        ["Moadian.FolderStatus"] = "استعلام وضعیت به‌روز کارپوشه خریداران و ماده ۶ (SDK 2.0.29)",
+        ["Moadian.PaymentRegister"] = "ثبت پرداخت صورتحساب‌های نسیه در سامانه مودیان (RegisterPayment)",
+        ["Moadian.Diagnose"] = "تست فنی اتصال، استعلام کد اقتصادی و عیب‌یابی",
+        // دستور کار و بخش پروژهٔ آن — معنای اکشن‌ها با CRUD عمومی فرق دارد
+        ["WorkOrders.View"] = "مشاهدهٔ دستور کار و نمایش در منو",
+        ["WorkOrders.Create"] = "ساخت دستور کار (حداقل برای خود)",
+        ["WorkOrders.AssignOthers"] = "واگذاری دستور کار به دیگران",
+        ["WorkOrders.Delete"] = "حذف دستور کار",
+        ["WorkProjects.View"] = "مشاهدهٔ پروژه‌های کاری و نمایش در منو",
+        ["WorkProjects.Create"] = "ساخت پروژهٔ کاری",
+        ["WorkProjects.Update"] = "ویرایش/تمدید/بستن و مدیریت اعضای پروژه (مالک پروژه همیشه مجاز است)",
+        ["WorkProjects.Delete"] = "حذف پروژهٔ کاری",
+        // دسترسی «هر قسمت» صفحهٔ پروژه — هر تب جداگانه اعطا می‌شود
+        ["WorkProjects.Summary"] = "بخش «خلاصه» پروژه (اطلاعات، تاریخ‌ها و وضعیت)",
+        ["WorkProjects.Orders"] = "بخش «دستورها» — فهرست دستور کارهای همان پروژه",
+        ["WorkProjects.MindFlow"] = "بخش «نگار ذهنی» پروژه (نقشهٔ ذهنی)",
+        ["WorkProjects.Members"] = "بخش «اعضا» — دیدن فهرست اعضای پروژه",
+        ["WorkProjects.Activity"] = "بخش «فعالیت‌ها» — تاریخچهٔ تغییرات پروژه",
+        // نگار ذهنی (صفحهٔ مستقل و منو)
+        ["MindFlow.View"] = "دیدن صفحهٔ نگار ذهنی، نگاشت‌های مجاز و نمایش در منو",
+        ["MindFlow.Create"] = "ساخت نگاشت ذهنی مستقل تازه",
+        ["MindFlow.Update"] = "ویرایش محتوای نگاشت (گره/رابط) — با نقش ویرایشگرِ همان نگاشت",
+        ["MindFlow.Delete"] = "حذف نگاشت ذهنی (فقط سازندهٔ نگاشت)",
+        ["MindFlow.Members"] = "مدیریت دسترسی و اعضای نگاشت ذهنی (فقط سازندهٔ نگاشت)",
+        ["ItRequests.Manage"] = "مدیر IT (ارجاع و تایید)",
+        ["ProjectCartable.Expert"] = "اتمام کارشناسی (تکمیل پروژه)",
+        ["DocArchive.Manage"] = "مدیریت آرشیو (حذف و تغییر دسترسی‌ها)",
+        ["MyCartable.View"] = "مشاهدهٔ «کارتابل من» در منو",
+        ["MyArchive.View"] = "مشاهدهٔ «بایگانی شخصی» در منو",
+        ["MyDashboards.View"] = "مشاهدهٔ «داشبورد من» و ویجت‌هایش",
+        ["MyDashboards.Design"] = "طراحی داشبورد (ساخت/ویرایش/حذف و چیدمان ویجت‌ها)",
+        ["ReportStudio.View"] = "مشاهده و اجرای گزارش‌های خود و گزارش‌های اشتراک‌گذاشته‌شده",
+        ["ReportStudio.Design"] = "ساخت و ویرایش گزارش (انتخاب جدول، جوین، ستون و فیلتر)",
+        ["ReportStudio.Share"] = "اشتراک‌گذاری گزارش با کاربران و نقش‌ها",
+        ["InnerLetters.ViewAll"] = "مشاهدهٔ نامه‌های داخلیِ دیگران (پیش‌فرض: فقط نامه‌های خودش)",
+        ["OutgoingLetters.ViewAll"] = "مشاهدهٔ نامه‌های صادرهٔ دیگران (پیش‌فرض: فقط نامه‌های خودش)",
+        ["IncomingLetters.ViewAll"] = "مشاهدهٔ نامه‌های واردهٔ دیگران (پیش‌فرض: فقط نامه‌های خودش)",
+        ["Chat.View"] = "مشاهده گفتگوها و پیام‌ها",
+        ["Chat.Send"] = "ارسال پیام",
+        ["Chat.Manage"] = "مدیریت گفتگوها (حذف پیام / گروه)",
+        ["HrMain.Manage"] = "مدیریت پایه سازمانی",
+        ["HrCore.Manage"] = "مدیریت کارگزینی",
+        ["HrPay.Manage"] = "مدیریت حقوق (سامانه قبلی)",
+        ["FaAtt.Manage"] = "مدیریت کل حضور و غیاب",
+        ["FaPay.Manage"] = "مدیریت کل حقوق",
+        ["FaLms.Manage"] = "مدیریت کل آموزش",
+        ["FaCom.Manage"] = "مدیریت کل ارتباطات",
+        ["HrMain.Overview"] = "داشبورد",
+        ["HrMain.Company"] = "شرکت",
+        ["HrMain.Org"] = "ساختار سازمانی",
+        ["HrMain.Positions"] = "سمت‌های سازمانی",
+        ["HrMain.Branches"] = "شعب",
+        ["HrMain.Employees"] = "کارکنان",
+        ["HrMain.Calendar"] = "تقویم کاری",
+        ["HrMain.Rules"] = "قوانین",
+        ["HrMain.Settings"] = "تنظیمات",
+        ["HrCore.Dashboard"] = "داشبورد کارگزینی",
+        ["HrCore.Contracts"] = "قراردادها",
+        ["HrCore.ContractTemplates"] = "قالب‌های قرارداد",
+        ["HrCore.Decrees"] = "احکام",
+        ["FaAtt.Clock"] = "ثبت ورود/خروج",
+        ["FaAtt.Daily"] = "تردد روزانه",
+        ["FaAtt.Shifts"] = "شیفت‌ها",
+        ["FaAtt.LeaveTypes"] = "انواع مرخصی",
+        ["FaAtt.Missions"] = "مأموریت‌ها",
+        ["FaAtt.Approvals"] = "تأیید مرخصی/مأموریت",
+        ["FaAtt.Leaves"] = "مرخصی‌ها (مدیریت)",
+        ["FaAtt.MyLeaves"] = "مرخصی‌های من",
+        ["FaAtt.Balances"] = "مانده مرخصی",
+        ["FaAtt.Devices"] = "دستگاه‌های حضور",
+        ["FaAtt.Reports"] = "گزارش‌های حضور",
+        ["FaPay.Dashboard"] = "داشبورد حقوق",
+        ["FaPay.Runs"] = "اجرا و محاسبه حقوق",
+        ["FaPay.My"] = "فیش حقوقی من",
+        ["FaPay.Adjustments"] = "کسورات و اضافات",
+        ["FaPay.Items"] = "آیتم‌های حقوقی",
+        ["FaPay.Settings"] = "تنظیمات حقوق",
+        ["FaPay.Reports"] = "گزارش‌های حقوق",
+        ["FaLms.Dashboard"] = "داشبورد آموزش",
+        ["FaLms.Courses"] = "دوره‌ها",
+        ["FaLms.Calendar"] = "تقویم آموزشی",
+        ["FaLms.Enrollments"] = "ثبت‌نام‌ها",
+        ["FaLms.Needs"] = "نیازسنجی آموزشی",
+        ["FaLms.Budgets"] = "بودجه آموزش",
+        ["FaLms.Certificates"] = "گواهی‌ها",
+        ["FaLms.My"] = "آموزش‌های من",
+        ["FaLms.Reports"] = "گزارش‌های آموزش",
+        ["FaCom.Dashboard"] = "داشبورد ارتباطات",
+        ["FaCom.Announcements"] = "اطلاعیه‌ها",
+        ["FaCom.Tickets"] = "تیکت‌های پشتیبانی",
+        ["FaCom.My"] = "پیام‌های من",
+        ["RadisHr.Dashboard"] = "داشبورد",
+        ["RadisHr.Employees"] = "پرسنل",
+        ["RadisHr.EmployeeEntry"] = "ورود اطلاعات",
+        ["RadisHr.Attendance"] = "حضور و غیاب",
+        ["RadisHr.Payroll"] = "حقوق و دستمزد",
+        ["RadisHr.StatutoryRules"] = "الزامات سالانه",
+        ["RadisHr.OrgStructure"] = "واحدها و ماتریس",
+        ["RadisHr.OrgSettings"] = "تقویم و ساعات",
+        ["RadisHr.Hse"] = "ایمنی و حوادث",
+        ["RadisHr.Finance"] = "مالی",
+        ["RadisHr.Accounting"] = "حسابداری حقوق",
+        ["RadisHr.ProductionDaily"] = "گزارش روزانه",
+        ["RadisHr.Notices"] = "اطلاعیه‌ها",
+        ["RadisHr.Access"] = "دسترسی کامل به همهٔ بخش‌ها + عملیات مدیریتی (پرسنل، سازمان، حقوق و اطلاعیه‌ها)",
+        ["HrCore.Recruitment"] = "جذب و استخدام",
+        ["MeetingMinutes.View"] = "مشاهده صورتجلسه‌ها",
+        ["MeetingMinutes.Create"] = "ثبت صورتجلسه",
+        ["MeetingMinutes.Update"] = "ویرایش صورتجلسه",
+        ["MeetingMinutes.Delete"] = "حذف صورتجلسه",
+        ["MeetingMinutes.Sign"] = "امضای الکترونیکی صورتجلسه",
+        ["MeetingMinutes.Print"] = "چاپ صورتجلسه",
+        ["MeetingMinutes.ToInnerLetter"] = "تبدیل به نامه داخلی",
+        ["MeetingMinutes.ToOutgoingLetter"] = "تبدیل به نامه صادره",
+        ["MeetingMinutes.SendEmail"] = "ارسال صورتجلسه با ایمیل",
+        ["AiAssistant.Use"] = "استفاده از دستیار هوش مصنوعی",
+        ["AiAssistant.Manage"] = "مدیریت تنظیمات و قواعد هوش مصنوعی"
+    };
+
+    private static string GetActionLabel(string module, string action)
+    {
+        if (ModuleActionNames.TryGetValue($"{module}.{action}", out var specific)) return specific;
+        if (ActionNames.TryGetValue(action, out var generic)) return generic;
+        return action;
+    }
+}

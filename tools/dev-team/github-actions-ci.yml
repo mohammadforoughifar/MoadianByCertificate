@@ -1,0 +1,36 @@
+# کپی به: .github/workflows/devteam-ci-hook.yml
+# Secrets ریپو: DEVTEAM_API_BASE (مثلاً https://erp.example.com) و DEVTEAM_GIT_WEBHOOK_SECRET
+name: DevTeam CI → Problem
+
+on:
+  workflow_run:
+    workflows: ["*"]   # یا نام workflow بیلد اصلی
+    types: [completed]
+  # جایگزین ساده‌تر: بعد از job بیلد خودتان:
+  # workflow_dispatch:
+
+jobs:
+  notify-devteam:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post failure to DevTeam
+        env:
+          BASE: ${{ secrets.DEVTEAM_API_BASE }}
+          TOKEN: ${{ secrets.DEVTEAM_GIT_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          BODY=$(jq -n \
+            --arg provider "github-actions" \
+            --arg status "failure" \
+            --arg job "${{ github.workflow }}" \
+            --arg repo "${{ github.repository }}" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg sha "${{ github.sha }}" \
+            --arg msg "${{ github.event.head_commit.message || github.event.workflow_run.head_commit.message || 'ci failure' }}" \
+            --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{provider:$provider,status:$status,jobName:$job,repo:$repo,branch:$branch,commitSha:$sha,commitMessage:$msg,url:$url}')
+          curl -sS -X POST "$BASE/api/dev-team/hooks/ci" \
+            -H "Content-Type: application/json" \
+            -H "X-DevTeam-Token: $TOKEN" \
+            -d "$BODY"
