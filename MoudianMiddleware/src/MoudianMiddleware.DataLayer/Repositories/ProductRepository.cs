@@ -20,6 +20,10 @@ public sealed class ProductRepository : GenericRepository<Product>, IProductRepo
     }
 
     /// <inheritdoc />
+    public Task<Product?> GetWithUnitAsync(int id, CancellationToken cancellationToken = default)
+        => Set.Include(x => x.MeasuringUnit).FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    /// <inheritdoc />
     public Task<bool> ExistsSstidAsync(string sstid, int? excludeId = null, CancellationToken cancellationToken = default)
         => Set.AnyAsync(
             x => x.Sstid == sstid && (excludeId == null || x.Id != excludeId.Value),

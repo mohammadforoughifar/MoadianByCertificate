@@ -7,8 +7,8 @@ namespace MoudianMiddleware.DataLayer.Entities;
 /// تاریخچه‌ی هر تلاش ارتباط با سامانه برای یک صورتحساب (ارسال/استعلام/تلاش مجدد/ثبت پرداخت).
 /// </summary>
 /// <remarks>
-/// این جدول «Audit عملیاتی» است: هر درخواست و پاسخ با شناسه‌ی پیگیری، کد خطا و زمان ثبت می‌شود.
-/// محتوای کامل Payload/Response در <see cref="AuditLog"/> و با ماسک‌کردن داده‌ی حساس ذخیره می‌شود.
+/// این جدول فقط metadata عملیاتی را نگه می‌دارد؛ بدنه‌ی خام Request/Response در این entity یا AuditLog ذخیره نمی‌شود.
+/// اگر ثبت JSON برای عیب‌یابی اضافه شد، باید پیش از ذخیره از IMoadianPayloadScrubber عبور کند.
 /// </remarks>
 public class InvoiceSubmission : BaseEntity, ITenantEntity
 {

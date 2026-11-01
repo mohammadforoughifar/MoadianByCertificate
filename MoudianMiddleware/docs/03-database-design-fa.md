@@ -258,7 +258,7 @@ src/MoudianMiddleware.DataLayer/
 └── DependencyInjection.cs
 
 tests/MoudianMiddleware.Tests/
-├── TestHelpers/{FakeTenantProvider, FakeCurrentUserProvider, FakeClock, TestDbContextFactory}.cs
+├── TestHelpers/{FakeTenantProvider, FakeCurrentUserProvider, FakeClock, SqliteTestDatabase}.cs
 └── Data/TenantIsolationTests.cs   (۵ تست: جداسازی، رد پیش‌فرض، خطای بدون مستأجر، حذف نرم، پوشش فیلترها)
 ```
 

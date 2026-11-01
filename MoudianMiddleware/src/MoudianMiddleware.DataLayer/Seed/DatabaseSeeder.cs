@@ -21,6 +21,7 @@ public sealed class DatabaseSeeder : IDatabaseSeeder
     private readonly IPasswordHasher _passwordHasher;
     private readonly DatabaseSeedOptions _options;
     private readonly ILogger<DatabaseSeeder> _logger;
+    private readonly ITenantScope _tenantScope;
 
     /// <summary>
     /// سازنده با تزریق وابستگی‌ها.
@@ -33,17 +34,27 @@ public sealed class DatabaseSeeder : IDatabaseSeeder
         MoudianDbContext context,
         IPasswordHasher passwordHasher,
         IOptions<DatabaseSeedOptions> options,
-        ILogger<DatabaseSeeder> logger)
+        ILogger<DatabaseSeeder> logger,
+        ITenantScope tenantScope)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(passwordHasher);
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(tenantScope);
 
         _context = context;
         _passwordHasher = passwordHasher;
         _options = options.Value;
         _logger = logger;
+        _tenantScope = tenantScope;
+    }
+
+    /// <inheritdoc />
+    public async Task SeedForTenantAsync(int tenantId, CancellationToken cancellationToken = default)
+    {
+        using var tenantScope = _tenantScope.Enter(tenantId);
+        await SeedAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

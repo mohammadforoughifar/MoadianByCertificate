@@ -12,4 +12,10 @@ public interface IDatabaseSeeder
     /// <param name="cancellationToken">توکن لغو.</param>
     /// <returns>وظیفه‌ی انجام عملیات.</returns>
     Task SeedAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>اجرای Seed در scope صریح یک مودی برای عملیات آینده‌ی tenant-scoped.</summary>
+    /// <param name="tenantId">شناسه‌ی مودی؛ باید مثبت باشد.</param>
+    /// <param name="cancellationToken">توکن لغو.</param>
+    /// <returns>وظیفه‌ی انجام عملیات.</returns>
+    Task SeedForTenantAsync(int tenantId, CancellationToken cancellationToken = default);
 }
