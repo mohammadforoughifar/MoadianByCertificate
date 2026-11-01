@@ -121,6 +121,42 @@ public sealed class InvoiceService : IInvoiceService
         return Map(invoice, false);
     }
 
+    /// <inheritdoc />
+    public async Task<InvoiceViewModel> UpdateDraftAsync(int id, InvoiceWriteRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        await _validator.ValidateAndThrowAsync(request, cancellationToken).ConfigureAwait(false);
+        var invoice = await _invoices.GetWithDetailsForUpdateAsync(id, cancellationToken).ConfigureAwait(false)
+            ?? throw new EntityNotFoundException(nameof(Invoice), id);
+        if (invoice.Status != InvoiceStatus.Draft) throw new BusinessConflictException("Only draft invoices can be edited.");
+        var tenantId = _tenantScope.TenantId ?? _tenantProvider.TenantId
+            ?? throw new InvalidOperationException("Current tenant is required.");
+        var customer = request.CustomerId is null ? null : await _customers.GetByIdAsync(request.CustomerId.Value, cancellationToken).ConfigureAwait(false)
+            ?? throw new EntityNotFoundException(nameof(Customer), request.CustomerId.Value);
+        var replacement = CreateEntity(request, tenantId, Normalize(request.ExternalId), customer);
+        invoice.InvoiceNumber = replacement.InvoiceNumber;
+        invoice.ExternalId = replacement.ExternalId;
+        invoice.Type = replacement.Type;
+        invoice.PatternCode = replacement.PatternCode;
+        invoice.SubjectCode = replacement.SubjectCode;
+        invoice.SettlementMethod = replacement.SettlementMethod;
+        invoice.IssueDate = replacement.IssueDate;
+        invoice.CustomerId = replacement.CustomerId;
+        invoice.BuyerName = replacement.BuyerName;
+        invoice.BuyerType = replacement.BuyerType;
+        invoice.BuyerNationalId = replacement.BuyerNationalId;
+        invoice.BuyerEconomicCode = replacement.BuyerEconomicCode;
+        invoice.BuyerPostalCode = replacement.BuyerPostalCode;
+        invoice.BuyerAddress = replacement.BuyerAddress;
+        invoice.BuyerBranchCode = replacement.BuyerBranchCode;
+        invoice.ReferenceTaxId = replacement.ReferenceTaxId;
+        invoice.Payments.Clear();
+        foreach (var payment in replacement.Payments) invoice.Payments.Add(payment);
+        _calculation.Apply(invoice, request.Items);
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return Map(invoice, false);
+    }
+
     private static Invoice CreateEntity(InvoiceWriteRequest request, int tenantId, string? externalId, Customer? customer)
     {
         var invoice = new Invoice
@@ -179,6 +215,14 @@ public sealed class InvoiceService : IInvoiceService
         Uid = invoice.Uid,
         Status = invoice.Status,
         BuyerName = invoice.BuyerName,
+        IssueDate = invoice.IssueDate,
+        Type = invoice.Type,
+        PatternCode = invoice.PatternCode,
+        SubjectCode = invoice.SubjectCode,
+        Items = invoice.Items.OrderBy(item => item.RowNumber).Select(item => new InvoiceItemViewModel { Sstid = item.Sstid, Description = item.Description, MeasuringUnitCode = item.MeasuringUnitCode, Quantity = item.Quantity, UnitPrice = item.UnitPrice, DiscountAmount = item.DiscountAmount, VatRate = item.VatRate }).ToArray(),
+        LastErrorCode = invoice.LastErrorCode,
+        LastErrorMessage = invoice.LastErrorMessage,
+        Submissions = invoice.Submissions.OrderByDescending(item => item.AttemptNumber).Select(item => new InvoiceSubmissionViewModel { AttemptNumber = item.AttemptNumber, Action = item.Action, Status = item.Status, MoadianStatus = item.MoadianStatus, ErrorCode = item.ErrorCode, ErrorMessage = item.ErrorMessage, WarningCount = item.WarningCount, StartedAt = item.StartedAt, CompletedAt = item.CompletedAt, DurationMs = item.DurationMs }).ToArray(),
         TotalBeforeDiscount = invoice.TotalBeforeDiscount,
         TotalDiscount = invoice.TotalDiscount,
         TotalAfterDiscount = invoice.TotalAfterDiscount,

@@ -710,4 +710,20 @@ public sealed class ProductService : IProductService
 1. پیش از اعلام تأیید نهایی مرحله‌ی ۴ باید `dotnet build` و کل تست‌ها روی .NET 8 اجرا شوند؛ این محیط فعلی CLI دات‌نت ندارد.
 2. تست‌های Core برای رمزنگاری envelope، credential خصوصی بدون certificate، امضای PKCS#8 و private-key-only، mapper/نوع عددی، محاسبه و rounding، validatorها، ثبت DI، آماده‌سازی TaxId، idempotency و submission با SQLite واقعی اضافه شده‌اند؛ همه هنوز باید در .NET 8 اجرا شوند. PKCS#11 به سخت‌افزار/درایور واقعی نیاز دارد.
 3. قراردادهای تأییدنشده‌ی رسمی در بخش ۱۲ ثبت شده‌اند و در تست‌های مالی واقعی نباید با فرض جایگزین شوند.
-4. پس از build/test موفق و تأیید شما، مرحله‌ی بعد می‌تواند API project، Controllerها، authentication/authorization و wiring تنظیمات میزبان باشد. Outbox/retry خودکار روی نتیجه‌ی مبهم ارسال باید در مرحله‌ی بعد طراحی شود تا duplicate invoice تولید نشود.
+4. API و Client در پروژه‌های جدا پیاده‌سازی شده‌اند؛ Controllerها thin هستند و Client فقط Contracts را مرجع می‌گیرد. Build/test مرحله‌ی ۵/۶ تا اجرای واقعی با SDK 2.0.29 و .NET 8 تأییدشده محسوب نمی‌شود.
+
+## ۱۴) مرحله‌ی ۵ — احراز هویت و هم‌زمانی
+
+- `AuthService.LoginAsync` و `RefreshAsync` پیش از tenant resolution از `IgnoreQueryFilters` استفاده می‌کنند و به‌صورت دستی `User.IsDeleted/IsActive`، `UserTenant.IsDeleted/IsActive`، `Tenant.IsDeleted/IsActive`، `RefreshToken.RevokedAt` و `ExpiresAt` را بررسی می‌کنند.
+- Refresh token خام فقط در پاسخ صادر می‌شود؛ DB فقط SHA-256/Base64 نگه می‌دارد. Refresh اتمیک است و reuse توکن revoke شده، تمام refresh tokenهای فعال همان کاربر را revoke می‌کند.
+- `ApiKeyAuthenticationHandler` فقط KeyHash را در مقایسه دارد؛ مدیریت کلید در `ApiClientsController` raw key را فقط در پاسخ صدور یک‌باره می‌دهد.
+- `Program.cs` برای `X-Forwarded-For/Proto` فقط proxyهای تنظیم‌شده در `MOUDIAN__FORWARDED_HEADERS_KNOWN_PROXIES` را trusted می‌کند. login rate limit با IP، و lockout نام کاربری در AuthService پس از پنج شکست و برای ۱۵ دقیقه است.
+- تست سریع relational روی SQLite باقی است؛ `SqlServerConcurrencyTests` با `MOUDIAN_TEST_SQLSERVER` دیتابیس تصادفی موقت می‌سازد تا دو refresh و دو send هم‌زمان را روی SQL Server بررسی کند. این تست‌ها opt-in هستند و هنوز در این محیط اجرا نشده‌اند.
+
+## ۱۵) مرحله‌ی ۶ — Client (Blazor WebAssembly)
+
+- `MoudianMiddleware.Client.csproj` تنها به `MoudianMiddleware.Contracts` ارجاع می‌دهد. منطق درخواست، refresh، تبدیل تاریخ و محاسبه‌ی نمایشی در `Services` و `ViewModels` است.
+- توکن‌ها فقط در `TokenStore` حافظه‌ای هستند، نه LocalStorage؛ مزیت کاهش ماندگاری XSS در برابر نیاز ورود مجدد پس از reload است. Refreshها با `SemaphoreSlim` تک‌پرواز می‌شوند؛ شکست، نشست را پاک و کاربر را به login می‌برد.
+- UI فارسی و RTL است؛ `JalaliDateFormatter` تاریخ ورودی را با `PersianCalendar` اعتبارسنجی می‌کند و ارقام نمایشی فارسی می‌شوند.
+- کلید خصوصی فقط با HTTPS ارسال می‌شود؛ byte buffer و input file پس از ارسال پاک می‌شوند. متن PEM در runtime immutable است و zero کردن مطمئن string ممکن نیست؛ برای custody سخت‌گیرانه‌تر، BFF با cookie HttpOnly یا HSM لازم است.
+- محاسبه‌ی تخفیف/VAT در فرم فقط پیش‌نمایش است؛ مبلغ قطعی از پاسخ سرور می‌آید. دکمه‌ها با Permission پنهان می‌شوند ولی کنترل امنیتی اصلی در API است.

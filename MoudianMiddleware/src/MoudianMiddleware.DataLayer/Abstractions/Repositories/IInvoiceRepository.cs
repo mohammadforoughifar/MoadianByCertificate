@@ -14,6 +14,9 @@ public interface IInvoiceRepository : IGenericRepository<Invoice>
     /// <returns>صورتحساب کامل یا <c>null</c>.</returns>
     Task<Invoice?> GetWithDetailsAsync(int id, CancellationToken cancellationToken = default);
 
+    /// <summary>بارگذاری tracked برای ویرایش پیش‌نویس.</summary>
+    Task<Invoice?> GetWithDetailsForUpdateAsync(int id, CancellationToken cancellationToken = default);
+
     /// <summary>یافتن صورتحساب با شناسه‌ی خارجی (مبنای Idempotency).</summary>
     /// <param name="externalId">شناسه‌ی سیستم خارجی.</param>
     /// <param name="cancellationToken">توکن لغو.</param>

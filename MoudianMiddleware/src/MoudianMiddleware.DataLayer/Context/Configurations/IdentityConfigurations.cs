@@ -104,13 +104,14 @@ public sealed class RefreshTokenConfiguration : IEntityTypeConfiguration<Refresh
         ArgumentNullException.ThrowIfNull(builder);
 
         builder.Property(x => x.TokenHash).HasMaxLength(200).IsRequired();
+        builder.Property(x => x.TenantId).IsRequired();
         builder.Property(x => x.ReplacedByTokenHash).HasMaxLength(200);
         builder.Property(x => x.CreatedByIp).HasMaxLength(60);
         builder.Property(x => x.RevokedByIp).HasMaxLength(60);
         builder.Property(x => x.UserAgent).HasMaxLength(400);
 
         builder.HasIndex(x => x.TokenHash).IsUnique();
-        builder.HasIndex(x => new { x.UserId, x.ExpiresAt });
+        builder.HasIndex(x => new { x.UserId, x.TenantId, x.ExpiresAt });
 
         builder.HasOne(x => x.User)
             .WithMany(u => u.RefreshTokens)

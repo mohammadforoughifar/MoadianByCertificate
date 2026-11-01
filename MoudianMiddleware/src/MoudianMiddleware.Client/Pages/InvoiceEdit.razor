@@ -1,0 +1,42 @@
+@page "/invoices/new"
+@page "/invoices/{Id:int}/edit"
+@attribute [Authorize]
+@inject InvoiceFormViewModel Vm
+@inject InvoiceService Invoices
+@inject NavigationManager Navigation
+<PageTitle>پیش‌نویس صورتحساب</PageTitle>
+<h1>ایجاد/ویرایش پیش‌نویس</h1>
+<PermissionView Permission="@Permissions.InvoiceEdit"><div class="card">
+    <ServerValidationErrors Errors="Vm.ValidationErrors" />
+    @if (!string.IsNullOrWhiteSpace(Vm.Error)) { <div class="notice error">@Vm.Error</div> }
+    <div class="grid cols-2">
+        <label>شماره داخلی <input @bind="Vm.InvoiceNumber" /></label>
+        <label>نام خریدار <input @bind="Vm.BuyerName" /></label>
+        <JalaliDateInput Label="تاریخ صدور" @bind-Value="Vm.IssueDate" />
+    </div>
+    <h2>اقلام</h2>
+    @foreach (var item in Vm.Items)
+    {
+        <div class="card"><div class="grid cols-2"><label>شناسه کالا/خدمت <input @bind="item.Sstid" /></label><label>شرح <input @bind="item.Description" /></label><label>واحد <input @bind="item.MeasuringUnitCode" /></label><label>تعداد <InputNumber @bind-Value="item.Quantity" /></label><label>قیمت واحد (ریال) <InputNumber @bind-Value="item.UnitPrice" /></label><label>تخفیف (ریال) <InputNumber @bind-Value="item.Discount" /></label><label>نرخ مالیات (%) <InputNumber @bind-Value="item.VatRate" /></label></div><button class="danger" disabled="@(Vm.Items.Count <= 1)" @onclick="() => Vm.RemoveItem(item)">حذف قلم</button></div>
+    }
+    <button class="secondary" @onclick="Vm.AddItem">افزودن قلم</button>
+    <div class="card"><h2>برآورد نمایشی (محاسبه نهایی با سرور است)</h2><p>ناخالص: @JalaliDateFormatter.ToPersianDigits(Vm.Gross.ToString("N0", Fa))</p><p>پس از تخفیف: @Vm.AfterDiscount.ToString("N0", Fa)</p><p>مالیات: @JalaliDateFormatter.ToPersianDigits(Vm.Vat.ToString("N0", Fa))</p><strong>جمع کل: @JalaliDateFormatter.ToPersianDigits(Vm.Total.ToString("N0", Fa)) ریال</strong></div>
+    <button @onclick="SaveAsync" disabled="@Busy">ذخیره پیش‌نویس</button>
+</div></PermissionView>
+@code {
+    [Parameter] public int? Id { get; set; }
+    private bool Busy;
+    private static readonly System.Globalization.CultureInfo Fa = new("fa-IR");
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Id is null) return;
+        try { var invoice = await Invoices.GetAsync(Id.Value); if (invoice.Status != InvoiceStatus.Draft) { Vm.SetError("فقط پیش‌نویس قابل ویرایش است."); return; } Vm.Load(invoice); }
+        catch (Exception ex) { Vm.SetError(ex.Message); }
+    }
+    private async Task SaveAsync()
+    {
+        Busy = true;
+        try { var saved = await Vm.SaveAsync(Invoices, Id); if (saved is not null) Navigation.NavigateTo($"/invoices/{saved.Id}"); }
+        finally { Busy = false; }
+    }
+}

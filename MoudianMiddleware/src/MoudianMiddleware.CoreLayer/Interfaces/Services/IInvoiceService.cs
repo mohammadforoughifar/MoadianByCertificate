@@ -12,4 +12,6 @@ public interface IInvoiceService
     Task<PagedResult<InvoiceViewModel>> ListAsync(InvoiceListQuery query, CancellationToken cancellationToken = default);
     /// <summary>ثبت پیش‌نویس؛ ExternalId در محدوده‌ی مودی idempotent است.</summary>
     Task<InvoiceViewModel> CreateAsync(InvoiceWriteRequest request, CancellationToken cancellationToken = default);
+    /// <summary>ویرایش پیش‌نویس؛ وضعیت‌های ارسال‌شده قفل هستند.</summary>
+    Task<InvoiceViewModel> UpdateDraftAsync(int id, InvoiceWriteRequest request, CancellationToken cancellationToken = default);
 }

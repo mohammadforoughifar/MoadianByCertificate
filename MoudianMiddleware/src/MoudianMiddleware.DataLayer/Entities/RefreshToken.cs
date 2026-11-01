@@ -13,6 +13,9 @@ public class RefreshToken : BaseEntity
     /// <summary>شناسه‌ی کاربر.</summary>
     public int UserId { get; set; }
 
+    /// <summary>مودی انتخاب‌شده هنگام صدور توکن؛ عضویت در هر refresh دوباره اعتبارسنجی می‌شود.</summary>
+    public int TenantId { get; set; }
+
     /// <summary>هش توکن (SHA-256 به‌صورت Base64).</summary>
     public string TokenHash { get; set; } = string.Empty;
 
