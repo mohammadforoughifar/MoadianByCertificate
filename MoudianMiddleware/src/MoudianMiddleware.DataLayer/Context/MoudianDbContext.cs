@@ -126,6 +126,12 @@ public class MoudianDbContext : DbContext
 
         ApplySoftDeleteFilter<Tenant>(modelBuilder);
         ApplySoftDeleteFilter<User>(modelBuilder);
+        // Match User's soft-delete filter across the required RefreshToken.User relationship.
+        // This keeps soft-deleted users' tokens out of ordinary queries and avoids EF's
+        // required-navigation/global-filter warning. Authentication flows that validate a
+        // presented token explicitly use IgnoreQueryFilters and re-check User.IsDeleted.
+        modelBuilder.Entity<RefreshToken>()
+            .HasQueryFilter(token => token.User != null && !token.User.IsDeleted);
         ApplySoftDeleteFilter<MeasuringUnit>(modelBuilder);
         ApplySoftDeleteFilter<MoadianErrorCode>(modelBuilder);
 
