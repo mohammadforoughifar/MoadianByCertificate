@@ -17,7 +17,7 @@ public interface IMoadianPayloadScrubber
 public sealed class MoadianPayloadScrubber : IMoadianPayloadScrubber
 {
     private const string Redacted = "[REDACTED]";
-    private static readonly HashSet<string> SafeScalarFields = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> _safeScalarFields = new(StringComparer.OrdinalIgnoreCase)
     {
         "uid", "referencenumber", "status", "packettype", "errorcode", "success", "durationms", "correlationid", "action"
     };
@@ -49,7 +49,7 @@ public sealed class MoadianPayloadScrubber : IMoadianPayloadScrubber
             return null;
         }
 
-        if (propertyName is not null && !SafeScalarFields.Contains(propertyName))
+        if (propertyName is not null && !_safeScalarFields.Contains(propertyName))
         {
             return JsonValue.Create(Redacted);
         }
@@ -74,7 +74,7 @@ public sealed class MoadianPayloadScrubber : IMoadianPayloadScrubber
             return result;
         }
 
-        return propertyName is not null && SafeScalarFields.Contains(propertyName)
+        return propertyName is not null && _safeScalarFields.Contains(propertyName)
             ? node.DeepClone()
             : JsonValue.Create(Redacted);
     }
