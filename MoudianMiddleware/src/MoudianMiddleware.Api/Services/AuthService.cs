@@ -28,7 +28,7 @@ public interface IAuthService
 public sealed class AuthService(MoudianDbContext db, IPasswordHasher passwords, JwtOptions options, TimeProvider clock) : IAuthService
 {
     private const int MaxFailedAttempts = 5;
-    private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan _lockoutDuration = TimeSpan.FromMinutes(15);
     private const int RefreshBytes = 48;
 
     public async Task<LoginResult> LoginAsync(LoginRequest request, string? ip, string? userAgent, CancellationToken ct)
@@ -48,7 +48,7 @@ public sealed class AuthService(MoudianDbContext db, IPasswordHasher passwords, 
             if (user is not null && !user.IsDeleted && user.IsActive && (user.LockoutEndAt is null || user.LockoutEndAt <= now))
             {
                 user.AccessFailedCount++;
-                if (user.AccessFailedCount >= MaxFailedAttempts) user.LockoutEndAt = now.Add(LockoutDuration);
+                if (user.AccessFailedCount >= MaxFailedAttempts) user.LockoutEndAt = now.Add(_lockoutDuration);
                 await db.SaveChangesAsync(ct).ConfigureAwait(false);
             }
             throw new UnauthorizedAccessException("Invalid credentials.");
