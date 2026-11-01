@@ -57,4 +57,7 @@ public class MoadianCredential : AuditableEntity, ITenantEntity
 
     /// <summary>Tag احراز اصالت AES-GCM پین (Base64).</summary>
     public string? PinTag { get; set; }
+
+    /// <summary>نسخه‌ی کلید رمزنگاری PIN برای پشتیبانی از چرخش KEK.</summary>
+    public int PinKeyVersion { get; set; } = 1;
 }

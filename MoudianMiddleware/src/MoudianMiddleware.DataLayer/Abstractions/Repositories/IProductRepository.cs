@@ -7,6 +7,12 @@ namespace MoudianMiddleware.DataLayer.Abstractions.Repositories;
 /// </summary>
 public interface IProductRepository : IGenericRepository<Product>
 {
+    /// <summary>دریافت کالا همراه با واحد اندازه‌گیری.</summary>
+    /// <param name="id">شناسه‌ی کالا.</param>
+    /// <param name="cancellationToken">توکن لغو.</param>
+    /// <returns>کالا یا null اگر در tenant جاری قابل مشاهده نباشد.</returns>
+    Task<Product?> GetWithUnitAsync(int id, CancellationToken cancellationToken = default);
+
     /// <summary>بررسی یکتایی شناسه‌ی کالا/خدمت در مستأجر جاری.</summary>
     /// <param name="sstid">شناسه‌ی کالا/خدمت.</param>
     /// <param name="excludeId">شناسه‌ای که باید از بررسی مستثنی شود (در ویرایش).</param>

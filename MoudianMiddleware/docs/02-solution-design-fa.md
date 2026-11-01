@@ -326,7 +326,7 @@ MoudianMiddleware/
 └── tests/
     └── MoudianMiddleware.Tests/
         ├── MoudianMiddleware.Tests.csproj
-        ├── TestHelpers/{TestDbContextFactory.cs, FakeTenantProvider.cs, FakeClock.cs, FakeSecretProtector.cs}
+        ├── TestHelpers/{SqliteTestDatabase.cs, FakeTenantProvider.cs, FakeClock.cs, FakeSecretProtector.cs}
         ├── Invoices/InvoiceCalculationServiceTests.cs
         ├── Invoices/InvoiceMapperTests.cs
         ├── Invoices/ExternalInvoiceIdempotencyTests.cs
@@ -588,7 +588,7 @@ Signing ←──── CryptographicOperations.ZeroMemory ← RSA.ImportFromPem
 | **CoreLayer** | `FluentValidation`, `FluentValidation.DependencyInjectionExtensions`, `Mapster`, `Mapster.DependencyInjection`, `ClosedXML` (Excel), `Microsoft.Extensions.Http`, `Microsoft.Extensions.Caching.Memory`, `Microsoft.Extensions.Hosting.Abstractions`, `Microsoft.Extensions.Options.ConfigurationExtensions`, **`TaxCollectData.Library` 2.0.29**, `Serilog` |
 | **Api** | `Microsoft.AspNetCore.Authentication.JwtBearer`, `System.IdentityModel.Tokens.Jwt`, `Serilog.AspNetCore`, `Swashbuckle.AspNetCore` (+ FrameworkReference `Microsoft.AspNetCore.App`) |
 | **Client** | `Microsoft.AspNetCore.Components.WebAssembly`, `...WebAssembly.DevServer`, `Microsoft.AspNetCore.Components.Authorization`, `Microsoft.Extensions.Http`, `Blazored.LocalStorage` |
-| **Tests** | `Microsoft.NET.Test.Sdk`, `xunit`, `xunit.runner.visualstudio`, `Moq`, `FluentAssertions`, `Microsoft.EntityFrameworkCore.InMemory`, `coverlet.collector` |
+| **Tests** | `Microsoft.NET.Test.Sdk`, `xunit`, `xunit.runner.visualstudio`, `Moq`, `FluentAssertions`, `Microsoft.EntityFrameworkCore.Sqlite`, `coverlet.collector` — ایندکس یکتا با اتصال SQLite in-memory واقعی تست می‌شود، نه InMemory provider. |
 
 > ⚠️ `TaxCollectData.Library` وابستگی‌های transitive دارد (`RestSharp 108`, `Newtonsoft.Json`, `BouncyCastle`, `JWT`, `jose-jwt`, `Pkcs11Interop`). این‌ها فقط در `CoreLayer` ظاهر می‌شوند و در هیچ لایه‌ی دیگری استفاده نمی‌شوند. توجه: `TaxCollectData.Library` روی `netstandard2.0` است و در .NET 8 مصرف می‌شود؛ این را **از نظر سازگاری تأییدشده** می‌دانم (سند رسمی .NET 7 به بالا را پشتیبانی می‌کند) ولی **بیلد واقعی را در این محیط نتوانستم اجرا کنم**.
 
@@ -689,16 +689,25 @@ public sealed class ProductService : IProductService
 
 ---
 
-## ۱۲) قدم بعدی (مرحله ۳)
+## ۱۲) پیاده‌سازی مرحله‌ی ۴ — وضعیت و قراردادهای تأییدنشده
 
-1. ساخت `MoudianMiddleware.sln` + `Contracts` + `DataLayer` + `Tests` با ارجاع‌های صحیح (Core/Api/Client در مراحل ۴/۵/۶ اضافه می‌شوند تا هیچ پروژه‌ی بدون EntryPoint در Solution نباشد).
-2. `BaseEntity` / `AuditableEntity` / `ITenantEntity` و `MoudianDbContext`.
-3. همه‌ی Entityها + Fluent API configurationها + ایندکس‌های Tenant-scoped.
-4. `UnitOfWork` + Repositoryهای عمومی و اختصاصی.
-5. Interceptorها (Audit + Tenant).
-6. Seed اولیه (نقش‌ها و Permissionها، واحدها، الگو/موضوع صورتحساب، روش‌های پرداخت، کدهای خطا) + کاربر Admin از Environment.
-7. **ERD متنی** در `docs/03-database-design-fa.md` + دستورهای `dotnet ef` برای ساخت Migration.
+- سرویس تنظیمات مودیان، credential، آماده‌سازی فاکتور، محاسبه، ارسال و inquiry در CoreLayer همراه interface و validator ثبت شده‌اند. آماده‌سازی از provider خود SDK برای TaxId/Verhoeff استفاده می‌کند.
+- مبالغ Entity (`long` برای مبلغ ریالی نهایی و `decimal` برای تعداد/قیمت واحد/نرخ) با DTOهای `TaxCollectData.Library` 2.0.29 سازگارند؛ mapper یگانه در `CoreLayer/Infrastructure/Moadian/MoadianInvoiceMapper.cs` فقط در همان مرز Entity→SDK DTO نگاشت می‌کند. مبالغ نهایی در محاسبه‌گر به ریال کامل گرد می‌شوند؛ تبدیل مالی دیگری در Gateway نیست.
+- SDK DTOها `long?` برای مبالغ و `decimal?` برای تعداد/نرخ دارند. Serializer نسخه‌ی 2.0.29 از camelCase استفاده می‌کند، اما nullها را حذف نمی‌کند؛ بنابراین مقادیر optional تهی به‌صورت `null` در JSON باقی می‌مانند. پذیرش این JSON توسط محیط واقعی مودیان از سورس SDK قابل اثبات نیست و باید با تست رسمی/محیط sandbox تأیید شود.
+- `cut` فقط برای الگوهای ارزی در تحلیل SDK مستند شده؛ چون Entity فعلی ریالی است mapper آن را null می‌گذارد. پذیرش صریح null نامطمئن است.
+- کد عددی `pmt` از enum فعلی منتقل می‌شود، ولی صحت تطابق کدهای پرداخت با دستورالعمل روز سامانه هنوز تأیید مستقل نشده است. قواعد مالیات/تخفیف نیز نیازمند تأیید مستند رسمی هستند.
+- آماده‌سازی فاکتور از `TaxIdProviderFactory` خود SDK 2.0.29 برای TaxId/Verhoeff استفاده می‌کند؛ serial از `Invoice.Id` پایگاه‌داده به‌صورت hex ده‌رقمی گرفته شده تا پایدار و یکتا باشد. سازگاری این منبع serial با سیاست عملیاتی هر حافظه‌ی مالیاتی باید با صاحب محصول/مستند رسمی تأیید شود.
+- حالت‌های PKCS#8+certificate و PKCS#11 از factoryهای SDK 2.0.29 استفاده می‌کنند. پشتیبانی Server از private-key-only تأیید نشده؛ این راهبرد مستقل، آزمایشی و مشروط به تأیید صریح مودی باقی می‌ماند.
+- SDK متدهای ارسال/استعلام با `CancellationToken` ندارد. Gateway فقط پیش از آغاز درخواست لغو را بررسی می‌کند و درخواست شبکه‌ی درحال اجرا را race/cancel نمی‌کند. برای رفع نشت HttpClient، wrapper از client SDK با HttpClient قابل‌Dispose استفاده می‌کند.
+- بدنه‌ی خام Request/Response و InnerException SDK در Audit ذخیره یا به خطای Gateway نشت نمی‌کند. `MoadianPayloadScrubber` fail-closed است و فقط metadata محدود allowlist را نگه می‌دارد؛ `InvoiceSubmission` metadata-only است.
+- آدرس Production پیش‌فرض از سورس SDK به‌تنهایی قابل اثبات نیست؛ مقدار متداول `https://tp.tax.gov.ir/requestsmanager` در کد پیش‌فرض است و باید پیش از استقرار با مستند رسمی جاری کنترل شود. آدرس Sandbox حدس زده نمی‌شود و باید صریحاً تنظیم شود.
+- مواد خصوصی در DB فقط ciphertext/nonce/tag و نسخه‌ی کلید دارند؛ `AesGcmSecretProtector` کلید ۳۲‌بایتی را از بخش `SecretProtection` می‌گیرد و میزبان باید مقادیر را از secret store تزریق کند.
 
-> **یادداشت امضا (تصمیم نهایی شما):** SDK فقط `2.0.29` و فقط در `Directory.Packages.props`. پیش‌فرض هر مودی `Pkcs8Certificate`؛ `Pkcs11Token` اختیاری (فقط برای پایانه‌ی محلی با درایور)؛ `PrivateKeyOnly` صرفاً `IsExperimental` و **هرگز پیش‌فرض نیست** — در UI نیازمند تأیید صریح و «تست اتصال» موفق است.
+> **یادداشت امضا:** SDK فقط `2.0.29` و فقط در `Directory.Packages.props`. پیش‌فرض `Pkcs8Certificate`؛ `Pkcs11Token` اختیاری؛ `PrivateKeyOnly` آزمایشی و هرگز پیش‌فرض نیست.
 
-**منتظر تأیید شما برای ورود به مرحله ۳ هستم.**
+## ۱۳) مرز مرحله‌ی بعد
+
+1. پیش از اعلام تأیید نهایی مرحله‌ی ۴ باید `dotnet build` و کل تست‌ها روی .NET 8 اجرا شوند؛ این محیط فعلی CLI دات‌نت ندارد.
+2. تست‌های Core برای رمزنگاری envelope، credential خصوصی بدون certificate، امضای PKCS#8 و private-key-only، mapper/نوع عددی، محاسبه و rounding، validatorها، ثبت DI، آماده‌سازی TaxId، idempotency و submission با SQLite واقعی اضافه شده‌اند؛ همه هنوز باید در .NET 8 اجرا شوند. PKCS#11 به سخت‌افزار/درایور واقعی نیاز دارد.
+3. قراردادهای تأییدنشده‌ی رسمی در بخش ۱۲ ثبت شده‌اند و در تست‌های مالی واقعی نباید با فرض جایگزین شوند.
+4. پس از build/test موفق و تأیید شما، مرحله‌ی بعد می‌تواند API project، Controllerها، authentication/authorization و wiring تنظیمات میزبان باشد. Outbox/retry خودکار روی نتیجه‌ی مبهم ارسال باید در مرحله‌ی بعد طراحی شود تا duplicate invoice تولید نشود.

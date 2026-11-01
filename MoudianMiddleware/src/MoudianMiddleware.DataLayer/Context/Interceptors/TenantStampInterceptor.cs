@@ -14,14 +14,17 @@ namespace MoudianMiddleware.DataLayer.Context.Interceptors;
 public sealed class TenantStampInterceptor : SaveChangesInterceptor
 {
     private readonly ITenantProvider _tenantProvider;
+    private readonly ITenantScope? _tenantScope;
 
     /// <summary>
-    /// سازنده با تزریق تأمین‌کننده‌ی مستأجر.
+    /// سازنده با تزریق تأمین‌کننده‌ی درخواست و scope صریح.
     /// </summary>
-    /// <param name="tenantProvider">تأمین‌کننده‌ی مستأجر جاری.</param>
-    public TenantStampInterceptor(ITenantProvider tenantProvider)
+    /// <param name="tenantProvider">تأمین‌کننده‌ی مستأجر درخواست HTTP.</param>
+    /// <param name="tenantScope">Scope صریح برای عملیات پس‌زمینه/Seed.</param>
+    public TenantStampInterceptor(ITenantProvider tenantProvider, ITenantScope? tenantScope = null)
     {
         _tenantProvider = tenantProvider;
+        _tenantScope = tenantScope;
     }
 
     /// <inheritdoc />
@@ -50,7 +53,7 @@ public sealed class TenantStampInterceptor : SaveChangesInterceptor
             return;
         }
 
-        var tenantId = _tenantProvider.TenantId;
+        var tenantId = _tenantScope?.TenantId ?? _tenantProvider.TenantId;
 
         foreach (var entry in context.ChangeTracker.Entries<ITenantEntity>())
         {

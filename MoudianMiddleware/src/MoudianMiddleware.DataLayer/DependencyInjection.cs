@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MoudianMiddleware.DataLayer.Abstractions.Repositories;
 using MoudianMiddleware.DataLayer.Context;
 using MoudianMiddleware.DataLayer.Context.Interceptors;
+using MoudianMiddleware.DataLayer.Abstractions;
 using MoudianMiddleware.DataLayer.Repositories;
 using MoudianMiddleware.DataLayer.Seed;
 using UnitOfWorkService = MoudianMiddleware.DataLayer.UnitOfWork.UnitOfWork;
@@ -40,6 +41,7 @@ public static class DependencyInjection
                 "متغیر محیطی ConnectionStrings__Default قرار دهید.");
         }
 
+        services.AddScoped<ITenantScope, TenantScope>();
         services.AddScoped<AuditableEntityInterceptor>();
         services.AddScoped<TenantStampInterceptor>();
 

@@ -45,7 +45,7 @@ public class AuditLog : BaseEntity
     /// <summary>آیا عملیات موفق بود؟</summary>
     public bool IsSuccess { get; set; } = true;
 
-    /// <summary>داده‌ی تکمیلی JSON (همیشه ماسک‌شده؛ بدون کلید/رمز).</summary>
+    /// <summary>داده‌ی تکمیلی JSON؛ فقط metadata مجاز/خروجی scrubber، هرگز بدنه‌ی خام مودیان یا credential.</summary>
     public string? AdditionalData { get; set; }
 
     /// <summary>زمان ثبت رویداد (UTC).</summary>

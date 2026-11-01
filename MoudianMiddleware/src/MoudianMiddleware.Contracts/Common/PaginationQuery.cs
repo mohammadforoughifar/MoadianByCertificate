@@ -14,14 +14,22 @@ public class PaginationQuery
     /// <summary>حداکثر اندازه‌ی صفحه (برای جلوگیری از کوئری سنگین).</summary>
     public const int MaxPageSize = 200;
 
+    /// <summary>حداکثر شماره‌ی صفحه برای جلوگیری از سرریز محاسبه‌ی Skip.</summary>
+    public const int MaxPageNumber = 1_000_000;
+
     private int _pageNumber = MinPageNumber;
     private int _pageSize = DefaultPageSize;
 
-    /// <summary>شماره‌ی صفحه (از ۱). مقادیر کوچک‌تر به ۱ اصلاح می‌شوند.</summary>
+    /// <summary>شماره‌ی صفحه (از ۱) با سقف <see cref="MaxPageNumber"/>.</summary>
     public int PageNumber
     {
         get => _pageNumber;
-        set => _pageNumber = value < MinPageNumber ? MinPageNumber : value;
+        set => _pageNumber = value switch
+        {
+            < MinPageNumber => MinPageNumber,
+            > MaxPageNumber => MaxPageNumber,
+            _ => value
+        };
     }
 
     /// <summary>اندازه‌ی صفحه؛ بین ۱ و <see cref="MaxPageSize"/> محدود می‌شود.</summary>

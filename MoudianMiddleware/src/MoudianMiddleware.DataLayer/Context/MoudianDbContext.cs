@@ -23,21 +23,27 @@ namespace MoudianMiddleware.DataLayer.Context;
 /// </remarks>
 public class MoudianDbContext : DbContext
 {
-    private readonly int? _tenantId;
+    private readonly ITenantProvider? _tenantProvider;
+    private readonly ITenantScope? _tenantScope;
 
     /// <summary>
     /// سازنده‌ی Context.
     /// </summary>
     /// <param name="options">تنظیمات EF (Provider، Interceptorها و ...).</param>
-    /// <param name="tenantProvider">تأمین‌کننده‌ی مستأجر جاری؛ در طراحی Migration می‌تواند <c>null</c> باشد.</param>
-    public MoudianDbContext(DbContextOptions<MoudianDbContext> options, ITenantProvider? tenantProvider)
+    /// <param name="tenantProvider">مودی جاری درخواست HTTP؛ در درخواست ناشناس مقدارش null است.</param>
+    /// <param name="tenantScope">مودی صریح برای worker/seed؛ مستقل از query-filter و بدون خاموش‌کردن آن.</param>
+    public MoudianDbContext(
+        DbContextOptions<MoudianDbContext> options,
+        ITenantProvider? tenantProvider,
+        ITenantScope? tenantScope = null)
         : base(options)
     {
-        _tenantId = tenantProvider?.TenantId;
+        _tenantProvider = tenantProvider;
+        _tenantScope = tenantScope;
     }
 
-    /// <summary>شناسه‌ی مستأجر جاری که فیلترهای سراسری به آن ارجاع می‌دهند.</summary>
-    public int? CurrentTenantId => _tenantId;
+    /// <summary>شناسه‌ی مودی صریح، یا مودی درخواست HTTP؛ null باعث فیلتر خالی می‌شود.</summary>
+    public int? CurrentTenantId => _tenantScope?.TenantId ?? _tenantProvider?.TenantId;
 
     /// <summary>مودیان (مستأجرها).</summary>
     public DbSet<Tenant> Tenants => Set<Tenant>();
