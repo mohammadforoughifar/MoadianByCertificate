@@ -33,6 +33,8 @@ MoadianByCertificate/
 ```
 
 > فایل‌های SDK با پسوندهای `.nupkg`، `.rar` و `.zip` عمداً از مخزن حذف و در `.gitignore` مستثنا شده‌اند تا در دانلود ZIP از GitHub نیایند. ساختار SDK که در ادامه توصیف می‌شود مربوط به سورس 2.0.29 بررسی‌شده در snapshot مرجع است؛ آرشیو آن همراه سورس برنامه توزیع نمی‌شود.
+>
+> بسته‌ی `TaxCollectData.Library` نسخه‌ی `2.0.29` در nuget.org منتشر نشده است؛ نسخه‌ی `0.0.34` موجود در برخی feedهای محلی API متفاوتی دارد و جایگزین سازگار این کد نیست. برای restore، در PowerShell از پوشه‌ی `MoudianMiddleware` اسکریپت `.\scripts\Restore-TaxCollectDataSdk.ps1` را اجرا کنید؛ اسکریپت نسخه‌ی 2.0.29 را از GitHub API در feed محلی نادیده‌گرفته‌شده قرار می‌دهد و hash آن را بررسی می‌کند. سپس `dotnet restore .\MoudianMiddleware.sln` را اجرا کنید. هیچ فایل SDK به Git اضافه نمی‌شود.
 
 ساختار درونی `TaxCollectData.Library` (۲۴ پوشه/ناحیه):
 
