@@ -33,6 +33,6 @@ public sealed class ApiKeyAuthenticationHandler(IOptionsMonitor<AuthenticationSc
         var claims = new List<Claim> { new(ApiClaims.TenantId, client.TenantId.ToString()), new(ApiClaims.ApiClientId, client.Id.ToString()),
             new(ApiClaims.RequestsPerMinute, Math.Clamp(client.RequestsPerMinute, 1, 10000).ToString()), new(ClaimTypes.Name, client.Name) };
         foreach (var scope in Enum.GetValues<ApiScope>().Where(scope => scope != ApiScope.None && client.Scopes.HasFlag(scope))) claims.Add(new Claim(ApiClaims.ApiScope, scope.ToString()));
-        return AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme)), Scheme));
+        return AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name)), Scheme.Name));
     }
 }

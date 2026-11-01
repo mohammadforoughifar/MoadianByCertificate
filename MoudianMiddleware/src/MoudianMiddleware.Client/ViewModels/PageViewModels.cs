@@ -59,12 +59,14 @@ public sealed class InvoiceFormViewModel
     public void SetError(string? message) => Error = message;
     public void Load(InvoiceViewModel invoice)
     {
+        ArgumentNullException.ThrowIfNull(invoice);
         InvoiceNumber = invoice.InvoiceNumber; BuyerName = invoice.BuyerName; IssueDate = invoice.IssueDate; Items.Clear();
         foreach (var item in invoice.Items) Items.Add(new InvoiceLineFormModel { Sstid=item.Sstid,Description=item.Description,MeasuringUnitCode=item.MeasuringUnitCode,Quantity=item.Quantity,UnitPrice=item.UnitPrice,Discount=item.DiscountAmount,VatRate=item.VatRate });
         if (Items.Count == 0) Items.Add(new InvoiceLineFormModel());
     }
     public async Task<InvoiceViewModel?> SaveAsync(InvoiceService service, int? id, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(service);
         Error = null; ValidationErrors = Array.Empty<ApiError>();
         var request = new InvoiceWriteRequest
         {

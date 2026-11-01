@@ -6,6 +6,7 @@ public sealed class SafeRequestLoggingMiddleware(RequestDelegate next, ILogger<S
 {
     public async Task InvokeAsync(HttpContext context)
     {
+        ArgumentNullException.ThrowIfNull(context);
         var timer = Stopwatch.StartNew();
         try { await next(context).ConfigureAwait(false); }
         finally

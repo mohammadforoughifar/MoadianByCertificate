@@ -8,6 +8,7 @@ public sealed class ApiExceptionMiddleware(RequestDelegate next, ILogger<ApiExce
 {
     public async Task InvokeAsync(HttpContext context)
     {
+        ArgumentNullException.ThrowIfNull(context);
         try
         {
             await next(context).ConfigureAwait(false);

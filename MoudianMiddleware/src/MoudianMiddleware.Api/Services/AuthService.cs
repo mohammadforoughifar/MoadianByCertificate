@@ -33,6 +33,9 @@ public sealed class AuthService(MoudianDbContext db, IPasswordHasher passwords, 
 
     public async Task<LoginResult> LoginAsync(LoginRequest request, string? ip, string? userAgent, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(request.UserName) || string.IsNullOrWhiteSpace(request.Password))
+            throw new UnauthorizedAccessException("Invalid credentials.");
         var normalized = request.UserName.Trim().ToUpperInvariant();
         var user = await db.Users.IgnoreQueryFilters()
             .Include(x => x.UserTenants).ThenInclude(x => x.Tenant)
@@ -80,6 +83,8 @@ public sealed class AuthService(MoudianDbContext db, IPasswordHasher passwords, 
 
     public async Task<TokenResult> RefreshAsync(RefreshRequest request, string? ip, string? userAgent, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(request.RefreshToken)) throw new UnauthorizedAccessException("Invalid refresh token.");
         var hash = Hash(request.RefreshToken);
         var stored = await db.RefreshTokens.IgnoreQueryFilters().Include(x => x.User).ThenInclude(x => x!.UserTenants).ThenInclude(x => x.Tenant)
             .Include(x => x.User).ThenInclude(x => x!.UserTenants).ThenInclude(x => x.Role).ThenInclude(x => x!.Permissions)
@@ -168,5 +173,5 @@ public sealed class Pbkdf2PasswordHasher : IPasswordHasher
 {
     private const int Iterations = 310_000;
     public string Hash(string password) { var salt=RandomNumberGenerator.GetBytes(16);var hash=Rfc2898DeriveBytes.Pbkdf2(password,salt,Iterations,HashAlgorithmName.SHA256,32);return $"PBKDF2-SHA256${Iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}"; }
-    public bool Verify(string password,string encoded){var parts=encoded.Split('$');if(parts.Length!=4||parts[0]!="PBKDF2-SHA256"||!int.TryParse(parts[1],out var rounds)||rounds<100000||rounds>2000000)return false;try{var salt=Convert.FromBase64String(parts[2]);var expected=Convert.FromBase64String(parts[3]);var actual=Rfc2898DeriveBytes.Pbkdf2(password,salt,rounds,HashAlgorithmName.SHA256,expected.Length);var valid=CryptographicOperations.FixedTimeEquals(actual,expected);CryptographicOperations.ZeroMemory(actual);CryptographicOperations.ZeroMemory(expected);return valid;}catch(FormatException){return false;}}
+    public bool Verify(string password,string encoded){ArgumentNullException.ThrowIfNull(encoded);if (password is null) return false;var parts=encoded.Split('$');if(parts.Length!=4||parts[0]!="PBKDF2-SHA256"||!int.TryParse(parts[1],out var rounds)||rounds<100000||rounds>2000000)return false;try{var salt=Convert.FromBase64String(parts[2]);var expected=Convert.FromBase64String(parts[3]);var actual=Rfc2898DeriveBytes.Pbkdf2(password,salt,rounds,HashAlgorithmName.SHA256,expected.Length);var valid=CryptographicOperations.FixedTimeEquals(actual,expected);CryptographicOperations.ZeroMemory(actual);CryptographicOperations.ZeroMemory(expected);return valid;}catch(FormatException){return false;}}
 }

@@ -8,7 +8,7 @@ using MoudianMiddleware.Client.ViewModels;
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
-var apiBase = new Uri(builder.HostEnvironment.BaseAddress, "api/");
+var apiBase = new Uri(new Uri(builder.HostEnvironment.BaseAddress, UriKind.Absolute), "api/");
 builder.Services.AddAuthorizationCore();
 builder.Services.AddScoped<TokenStore>();
 builder.Services.AddScoped<ClientAuthenticationStateProvider>();
