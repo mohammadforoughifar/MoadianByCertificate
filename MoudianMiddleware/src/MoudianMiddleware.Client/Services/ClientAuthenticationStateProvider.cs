@@ -19,6 +19,7 @@ public sealed class ClientAuthenticationStateProvider(TokenStore tokens) : Authe
 
     public static ClaimsPrincipal ParsePrincipal(string jwt)
     {
+        ArgumentNullException.ThrowIfNull(jwt);
         try
         {
             var parts = jwt.Split('.');

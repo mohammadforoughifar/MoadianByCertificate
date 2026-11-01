@@ -22,7 +22,7 @@ public sealed record ApiClientCreated(ApiClientView Client, string ApiKey);
 public sealed class ApiClientsController(MoudianDbContext db, ITenantProvider tenantProvider) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<ApiClientView>>>> List(CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<ApiClientView>>>> ListAsync(CancellationToken ct)
     {
         var tenant = RequireTenant();
         var clients = await db.ApiClients.AsNoTracking().Where(x => x.TenantId == tenant).OrderBy(x => x.Name)
@@ -31,8 +31,9 @@ public sealed class ApiClientsController(MoudianDbContext db, ITenantProvider te
     }
 
     [HttpPost]
-    public async Task<ActionResult<ApiResponse<ApiClientCreated>>> Create(ApiClientCreateRequest request, CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<ApiClientCreated>>> CreateAsync(ApiClientCreateRequest request, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 200 || request.Scopes == ApiScope.None || request.RequestsPerMinute is < 1 or > 10000 || request.ExpiresAt is { } expiresAt && expiresAt <= DateTimeOffset.UtcNow)
             throw new FluentValidation.ValidationException("API key name, scopes, and rate limit are invalid.");
         var allowed = ApiScope.InvoiceWrite | ApiScope.InvoiceRead | ApiScope.BaseInfoRead | ApiScope.InquiryRead | ApiScope.PaymentWrite;
@@ -48,7 +49,7 @@ public sealed class ApiClientsController(MoudianDbContext db, ITenantProvider te
     }
 
     [HttpDelete("{id:int}")]
-    public async Task<ActionResult<ApiResponse<object>>> Revoke(int id, CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<object>>> RevokeAsync(int id, CancellationToken ct)
     {
         var client = await db.ApiClients.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == RequireTenant(), ct).ConfigureAwait(false)
             ?? throw new MoudianMiddleware.CoreLayer.Common.Exceptions.EntityNotFoundException(nameof(ApiClient), id);

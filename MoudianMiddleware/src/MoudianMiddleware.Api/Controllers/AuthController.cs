@@ -12,21 +12,23 @@ namespace MoudianMiddleware.Api.Controllers;
 public sealed class AuthController(IAuthService auth) : ControllerBase
 {
     [AllowAnonymous, EnableRateLimiting("AuthByIp"), HttpPost("login")]
-    public async Task<ActionResult<ApiResponse<LoginResult>>> Login(LoginRequest request, CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<LoginResult>>> LoginAsync(LoginRequest request, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
         var result = await auth.LoginAsync(request, RemoteIp, UserAgent, ct).ConfigureAwait(false);
         return Ok(new ApiResponse<LoginResult> { IsSuccess = true, Code = ApiResponseCodes.Ok, Data = result, TraceId = HttpContext.TraceIdentifier });
     }
 
     [AllowAnonymous, EnableRateLimiting("AuthByIp"), HttpPost("refresh")]
-    public async Task<ActionResult<ApiResponse<TokenResult>>> Refresh(RefreshRequest request, CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<TokenResult>>> RefreshAsync(RefreshRequest request, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
         var result = await auth.RefreshAsync(request, RemoteIp, UserAgent, ct).ConfigureAwait(false);
         return Ok(new ApiResponse<TokenResult> { IsSuccess = true, Code = ApiResponseCodes.Ok, Data = result, TraceId = HttpContext.TraceIdentifier });
     }
 
     [Authorize, HttpPost("select-tenant/{tenantId:int}")]
-    public async Task<ActionResult<ApiResponse<TokenResult>>> SelectTenant(int tenantId, CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<TokenResult>>> SelectTenantAsync(int tenantId, CancellationToken ct)
     {
         if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)) return Unauthorized();
         var result = await auth.SelectTenantAsync(userId, tenantId, RemoteIp, UserAgent, ct).ConfigureAwait(false);

@@ -19,7 +19,7 @@ public static class JalaliDateFormatter
     {
         value = default;
         var text = NormalizeDigits(input?.Trim() ?? string.Empty);
-        var parts = text.Split('/', '-', '.', StringSplitOptions.TrimEntries);
+        var parts = text.Split(new[] { '/', '-', '.' }, StringSplitOptions.TrimEntries);
         if (parts.Length != 3 || !int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var year)
             || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var month)
             || !int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out var day)) return false;

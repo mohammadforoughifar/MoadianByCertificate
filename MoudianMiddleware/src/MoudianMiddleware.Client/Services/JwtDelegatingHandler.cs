@@ -6,6 +6,7 @@ public sealed class JwtDelegatingHandler(TokenStore tokens, RefreshCoordinator r
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(request);
         var path = request.RequestUri?.ToString() ?? string.Empty;
         if (path.Contains("auth/login", StringComparison.OrdinalIgnoreCase) || path.Contains("auth/refresh", StringComparison.OrdinalIgnoreCase))
             return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);

@@ -11,7 +11,10 @@ namespace MoudianMiddleware.Client.Services;
 public sealed class InvoiceService(BackendApi api)
 {
     public Task<PagedResult<InvoiceViewModel>> ListAsync(InvoiceListQuery query, CancellationToken ct = default)
-        => api.GetAsync<PagedResult<InvoiceViewModel>>($"invoices?pageNumber={query.PageNumber}&pageSize={query.PageSize}&status={query.Status}&fromDate={Uri.EscapeDataString(query.FromDate?.ToString("O") ?? string.Empty)}&toDate={Uri.EscapeDataString(query.ToDate?.ToString("O") ?? string.Empty)}", ct);
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return api.GetAsync<PagedResult<InvoiceViewModel>>($"invoices?pageNumber={query.PageNumber}&pageSize={query.PageSize}&status={query.Status}&fromDate={Uri.EscapeDataString(query.FromDate?.ToString("O") ?? string.Empty)}&toDate={Uri.EscapeDataString(query.ToDate?.ToString("O") ?? string.Empty)}", ct);
+    }
     public Task<InvoiceViewModel> GetAsync(int id, CancellationToken ct = default) => api.GetAsync<InvoiceViewModel>($"invoices/{id}", ct);
     public Task<InvoiceViewModel> CreateAsync(InvoiceWriteRequest request, CancellationToken ct = default) => api.PostAsync<InvoiceWriteRequest, InvoiceViewModel>("invoices", request, ct);
     public Task<InvoiceViewModel> UpdateAsync(int id, InvoiceWriteRequest request, CancellationToken ct = default) => api.PutAsync<InvoiceWriteRequest, InvoiceViewModel>($"invoices/{id}/draft", request, ct);
