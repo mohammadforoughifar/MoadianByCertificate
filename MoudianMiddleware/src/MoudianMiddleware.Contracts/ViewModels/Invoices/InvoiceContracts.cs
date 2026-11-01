@@ -142,6 +142,22 @@ public sealed class InvoiceViewModel
     public InvoiceStatus Status { get; init; }
     /// <summary>نام خریدار snapshot شده.</summary>
     public string BuyerName { get; init; } = string.Empty;
+    /// <summary>زمان صدور.</summary>
+    public DateTimeOffset IssueDate { get; init; }
+    /// <summary>نوع صورتحساب.</summary>
+    public InvoiceType Type { get; init; }
+    /// <summary>کد الگو.</summary>
+    public int PatternCode { get; init; }
+    /// <summary>کد موضوع.</summary>
+    public int SubjectCode { get; init; }
+    /// <summary>اقلام جهت نمایش و ویرایش پیش‌نویس.</summary>
+    public IReadOnlyList<InvoiceItemViewModel> Items { get; init; } = Array.Empty<InvoiceItemViewModel>();
+    /// <summary>آخرین کد خطای ثبت‌شده با پیام امن.</summary>
+    public string? LastErrorCode { get; init; }
+    /// <summary>آخرین پیام خطای سامانه، پس از scrub.</summary>
+    public string? LastErrorMessage { get; init; }
+    /// <summary>تاریخچه metadata-only ارسال‌ها و استعلام‌ها.</summary>
+    public IReadOnlyList<InvoiceSubmissionViewModel> Submissions { get; init; } = Array.Empty<InvoiceSubmissionViewModel>();
     /// <summary>جمع ناخالص قبل از تخفیف.</summary>
     public long TotalBeforeDiscount { get; init; }
     /// <summary>جمع تخفیف.</summary>
@@ -156,4 +172,48 @@ public sealed class InvoiceViewModel
     public long TotalAmount { get; init; }
     /// <summary>آیا نتیجه‌ی قبلی به‌صورت idempotent بازگردانده شد؟</summary>
     public bool IsIdempotentReplay { get; init; }
+}
+
+/// <summary>یک قلم قابل‌نمایش در جزئیات صورتحساب.</summary>
+public sealed class InvoiceItemViewModel
+{
+    /// <summary>شناسه کالا/خدمت.</summary>
+    public string Sstid { get; init; } = string.Empty;
+    /// <summary>شرح قلم.</summary>
+    public string Description { get; init; } = string.Empty;
+    /// <summary>کد واحد.</summary>
+    public string MeasuringUnitCode { get; init; } = string.Empty;
+    /// <summary>تعداد.</summary>
+    public decimal Quantity { get; init; }
+    /// <summary>قیمت واحد ریالی.</summary>
+    public decimal UnitPrice { get; init; }
+    /// <summary>تخفیف ریالی.</summary>
+    public long DiscountAmount { get; init; }
+    /// <summary>نرخ مالیات درصدی.</summary>
+    public decimal VatRate { get; init; }
+}
+
+/// <summary>خلاصه‌ی امن تلاش ارسال/استعلام بدون بدنه‌ی خام SDK.</summary>
+public sealed class InvoiceSubmissionViewModel
+{
+    /// <summary>شماره تلاش.</summary>
+    public int AttemptNumber { get; init; }
+    /// <summary>نوع اقدام.</summary>
+    public SubmissionAction Action { get; init; }
+    /// <summary>نتیجه اقدام.</summary>
+    public SubmissionStatus Status { get; init; }
+    /// <summary>وضعیت گزارش‌شده توسط سامانه.</summary>
+    public string? MoadianStatus { get; init; }
+    /// <summary>کد خطای امن.</summary>
+    public string? ErrorCode { get; init; }
+    /// <summary>پیام خطای scrub شده.</summary>
+    public string? ErrorMessage { get; init; }
+    /// <summary>تعداد هشدارها.</summary>
+    public int WarningCount { get; init; }
+    /// <summary>زمان آغاز.</summary>
+    public DateTimeOffset StartedAt { get; init; }
+    /// <summary>زمان پایان.</summary>
+    public DateTimeOffset? CompletedAt { get; init; }
+    /// <summary>مدت اجرا میلی‌ثانیه.</summary>
+    public int? DurationMs { get; init; }
 }

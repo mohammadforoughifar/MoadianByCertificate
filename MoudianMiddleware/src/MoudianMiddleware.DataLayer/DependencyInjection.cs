@@ -21,7 +21,7 @@ public static class DependencyInjection
     public const string ConnectionStringName = "Default";
 
     /// <summary>
-    /// افزودن DbContext، Repositoryها، واحد کار و Seeder به سرویس‌ها.
+    /// افزودن DbContext، Repositoryها، واحد کار و Seeder؛ رشته‌ی اتصال فقط از MOUDIAN__CONNECTION_STRING خوانده می‌شود.
     /// </summary>
     /// <param name="services">مجموعه‌ی سرویس‌ها.</param>
     /// <param name="configuration">تنظیمات برنامه (برای رشته‌ی اتصال).</param>
@@ -32,13 +32,12 @@ public static class DependencyInjection
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
 
-        var connectionString = configuration.GetConnectionString(ConnectionStringName);
+        var connectionString = Environment.GetEnvironmentVariable("MOUDIAN__CONNECTION_STRING");
 
         if (string.IsNullOrWhiteSpace(connectionString))
         {
             throw new InvalidOperationException(
-                $"رشته‌ی اتصال «{ConnectionStringName}» تنظیم نشده است. آن را در appsettings یا " +
-                "متغیر محیطی ConnectionStrings__Default قرار دهید.");
+                "متغیر محیطی MOUDIAN__CONNECTION_STRING تنظیم نشده است.");
         }
 
         services.AddScoped<ITenantScope, TenantScope>();

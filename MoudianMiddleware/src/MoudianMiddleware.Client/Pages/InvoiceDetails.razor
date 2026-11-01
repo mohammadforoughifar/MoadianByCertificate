@@ -1,0 +1,36 @@
+@page "/invoices/{Id:int}"
+@attribute [Authorize]
+@inject InvoiceService Service
+<PageTitle>جزئیات صورتحساب</PageTitle>
+<h1>جزئیات صورتحساب</h1>
+<LoadingPanel Loading="Loading" Error="Error" />
+@if (Invoice is not null)
+{
+    <div class="card"><div class="toolbar"><h2>@Invoice.InvoiceNumber</h2><span class="badge">@Invoice.Status</span></div><p>خریدار: @Invoice.BuyerName</p><p>شناسه مالیاتی: @(Invoice.TaxId ?? "—")</p><p>شناسه پیگیری: @(Invoice.Uid ?? "—")</p><p>جمع نهایی: @JalaliDateFormatter.ToPersianDigits(Invoice.TotalAmount.ToString("N0", Fa)) ریال</p>
+        @if (!string.IsNullOrWhiteSpace(Invoice.LastErrorMessage)){<div class="notice error"><strong>@Invoice.LastErrorCode</strong><p>@Invoice.LastErrorMessage</p></div>}
+        @if (Invoice.Submissions.Count > 0){<h2>تاریخچه ارسال و استعلام</h2><ul>@foreach(var attempt in Invoice.Submissions){<li>تلاش @attempt.AttemptNumber — @attempt.Action / @attempt.Status — @attempt.MoadianStatus — @attempt.ErrorCode: @attempt.ErrorMessage</li>}</ul>}
+        @if (ActionError is not null) { <div class="notice error">@ActionError</div> }
+        @if (ActionResult is not null) { <div class="notice">@ActionResult</div> }
+        <div class="toolbar">
+            <PermissionView Permission="@Permissions.InvoiceEdit"><a class="button secondary" href="/invoices/@Id/edit">ویرایش پیش‌نویس</a></PermissionView>
+            <PermissionView Permission="@Permissions.InvoiceSend"><button @onclick="SendAsync">ارسال</button></PermissionView>
+            <PermissionView Permission="@Permissions.InquiryExecute"><button class="secondary" @onclick="InquiryAsync">استعلام</button></PermissionView>
+            <PermissionView Permission="@Permissions.InvoiceRetry"><ConfirmDanger Text="ارسال مجدد" Prompt="فقط صورتحساب آماده ارسال دوباره ارسال می‌شود. ادامه می‌دهید؟" Confirmed="ResendAsync" /></PermissionView>
+        </div>
+    </div>
+}
+@code {
+    [Parameter] public int Id { get; set; }
+    private InvoiceViewModel? Invoice;
+    private bool Loading;
+    private string? Error;
+    private string? ActionError;
+    private string? ActionResult;
+    private static readonly System.Globalization.CultureInfo Fa = new("fa-IR");
+    protected override async Task OnParametersSetAsync() { Loading = true; try { Invoice = await Service.GetAsync(Id); } catch (Exception ex) { Error = ex.Message; } finally { Loading = false; } }
+    private Task SendAsync() => RunActionAsync(() => Service.SendAsync(Id), "درخواست ارسال ثبت شد.");
+    private Task InquiryAsync() => RunActionAsync(() => Service.InquiryAsync(Id), "نتیجه استعلام دریافت شد.");
+    private Task ResendAsync() => RunActionAsync(() => Service.ResendAsync(Id), "درخواست ارسال مجدد انجام شد.");
+    private async Task RunActionAsync(Func<Task<object>> action, string success)
+    { ActionError = null; ActionResult = null; try { var result = await action(); ActionResult = success + " " + result.ToString(); Invoice = await Service.GetAsync(Id); } catch (Exception ex) { ActionError = ex.Message; } }
+}

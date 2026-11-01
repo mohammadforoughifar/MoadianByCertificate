@@ -1,0 +1,36 @@
+@page "/moadian-settings"
+@implements IDisposable
+@attribute [Authorize]
+@inject MoadianSettingsViewModel Vm
+@inject MoadianSettingsService Service
+@inject NavigationManager Navigation
+<PageTitle>تنظیمات مودیان</PageTitle>
+<h1>تنظیمات مودیان</h1>
+<LoadingPanel Loading="Vm.IsLoading" Error="Vm.Error" />
+<PermissionView Permission="@Permissions.MoadianEdit">
+<div class="card"><h2>اتصال و محیط</h2>
+<div class="grid cols-2"><label>شناسه حافظه مالیاتی<input @bind="MemoryId" /></label><label>شماره اقتصادی<input @bind="EconomicCode" /></label><label>شناسه ملی<input @bind="NationalId" /></label><label>کد شعبه<input @bind="BranchCode" /></label><label>محیط<select @bind="Environment"><option value="Sandbox">آزمایشی</option><option value="Production">عملیاتی</option></select></label><label>حالت امضا<select @bind="SignatureMode"><option value="Pkcs8Certificate">کلید PKCS#8 و گواهی</option><option value="Pkcs11Token">توکن سخت‌افزاری</option><option value="PrivateKeyOnly">فقط کلید (آزمایشی)</option></select></label><label>نشانی Sandbox<input @bind="SandboxUrl" /></label><label>نشانی Production<input @bind="ProductionUrl" /></label></div>
+<div class="form-actions"><button @onclick="SaveSettingsAsync">ذخیره تنظیمات</button></div>
+</div>
+<div class="card"><h2>گواهی و کلید خصوصی</h2><p class="notice">مواد محرمانه فقط به API ارسال می‌شوند و در مرورگر ذخیره‌سازی پایدار ندارند. ارسال فقط روی HTTPS مجاز است.</p>
+<label>گواهی عمومی (.cer/.crt/.pem)<InputFile @key="CertificateInputVersion" OnChange="ReadCertificateAsync" accept=".cer,.crt,.pem" /></label>
+<label>کلید خصوصی PKCS#8 PEM<InputFile @key="KeyInputVersion" OnChange="ReadPrivateKeyAsync" accept=".pem,.key" /></label>
+@if (!string.IsNullOrWhiteSpace(CertificateName)){<p>گواهی انتخاب‌شده: @CertificateName</p>}
+@if (!string.IsNullOrWhiteSpace(KeyName)){<p>کلید انتخاب‌شده: @KeyName (در حافظه موقت صفحه)</p>}
+@if (!string.IsNullOrWhiteSpace(Error)){<div class="notice error">@Error</div>}
+<button @onclick="UploadAsync" disabled="@(string.IsNullOrWhiteSpace(PrivateKeyPem) && string.IsNullOrWhiteSpace(CertificateBase64))">ارسال امن و پاک‌سازی</button>
+@if (Vm.Credential is not null){<p class="muted">گواهی ثبت شده: @Vm.Credential.HasCertificate؛ کلید رمزنگاری‌شده موجود: @Vm.Credential.HasPrivateKey</p>}
+</div>
+</PermissionView>
+@code {
+private string MemoryId=""; private string EconomicCode=""; private string? NationalId; private string? BranchCode; private string? SandboxUrl; private string? ProductionUrl;
+private MoadianEnvironment Environment=MoadianEnvironment.Sandbox; private MoadianSignatureMode SignatureMode=MoadianSignatureMode.Pkcs8Certificate;
+private string? PrivateKeyPem; private string? CertificateBase64; private string? CertificateName; private string? KeyName; private string? Error; private int KeyInputVersion; private int CertificateInputVersion;
+protected override async Task OnInitializedAsync(){await Vm.LoadAsync();if(Vm.Settings is {} s){MemoryId=s.MemoryId;EconomicCode=s.EconomicCode;NationalId=s.NationalId;BranchCode=s.BranchCode;SandboxUrl=s.SandboxBaseUrl;ProductionUrl=s.ProductionBaseUrl;Environment=s.ActiveEnvironment;SignatureMode=s.SignatureMode;}}
+private async Task SaveSettingsAsync(){try{await Service.SaveAsync(new MoadianSettingWriteRequest{MemoryId=MemoryId,EconomicCode=EconomicCode,NationalId=NationalId,BranchCode=BranchCode,SandboxBaseUrl=SandboxUrl,ProductionBaseUrl=ProductionUrl,ActiveEnvironment=Environment,SignatureMode=SignatureMode});Error="تنظیمات ذخیره شد.";}catch(Exception ex){Error=ex.Message;}}
+private async Task ReadCertificateAsync(InputFileChangeEventArgs args){try{var bytes=await ReadFileAsync(args);CertificateBase64=Convert.ToBase64String(bytes);CertificateName=args.File.Name;System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes);}catch(Exception ex){Error=ex.Message;}}
+private async Task ReadPrivateKeyAsync(InputFileChangeEventArgs args){try{var bytes=await ReadFileAsync(args);PrivateKeyPem=System.Text.Encoding.UTF8.GetString(bytes);KeyName=args.File.Name;System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes);}catch(Exception ex){Error=ex.Message;}}
+private static async Task<byte[]> ReadFileAsync(InputFileChangeEventArgs args){await using var stream=args.File.OpenReadStream(2*1024*1024);using var memory=new MemoryStream();await stream.CopyToAsync(memory);return memory.ToArray();}
+private async Task UploadAsync(){Error=null;if(new Uri(Navigation.Uri).Scheme!=Uri.UriSchemeHttps){Error="بارگذاری اطلاعات محرمانه فقط از HTTPS مجاز است.";return;}try{var request=new SaveMoadianCredentialRequest{PrivateKeyPem=PrivateKeyPem,CertificateBase64=CertificateBase64};await Service.SaveCredentialAsync(request);Error="مواد امضا به سرور ارسال و ذخیره شد.";}catch(Exception ex){Error=ex.Message;}finally{PrivateKeyPem=null;CertificateBase64=null;KeyName=null;CertificateName=null;KeyInputVersion++;CertificateInputVersion++;StateHasChanged();}}
+public void Dispose(){PrivateKeyPem=null;CertificateBase64=null;}
+}

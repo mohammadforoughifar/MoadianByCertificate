@@ -16,15 +16,17 @@ namespace MoudianMiddleware.CoreLayer;
 /// <summary>ثبت سرویس‌ها و validatorهای CoreLayer.</summary>
 public static class DependencyInjection
 {
-    /// <summary>ثبت سرویس‌های Core و اتصال تنظیمات رمزنگاری به بخش SecretProtection.</summary>
+    /// <summary>ثبت سرویس‌های Core؛ KEK فقط مستقیماً از Environment Variables خوانده می‌شود.</summary>
     /// <param name="services">مجموعه‌ی سرویس‌ها.</param>
-    /// <param name="configuration">پیکربندی میزبان؛ کلیدهای رمزنگاری باید از secret store تأمین شوند.</param>
+    /// <param name="configuration">پیکربندی میزبان (برای سازگاری امضا نگه داشته شده؛ KEK از آن خوانده نمی‌شود).</param>
     /// <returns>همان مجموعه برای زنجیره‌سازی.</returns>
     public static IServiceCollection AddCoreLayer(this IServiceCollection services, IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
-        services.Configure<SecretProtectionOptions>(configuration.GetSection(SecretProtectionOptions.SectionName));
+        var options = SecretProtectionOptions.FromEnvironment();
+        services.AddSingleton(options);
+        services.AddSingleton<Microsoft.Extensions.Options.IOptions<SecretProtectionOptions>>(Microsoft.Extensions.Options.Options.Create(options));
         return services.AddCoreLayer();
     }
 

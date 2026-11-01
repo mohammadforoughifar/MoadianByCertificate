@@ -31,6 +31,15 @@ public sealed class InvoiceRepository : GenericRepository<Invoice>, IInvoiceRepo
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
     /// <inheritdoc />
+    public Task<Invoice?> GetWithDetailsForUpdateAsync(int id, CancellationToken cancellationToken = default)
+        => Set
+            .Include(x => x.Items)
+            .Include(x => x.Payments)
+            .Include(x => x.Submissions)
+            .Include(x => x.Customer)
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    /// <inheritdoc />
     public Task<Invoice?> GetByExternalIdAsync(string externalId, CancellationToken cancellationToken = default)
         => Set.AsNoTracking()
             .FirstOrDefaultAsync(x => x.ExternalId == externalId, cancellationToken);
