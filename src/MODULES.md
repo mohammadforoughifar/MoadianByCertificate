@@ -37,5 +37,5 @@
 
 ## راهنمای تغییرات
 - **افزودن فیلد/نقش جدید در یک ماژول:** فقط پوشه‌ی همان ماژول در هر سه لایه (Controller/Entity/Page) + یک `dotnet ef migrations add`
-- **جست‌وجو:** `grep -r "نام" src/Inventory.Api/Controllers/Hr/`
-- بعد از هر تغییر: `dotnet build Inventory.sln` (باید 0 خطا باشد)
+- **جست‌وجو:** `grep -r "نام" src/TotallSoftwareForoughAriya.Api/Controllers/Hr/`
+- بعد از هر تغییر: `dotnet build TotallSoftwareForoughAriya.sln` (باید 0 خطا باشد)

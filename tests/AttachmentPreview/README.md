@@ -1,6 +1,6 @@
 # Attachment preview verification — v3
 
-This is a **test-only** harness. Do not publish `AttachmentPreview.csproj` as your website. The production implementation is in `src/Inventory.Api`, `src/Inventory.Client` and `src/Inventory.Shared` and requires no Python, Playwright, installed Office, LibreOffice, converter executable or cloud preview service.
+This is a **test-only** harness. Do not publish `AttachmentPreview.csproj` as your website. The production implementation is in `src/TotallSoftwareForoughAriya.Api`, `src/TotallSoftwareForoughAriya.Client` and `src/TotallSoftwareForoughAriya.Shared` and requires no Python, Playwright, installed Office, LibreOffice, converter executable or cloud preview service.
 
 ## What is actually exercised
 
@@ -22,8 +22,8 @@ This is **not** a claim of exhaustive Office fidelity, every file variant, Windo
 Requires .NET 8 SDK. Normal commands (PowerShell or shell):
 
 ```text
-dotnet restore inventory/Inventory.sln
-dotnet build inventory/Inventory.sln -c Release
+dotnet restore inventory/TotallSoftwareForoughAriya.sln
+dotnet build inventory/TotallSoftwareForoughAriya.sln -c Release
 dotnet restore inventory/tests/AttachmentPreview/AttachmentPreview.csproj
 dotnet build inventory/tests/AttachmentPreview/AttachmentPreview.csproj -c Release
 dotnet run --project inventory/tests/AttachmentPreview -c Release --no-build -- --verify

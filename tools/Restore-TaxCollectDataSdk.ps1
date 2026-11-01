@@ -40,4 +40,4 @@ if ($actualBlobSha -ne $expectedBlobSha) {
 
 [IO.File]::WriteAllBytes($packagePath, $bytes)
 Write-Host "Restored verified SDK 2.0.29 package to $packagePath"
-Write-Host 'Now run: dotnet restore .\Inventory.sln'
+Write-Host 'Now run: dotnet restore .\TotallSoftwareForoughAriya.sln'

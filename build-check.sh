@@ -8,11 +8,11 @@ cd "$(dirname "$0")"
 TARGET="${1:-All}"
 FLAGS=(-c Debug -m:1 -p:MaxCpuCount=1 -p:RunAnalyzers=false -p:EnableNETAnalyzers=false)
 case "$TARGET" in
-  Shared) dotnet build src/Inventory.Shared/Inventory.Shared.csproj --no-restore "${FLAGS[@]}";;
-  Api)    dotnet build src/Inventory.Api/Inventory.Api.csproj --no-restore "${FLAGS[@]}";;
-  Client) dotnet build src/Inventory.Client/Inventory.Client.csproj --no-restore "${FLAGS[@]}";;
+  Shared) dotnet build src/TotallSoftwareForoughAriya.Shared/TotallSoftwareForoughAriya.Shared.csproj --no-restore "${FLAGS[@]}";;
+  Api)    dotnet build src/TotallSoftwareForoughAriya.Api/TotallSoftwareForoughAriya.Api.csproj --no-restore "${FLAGS[@]}";;
+  Client) dotnet build src/TotallSoftwareForoughAriya.Client/TotallSoftwareForoughAriya.Client.csproj --no-restore "${FLAGS[@]}";;
   All)
-    dotnet build src/Inventory.Api/Inventory.Api.csproj --no-restore "${FLAGS[@]}"
-    dotnet build src/Inventory.Client/Inventory.Client.csproj --no-restore "${FLAGS[@]}"
+    dotnet build src/TotallSoftwareForoughAriya.Api/TotallSoftwareForoughAriya.Api.csproj --no-restore "${FLAGS[@]}"
+    dotnet build src/TotallSoftwareForoughAriya.Client/TotallSoftwareForoughAriya.Client.csproj --no-restore "${FLAGS[@]}"
     ;;
 esac

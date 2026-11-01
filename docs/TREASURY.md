@@ -217,7 +217,7 @@ Migration: `Migrations/20260906040427_AddTreasuryModule.cs` — مانند سا�
 اسکریپت مستقل: `sql/treasury/AddTreasuryModule.sql` · نسخه‌ی اصلی EF: `sql/treasury/AddTreasuryModule.original.cs.txt`.
 
 ```bash
-dotnet ef database update --project src/Inventory.Api
+dotnet ef database update --project src/TotallSoftwareForoughAriya.Api
 # یا اجرای مستقیم sql/treasury/AddTreasuryModule.sql روی SQL Server
 ```
 

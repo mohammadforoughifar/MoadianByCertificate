@@ -1,16 +1,20 @@
-﻿# سورس مرجع یکپارچه
+# راهنمای شروع سریع — `TotallSoftwareForoughAriya`
 
-مسیر مرجع توسعه و Build فقط این است:
-`TotallCollectionSoftware/inventory/Inventory.sln`
+مسیر مرجع توسعه و Build در ریشه مخزن قرار دارد:
 
-کد مرجع در `inventory/src` است. قابلیت‌های MindFlow، ویزیتوری، کارتابل و پرداخت ترکیبی از مسیر اصلی با بهبودهای گزارش کار، نامه، چاپ و ایمیل inventory یکپارچه شده‌اند. مبنا: a33e2a991b2f15f67038982ed89c3f85f0f954c7 به‌علاوهٔ ادغام محلی بررسی‌شدهٔ v23.
+- **فایل Solution:** `TotallSoftwareForoughAriya.sln`
+- **پروژه مدل‌های مشترک:** `src/TotallSoftwareForoughAriya.Shared/TotallSoftwareForoughAriya.Shared.csproj`
+- **پروژه سرور (Web API):** `src/TotallSoftwareForoughAriya.Api/TotallSoftwareForoughAriya.Api.csproj`
+- **پروژه کلاینت (Blazor WASM):** `src/TotallSoftwareForoughAriya.Client/TotallSoftwareForoughAriya.Client.csproj`
+- **نام دیتابیس پیش‌فرض SQL Server:** `TotallSoftwareForoughAriya`
 
-این یک پیش‌نویس محلی است؛ روی main پوش نشده و هیچ فایل مخزن راه دور حذف نشده است.
+## بررسی بیلد و راه‌اندازی در ویندوز
 
-- Solution قدیمیِ پوشهٔ بالاتر اکنون فقط به همان پروژه‌های inventory/src اشاره می‌کند؛ برنامهٔ مستقلی نمی‌سازد.
-- سورس قدیمیِ src بالاتر فعلاً برای مقایسه باقی است، ولی Build مستقیم پروژه‌های آن عمداً با راهنمای روشن متوقف می‌شود. تغییرات جدید را فقط در inventory/src انجام دهید.
-- اسکریپت‌های قدیمی پوشهٔ بالاتر که src را مستقیم Build می‌کنند هنوز منتقل نشده‌اند؛ از اسکریپت بررسی جدید کنار Solution مرجع استفاده کنید.
-- ZIPهای قدیمی ذخیره‌شده در ریشهٔ مخزن، مرجع سورس نیستند و خودکار به‌روز نمی‌شوند.
-- حذف نهایی سورس قدیمی و ZIPهای قدیمی مخزن نیازمند تصمیم جداگانهٔ تیم است؛ در این پیش‌نویس انجام نشده است.
-
-برای اولین بررسی ویندوز، پوشه را در مسیری کوتاه مانند C:\Work\UnifiedInventory استخراج کنید و فایل verify-unified.bat را در inventory اجرا کنید. .NET 8 SDK لازم است. فایل‌های bin/obj و کلیدها/داده‌های خصوصی نصب در بستهٔ سورس قرار نمی‌گیرند. تنظیمات اتصال پایگاه داده و کلیدهای نصب خود را جداگانه حفظ کنید. Build به معنای تأیید مهاجرت SQL واقعی، رابط مرورگر، چاپ/PDF یا همهٔ گردش‌های تجاری نیست.
+1. در ریشه مخزن فایل `verify-unified.bat` یا دستورات زیر را اجرا کنید (`.NET 8 SDK` الزامی است):
+   ```powershell
+   dotnet restore TotallSoftwareForoughAriya.sln
+   dotnet build TotallSoftwareForoughAriya.sln -c Release --no-restore
+   ```
+2. رشته اتصال دیتابیس در `src/TotallSoftwareForoughAriya.Api/appsettings.json` (و در محیط توسعه `appsettings.Development.json`) به صورت پیش‌فرض روی دیتابیس **`TotallSoftwareForoughAriya`** تنظیم شده است.
+3. برای استقرار تک‌سروره در ویندوز از `.\deploy-single.ps1` یا `publish-server.bat` و برای ارتقای مستقیم دیتابیس از `update-database.bat` استفاده کنید.
+4. مستند کامل ماژول جدید سامانه مودیان (مبتنی بر گواهی امضا و `TaxCollectData.Library 2.0.29`) در مسیر `docs/MOADIAN-SDK-2.0.29-GUIDE-FA.md` قرار دارد.

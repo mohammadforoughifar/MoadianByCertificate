@@ -15,7 +15,7 @@ var originalHttpsDir = Environment.GetEnvironmentVariable("HTTPS_DATA_DIR");
 var originalHttpsPort = Environment.GetEnvironmentVariable("HTTPS_PORT");
 try
 {
-    var project = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/Inventory.Api"));
+    var project = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/TotallSoftwareForoughAriya.Api"));
     Directory.SetCurrentDirectory(project);
     Environment.SetEnvironmentVariable("ConnectionStrings__Default", "Server=env-test;Database=OtherDb;Integrated Security=True");
     using (var db = new Inventory.Api.Data.DesignTimeDbContextFactory().CreateDbContext(new[] { "--Database:Provider", "SqlServer" }))

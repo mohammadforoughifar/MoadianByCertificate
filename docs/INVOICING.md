@@ -146,6 +146,6 @@ Migration: `Migrations/20260906033059_AddInvoicingModule.cs` — مانند سا
 نسخه‌ی اصلی EF برای مرجع: `sql/invoicing/AddInvoicingModule.original.cs.txt`.
 
 ```bash
-dotnet ef database update --project src/Inventory.Api
+dotnet ef database update --project src/TotallSoftwareForoughAriya.Api
 # یا اجرای مستقیم sql/invoicing/AddInvoicingModule.sql روی SQL Server
 ```

@@ -162,7 +162,7 @@ public class OutgoingLettersController : RbacControllerBase
             return BadRequest(new
             {
                 message = ex.GetBaseException().Message,
-                detail = "ثبت نامه صادره انجام نشد؛ جزئیات کامل در لاگ Inventory.Api ثبت شد."
+                detail = "ثبت نامه صادره انجام نشد؛ جزئیات کامل در لاگ TotallSoftwareForoughAriya.Api ثبت شد."
             });
         }
     }

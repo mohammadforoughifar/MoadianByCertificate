@@ -4,11 +4,11 @@ cd /d "%~dp0"
 
 set "ASPNETCORE_ENVIRONMENT=Production"
 set "ASPNETCORE_URLS=http://192.168.30.104:8181"
-set "ConnectionStrings__Default=Server=.;Database=InventoryDb;Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False"
+set "ConnectionStrings__Default=Server=.;Database=TotallSoftwareForoughAriya;Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False"
 set "DOTNET_PRINT_TELEMETRY_MESSAGE=false"
 
-if not exist "src\Inventory.Api\Inventory.Api.csproj" (
-  echo ERROR: Run this script from the inventory project folder.
+if not exist "src\TotallSoftwareForoughAriya.Api\TotallSoftwareForoughAriya.Api.csproj" (
+  echo ERROR: Run this script from the TotallSoftwareForoughAriya root folder.
   pause
   exit /b 1
 )
@@ -24,9 +24,7 @@ if exist "totall.pid" (
   del "totall.pid" >nul 2>nul
 )
 
-REM همیشه سورس فعلی را Publish کن. نسخهٔ پیشین فقط وقتی Inventory.Api.exe وجود نداشت
-REM Publish می‌کرد؛ بنابراین پس از تغییرات مودیان، start.bat همان DLL/کلاینت قدیمی را
-REM بالا می‌آورد و نتیجهٔ اجرای برنامه با سورس مخزن متفاوت می‌شد.
+REM همیشه سورس فعلی را Publish کن تا خروجی اجرایی دقیقاً منطبق بر آخرین سورس مخزن باشد.
 echo Publishing current source...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0deploy-single.ps1"
 if errorlevel 1 (
@@ -36,7 +34,7 @@ if errorlevel 1 (
 )
 
 if not exist "logs" mkdir "logs"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=Start-Process -FilePath '%~dp0publish\app\Inventory.Api.exe' -WorkingDirectory '%~dp0publish\app' -PassThru -WindowStyle Hidden -RedirectStandardOutput '%~dp0logs\server.log' -RedirectStandardError '%~dp0logs\server-error.log'; Set-Content -Path '%~dp0totall.pid' -Value $p.Id"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=Start-Process -FilePath '%~dp0publish\app\TotallSoftwareForoughAriya.Api.exe' -WorkingDirectory '%~dp0publish\app' -PassThru -WindowStyle Hidden -RedirectStandardOutput '%~dp0logs\server.log' -RedirectStandardError '%~dp0logs\server-error.log'; Set-Content -Path '%~dp0totall.pid' -Value $p.Id"
 if errorlevel 1 (
   echo ERROR: Could not start API. Check logs\server-error.log
   pause

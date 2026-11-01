@@ -1,6 +1,6 @@
 # ماژول انبارداری (Warehousing)
 
-این ماژول به‌صورت کامل داخل همان راه‌حل موجود (`Inventory.sln`) و با همان الگوهای پروژه پیاده‌سازی شده است:
+این ماژول به‌صورت کامل داخل همان راه‌حل موجود (`TotallSoftwareForoughAriya.sln`) و با همان الگوهای پروژه پیاده‌سازی شده است:
 `Inventory.Shared` (DTO و Enum) → `Inventory.Api` (Entity، Service، Controller، Migration) → `Inventory.Client` (سرویس‌های API و صفحات Blazor).
 
 پایگاه‌داده **SQL Server** و از همان `AppDbContext` و مکانیزم Migrations استفاده می‌کند.
@@ -123,13 +123,13 @@ GET    api/inv/reports/stock?warehouseId=&categoryId=&search=&below=&page=&pageS
 
 ```bash
 # اعمال مهاجرت
-dotnet ef database update -p src/Inventory.Api -s src/Inventory.Api
+dotnet ef database update -p src/TotallSoftwareForoughAriya.Api -s src/TotallSoftwareForoughAriya.Api
 
 # یا اجرای مستقیم اسکریپت
-sqlcmd -S . -d InventoryDb -i sql/warehousing/AddWarehousingModule.sql
+sqlcmd -S . -d TotallSoftwareForoughAriya -i sql/warehousing/AddWarehousingModule.sql
 
 # اجرای پروژه
-dotnet run --project src/Inventory.Api
+dotnet run --project src/TotallSoftwareForoughAriya.Api
 ```
 
 ---
@@ -151,7 +151,7 @@ PackageSourceMapping is enabled, the following source(s) were not considered: �
 
 ```bash
 dotnet nuget locals http-cache --clear
-dotnet restore Inventory.sln
+dotnet restore TotallSoftwareForoughAriya.sln
 ```
 
 اگر فید داخلی سازمانی دارید، آن را هم به هر دو بخش `packageSources` و `packageSourceMapping` همین فایل اضافه کنید.

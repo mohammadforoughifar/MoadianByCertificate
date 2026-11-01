@@ -23,8 +23,8 @@ internal static class DesignTimeDatabaseConfiguration
         var root = new[]
         {
             cwd,
+            Path.Combine(cwd, "src", "TotallSoftwareForoughAriya.Api"),
             Path.Combine(cwd, "src", "Inventory.Api"),
-            Path.Combine(cwd, "inventory", "src", "Inventory.Api"),
             AppContext.BaseDirectory
         }.FirstOrDefault(p => File.Exists(Path.Combine(p, "appsettings.json")))
             ?? throw new InvalidOperationException("پوشهٔ تنظیمات API پیدا نشد؛ دستور EF را از ریشه مخزن یا پوشهٔ API اجرا کنید.");

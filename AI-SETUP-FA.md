@@ -123,7 +123,7 @@ Ai__TranscriptionApiKey=sk-...
 
 ## ۳. تنظیمات
 
-بخش `Ai` در `src/Inventory.Api/appsettings.json` (مقادیر پیش‌فرض برای Ollama لوکال آماده است):
+بخش `Ai` در `src/TotallSoftwareForoughAriya.Api/appsettings.json` (مقادیر پیش‌فرض برای Ollama لوکال آماده است):
 
 ```json
 "Ai": {

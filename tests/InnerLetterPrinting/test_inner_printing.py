@@ -6,8 +6,8 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-API = ROOT / "src" / "Inventory.Api"
-CLIENT = ROOT / "src" / "Inventory.Client"
+API = ROOT / "src" / "TotallSoftwareForoughAriya.Api"
+CLIENT = ROOT / "src" / "TotallSoftwareForoughAriya.Client"
 OFFICE = API / "Services" / "Office"
 
 
@@ -92,7 +92,7 @@ class InnerPrintingTests(unittest.TestCase):
         self.assertIn("GetPrintPdfAsync(letterId, size, withHamesh)", method)
 
     def test_publish_rule_includes_inner_templates(self):
-        project = ET.parse(API / "Inventory.Api.csproj")
+        project = ET.parse(API / "TotallSoftwareForoughAriya.Api.csproj")
         rule = next(c for c in project.iter("Content") if c.get("Include") == "Reports/**/*.mrt")
         self.assertEqual(rule.get("CopyToOutputDirectory"), "PreserveNewest")
         self.assertEqual(rule.get("CopyToPublishDirectory"), "PreserveNewest")

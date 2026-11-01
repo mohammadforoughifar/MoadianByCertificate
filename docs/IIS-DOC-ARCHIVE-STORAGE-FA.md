@@ -66,13 +66,13 @@ icacls "D:\InventoryData\DocArchive" /grant "IIS AppPool\<نام AppPool>:(OI)(C
 | 11 | نصب زیر Application/Virtual Directory (مثلاً `http://server/erp/`) | `base href="/"`، درخواست‌های `"/api/..."` و سرویس‌ورکر از ریشهٔ سایت می‌خواندند | سرور `base href` را با `PathBase` می‌نویسد؛ `PathBaseHandler` در HttpClient؛ سرویس‌ورکر و صف آفلاین آرشیو مسیر پایه را می‌شناسند. روی ریشهٔ سایت هیچ تغییری ایجاد نمی‌شود |
 | 12 | سقف حجم بدنهٔ Kestrel فقط داخل بلوک HTTPS برداشته می‌شد | پشت IIS (OutOfProcess) آن بلوک اجرا نمی‌شود و سقف پیش‌فرض ۳۰ مگابایت Kestrel آپلودهای بزرگ را با 413 رد می‌کرد | برداشتن سقف سراسری در تنظیم عمومی Kestrel؛ سقف هر endpoint (`[RequestSizeLimit]`) و محدودیت‌های خود برنامه مثل قبل اعمال می‌شود |
 | 13 | خطای ذخیرهٔ فایل در ورود انبوه | پاسخ به مرورگر «Pending» با پیام خالی بود («وارد نشد» بی‌دلیل) و شمارش «ناموفق» نوبت ذخیره نمی‌شد | بارگذاری دوبارهٔ ردیف و نوبت پس از برگشت تراکنش؛ پیام روشن «ذخیرهٔ فایل روی دیسک سرور ناموفق بود…» |
-| 14 | مرحلهٔ ۲ اسکریپت `deploy-single.ps1`/`.sh` همهٔ محتوای `src/Inventory.Api/wwwroot` را پاک می‌کرد | اگر برنامه روی همان سیستم از سورس اجرا شده بود، پوشهٔ `uploads` (مدارک ذخیره‌شده) با هر بیلد انتشار پاک می‌شد | `uploads` و `SecureFiles` از پاک‌سازی مستثنا شدند (خروجی انتشار همچنان بدون این پوشه‌هاست تا روی فایل‌های سرور نوشته نشود) |
+| 14 | مرحلهٔ ۲ اسکریپت `deploy-single.ps1`/`.sh` همهٔ محتوای `src/TotallSoftwareForoughAriya.Api/wwwroot` را پاک می‌کرد | اگر برنامه روی همان سیستم از سورس اجرا شده بود، پوشهٔ `uploads` (مدارک ذخیره‌شده) با هر بیلد انتشار پاک می‌شد | `uploads` و `SecureFiles` از پاک‌سازی مستثنا شدند (خروجی انتشار همچنان بدون این پوشه‌هاست تا روی فایل‌های سرور نوشته نشود) |
 
 ## ۳) چک‌لیست نصب روی IIS
 
 1. **ASP.NET Core Hosting Bundle 8** روی سرور نصب باشد.
 2. Application Pool: `.NET CLR Version = No Managed Code`.
-3. خروجی کلاینت در `wwwroot` پروژهٔ API کپی شده باشد (طبق `src/Inventory.Api/wwwroot/README.md` یا `deploy-single.ps1`)، سپس `dotnet publish` پروژهٔ API.
+3. خروجی کلاینت در `wwwroot` پروژهٔ API کپی شده باشد (طبق `src/TotallSoftwareForoughAriya.Api/wwwroot/README.md` یا `deploy-single.ps1`)، سپس `dotnet publish` پروژهٔ API.
 4. `DocArchive:StorageRoot` روی مسیر ثابت بیرون از پوشهٔ برنامه + `icacls` بالا.
 5. دسترسی Modify هویت AppPool روی `App_Data` پوشهٔ برنامه (کلیدهای DataProtection) هم لازم است.
 6. بعد از اولین اجرا در Event Viewer هشدار `[Storage]` نباشد.

@@ -1,6 +1,6 @@
 # ماژول حسابداری (Accounting)
 
-این ماژول در همان راه‌حل `Inventory.sln` و روی همان `AppDbContext` (SQL Server) ساخته شده و
+این ماژول در همان راه‌حل `TotallSoftwareForoughAriya.sln` و روی همان `AppDbContext` (SQL Server) ساخته شده و
 با ماژول انبارداری یکپارچه است: با قطعی شدن هر رسید/حواله، سند حسابداری متناظر به‌صورت خودکار صادر می‌شود.
 
 ---
@@ -158,7 +158,7 @@ POST   api/acc/inv-rules/post-doc/{invDocId}
 اجرا:
 
 ```bash
-dotnet ef database update -p src/Inventory.Api -s src/Inventory.Api
+dotnet ef database update -p src/TotallSoftwareForoughAriya.Api -s src/TotallSoftwareForoughAriya.Api
 # یا صرفاً API را ری‌استارت کنید؛ DbInitializer خودش Migrate() را صدا می‌زند.
 ```
 

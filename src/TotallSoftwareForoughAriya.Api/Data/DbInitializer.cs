@@ -628,7 +628,7 @@ public static class DbInitializer
                     Console.WriteLine($"     {safeConnection.ConnectionString}");
                     Console.WriteLine("  5) برای تست بدون SQL Server، در appsettings.json مقدار");
                     Console.WriteLine("     Database:Provider را روی \"Sqlite\" و ConnectionStrings:Default را روی");
-                    Console.WriteLine("     \"Data Source=inventory.db\" بگذارید.");
+                    Console.WriteLine("     \"Data Source=TotallSoftwareForoughAriya.db\" بگذارید.");
                     Console.WriteLine("=============================================================");
                     throw;
                 }
