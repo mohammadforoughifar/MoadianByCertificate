@@ -42,11 +42,15 @@
        نقشه، ویرایش، ذخیره و بقیهٔ عملیات مثل قبل کار می‌کنند (قبلاً کل صفحه می‌افتاد). *@
     @if (_dragUnavailable)
     {
-        <div class="alert alert-info py-2 px-3 mb-2 fs-9">
+        <div class="alert alert-info py-2 px-3 mb-2 fs-9 d-flex align-items-center flex-wrap gap-2">
             <i class="bi bi-info-circle"></i>
-            جابه‌جایی گره‌ها با کشیدن ماوس در این نشست فعال نشد (فایل اسکریپت نقشه بارگذاری نشد)؛
-            برای تغییر جای گره از تنظیمات گره استفاده کنید. اگر تکرار شد، صفحه را یک‌بار با
-            <b>Ctrl+F5</b> تازه کنید.
+            <span>
+                جابه‌جایی گره‌ها با کشیدن ماوس در این نشست فعال نشد (اسکریپت نقشه بارگذاری نشد)؛
+                بقیهٔ نقشه سالم است. اگر تکرار شد، صفحه را یک‌بار با <b>Ctrl+F5</b> تازه کنید.
+            </span>
+            <button type="button" class="btn btn-sm btn-outline-primary py-0" @onclick="RetryDragAsync">
+                <i class="bi bi-arrow-clockwise"></i> تلاش دوباره
+            </button>
         </div>
     }
     @if (_loading)
@@ -59,7 +63,7 @@
             <div class="wpmf-canvas-wrap">
                 <div class="wpmf-canvas-scroller">
                     <div class="wpmf-grid"></div>
-                    <svg id="@_svgId" class="wpmf-canvas" data-readonly="@(!CanEdit)" viewBox="@ViewBox" aria-label="@(IsStandalone ? "نگاشت ذهنی مستقل" : "نقشه ذهنی پروژه")">
+                    <svg @ref="_svgElementRef" id="@_svgId" class="wpmf-canvas" data-readonly="@(!CanEdit)" viewBox="@ViewBox" aria-label="@(IsStandalone ? "نگاشت ذهنی مستقل" : "نقشه ذهنی پروژه")">
                     @foreach (var node in VisibleNodes.Where(n => n.ParentId.HasValue))
                     {
                         var parent = _map.Nodes.FirstOrDefault(n => n.Id == node.ParentId);
@@ -421,6 +425,15 @@
 
     /// <summary>کشیدن با ماوس فعال نشد (خطای JS) — راهنمای کوچک بالای نقشه نشان داده می‌شود.</summary>
     private bool _dragUnavailable;
+
+    /// <summary>مرجع عنصر svg نقشه (برای تشخیص تعویض عنصر در رندرهای بعدی).</summary>
+    private ElementReference _svgElementRef;
+
+    /// <summary>شناسهٔ عنصر فعال (iframe/subtree) — برای مقایسه با شناسهٔ رندرشده.</summary>
+    private string _attachedSvgId = "";
+
+    /// <summary>عنصری که کنترلر drag به آن وصل شده است؛ اگر Blazor عنصر را بازسازی کند دوباره وصل می‌کنیم.</summary>
+    private ElementReference _attachedSvgRef;
     private int _loadedProjectId;
     private int? _loadedStandaloneMapId;
     private string _loadedSubFlowPath = "";
@@ -483,7 +496,7 @@
             _wasCanManageAccess = CanManageAccess;
             return;
         }
-        _self?.Dispose(); _self = null; _attached = false;
+        _self?.Dispose(); _self = null; _attached = false; _dragUnavailable = false; _attachedSvgRef = default; _attachedSvgId = "";
         _workOrderLoadGeneration++; _candidateSearchGeneration++;
         _loadedProjectId = ProjectId; _loadedStandaloneMapId = StandaloneMapId; _loadedSubFlowPath = subPath;
         _projectOrders.Clear(); _workOrderCache.Clear(); _workOrderSkip = 0; _hasMoreWorkOrders = false; _loadingOrders = false; _linkedChecklist.Clear(); _loadedChecklistOrderId = null;
@@ -523,60 +536,162 @@
         finally { _loading = false; }
     }
 
+    /// <summary>
+    /// اتصال «کشیدن گره‌ها» به JS — با try/catch دورِ خودِ چرخهٔ رندر.
+    /// هر خطای غیرمنتظرهٔ JSInterop قبلاً به‌صورت
+    /// <c>Unhandled exception rendering component</c> کل کامپوننت را از رندر می‌انداخت
+    /// (Ctrl+F5 هم کمکی نمی‌کرد چون خطا در خود چرخهٔ رندر بود).
+    /// همچنین اگر Blazor عنصر svg را بازسازی کند، خودکار دوباره وصل می‌شود.
+    /// </summary>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!_attached && !_loading && _map.Nodes.Count > 0)
+        if (_loading || _map.Nodes.Count == 0) return;
+        // مهم: مقایسهٔ عنصر باید قبل از هر await/تغییر state انجام شود.
+        // اگر Blazor عنصر svg را در رندر بعدی بازسازی کند، شنونده‌های pointer از بین
+        // می‌روند و «کشیدن» بی‌صدا از کار می‌افتد؛ پس به تعویض عنصر هم حساس باشیم.
+        var currentRef = _svgElementRef;
+        var currentSvgId = _svgId;
+        if (_attached && _attachedSvgId == currentSvgId && _attachedSvgRef.Equals(currentRef)) return;
+        try
         {
             _self ??= DotNetObjectReference.Create(this);
-            await AttachDragAsync();
+            await AttachDragAsync(currentRef, currentSvgId);
+            // اگر اتصال ناموفق بود، پیام و دکمهٔ «تلاش دوباره» فوراً دیده شود.
+            if (_dragUnavailable) await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            // نباید هرگز به چرخهٔ رندر برسد
+            _attached = true;
+            _dragUnavailable = true;
+            Console.WriteLine($"[MindFlow] OnAfterRender drag attach failed: {ex.Message}");
         }
     }
 
     /// <summary>
-    /// اتصال «کشیدنِ گره‌ها» به ماژول JS — دو لایه برای اینکه هرگز رندر صفحه را نشکند.
+    /// اتصال «کشیدنِ گره‌ها» به ماژول JS — چندلایه، تا در هیچ حالتی رندر صفحه نشکند.
     /// <para>
-    /// باگ واقعی: خطای <c>Could not find 'inventoryWorkProjectMindFlow.attachDrag'
-    /// ('inventoryWorkProjectMindFlow' was undefined)</c> هنگام باز کردن «نگار ذهنی» در
-    /// پروژه‌های بخش دستور کار. دلیلش نبودِ تابع در صفحه نبود؛ فایل
-    /// <c>wwwroot/js/inventory-workproject-mindflow.js</c> وجود داشت ولی هیچ‌جا در
-    /// <c>index.html</c> بارگذاری نمی‌شد، پس متغیر سراسری هرگز ساخته نمی‌شد و JSInterop
-    /// استثنا می‌داد و کل کامپوننت از رندر می‌افتاد.
+    /// خطای واقعی: <c>Could not find 'inventoryWorkProjectMindFlow.attachDrag'
+    /// ('inventoryWorkProjectMindFlow' was undefined)</c> هنگام باز کردن «نگار ذهنی»
+    /// در پروژه‌های بخش دستور کار. دو ریشه داشت:
     /// </para>
+    /// <list type="number">
+    /// <item>فایل <c>wwwroot/js/inventory-workproject-mindflow.js</c> در نسخهٔ منتشرشدهٔ
+    /// سرور (یا در کش سرویس‌ورکر مرورگر) بارگذاری نمی‌شد، پس متغیر سراسری ساخته نمی‌شد.</item>
+    /// <item>مسیر «fallback» با <c>import</c> پویا هم کار نمی‌کرد، چون آن فایل یک اسکریپت
+    /// کلاسیک است و هیچ <c>export</c> ندارد؛ ماژولِ خالی لود می‌شد و
+    /// <c>attachDrag</c> وجود نداشت.</item>
+    /// </list>
     /// <para>
-    /// اصلاح: (۱) اسکریپت به index.html اضافه شد؛ (۲) همین‌جا هم اگر تابع سراسری نبود،
-    /// ماژول با import پویا بارگذاری می‌شود (مثل الگوی چت) تا حتی با index.html قدیمی در
-    /// کش مرورگر هم کار کند؛ (۳) هر خطای JS فقط «کشیدن با ماوس» را از کار می‌اندازد و
-    /// پیام کوتاهی در بالای نقشه نشان داده می‌شود — نه سقوط کل صفحه.
+    /// اصلاح: (۱) تزریق مستقیم اسکریپت با <c>import()</c> روی فایل <b>پوششی ماژول</b>
+    /// (<c>inventory-workproject-mindflow.module.js</c>) که واقعاً <c>export</c> دارد و
+    /// خودش فایل اصلی را لود می‌کند؛ (۲) اگر آن هم نشد، تزریق تگ <c>&lt;script&gt;</c>
+    /// در زمان اجرا (مستقل از index.html و کش سرویس‌ورکر)؛ (۳) در آخرین مرحله اگر
+    /// اتچ نشد، فقط کشیدن با ماوس غیرفعال می‌شود و پیام کوتاه نشان داده می‌شود —
+    /// بقیهٔ نقشه (ویرایش، ذخیره، دستورها) سالم می‌ماند.
     /// </para>
     /// </summary>
-    private async Task AttachDragAsync()
+    private async Task AttachDragAsync(ElementReference svgRef, string svgId)
+    {
+        // عنصر مرجع را «قبل از await» ثبت می‌کنیم تا اگر Blazor در میانهٔ کار آن را
+        // بازسازی کند، رندر بعدی متوجه شود و دوباره وصل کند.
+        _attachedSvgRef = svgRef;
+        _attachedSvgId = svgId;
+
+        // ترتیب تلاش: سراسری → ماژول ES → تزریق تگ script در زمان اجرا
+        bool? attached = await TryAttachDragFromGlobalAsync(svgId);
+        if (attached != true) attached = await TryAttachDragFromModuleAsync(svgId);
+        if (attached != true) attached = await TryAttachDragFromInjectedScriptAsync(svgId);
+
+        _attached = true;
+        _dragUnavailable = attached != true;
+
+        if (_dragUnavailable)
+            Console.WriteLine("[MindFlow] فعال‌سازی کشیدن گره‌ها انجام نشد؛ نقشه بدون drag کار می‌کند.");
+    }
+
+    /// <summary>مسیر اول: اسکریپت از قبل در index.html بارگذاری شده است.</summary>
+    private async Task<bool?> TryAttachDragFromGlobalAsync(string svgId)
     {
         try
         {
-            // تابع سراسری از اسکریپت index.html موجود است؟
-            var hasGlobal = await JS.InvokeAsync<bool>("eval",
-                "typeof window.inventoryWorkProjectMindFlow === 'object' && typeof window.inventoryWorkProjectMindFlow.attachDrag === 'function'");
-
-            if (hasGlobal)
-                await JS.InvokeVoidAsync("inventoryWorkProjectMindFlow.attachDrag", _svgId, _self);
-            else
-            {
-                // بارگذاری پویا — مستقل از ترتیب/کش اسکریپت‌های index.html
-                _dragModule ??= await JS.InvokeAsync<IJSObjectReference>("import",
-                    "./js/inventory-workproject-mindflow.js?v=1");
-                await _dragModule.InvokeVoidAsync("attachDrag", _svgId, _self);
-            }
-
-            _attached = true;
-            _dragUnavailable = false;
+            // اگر تابع سراسری نباشد JSException می‌دهد و مسیر بعدی امتحان می‌شود.
+            var ok = await JS.InvokeAsync<bool>("inventoryWorkProjectMindFlow.attachDrag", svgId, _self);
+            return ok ? true : null;
         }
         catch (Exception ex)
         {
-            // تلاش دوباره در هر رندر بی‌فایده است (و لاگ را پر می‌کند)؛ یک‌بار علامت می‌زنیم.
-            _attached = true;
-            _dragUnavailable = true;
-            Console.WriteLine($"[MindFlow] فعال‌سازی کشیدن گره‌ها انجام نشد: {ex.Message}");
+            Console.WriteLine($"[MindFlow] global attachDrag unavailable: {ex.Message}");
+            return null;
         }
+    }
+
+    /// <summary>مسیر دوم: پوشش ES-module که attachDrag را export می‌کند.</summary>
+    private async Task<bool?> TryAttachDragFromModuleAsync(string svgId)
+    {
+        try
+        {
+            _dragModule ??= await JS.InvokeAsync<IJSObjectReference>("import",
+                "./js/inventory-workproject-mindflow.module.js?v=2");
+            var ok = await _dragModule.InvokeAsync<bool>("attachDrag", svgId, _self);
+            return ok ? true : null;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MindFlow] module attachDrag failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// مسیر سوم: تزریق تگ <c>script</c> در زمان اجرا — مستقل از index.html و کش
+    /// سرویس‌ورکر، حتی اگر فایل پوشش ماژول هم در سرور قدیمی باشد.
+    /// </summary>
+    private async Task<bool?> TryAttachDragFromInjectedScriptAsync(string svgId)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("eval", InjectDragScriptJs);
+
+            // کمی صبر تا دانلود/اجرای اسکریپت، بعد یک‌بار دیگر از مسیر سراسری
+            for (var attempt = 0; attempt < 25; attempt++)
+            {
+                if (await TryAttachDragFromGlobalAsync(svgId) == true) return true;
+                await Task.Delay(120);
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MindFlow] script injection failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>اسکریپت کوچکِ تزریق تگ script (یک‌بار در طول عمر صفحه).</summary>
+    private const string InjectDragScriptJs =
+        "(function(){if(document.querySelector('script[data-wpmf-drag]'))return 1;" +
+        "var s=document.createElement('script');s.src='./js/inventory-workproject-mindflow.js?v=2';" +
+        "s.async=true;s.setAttribute('data-wpmf-drag','1');document.head.appendChild(s);return 1;})()";
+
+    /// <summary>
+    /// تلاش دوبارهٔ دستی برای وصل‌کردن drag (دکمهٔ «تلاش دوباره» در پیام هشدار).
+    /// </summary>
+    private async Task RetryDragAsync()
+    {
+        _dragUnavailable = false;
+        _attached = false;
+        try
+        {
+            _self ??= DotNetObjectReference.Create(this);
+            await AttachDragAsync(_svgElementRef, _svgId);
+        }
+        catch (Exception ex)
+        {
+            _dragUnavailable = true;
+            Console.WriteLine($"[MindFlow] retry failed: {ex.Message}");
+        }
+        StateHasChanged();
     }
 
     private void CreateStarter()
@@ -1131,13 +1246,37 @@
     {
         _workOrderLoadGeneration++;
         _candidateSearchGeneration++;
+        // مرجع دات‌نت را باطل کن تا callbackهای JS روی کامپوننت Dispose‌شده اجرا نشوند
+        // (قبلاً بعد از جابه‌جایی بین صفحه‌ها، drag روی نقشهٔ قدیمی خطا می‌داد).
+        TryDetachDrag();
         _self?.Dispose();
+        _self = null;
+        _attached = false;
         // آزادسازی ماژول JS (اگر با import پویا بارگذاری شده باشد) — بی‌صدا
         if (_dragModule is not null)
         {
             var module = _dragModule;
             _dragModule = null;
             _ = SafeDisposeModuleAsync(module);
+        }
+    }
+
+    /// <summary>
+    /// جدا کردن کنترلر JS از این نمونه (بدون await در Dispose تا رندر قفل نشود).
+    /// اگر ماژول JS در دسترس نباشد بی‌صدا رد می‌شود.
+    /// </summary>
+    private void TryDetachDrag()
+    {
+        try
+        {
+            var id = _svgId;
+            _ = JS.InvokeVoidAsync("inventoryWorkProjectMindFlow.detachDrag", id)
+                   .AsTask()
+                   .ContinueWith(t => { _ = t.Exception; }, TaskScheduler.Default);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MindFlow] detachDrag skipped: {ex.Message}");
         }
     }
 
