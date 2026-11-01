@@ -34,6 +34,17 @@ Access and refresh tokens are kept only in the Client's in-memory `TokenStore`; 
 
 Certificate/private-key files are sent only over HTTPS. The Client keeps file bytes only transiently, clears byte arrays and file controls after upload, and never logs credentials. The browser necessarily creates a short-lived managed string for the PEM JSON request; JavaScript/.NET strings cannot be reliably zeroed, so environments requiring stronger key custody should use a BFF or hardware-backed signing flow instead of browser upload.
 
+## Run the local login and dashboard
+
+On Windows with the .NET 8 SDK and SQL Server LocalDB installed:
+
+1. Run `scripts/Restore-TaxCollectDataSdk.ps1` from this directory, then restore the solution.
+2. In Visual Studio, set **MoudianMiddleware.Api** and **MoudianMiddleware.Client** as multiple startup projects (both Start).
+3. Start the solution. The API Development profile uses LocalDB at `MoudianMiddlewareDev`, creates the schema only in Development, seeds lookup/role rows and a demo tenant, and creates a one-time `admin` password if no seed credentials were configured. Copy the password printed once in the API console.
+4. The Client opens at `http://localhost:5081`; it redirects to `/login`. Sign in with username `admin` and the printed password to open the dashboard, then inspect Customers and Products from the navigation.
+
+The Development KEK is created once under the current user's LocalApplicationData folder and reused across restarts; the JWT signing key is ephemeral in Development, so restarting the API invalidates existing tokens. For a stable admin credential, configure `DatabaseSeed:AdminUserName` and `DatabaseSeed:AdminPassword` via User Secrets or process environment variables before first startup. The API profile uses Windows LocalDB; override `MOUDIAN__CONNECTION_STRING` if needed. Never enable this bootstrap in Production: production still requires an explicit database/schema deployment and configured secrets.
+
 ## Integration tests using SQL Server
 
 SQLite in-memory remains the fast default for relational tests. The opt-in SQL Server concurrency tests create a uniquely named temporary database and delete only that database after completion. Set `MOUDIAN_TEST_SQLSERVER` to a SQL Server connection string whose login is allowed to create/drop databases. Tests are skipped when it is unset. Never point this variable at a production server/account.

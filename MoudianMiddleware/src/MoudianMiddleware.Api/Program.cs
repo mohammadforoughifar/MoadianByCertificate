@@ -15,6 +15,7 @@ using MoudianMiddleware.DataLayer;
 using MoudianMiddleware.DataLayer.Abstractions;
 
 var builder = WebApplication.CreateBuilder(args);
+DevelopmentSecretBootstrap.EnsureDevelopmentKek(builder.Environment);
 var jwtKeyIsMissing = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MOUDIAN__JWT_SIGNING_KEY"));
 var jwt = JwtOptions.FromEnvironment(allowDevelopmentFallback: builder.Environment.IsDevelopment());
 if (jwtKeyIsMissing && builder.Environment.IsDevelopment())
@@ -29,6 +30,7 @@ builder.Services.AddScoped<ICurrentUserProvider, HttpCurrentUserProvider>();
 builder.Services.AddDataLayer(builder.Configuration);
 builder.Services.AddCoreLayer(builder.Configuration);
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<DevelopmentBootstrapper>();
 builder.Services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
 builder.Services.AddSingleton<MoudianMiddleware.DataLayer.Abstractions.IPasswordHasher>(sp => sp.GetRequiredService<IPasswordHasher>());
 builder.Services.AddControllers();
@@ -90,6 +92,11 @@ builder.Services.AddRateLimiter(options =>
 });
 builder.Services.AddSwaggerGen();
 var app = builder.Build();
+if (app.Environment.IsDevelopment())
+{
+    await using var developmentScope = app.Services.CreateAsyncScope();
+    await developmentScope.ServiceProvider.GetRequiredService<DevelopmentBootstrapper>().InitializeAsync();
+}
 app.UseForwardedHeaders();
 app.UseMiddleware<ApiExceptionMiddleware>();
 app.UseRouting();
