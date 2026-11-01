@@ -1,7 +1,7 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
-using MoadianMiddleware.Contracts.Enums;
-using MoadianMiddleware.CoreLayer.Infrastructure.Moadian;
+using MoudianMiddleware.Contracts.Enums;
+using MoudianMiddleware.CoreLayer.Infrastructure.Moadian;
 using MoudianMiddleware.CoreLayer.Interfaces.Infrastructure;
 using MoudianMiddleware.CoreLayer.Services.Moadian;
 using MoudianMiddleware.DataLayer.Context;
@@ -15,7 +15,7 @@ namespace MoudianMiddleware.Tests.Core;
 public sealed class MoadianSubmissionServiceTests
 {
     [Fact]
-    public async Task SubmitAsync_ClaimsAndPersistsReceiptAndMetadataOnlyHistory()
+    public async Task SubmitAsync_ClaimsAndPersistsReceiptAndMetadataOnlyHistoryAsync()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var tenantScope = new TenantScope();
@@ -44,7 +44,7 @@ public sealed class MoadianSubmissionServiceTests
     }
 
     [Fact]
-    public async Task InquiryByTaxIdAsync_ReconcilesAnInvoiceWithoutReferenceNumber()
+    public async Task InquiryByTaxIdAsync_ReconcilesAnInvoiceWithoutReferenceNumberAsync()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var tenantScope = new TenantScope();
