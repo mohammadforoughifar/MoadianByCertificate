@@ -20,6 +20,8 @@ public class GenericRepository<TEntity> : IGenericRepository<TEntity>
     /// <param name="context">Context دیتابیس.</param>
     public GenericRepository(MoudianDbContext context)
     {
+        ArgumentNullException.ThrowIfNull(context);
+
         _dbSet = context.Set<TEntity>();
     }
 

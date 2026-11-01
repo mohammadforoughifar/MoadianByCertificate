@@ -49,6 +49,8 @@ public sealed class InvoiceRepository : GenericRepository<Invoice>, IInvoiceRepo
         InvoiceQuery query,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(query);
+
         var invoices = ApplyFilters(Set.AsNoTracking(), query);
 
         var totalCount = await invoices.CountAsync(cancellationToken).ConfigureAwait(false);

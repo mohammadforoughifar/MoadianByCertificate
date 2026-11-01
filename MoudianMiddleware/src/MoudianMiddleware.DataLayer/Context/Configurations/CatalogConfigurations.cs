@@ -12,6 +12,8 @@ public sealed class MeasuringUnitConfiguration : IEntityTypeConfiguration<Measur
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<MeasuringUnit> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Code).HasMaxLength(20).IsRequired();
         builder.Property(x => x.Title).HasMaxLength(100).IsRequired();
         builder.Property(x => x.Symbol).HasMaxLength(20);
@@ -28,6 +30,8 @@ public sealed class ProductConfiguration : IEntityTypeConfiguration<Product>
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<Product> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Sstid).HasMaxLength(20).IsRequired();
         builder.Property(x => x.Title).HasMaxLength(300).IsRequired();
         builder.Property(x => x.HsCode).HasMaxLength(30);
@@ -56,6 +60,8 @@ public sealed class CustomerConfiguration : IEntityTypeConfiguration<Customer>
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<Customer> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Code).HasMaxLength(50).IsRequired();
         builder.Property(x => x.Name).HasMaxLength(300).IsRequired();
         builder.Property(x => x.NationalId).HasMaxLength(20);

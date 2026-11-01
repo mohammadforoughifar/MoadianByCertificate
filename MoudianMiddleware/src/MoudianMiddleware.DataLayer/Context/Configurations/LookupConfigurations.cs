@@ -12,6 +12,8 @@ public sealed class InvoicePatternConfiguration : IEntityTypeConfiguration<Invoi
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<InvoicePattern> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Title).HasMaxLength(300).IsRequired();
         builder.Property(x => x.Description).HasMaxLength(1000);
         builder.HasIndex(x => x.Code).IsUnique();
@@ -26,6 +28,8 @@ public sealed class InvoiceSubjectConfiguration : IEntityTypeConfiguration<Invoi
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<InvoiceSubject> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Title).HasMaxLength(300).IsRequired();
         builder.Property(x => x.Description).HasMaxLength(1000);
         builder.HasIndex(x => x.Code).IsUnique();
@@ -40,6 +44,8 @@ public sealed class PaymentMethodCodeConfiguration : IEntityTypeConfiguration<Pa
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<PaymentMethodCode> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Title).HasMaxLength(100).IsRequired();
         builder.HasIndex(x => x.MethodCode).IsUnique();
     }
@@ -53,6 +59,8 @@ public sealed class MoadianErrorCodeConfiguration : IEntityTypeConfiguration<Moa
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<MoadianErrorCode> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Code).HasMaxLength(50).IsRequired();
         builder.Property(x => x.PersianMessage).HasMaxLength(1000).IsRequired();
         builder.Property(x => x.TechnicalMessage).HasMaxLength(1000);

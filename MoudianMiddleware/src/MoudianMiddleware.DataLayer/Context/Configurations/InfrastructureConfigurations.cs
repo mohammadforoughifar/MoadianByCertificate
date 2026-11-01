@@ -12,6 +12,8 @@ public sealed class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<AuditLog> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.EntityName).HasMaxLength(100);
         builder.Property(x => x.EntityId).HasMaxLength(50);
         builder.Property(x => x.Description).HasMaxLength(2000).IsRequired();
@@ -34,6 +36,8 @@ public sealed class ApiClientConfiguration : IEntityTypeConfiguration<ApiClient>
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<ApiClient> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Name).HasMaxLength(200).IsRequired();
         builder.Property(x => x.KeyPrefix).HasMaxLength(20).IsRequired();
         builder.Property(x => x.KeyHash).HasMaxLength(200).IsRequired();
@@ -53,6 +57,8 @@ public sealed class OutboxMessageConfiguration : IEntityTypeConfiguration<Outbox
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<OutboxMessage> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Type).HasMaxLength(100).IsRequired();
         builder.Property(x => x.Payload).IsRequired();
         builder.Property(x => x.LastError).HasMaxLength(2000);

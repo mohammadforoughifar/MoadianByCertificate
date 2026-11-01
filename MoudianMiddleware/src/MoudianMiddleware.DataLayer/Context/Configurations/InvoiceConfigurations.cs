@@ -12,6 +12,8 @@ public sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<Invoice> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.InvoiceNumber).HasMaxLength(50).IsRequired();
         builder.Property(x => x.ExternalId).HasMaxLength(100);
         builder.Property(x => x.BuyerName).HasMaxLength(300).IsRequired();
@@ -78,6 +80,8 @@ public sealed class InvoiceItemConfiguration : IEntityTypeConfiguration<InvoiceI
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<InvoiceItem> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Sstid).HasMaxLength(20).IsRequired();
         builder.Property(x => x.Description).HasMaxLength(500).IsRequired();
         builder.Property(x => x.MeasuringUnitCode).HasMaxLength(20).IsRequired();
@@ -105,6 +109,8 @@ public sealed class InvoicePaymentConfiguration : IEntityTypeConfiguration<Invoi
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<InvoicePayment> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.ReferenceNumber).HasMaxLength(100);
         builder.Property(x => x.TerminalNumber).HasMaxLength(50);
         builder.Property(x => x.AcceptorNumber).HasMaxLength(50);
@@ -126,6 +132,8 @@ public sealed class InvoiceSubmissionConfiguration : IEntityTypeConfiguration<In
     /// <inheritdoc />
     public void Configure(EntityTypeBuilder<InvoiceSubmission> builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         builder.Property(x => x.Uid).HasMaxLength(50);
         builder.Property(x => x.ReferenceNumber).HasMaxLength(100);
         builder.Property(x => x.MoadianStatus).HasMaxLength(30);

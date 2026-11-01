@@ -30,6 +30,7 @@ public sealed class AuditableEntityInterceptor : SaveChangesInterceptor
     /// <inheritdoc />
     public override InterceptionResult<int> SavingChanges(DbContextEventData eventData, InterceptionResult<int> result)
     {
+        ArgumentNullException.ThrowIfNull(eventData);
         Apply(eventData.Context);
         return base.SavingChanges(eventData, result);
     }
@@ -40,6 +41,7 @@ public sealed class AuditableEntityInterceptor : SaveChangesInterceptor
         InterceptionResult<int> result,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(eventData);
         Apply(eventData.Context);
         return base.SavingChangesAsync(eventData, result, cancellationToken);
     }
