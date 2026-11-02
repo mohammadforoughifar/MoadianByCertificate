@@ -45,6 +45,15 @@ try
         Check(snapshot.FindEntityType("Inventory.Api.Data.MdnInvoice") is not null
             && snapshot.FindEntityType("Inventory.Api.Data.MoadianInvoiceHeader") is null,
             "snapshot replaces legacy Moadian entities with Mdn* SDK 2.0.29 entities");
+
+        const string usersOrgMigration = "20261102120000_AddUsersOrganizationId";
+        Check(db.Database.GetMigrations().Contains(usersOrgMigration), "Users.OrganizationId migration is discoverable by EF");
+        var usersOrgScript = db.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>()
+            .GenerateScript(moadianV2Migration, usersOrgMigration);
+        Check(usersOrgScript.Contains("ALTER TABLE [dbo].[Users] ADD [OrganizationId] int NULL"),
+            "Users.OrganizationId SQL Server migration adds OrganizationId to dbo.Users");
+        Check(snapshot.FindEntityType("Inventory.Api.Data.User")!.FindProperty("OrganizationId") is not null,
+            "snapshot records User.OrganizationId");
     }
 
     foreach (var state in new[] { "fresh", "legacy", "partial" })
@@ -58,7 +67,9 @@ try
 CREATE TABLE SystemCompanies (Id INTEGER NOT NULL PRIMARY KEY);
 INSERT INTO SystemCompanies VALUES (1);
 CREATE TABLE SystemUsers (Id INTEGER NOT NULL PRIMARY KEY);
-INSERT INTO SystemUsers VALUES (1);";
+INSERT INTO SystemUsers VALUES (1);
+CREATE TABLE Users (Id INTEGER NOT NULL PRIMARY KEY, Username TEXT NOT NULL DEFAULT 'admin', PasswordHash TEXT NOT NULL DEFAULT '', Role TEXT NOT NULL DEFAULT 'Admin', MobileVerified INTEGER NOT NULL DEFAULT 0, EmailVerified INTEGER NOT NULL DEFAULT 0, IsActive INTEGER NOT NULL DEFAULT 1, CreatedAt TEXT NOT NULL DEFAULT '2026-11-02 00:00:00');
+INSERT INTO Users (Id, Username) VALUES (1, 'admin');";
             await command.ExecuteNonQueryAsync();
             if (state != "fresh")
             {
@@ -89,7 +100,9 @@ UPDATE Organizations SET CompanyId = 1;";
         Check(state == "fresh" ? defaultOrg is null : defaultOrg?.NameUniq == "MQ",
             state + ": reported FirstOrDefault query works after repeated upgrade; existing rows preserved");
         Check(db.SystemUsers.Select(u => u.OrganizationId).Single() is null,
-            state + ": missing user organization column repaired without assigning a unit");
+            state + ": missing system user organization column repaired without assigning a unit");
+        Check(db.Users.Select(u => u.OrganizationId).Single() is null,
+            state + ": missing core user organization column repaired without assigning a unit");
         if (state == "partial")
             Check(defaultOrg!.CompanyId == 1, "partial: existing company assignment is not overwritten");
     }

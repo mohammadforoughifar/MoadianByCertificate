@@ -25,7 +25,7 @@ public static class OrganizationSchemaV1
         {
             // These columns are required by the EF model; do not continue into misleading query errors.
             throw new InvalidOperationException(
-                "ارتقای جدول‌های سازمانی ناموفق بود؛ مجوز ALTER و ساختار Organizations/SystemUsers را بررسی کنید.", ex);
+                "ارتقای جدول‌های سازمانی ناموفق بود؛ مجوز ALTER و ساختار Organizations/SystemUsers/Users را بررسی کنید.", ex);
         }
     }
 
@@ -47,6 +47,19 @@ public static class OrganizationSchemaV1
             IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_Organizations_NameUniq' AND object_id = OBJECT_ID(N'dbo.Organizations'))
                 CREATE UNIQUE INDEX [IX_Organizations_NameUniq] ON [Organizations] ([NameUniq]);";
 
+    internal const string SqlServerUsersOrganizationColumn = @"
+IF OBJECT_ID(N'dbo.Users', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.Users', N'OrganizationId') IS NULL
+    ALTER TABLE [dbo].[Users] ADD [OrganizationId] int NULL;
+";
+
+    internal const string SqlServerUsersOrganizationIndex = @"
+IF OBJECT_ID(N'dbo.Users', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.Users', N'OrganizationId') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.Users') AND name = N'IX_Users_OrganizationId')
+    CREATE INDEX [IX_Users_OrganizationId] ON [dbo].[Users] ([OrganizationId]);
+";
+
     internal const string SqlServerColumns = @"
 IF OBJECT_ID(N'dbo.Organizations', N'U') IS NOT NULL
    AND COL_LENGTH(N'dbo.Organizations', N'CompanyId') IS NULL
@@ -54,6 +67,9 @@ IF OBJECT_ID(N'dbo.Organizations', N'U') IS NOT NULL
 IF OBJECT_ID(N'dbo.SystemUsers', N'U') IS NOT NULL
    AND COL_LENGTH(N'dbo.SystemUsers', N'OrganizationId') IS NULL
     ALTER TABLE [dbo].[SystemUsers] ADD [OrganizationId] int NULL;
+IF OBJECT_ID(N'dbo.Users', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.Users', N'OrganizationId') IS NULL
+    ALTER TABLE [dbo].[Users] ADD [OrganizationId] int NULL;
 ";
 
     internal const string SqlServerRelations = @"
@@ -77,6 +93,10 @@ BEGIN
             ADD CONSTRAINT [FK_SystemUsers_Organizations_OrganizationId]
             FOREIGN KEY ([OrganizationId]) REFERENCES [dbo].[Organizations] ([OrganizationId]) ON DELETE NO ACTION;
 END;
+IF OBJECT_ID(N'dbo.Users', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.Users', N'OrganizationId') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.Users') AND name = N'IX_Users_OrganizationId')
+    CREATE INDEX [IX_Users_OrganizationId] ON [dbo].[Users] ([OrganizationId]);
 ";
 
     // ================== SQLite ==================
@@ -146,6 +166,11 @@ END;
         {
             EnsureColumn("SystemUsers", "OrganizationId", "INTEGER NULL REFERENCES Organizations(OrganizationId)");
             Exec("CREATE INDEX IF NOT EXISTS IX_SystemUsers_OrganizationId ON SystemUsers (OrganizationId);");
+        }
+        if (TableExists("Users"))
+        {
+            EnsureColumn("Users", "OrganizationId", "INTEGER NULL");
+            Exec("CREATE INDEX IF NOT EXISTS IX_Users_OrganizationId ON Users (OrganizationId);");
         }
 
         await Task.CompletedTask;

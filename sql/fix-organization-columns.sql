@@ -32,6 +32,9 @@ IF OBJECT_ID(N''dbo.Organizations'', N''U'') IS NOT NULL
 IF OBJECT_ID(N''dbo.SystemUsers'', N''U'') IS NOT NULL
    AND COL_LENGTH(N''dbo.SystemUsers'', N''OrganizationId'') IS NULL
     ALTER TABLE [dbo].[SystemUsers] ADD [OrganizationId] int NULL;
+IF OBJECT_ID(N''dbo.Users'', N''U'') IS NOT NULL
+   AND COL_LENGTH(N''dbo.Users'', N''OrganizationId'') IS NULL
+    ALTER TABLE [dbo].[Users] ADD [OrganizationId] int NULL;
 ');
     EXEC(N'
 IF OBJECT_ID(N''dbo.Organizations'', N''U'') IS NOT NULL
@@ -54,6 +57,10 @@ BEGIN
             ADD CONSTRAINT [FK_SystemUsers_Organizations_OrganizationId]
             FOREIGN KEY ([OrganizationId]) REFERENCES [dbo].[Organizations] ([OrganizationId]) ON DELETE NO ACTION;
 END;
+IF OBJECT_ID(N''dbo.Users'', N''U'') IS NOT NULL
+   AND COL_LENGTH(N''dbo.Users'', N''OrganizationId'') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N''dbo.Users'') AND name = N''IX_Users_OrganizationId'')
+    CREATE INDEX [IX_Users_OrganizationId] ON [dbo].[Users] ([OrganizationId]);
 ');
     COMMIT TRANSACTION;
 END TRY
@@ -63,4 +70,5 @@ BEGIN CATCH
 END CATCH;
 SELECT DB_NAME() AS DatabaseName,
        COL_LENGTH(N'dbo.Organizations', N'CompanyId') AS CompanyIdColumnLength,
-       COL_LENGTH(N'dbo.SystemUsers', N'OrganizationId') AS OrganizationIdColumnLength;
+       COL_LENGTH(N'dbo.SystemUsers', N'OrganizationId') AS SystemUsersOrganizationIdColumnLength,
+       COL_LENGTH(N'dbo.Users', N'OrganizationId') AS UsersOrganizationIdColumnLength;
