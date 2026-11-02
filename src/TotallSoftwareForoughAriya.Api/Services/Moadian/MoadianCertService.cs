@@ -376,7 +376,7 @@ public sealed class MoadianCertService : IMoadianCertService
     {
         var (companyId, _) = await RequireActiveCompanyAsync();
         var parties = await _db.Parties.AsNoTracking()
-            .Where(p => p.IsActive && (p.Type == PartyType.Customer || p.Type == PartyType.Both))
+            .Where(p => p.IsActive && p.Type == Inventory.Shared.PartyType.Customer)
             .ToListAsync();
 
         var existingByParty = await _db.MdnBuyers
@@ -1184,7 +1184,7 @@ public sealed class MoadianCertService : IMoadianCertService
         var list = await _db.FacInvoices.AsNoTracking()
             .Include(f => f.Party)
             .Include(f => f.Lines)
-            .Where(f => f.Kind == InvoiceKind.Sales && f.Status != InvoiceStatus.Cancelled)
+            .Where(f => f.Kind == Inventory.Shared.InvoiceKind.Sale && f.Status != Inventory.Shared.InvoiceStatus.Cancelled)
             .OrderByDescending(f => f.Date)
             .ThenByDescending(f => f.Id)
             .Take(50)
@@ -1241,7 +1241,7 @@ public sealed class MoadianCertService : IMoadianCertService
             });
         }
 
-        var settlement = fac.Settlement == SettlementType.Cash
+        var settlement = fac.Settlement == Inventory.Shared.SettlementType.Cash
             ? MdnSettlementMethod.Cash
             : MdnSettlementMethod.Credit;
 

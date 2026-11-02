@@ -24,7 +24,7 @@ public sealed class MoadianCertController : RbacControllerBase
     // ==================== داشبورد ====================
 
     [HttpGet("dashboard")]
-    public async Task<ActionResult<MdnDashboardDto>> GetDashboard()
+    public async Task<IActionResult> GetDashboard()
     {
         if (await ForbiddenUnlessAsync(Module, "View") is { } forbid) return forbid;
         return Ok(await _svc.GetDashboardAsync());
@@ -33,49 +33,49 @@ public sealed class MoadianCertController : RbacControllerBase
     // ==================== پروفایل مودی، گواهی امضا و تشخیص ====================
 
     [HttpGet("profile")]
-    public async Task<ActionResult<MdnProfileDto>> GetProfile()
+    public async Task<IActionResult> GetProfile()
     {
         if (await ForbiddenUnlessAnyAsync(Module, "View", "Certificate", "InvoiceCreate") is { } forbid) return forbid;
         return Ok(await _svc.GetProfileAsync());
     }
 
     [HttpPost("profile")]
-    public async Task<ActionResult<MdnProfileDto>> SaveProfile([FromBody] MdnSaveProfileRequest req)
+    public async Task<IActionResult> SaveProfile([FromBody] MdnSaveProfileRequest req)
     {
         if (await ForbiddenUnlessAsync(Module, "Certificate") is { } forbid) return forbid;
         return Ok(await _svc.SaveProfileAsync(req, MyUsername));
     }
 
     [HttpPost("profile/certificate")]
-    public async Task<ActionResult<MdnProfileDto>> UploadCertificate([FromBody] MdnUploadCertificateRequest req)
+    public async Task<IActionResult> UploadCertificate([FromBody] MdnUploadCertificateRequest req)
     {
         if (await ForbiddenUnlessAsync(Module, "Certificate") is { } forbid) return forbid;
         return Ok(await _svc.UploadCertificateAsync(req, MyUsername));
     }
 
     [HttpDelete("profile/certificate")]
-    public async Task<ActionResult<MdnProfileDto>> ClearCertificate()
+    public async Task<IActionResult> ClearCertificate()
     {
         if (await ForbiddenUnlessAsync(Module, "Certificate") is { } forbid) return forbid;
         return Ok(await _svc.ClearCertificateAsync(MyUsername));
     }
 
     [HttpPost("diagnostics/connection")]
-    public async Task<ActionResult<MdnConnectionDiagnosticsDto>> TestConnection()
+    public async Task<IActionResult> TestConnection()
     {
         if (await ForbiddenUnlessAnyAsync(Module, "Certificate", "Diagnose") is { } forbid) return forbid;
         return Ok(await _svc.TestConnectionAsync(MyUsername));
     }
 
     [HttpGet("diagnostics/taxpayer/{economicCode}")]
-    public async Task<ActionResult<MdnTaxpayerLookupDto>> LookupTaxpayer(string economicCode)
+    public async Task<IActionResult> LookupTaxpayer(string economicCode)
     {
         if (await ForbiddenUnlessAnyAsync(Module, "View", "MasterData", "InvoiceCreate", "Diagnose") is { } forbid) return forbid;
         return Ok(await _svc.LookupTaxpayerAsync(economicCode));
     }
 
     [HttpPost("diagnostics/article6")]
-    public async Task<ActionResult<MdnArticle6CheckResultDto>> CheckArticle6([FromBody] MdnArticle6CheckRequest req)
+    public async Task<IActionResult> CheckArticle6([FromBody] MdnArticle6CheckRequest req)
     {
         if (await ForbiddenUnlessAnyAsync(Module, "FolderStatus", "Diagnose", "Certificate") is { } forbid) return forbid;
         return Ok(await _svc.CheckArticle6StatusAsync(req));
@@ -84,14 +84,14 @@ public sealed class MoadianCertController : RbacControllerBase
     // ==================== اطلاعات پایه و همگام‌سازی ERP ====================
 
     [HttpGet("buyers")]
-    public async Task<ActionResult<List<MdnBuyerDto>>> GetBuyers([FromQuery] string? search = null)
+    public async Task<IActionResult> GetBuyers([FromQuery] string? search = null)
     {
         if (await ForbiddenUnlessAnyAsync(Module, "View", "MasterData", "InvoiceCreate", "InvoiceUpdate") is { } forbid) return forbid;
         return Ok(await _svc.GetBuyersAsync(search));
     }
 
     [HttpPost("buyers")]
-    public async Task<ActionResult<MdnBuyerDto>> SaveBuyer([FromBody] MdnSaveBuyerRequest req)
+    public async Task<IActionResult> SaveBuyer([FromBody] MdnSaveBuyerRequest req)
     {
         if (await ForbiddenUnlessAnyAsync(Module, "MasterData", "InvoiceCreate") is { } forbid) return forbid;
         return Ok(await _svc.SaveBuyerAsync(req));
@@ -106,21 +106,21 @@ public sealed class MoadianCertController : RbacControllerBase
     }
 
     [HttpPost("buyers/sync-erp")]
-    public async Task<ActionResult<MdnSyncResultDto>> SyncBuyersFromParties()
+    public async Task<IActionResult> SyncBuyersFromParties()
     {
         if (await ForbiddenUnlessAsync(Module, "MasterData") is { } forbid) return forbid;
         return Ok(await _svc.SyncBuyersFromPartiesAsync());
     }
 
     [HttpGet("catalog")]
-    public async Task<ActionResult<List<MdnCatalogItemDto>>> GetCatalog([FromQuery] string? search = null)
+    public async Task<IActionResult> GetCatalog([FromQuery] string? search = null)
     {
         if (await ForbiddenUnlessAnyAsync(Module, "View", "MasterData", "InvoiceCreate", "InvoiceUpdate") is { } forbid) return forbid;
         return Ok(await _svc.GetCatalogItemsAsync(search));
     }
 
     [HttpPost("catalog")]
-    public async Task<ActionResult<MdnCatalogItemDto>> SaveCatalog([FromBody] MdnSaveCatalogItemRequest req)
+    public async Task<IActionResult> SaveCatalog([FromBody] MdnSaveCatalogItemRequest req)
     {
         if (await ForbiddenUnlessAnyAsync(Module, "MasterData", "InvoiceCreate") is { } forbid) return forbid;
         return Ok(await _svc.SaveCatalogItemAsync(req));
@@ -135,21 +135,21 @@ public sealed class MoadianCertController : RbacControllerBase
     }
 
     [HttpPost("catalog/sync-erp")]
-    public async Task<ActionResult<MdnSyncResultDto>> SyncCatalogFromProducts()
+    public async Task<IActionResult> SyncCatalogFromProducts()
     {
         if (await ForbiddenUnlessAsync(Module, "MasterData") is { } forbid) return forbid;
         return Ok(await _svc.SyncCatalogFromProductsAsync());
     }
 
     [HttpGet("units")]
-    public async Task<ActionResult<List<MdnMeasureUnitDto>>> GetUnits()
+    public async Task<IActionResult> GetUnits()
     {
         if (await ForbiddenUnlessAnyAsync(Module, "View", "MasterData", "InvoiceCreate", "InvoiceUpdate") is { } forbid) return forbid;
         return Ok(await _svc.GetMeasureUnitsAsync());
     }
 
     [HttpPost("units")]
-    public async Task<ActionResult<MdnMeasureUnitDto>> SaveUnit([FromBody] MdnSaveMeasureUnitRequest req)
+    public async Task<IActionResult> SaveUnit([FromBody] MdnSaveMeasureUnitRequest req)
     {
         if (await ForbiddenUnlessAsync(Module, "MasterData") is { } forbid) return forbid;
         return Ok(await _svc.SaveMeasureUnitAsync(req));
@@ -158,7 +158,7 @@ public sealed class MoadianCertController : RbacControllerBase
     // ==================== صورتحساب‌ها، پیش‌نمایش و تبدیل از ERP ====================
 
     [HttpGet("invoices")]
-    public async Task<ActionResult<MdnInvoiceListResultDto>> GetInvoices(
+    public async Task<IActionResult> GetInvoices(
         [FromQuery] string? search = null,
         [FromQuery] MdnSubmissionStatus? submissionStatus = null,
         [FromQuery] MdnFolderStatus? folderStatus = null,
@@ -185,14 +185,14 @@ public sealed class MoadianCertController : RbacControllerBase
     }
 
     [HttpGet("invoices/{id:int}")]
-    public async Task<ActionResult<MdnInvoiceDetailDto>> GetInvoiceDetail(int id)
+    public async Task<IActionResult> GetInvoiceDetail(int id)
     {
         if (await ForbiddenUnlessAsync(Module, "View") is { } forbid) return forbid;
         return Ok(await _svc.GetInvoiceDetailAsync(id));
     }
 
     [HttpPost("invoices")]
-    public async Task<ActionResult<MdnInvoiceDetailDto>> SaveInvoice([FromBody] MdnSaveInvoiceRequest req)
+    public async Task<IActionResult> SaveInvoice([FromBody] MdnSaveInvoiceRequest req)
     {
         var action = req.Id == 0 ? "InvoiceCreate" : "InvoiceUpdate";
         if (await ForbiddenUnlessAsync(Module, action) is { } forbid) return forbid;
@@ -208,28 +208,28 @@ public sealed class MoadianCertController : RbacControllerBase
     }
 
     [HttpGet("invoices/{id:int}/preview-json")]
-    public async Task<ActionResult<MdnInvoiceJsonPreviewDto>> PreviewJson(int id)
+    public async Task<IActionResult> PreviewJson(int id)
     {
         if (await ForbiddenUnlessAsync(Module, "View") is { } forbid) return forbid;
         return Ok(await _svc.PreviewInvoiceJsonAsync(id));
     }
 
     [HttpPost("invoices/{id:int}/derivative")]
-    public async Task<ActionResult<MdnInvoiceDetailDto>> CreateDerivative(int id, [FromBody] MdnCreateDerivativeRequest req)
+    public async Task<IActionResult> CreateDerivative(int id, [FromBody] MdnCreateDerivativeRequest req)
     {
         if (await ForbiddenUnlessAsync(Module, "InvoiceUpdate") is { } forbid) return forbid;
         return Ok(await _svc.CreateDerivativeInvoiceAsync(id, req, MyUserId, MyUsername));
     }
 
     [HttpGet("erp-invoices")]
-    public async Task<ActionResult<List<MdnErpFacInvoicePickDto>>> GetErpInvoices()
+    public async Task<IActionResult> GetErpInvoices()
     {
         if (await ForbiddenUnlessAsync(Module, "InvoiceCreate") is { } forbid) return forbid;
         return Ok(await _svc.GetReceivableErpInvoicesAsync());
     }
 
     [HttpPost("erp-invoices/{facInvoiceId:int}/import")]
-    public async Task<ActionResult<MdnInvoiceDetailDto>> ImportErpInvoice(int facInvoiceId)
+    public async Task<IActionResult> ImportErpInvoice(int facInvoiceId)
     {
         if (await ForbiddenUnlessAsync(Module, "InvoiceCreate") is { } forbid) return forbid;
         return Ok(await _svc.ImportFromErpInvoiceAsync(facInvoiceId, MyUserId, MyUsername));
@@ -238,49 +238,49 @@ public sealed class MoadianCertController : RbacControllerBase
     // ==================== ارسال، استعلام وضعیت، استعلام کارپوشه و ثبت پرداخت ====================
 
     [HttpPost("invoices/send")]
-    public async Task<ActionResult<MdnBatchActionResultDto>> SendInvoices([FromBody] MdnBulkIdsRequest req)
+    public async Task<IActionResult> SendInvoices([FromBody] MdnBulkIdsRequest req)
     {
         if (await ForbiddenUnlessAsync(Module, "InvoiceSend") is { } forbid) return forbid;
         return Ok(await _svc.SendInvoicesAsync(req.InvoiceIds, MyUsername));
     }
 
     [HttpPost("invoices/inquiry-submission")]
-    public async Task<ActionResult<MdnBatchActionResultDto>> InquirySubmissions([FromBody] MdnBulkIdsRequest req)
+    public async Task<IActionResult> InquirySubmissions([FromBody] MdnBulkIdsRequest req)
     {
         if (await ForbiddenUnlessAsync(Module, "InvoiceInquiry") is { } forbid) return forbid;
         return Ok(await _svc.InquirySubmissionsAsync(req.InvoiceIds, MyUsername));
     }
 
     [HttpPost("invoices/inquiry-folder")]
-    public async Task<ActionResult<MdnBatchActionResultDto>> InquiryFolder([FromBody] MdnBulkIdsRequest req)
+    public async Task<IActionResult> InquiryFolder([FromBody] MdnBulkIdsRequest req)
     {
         if (await ForbiddenUnlessAsync(Module, "FolderStatus") is { } forbid) return forbid;
         return Ok(await _svc.InquiryFolderStatusesAsync(req.InvoiceIds, MyUsername));
     }
 
     [HttpPost("invoices/refresh-all")]
-    public async Task<ActionResult<MdnBatchActionResultDto>> RefreshAll([FromBody] MdnBulkIdsRequest req)
+    public async Task<IActionResult> RefreshAll([FromBody] MdnBulkIdsRequest req)
     {
         if (await ForbiddenUnlessAnyAsync(Module, "InvoiceInquiry", "FolderStatus") is { } forbid) return forbid;
         return Ok(await _svc.RefreshAllStatusesAsync(req.InvoiceIds, MyUsername));
     }
 
     [HttpPost("invoices/inquiry-time-range")]
-    public async Task<ActionResult<List<MdnTimeRangeInquiryItemDto>>> InquiryTimeRange([FromBody] MdnTimeRangeInquiryRequest req)
+    public async Task<IActionResult> InquiryTimeRange([FromBody] MdnTimeRangeInquiryRequest req)
     {
         if (await ForbiddenUnlessAsync(Module, "InvoiceInquiry") is { } forbid) return forbid;
         return Ok(await _svc.InquiryByTimeRangeAsync(req, MyUsername));
     }
 
     [HttpPost("invoices/{id:int}/payments")]
-    public async Task<ActionResult<MdnInvoicePaymentDto>> RegisterPayment(int id, [FromBody] MdnRegisterPaymentRequest req)
+    public async Task<IActionResult> RegisterPayment(int id, [FromBody] MdnRegisterPaymentRequest req)
     {
         if (await ForbiddenUnlessAsync(Module, "PaymentRegister") is { } forbid) return forbid;
         return Ok(await _svc.RegisterPaymentAsync(id, req, MyUsername));
     }
 
     [HttpPost("invoices/{id:int}/payments/{paymentId:int}/retry")]
-    public async Task<ActionResult<MdnInvoicePaymentDto>> RetryPayment(int id, int paymentId)
+    public async Task<IActionResult> RetryPayment(int id, int paymentId)
     {
         if (await ForbiddenUnlessAsync(Module, "PaymentRegister") is { } forbid) return forbid;
         return Ok(await _svc.RetryPaymentSyncAsync(id, paymentId, MyUsername));
