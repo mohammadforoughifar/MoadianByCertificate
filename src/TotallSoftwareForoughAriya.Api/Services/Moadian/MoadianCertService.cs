@@ -15,6 +15,7 @@ public interface IMoadianCertService
     Task<MdnProfileDto> SaveProfileAsync(MdnSaveProfileRequest req, string username);
     Task<MdnProfileDto> UploadCertificateAsync(MdnUploadCertificateRequest req, string username);
     Task<MdnProfileDto> ClearCertificateAsync(string username);
+    Task<MdnPkcs11DiscoverResultDto> DiscoverPkcs11Async(MdnPkcs11DiscoverRequest req);
     Task<MdnConnectionDiagnosticsDto> TestConnectionAsync(string username);
     Task<MdnTaxpayerLookupDto> LookupTaxpayerAsync(string economicCode);
     Task<MdnArticle6CheckResultDto> CheckArticle6StatusAsync(MdnArticle6CheckRequest req);
@@ -200,25 +201,55 @@ public sealed class MoadianCertService : IMoadianCertService
         }
         else if (req.SignatureMode == MdnSignatureMode.Pkcs11Token)
         {
-            if (string.IsNullOrWhiteSpace(req.Pkcs11LibraryPath) || string.IsNullOrWhiteSpace(req.Pkcs11CertificateAlias))
-                throw new InvalidOperationException("مسیر فایل کتابخانه PKCS#11 و نام مستعار گواهی روی توکن الزامی است.");
+            if (string.IsNullOrWhiteSpace(req.Pkcs11LibraryPath))
+                throw new InvalidOperationException("مسیر فایل کتابخانه درایور PKCS#11 الزامی است (می‌توانید از دکمهٔ «جستجوی خودکار درایور و گواهی‌های توکن» استفاده کنید).");
 
-            profile.Pkcs11LibraryPath = req.Pkcs11LibraryPath.Trim();
-            profile.Pkcs11CertificateAlias = req.Pkcs11CertificateAlias.Trim();
+            string effectivePin;
+            if (!string.IsNullOrWhiteSpace(req.Pkcs11Pin))
+            {
+                effectivePin = req.Pkcs11Pin;
+            }
+            else if (!string.IsNullOrWhiteSpace(profile.EncryptedPkcs11Pin))
+            {
+                var pinBytes = _vault.DecryptToBytes(profile.EncryptedPkcs11Pin, companyId, "pkcs11-pin");
+                try { effectivePin = System.Text.Encoding.UTF8.GetString(pinBytes); }
+                finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(pinBytes); }
+            }
+            else
+            {
+                throw new InvalidOperationException("رمز پین (PIN) توکن سخت‌افزاری باید وارد شود.");
+            }
+
+            // بررسی زندهٔ درایور، پین، اتصال توکن، تطبیق Label گواهی و تست امضای سخت‌افزاری
+            var validated = MoadianPkcs11Inspector.ValidateAndInspectSelection(
+                req.Pkcs11LibraryPath,
+                req.Pkcs11CertificateAlias,
+                effectivePin);
+
+            profile.Pkcs11LibraryPath = validated.LibraryPath;
+            profile.Pkcs11CertificateAlias = validated.ExactCertificateAlias;
             if (!string.IsNullOrWhiteSpace(req.Pkcs11Pin))
                 profile.EncryptedPkcs11Pin = _vault.Encrypt(req.Pkcs11Pin, companyId, "pkcs11-pin");
 
-            if (string.IsNullOrWhiteSpace(profile.EncryptedPkcs11Pin))
-                throw new InvalidOperationException("رمز پین توکن سخت‌افزاری باید حداقل یک‌بار وارد شود.");
-
+            profile.CertificateSubject = Truncate(validated.Subject, 400);
+            profile.CertificateIssuer = Truncate(validated.Issuer, 400);
+            profile.CertificateSerial = Truncate(validated.SerialNumber, 120);
+            profile.CertificateThumbprint = Truncate(validated.Thumbprint, 120);
+            profile.CertificateNotBefore = validated.NotBeforeUtc;
+            profile.CertificateNotAfter = validated.NotAfterUtc;
             profile.UpdatedAt = DateTime.Now;
-            AddLog(null, "PKCS11_CONFIG", true, "SAVED", null, null, null,
-                $"تنظیمات توکن سخت‌افزاری PKCS#11 ثبت شد ({profile.Pkcs11CertificateAlias}).", null, username);
+
+            AddLog(null, "PKCS11_CONFIG", true, "TOKEN_VERIFIED", null, null, null,
+                $"توکن سخت‌افزاری PKCS#11 با موفقیت بررسی، تست امضا و ثبت شد (Label: {profile.Pkcs11CertificateAlias}، اعتبار تا {validated.NotAfterUtc.ToLocalTime():yyyy/MM/dd}).",
+                null, username);
         }
 
         await _db.SaveChangesAsync();
         return MapProfileDto(profile, companyName);
     }
+
+    public Task<MdnPkcs11DiscoverResultDto> DiscoverPkcs11Async(MdnPkcs11DiscoverRequest req)
+        => Task.FromResult(MoadianPkcs11Inspector.Discover(req.LibraryPath, req.Pin));
 
     public async Task<MdnProfileDto> ClearCertificateAsync(string username)
     {

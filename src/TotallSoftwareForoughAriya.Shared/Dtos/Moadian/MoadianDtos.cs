@@ -218,6 +218,54 @@ public class MdnUploadCertificateRequest
     public string? Pkcs11Pin { get; set; }
 }
 
+public class MdnPkcs11DiscoverRequest
+{
+    /// <summary>مسیر دلخواه فایل DLL/SO؛ اگر خالی باشد تمام مسیرهای استاندارد سیستم اسکن می‌شوند.</summary>
+    public string? LibraryPath { get; set; }
+
+    /// <summary>رمز پین توکن (اختیاری؛ برای خواندن گواهی‌های خصوصی و تأیید کلید خصوصی روی توکن).</summary>
+    public string? Pin { get; set; }
+}
+
+public class MdnPkcs11DriverDto
+{
+    public string LibraryPath { get; set; } = "";
+    public string VendorName { get; set; } = "";
+    public bool LoadSucceeded { get; set; }
+    public int ConnectedTokensCount { get; set; }
+    public string? DiagnosticMessage { get; set; }
+}
+
+public class MdnPkcs11CertificateItemDto
+{
+    public string LibraryPath { get; set; } = "";
+    public string VendorName { get; set; } = "";
+    public string SlotDescription { get; set; } = "";
+    public string TokenLabel { get; set; } = "";
+    public string TokenModel { get; set; } = "";
+    public string TokenManufacturer { get; set; } = "";
+    public string TokenSerial { get; set; } = "";
+    public string CertificateAlias { get; set; } = "";
+    public string Subject { get; set; } = "";
+    public string CommonName { get; set; } = "";
+    public string Issuer { get; set; } = "";
+    public string SerialNumber { get; set; } = "";
+    public string Thumbprint { get; set; } = "";
+    public DateTime NotBefore { get; set; }
+    public DateTime NotAfter { get; set; }
+    public bool IsExpired { get; set; }
+    public bool IsCertificateAuthority { get; set; }
+    public bool HasPrivateKey { get; set; }
+}
+
+public class MdnPkcs11DiscoverResultDto
+{
+    public bool Is64BitProcess { get; set; }
+    public string Summary { get; set; } = "";
+    public List<MdnPkcs11DriverDto> Drivers { get; set; } = new();
+    public List<MdnPkcs11CertificateItemDto> Certificates { get; set; } = new();
+}
+
 public class MdnDiagnosticStepDto
 {
     public string Title { get; set; } = "";

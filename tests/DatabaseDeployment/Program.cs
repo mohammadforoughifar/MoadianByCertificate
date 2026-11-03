@@ -170,6 +170,25 @@ UPDATE Organizations SET CompanyId = 1;";
         }
         catch (InvalidOperationException ex) { csrError = ex.Message; }
         Check(csrError.Contains("CSR") && !csrError.Contains("Base-64"), "Moadian vault explains CSR mistake in Persian");
+
+        // 5. Key/cert mismatch reports exact RSA modulus fingerprints and CA certificate role
+        using var unrelatedRsa = System.Security.Cryptography.RSA.Create(2048);
+        var mismatchError = "";
+        try
+        {
+            Inventory.Api.Services.Moadian.MoadianSecretVault.ParseAndValidatePkcs8Material(
+                unrelatedRsa.ExportPkcs8PrivateKeyPem(),
+                caPem,
+                null,
+                null);
+        }
+        catch (InvalidOperationException ex) { mismatchError = ex.Message; }
+        Check(mismatchError.Contains("شناسه ماژول کلید") && mismatchError.Contains("مرکز صدور گواهی"),
+            "Moadian vault reports exact RSA modulus fingerprints and CA role on mismatch");
+
+        // 6. PKCS#11 auto-discovery safely scans without throwing when no hardware token is attached
+        var pkcs11Scan = Inventory.Api.Services.Moadian.MoadianPkcs11Inspector.Discover(null, null);
+        Check(!string.IsNullOrWhiteSpace(pkcs11Scan.Summary), "PKCS#11 auto-discovery returns summary cleanly");
     }
     first.Certificate?.Dispose();
 

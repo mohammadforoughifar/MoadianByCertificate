@@ -152,19 +152,28 @@ public sealed class MoadianSecretVault
             X509Certificate2? matched = null;
             foreach (var c in candidates)
             {
-                if (DoesRsaMatchCertificate(rsa, c))
+                if (!MoadianPkcs11Inspector.IsCaCertificate(c) && DoesRsaMatchCertificate(rsa, c))
                 {
                     matched = c;
                     break;
                 }
             }
 
+            // اگر هیچ گواهی غیر CA منطبق نشد، گواهی‌های دیگر (مثل گواهی خودامضای آزمایشی با پرچم CA) هم بررسی می‌شوند
             if (matched is null)
             {
-                var firstSubject = candidates[0].Subject;
-                throw new InvalidOperationException(
-                    $"کلید خصوصی انتخاب‌شده با گواهی امضای الکترونیکی مطابقت ریاضی ندارد! (صاحب گواهی بارگذاری‌شده: {firstSubject}). مطمئن شوید گواهی مربوط به همین زوج‌کلید باشد.");
+                foreach (var c in candidates)
+                {
+                    if (DoesRsaMatchCertificate(rsa, c))
+                    {
+                        matched = c;
+                        break;
+                    }
+                }
             }
+
+            if (matched is null)
+                throw new InvalidOperationException(BuildDetailedKeyCertMismatchMessage(rsa, candidates));
 
             var normalizedPkcs8Pem = rsa.ExportPkcs8PrivateKeyPem();
             var normalizedCertDerBase64 = Convert.ToBase64String(matched.Export(X509ContentType.Cert));
@@ -220,6 +229,21 @@ public sealed class MoadianSecretVault
 
     private static ParsedCertificateMaterial ExtractFromPkcs12Bytes(byte[] pfxBytes, string? password)
     {
+        try
+        {
+            var detected = X509Certificate2.GetCertContentType(pfxBytes);
+            if (detected == X509ContentType.Cert || detected == X509ContentType.Pkcs7)
+            {
+                throw new InvalidOperationException(
+                    "علت عدم تطابق: فایل انتخاب‌شده فقط شامل گواهی عمومی (.cer / .crt / .p7b بدون کلید خصوصی) است، نه فایل تجمیعی PFX/P12! لطفاً کلید خصوصی و این فایل گواهی را در زبانهٔ اول «کلید خصوصی + گواهی (.pem / .crt)» بارگذاری کنید.");
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            throw;
+        }
+        catch { /* ادامه با تلاش بارگذاری مستقیم PFX */ }
+
         var flags = OperatingSystem.IsWindows()
             ? X509KeyStorageFlags.Exportable
             : X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable;
@@ -231,11 +255,23 @@ public sealed class MoadianSecretVault
             collection.Import(pfxBytes, password ?? string.Empty, flags);
 #pragma warning restore SYSLIB0057
 
-            var signingCert = collection.Cast<X509Certificate2>().FirstOrDefault(c => c.HasPrivateKey)
-                ?? throw new InvalidOperationException("فایل PFX/P12 فاقد کلید خصوصی امضا است.");
+            if (collection.Count == 0)
+                throw new InvalidOperationException("هیچ گواهی X.509 داخل فایل PFX/P12 یافت نشد.");
+
+            var signingCert = collection.Cast<X509Certificate2>()
+                .FirstOrDefault(c => c.HasPrivateKey && !MoadianPkcs11Inspector.IsCaCertificate(c))
+                ?? collection.Cast<X509Certificate2>().FirstOrDefault(c => c.HasPrivateKey);
+
+            if (signingCert is null)
+            {
+                var subjects = string.Join(" | ", collection.Cast<X509Certificate2>().Select(c => c.Subject));
+                throw new InvalidOperationException(
+                    $"علت عدم تطابق: فایل PFX/P12 باز شد (شامل {collection.Count} گواهی: {subjects})، اما فاقد کلید خصوصی است! هنگام خروجی گرفتن (Export) از گواهی، گزینهٔ «Yes, export the private key» انتخاب نشده است.");
+            }
 
             using var rsaFromPfx = signingCert.GetRSAPrivateKey()
-                ?? throw new InvalidOperationException("کلید خصوصی داخل فایل PFX باید از نوع RSA باشد.");
+                ?? throw new InvalidOperationException(
+                    $"علت عدم تطابق: کلید خصوصی داخل فایل PFX از نوع غیر RSA ({signingCert.PublicKey.Oid?.FriendlyName ?? signingCert.PublicKey.Oid?.Value}) است؛ سامانه مودیان فقط کلید RSA (حداقل ۲۰۴۸ بیت) را می‌پذیرد.");
 
             ValidateRsaAndCertificateMatch(rsaFromPfx, signingCert);
 
@@ -249,8 +285,10 @@ public sealed class MoadianSecretVault
         }
         catch (CryptographicException ex)
         {
-            throw new InvalidOperationException(
-                $"بارگذاری فایل تجمیعی PFX/P12 ناموفق بود (رمز عبور فایل یا ساختار گواهی را بررسی کنید): {ex.Message}");
+            var pwdHint = string.IsNullOrEmpty(password)
+                ? "این فایل PFX/P12 رمزگذاری شده است؛ لطفاً رمز عبور فایل PFX را وارد کنید."
+                : "رمز عبور واردشده برای فایل PFX/P12 نادرست است یا ساختار فایل آسیب دیده است.";
+            throw new InvalidOperationException($"{pwdHint} (جزئیات فنی: {ex.Message})");
         }
         finally
         {
@@ -963,7 +1001,72 @@ public sealed class MoadianSecretVault
             throw new InvalidOperationException($"طول کلید RSA باید حداقل ۲۰۴۸ بیت باشد (کلید فعلی: {privateKey.KeySize} بیت).");
 
         if (!DoesRsaMatchCertificate(privateKey, certificate))
-            throw new InvalidOperationException("کلید خصوصی انتخاب‌شده با گواهی امضای الکترونیکی مطابقت ندارد!");
+            throw new InvalidOperationException(BuildDetailedKeyCertMismatchMessage(privateKey, new List<X509Certificate2> { certificate }));
+    }
+
+    private static string BuildDetailedKeyCertMismatchMessage(RSA privateKey, List<X509Certificate2> candidates)
+    {
+        var privFingerprint = ComputeRsaModulusFingerprint(privateKey);
+        var allAreCa = candidates.Count > 0 && candidates.All(MoadianPkcs11Inspector.IsCaCertificate);
+        var anyNonRsa = candidates.Any(c => c.GetRSAPublicKey() is null);
+
+        var sb = new StringBuilder();
+        sb.AppendLine("عدم تطابق ریاضی بین کلید خصوصی و گواهی امضای الکترونیکی!");
+
+        if (allAreCa)
+        {
+            sb.AppendLine("• علت دقیق: فایل گواهی بارگذاری‌شده متعلق به «مرکز صدور گواهی (گواهی ریشه/میانی CA)» است (BasicConstraints: CA=True)، نه گواهی اختصاصی صادرشده برای مودی! لطفاً فایل گواهی امضای شرکت/شخص خودتان را انتخاب کنید.");
+        }
+        else if (anyNonRsa && candidates.All(c => c.GetRSAPublicKey() is null))
+        {
+            var oid = candidates[0].PublicKey.Oid?.FriendlyName ?? candidates[0].PublicKey.Oid?.Value ?? "غیر RSA";
+            sb.AppendLine($"• علت دقیق: کلید عمومی داخل گواهی از نوع «{oid}» است، در حالی که کلید خصوصی از نوع RSA است.");
+        }
+        else
+        {
+            sb.AppendLine("• علت دقیق: ماژول ریاضی (Modulus) کلید خصوصی بارگذاری‌شده با کلید عمومی داخل گواهی یکسان نیست؛ یعنی این گواهی از روی یک کلید خصوصی / درخواست گواهی (CSR) دیگر صادر شده است.");
+        }
+
+        sb.AppendLine($"• مشخصات کلید خصوصی بارگذاری‌شده (کادر ۱): RSA {privateKey.KeySize}-bit | شناسه ماژول کلید: [{privFingerprint}]");
+        sb.AppendLine($"• مشخصات گواهی‌های بررسی‌شده در فایل (کادر ۲ — {candidates.Count} گواهی):");
+
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            var c = candidates[i];
+            var isCa = MoadianPkcs11Inspector.IsCaCertificate(c);
+            var expired = c.NotAfter.ToUniversalTime() < DateTime.UtcNow;
+            string pubInfo;
+            using (var pub = c.GetRSAPublicKey())
+            {
+                pubInfo = pub is not null
+                    ? $"RSA {pub.KeySize}-bit | شناسه ماژول کلید عمومی: [{ComputeRsaModulusFingerprint(pub)}]"
+                    : $"نوع غیر RSA ({c.PublicKey.Oid?.FriendlyName ?? c.PublicKey.Oid?.Value})";
+            }
+
+            var roleTag = isCa ? "گواهی مرکز صدور (CA)" : "گواهی پایانی (مودی)";
+            var expTag = expired ? " — منقضی‌شده!" : "";
+            sb.AppendLine($"  [{i + 1}] {roleTag}: {c.Subject}");
+            sb.AppendLine($"      صادرکننده: {c.Issuer} | اعتبار: {c.NotBefore:yyyy/MM/dd} تا {c.NotAfter:yyyy/MM/dd}{expTag}");
+            sb.AppendLine($"      کلید داخل گواهی: {pubInfo}");
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string ComputeRsaModulusFingerprint(RSA rsa)
+    {
+        try
+        {
+            var p = rsa.ExportParameters(includePrivateParameters: false);
+            if (p.Modulus is null || p.Modulus.Length == 0)
+                return "نامشخص";
+            var hash = SHA256.HashData(p.Modulus);
+            return $"{Convert.ToHexString(hash, 0, 2)}-{Convert.ToHexString(hash, 2, 2)}-{Convert.ToHexString(hash, 4, 2)}-{Convert.ToHexString(hash, 6, 2)}";
+        }
+        catch
+        {
+            return "نامشخص";
+        }
     }
 
     private static ParsedCertificateMaterial BuildMetadata(string pkcs8Pem, string certDerBase64, X509Certificate2 cert)
