@@ -206,33 +206,48 @@ else if (profile is not null)
                         {
                             <div class="mb-3">
                                 <div class="d-flex justify-content-between align-items-center mb-1">
-                                    <label class="form-label mb-0">۱. کلید خصوصی مودی (Private Key PEM — PKCS#8 یا RSA)</label>
+                                    <label class="form-label mb-0">۱. کلید خصوصی مودی (Private Key — .pem / .key)</label>
                                     <label class="btn btn-sm btn-outline-secondary mb-0">
-                                        <i class="bi bi-upload me-1"></i>انتخاب فایل .pem / .key
-                                        <InputFile OnChange="OnPrivateKeyFileSelected" accept=".pem,.key,.txt" class="d-none" />
+                                        <i class="bi bi-upload me-1"></i>انتخاب فایل کلید خصوصی
+                                        <InputFile OnChange="OnPrivateKeyFileSelected" accept=".pem,.key,.der,.txt" class="d-none" />
                                     </label>
                                 </div>
                                 <textarea class="form-control font-monospace small" dir="ltr" rows="3"
                                           @bind="certReq.PrivateKeyPem"
                                           placeholder="-----BEGIN PRIVATE KEY----- ..."></textarea>
+                                @if (!string.IsNullOrWhiteSpace(selectedKeyFileName))
+                                {
+                                    <div class="small text-success mt-1"><i class="bi bi-check2 me-1"></i>فایل کلید خوانده شد: @selectedKeyFileName</div>
+                                }
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label small mb-1">رمز کلید خصوصی <span class="text-muted">(اختیاری — فقط در صورتی که فایل کلید خصوصی رمزدار باشد)</span></label>
+                                <input type="password" class="form-control form-control-sm" dir="ltr"
+                                       @bind="certReq.PrivateKeyPassword"
+                                       placeholder="در صورت بدون رمز بودن کلید خصوصی خالی بگذارید" />
                             </div>
 
                             <div class="mb-3">
                                 <div class="d-flex justify-content-between align-items-center mb-1">
-                                    <label class="form-label mb-0">۲. گواهی امضای الکترونیکی مودی (X.509 Certificate — .crt / .cer / .pem)</label>
+                                    <label class="form-label mb-0">۲. گواهی امضای الکترونیکی مودی (X.509 Certificate — .crt / .cer / .pem / .p7b)</label>
                                     <label class="btn btn-sm btn-outline-secondary mb-0">
                                         <i class="bi bi-upload me-1"></i>انتخاب فایل .crt / .cer
-                                        <InputFile OnChange="OnCertFileSelected" accept=".crt,.cer,.pem,.txt" class="d-none" />
+                                        <InputFile OnChange="OnCertFileSelected" accept=".crt,.cer,.pem,.der,.p7b,.p7c,.txt" class="d-none" />
                                     </label>
                                 </div>
                                 <textarea class="form-control font-monospace small" dir="ltr" rows="3"
                                           @bind="certReq.CertificateContent"
-                                          placeholder="-----BEGIN CERTIFICATE----- ..."></textarea>
+                                          placeholder="-----BEGIN CERTIFICATE----- ... (یا بارگذاری فایل باینری .cer / .crt)"></textarea>
+                                @if (!string.IsNullOrWhiteSpace(selectedCertFileName))
+                                {
+                                    <div class="small text-success mt-1"><i class="bi bi-check2 me-1"></i>فایل گواهی خوانده شد: @selectedCertFileName</div>
+                                }
                             </div>
 
                             <div class="alert alert-light border small py-2 mb-3">
                                 <i class="bi bi-lock-fill text-success me-1"></i>
-                                تطابق ریاضی زوج‌کلید RSA و گواهی X.509 پیش از ذخیره کنترل شده و کلید خصوصی با الگوریتم <strong>AES-256-GCM + HKDF</strong> رمزنگاری می‌گردد (هرگز در لاگ یا پاسخ API بازگردانده نمی‌شود).
+                                پشتیبانی کامل از گواهی متنی PEM، باینری DER (<code>.cer</code>/<code>.crt</code>)، Base64 خام و زنجیره PKCS#7 (<code>.p7b</code>). تطابق ریاضی زوج‌کلید RSA و گواهی X.509 پیش از ذخیره کنترل شده و کلید با الگوریتم <strong>AES-256-GCM + HKDF</strong> رمزنگاری می‌گردد.
                             </div>
 
                             <div class="text-end">
@@ -406,6 +421,8 @@ else if (profile is not null)
     private MdnSaveProfileRequest form = new();
     private MdnUploadCertificateRequest certReq = new();
     private string certTab = "pem";
+    private string? selectedKeyFileName;
+    private string? selectedCertFileName;
     private string? selectedPfxFileName;
 
     private MdnConnectionDiagnosticsDto? diagResult;
@@ -474,8 +491,8 @@ else if (profile is not null)
     {
         try
         {
-            using var reader = new StreamReader(e.File.OpenReadStream(2 * 1024 * 1024));
-            certReq.PrivateKeyPem = await reader.ReadToEndAsync();
+            certReq.PrivateKeyPem = await ReadFileAsPemOrBase64Async(e.File, 4 * 1024 * 1024);
+            selectedKeyFileName = e.File.Name;
             Toast.Info($"فایل کلید خصوصی «{e.File.Name}» خوانده شد.");
         }
         catch (Exception ex) { Toast.Error(ex.Message); }
@@ -485,17 +502,38 @@ else if (profile is not null)
     {
         try
         {
-            await using var ms = new MemoryStream();
-            await e.File.OpenReadStream(2 * 1024 * 1024).CopyToAsync(ms);
-            var bytes = ms.ToArray();
-            var text = System.Text.Encoding.UTF8.GetString(bytes);
-            // پشتیبانی هم از گواهی متنی PEM و هم گواهی باینری DER (.cer / .crt)
-            certReq.CertificateContent = text.Contains("BEGIN CERTIFICATE", StringComparison.OrdinalIgnoreCase)
-                ? text
-                : Convert.ToBase64String(bytes);
+            certReq.CertificateContent = await ReadFileAsPemOrBase64Async(e.File, 4 * 1024 * 1024);
+            selectedCertFileName = e.File.Name;
             Toast.Info($"فایل گواهی امضا «{e.File.Name}» بارگذاری شد.");
         }
         catch (Exception ex) { Toast.Error(ex.Message); }
+    }
+
+    private static async Task<string> ReadFileAsPemOrBase64Async(IBrowserFile file, long maxBytes)
+    {
+        await using var ms = new MemoryStream();
+        await file.OpenReadStream(maxBytes).CopyToAsync(ms);
+        var bytes = ms.ToArray();
+        if (bytes.Length == 0) return string.Empty;
+
+        string? decoded = null;
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            decoded = System.Text.Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+        else if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+            decoded = System.Text.Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+        else if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+            decoded = System.Text.Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
+        else if (Array.IndexOf(bytes, (byte)0) < 0)
+            decoded = System.Text.Encoding.UTF8.GetString(bytes);
+
+        if (!string.IsNullOrWhiteSpace(decoded) &&
+            !decoded.Contains('\uFFFD') &&
+            decoded.Contains("-----BEGIN", StringComparison.OrdinalIgnoreCase))
+        {
+            return decoded.Trim('\uFEFF', '\0', ' ', '\r', '\n', '\t');
+        }
+
+        return Convert.ToBase64String(bytes);
     }
 
     private async Task OnPfxFileSelected(InputFileChangeEventArgs e)
@@ -520,7 +558,10 @@ else if (profile is not null)
             certReq.PfxBase64 = null;
             profile = await Mdn.UploadCertificateAsync(certReq);
             certReq.PrivateKeyPem = null;
+            certReq.PrivateKeyPassword = null;
             certReq.CertificateContent = null;
+            selectedKeyFileName = null;
+            selectedCertFileName = null;
             Toast.Success("گواهی امضای الکترونیکی X.509 و کلید خصوصی با موفقیت تأیید و رمزنگاری شدند.");
         }
         catch (Exception ex) { Toast.Error(ex.Message); }

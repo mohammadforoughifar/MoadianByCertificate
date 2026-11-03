@@ -137,7 +137,40 @@ UPDATE Organizations SET CompanyId = 1;";
     if (!OperatingSystem.IsWindows())
         Check(File.GetUnixFileMode(keyPath) == (UnixFileMode.UserRead | UnixFileMode.UserWrite), "CA key permissions are owner-only");
     using (var ca = X509Certificate2.CreateFromPemFile(first.CaPath, keyPath))
+    {
         Check(ca.HasPrivateKey, "CA can be reloaded with signing key");
+        var caPem = File.ReadAllText(first.CaPath);
+        var keyPem = File.ReadAllText(keyPath);
+        var rawB64NoHeaders = Convert.ToBase64String(ca.RawData);
+
+        // 1. OpenSSL Bag Attributes + UTF-8 BOM + ZWNJ
+        var bagCert = "\uFEFF\u200CBag Attributes\n    friendlyName: Taxpayer\nsubject=CN=Test\n" + caPem;
+        var parsed1 = Inventory.Api.Services.Moadian.MoadianSecretVault.ParseAndValidatePkcs8Material(keyPem, bagCert, null, null);
+        Check(parsed1.Thumbprint == ca.Thumbprint, "Moadian vault parses PEM with BOM, ZWNJ, and Bag Attributes");
+
+        // 2. Double-Base64 (raw Base64 .cer file with UTF-8 BOM uploaded via InputFile)
+        var bomRawFileBytes = System.Text.Encoding.UTF8.GetPreamble().Concat(System.Text.Encoding.UTF8.GetBytes(rawB64NoHeaders)).ToArray();
+        var inputFileWrapped = Convert.ToBase64String(bomRawFileBytes);
+        var parsed2 = Inventory.Api.Services.Moadian.MoadianSecretVault.ParseAndValidatePkcs8Material(keyPem, inputFileWrapped, null, null);
+        Check(parsed2.Thumbprint == ca.Thumbprint, "Moadian vault parses raw Base64 .cer file with UTF-8 BOM uploaded via InputFile");
+
+        // 3. Swapped key & certificate inputs
+        var parsed3 = Inventory.Api.Services.Moadian.MoadianSecretVault.ParseAndValidatePkcs8Material(caPem, keyPem, null, null);
+        Check(parsed3.Thumbprint == ca.Thumbprint, "Moadian vault auto-corrects swapped key and certificate inputs");
+
+        // 4. CSR file gives clear Persian message instead of FormatException
+        var csrError = "";
+        try
+        {
+            Inventory.Api.Services.Moadian.MoadianSecretVault.ParseAndValidatePkcs8Material(
+                keyPem,
+                "-----BEGIN CERTIFICATE REQUEST-----\nMIIBMTCB2gIBADASMRAwDgYDVQQDDAdUZXN0Q1NS\n-----END CERTIFICATE REQUEST-----",
+                null,
+                null);
+        }
+        catch (InvalidOperationException ex) { csrError = ex.Message; }
+        Check(csrError.Contains("CSR") && !csrError.Contains("Base-64"), "Moadian vault explains CSR mistake in Persian");
+    }
     first.Certificate?.Dispose();
 
     var renewed = HttpsCertificates.Regenerate(env, cfg, newCa: false);

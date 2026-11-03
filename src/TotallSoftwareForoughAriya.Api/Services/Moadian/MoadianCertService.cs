@@ -181,7 +181,8 @@ public sealed class MoadianCertService : IMoadianCertService
                 req.PrivateKeyPem,
                 req.CertificateContent,
                 req.PfxBase64,
-                req.PfxPassword);
+                req.PfxPassword,
+                req.PrivateKeyPassword);
 
             profile.EncryptedPrivateKeyPem = _vault.Encrypt(parsed.Pkcs8PrivateKeyPem, companyId, "pkcs8-key");
             profile.EncryptedCertificateBase64 = _vault.Encrypt(parsed.CertificateDerBase64, companyId, "x509-cert");
