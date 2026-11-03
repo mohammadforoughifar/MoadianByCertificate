@@ -199,10 +199,13 @@ public class MdnUploadCertificateRequest
 {
     public MdnSignatureMode SignatureMode { get; set; } = MdnSignatureMode.Pkcs8Certificate;
 
-    /// <summary>محتوای PEM کلید خصوصی (PKCS#8 یا RSA PRIVATE KEY).</summary>
+    /// <summary>محتوای PEM یا Base64 کلید خصوصی (PKCS#8 یا RSA PRIVATE KEY).</summary>
     public string? PrivateKeyPem { get; set; }
 
-    /// <summary>گواهی امضای الکترونیکی به صورت متن PEM یا Base64 فایل CRT/CER/DER.</summary>
+    /// <summary>رمز کلید خصوصی در صورت رمزگذاری بودن فایل کلید خصوصی (اختیاری).</summary>
+    public string? PrivateKeyPassword { get; set; }
+
+    /// <summary>گواهی امضای الکترونیکی به صورت متن PEM یا Base64 فایل CRT/CER/DER/P7B.</summary>
     public string? CertificateContent { get; set; }
 
     /// <summary>آپلود یکجای فایل PFX / P12 به صورت Base64 (جایگزین کلید + گواهی جداگانه).</summary>
