@@ -11,6 +11,7 @@ public interface IMoadianClientService
     Task<MdnProfileDto> SaveProfileAsync(MdnSaveProfileRequest req);
     Task<MdnProfileDto> UploadCertificateAsync(MdnUploadCertificateRequest req);
     Task<MdnProfileDto> ClearCertificateAsync();
+    Task<MdnPkcs11DiscoverResultDto> DiscoverPkcs11Async(MdnPkcs11DiscoverRequest req);
     Task<MdnConnectionDiagnosticsDto> TestConnectionAsync();
     Task<MdnTaxpayerLookupDto> LookupTaxpayerAsync(string economicCode);
     Task<MdnArticle6CheckResultDto> CheckArticle6Async(MdnArticle6CheckRequest req);
@@ -69,6 +70,9 @@ public sealed class MoadianClientService : IMoadianClientService
 
     public Task<MdnProfileDto> ClearCertificateAsync()
         => _api.DeleteAsync<MdnProfileDto>("api/moadian/profile/certificate");
+
+    public Task<MdnPkcs11DiscoverResultDto> DiscoverPkcs11Async(MdnPkcs11DiscoverRequest req)
+        => _api.PostAsync<MdnPkcs11DiscoverResultDto>("api/moadian/pkcs11/discover", req);
 
     public Task<MdnConnectionDiagnosticsDto> TestConnectionAsync()
         => _api.PostAsync<MdnConnectionDiagnosticsDto>("api/moadian/diagnostics/connection");

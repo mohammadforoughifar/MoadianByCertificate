@@ -186,21 +186,34 @@ else if (profile is not null)
                         <!-- تب‌های روش بارگذاری گواهی -->
                         <ul class="nav nav-tabs mb-3">
                             <li class="nav-item">
-                                <button type="button" class="nav-link @(certTab == "pem" ? "active" : "")" @onclick='() => certTab = "pem"'>
+                                <button type="button" class="nav-link @(certTab == "pem" ? "active" : "")" @onclick='() => SwitchCertTab("pem")'>
                                     کلید خصوصی + گواهی (.pem / .crt)
                                 </button>
                             </li>
                             <li class="nav-item">
-                                <button type="button" class="nav-link @(certTab == "pfx" ? "active" : "")" @onclick='() => certTab = "pfx"'>
+                                <button type="button" class="nav-link @(certTab == "pfx" ? "active" : "")" @onclick='() => SwitchCertTab("pfx")'>
                                     فایل تجمیعی (.pfx / .p12)
                                 </button>
                             </li>
                             <li class="nav-item">
-                                <button type="button" class="nav-link @(certTab == "pkcs11" ? "active" : "")" @onclick='() => certTab = "pkcs11"'>
+                                <button type="button" class="nav-link @(certTab == "pkcs11" ? "active" : "")" @onclick='() => SwitchCertTab("pkcs11")'>
                                     توکن سخت‌افزاری (PKCS#11)
                                 </button>
                             </li>
                         </ul>
+
+                        @if (!string.IsNullOrWhiteSpace(vaultDiagnosticError))
+                        {
+                            <div class="alert alert-danger py-2 px-3 mb-3">
+                                <div class="d-flex justify-content-between align-items-start gap-2">
+                                    <div class="fw-bold small">
+                                        <i class="bi bi-exclamation-octagon-fill me-1"></i>گزارش دقیق علت خطا / عدم تطابق گواهی امضا
+                                    </div>
+                                    <button type="button" class="btn-close btn-sm" @onclick="() => vaultDiagnosticError = null"></button>
+                                </div>
+                                <div class="small mt-1" style="white-space: pre-wrap; line-height: 1.75;">@vaultDiagnosticError</div>
+                            </div>
+                        }
 
                         @if (certTab == "pem")
                         {
@@ -280,14 +293,112 @@ else if (profile is not null)
                         }
                         else
                         {
+                            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                                <span class="small text-muted">
+                                    توکن USB را به سرور وصل کنید و دکمهٔ روبه‌رو را بزنید تا مسیر درایور و نام دقیق گواهی خودکار پر شود:
+                                </span>
+                                <button type="button" class="btn btn-sm btn-outline-primary" disabled="@busy" @onclick="DiscoverPkcs11Async">
+                                    @if (busyAction == "pkcs11-scan")
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-1"></span>
+                                    }
+                                    else
+                                    {
+                                        <i class="bi bi-search me-1"></i>
+                                    }
+                                    جستجوی خودکار درایور و گواهی‌های توکن
+                                </button>
+                            </div>
+
+                            @if (pkcs11Discovery is not null)
+                            {
+                                <div class="alert @(pkcs11Discovery.Certificates.Count > 0 ? "alert-success" : "alert-warning") py-2 px-3 small mb-3">
+                                    <div class="fw-semibold mb-1">@pkcs11Discovery.Summary</div>
+
+                                    @if (pkcs11Discovery.Drivers.Count > 0)
+                                    {
+                                        <div class="mt-1">
+                                            <div class="text-muted mb-1">درایورهای PKCS#11 شناسایی‌شده روی سیستم:</div>
+                                            <div class="d-flex flex-wrap gap-1">
+                                                @foreach (var drv in pkcs11Discovery.Drivers)
+                                                {
+                                                    <button type="button"
+                                                            class="btn btn-sm @(drv.ConnectedTokensCount > 0 ? "btn-success" : "btn-outline-secondary")"
+                                                            title="@drv.DiagnosticMessage"
+                                                            @onclick="() => SelectPkcs11Driver(drv)">
+                                                        <i class="bi @(drv.ConnectedTokensCount > 0 ? "bi-usb-plug-fill" : "bi-filetype-dll") me-1"></i>
+                                                        @drv.VendorName
+                                                        @if (drv.ConnectedTokensCount > 0)
+                                                        {
+                                                            <span class="badge bg-light text-dark ms-1">توکن متصل</span>
+                                                        }
+                                                    </button>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+
+                                    @if (pkcs11Discovery.Certificates.Count > 0)
+                                    {
+                                        <div class="table-responsive mt-2 bg-white rounded border">
+                                            <table class="table table-sm align-middle mb-0">
+                                                <thead class="table-light">
+                                                    <tr>
+                                                        <th>Label (Alias)</th>
+                                                        <th>صاحب گواهی</th>
+                                                        <th>انقضا</th>
+                                                        <th>وضعیت</th>
+                                                        <th></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var cert in pkcs11Discovery.Certificates)
+                                                    {
+                                                        <tr class="@(cert.IsCertificateAuthority ? "table-secondary" : "")">
+                                                            <td class="font-monospace small" dir="ltr">@cert.CertificateAlias</td>
+                                                            <td class="small">
+                                                                <div class="fw-semibold">@cert.CommonName</div>
+                                                                <div class="text-muted" style="font-size:0.75rem;" dir="ltr">@cert.TokenModel (@cert.TokenSerial)</div>
+                                                            </td>
+                                                            <td class="small">@cert.NotAfter.ToFaDate()</td>
+                                                            <td>
+                                                                @if (cert.IsCertificateAuthority)
+                                                                {
+                                                                    <span class="badge bg-secondary">گواهی مرکز صدور (CA)</span>
+                                                                }
+                                                                else if (cert.IsExpired)
+                                                                {
+                                                                    <span class="badge bg-danger">منقضی‌شده</span>
+                                                                }
+                                                                else
+                                                                {
+                                                                    <span class="badge bg-success">گواهی مودی</span>
+                                                                }
+                                                            </td>
+                                                            <td class="text-end">
+                                                                <button type="button" class="btn btn-sm btn-primary"
+                                                                        disabled="@cert.IsCertificateAuthority"
+                                                                        @onclick="() => SelectPkcs11Certificate(cert)">
+                                                                    انتخاب
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    }
+                                </div>
+                            }
+
                             <div class="mb-3">
                                 <label class="form-label">مسیر کتابخانه درایور توکن روی سرور (.dll / .so)</label>
-                                <input class="form-control font-monospace" dir="ltr" @bind="certReq.Pkcs11LibraryPath" placeholder="C:\Windows\System32\eps2003csp11.dll" />
+                                <input class="form-control font-monospace" dir="ltr" @bind="certReq.Pkcs11LibraryPath" placeholder="C:\Windows\System32\shuttlecsp11_3003.dll" />
                             </div>
                             <div class="row g-2 mb-3">
                                 <div class="col-md-6">
-                                    <label class="form-label">نام مستعار گواهی (Certificate Alias / CN)</label>
-                                    <input class="form-control" dir="ltr" @bind="certReq.Pkcs11CertificateAlias" placeholder="نام صاحب گواهی روی توکن" />
+                                    <label class="form-label">برچسب گواهی روی توکن (Certificate Alias / Label)</label>
+                                    <input class="form-control font-monospace" dir="ltr" @bind="certReq.Pkcs11CertificateAlias" placeholder="با دکمه جستجوی خودکار پر می‌شود (یا خالی بگذارید)" />
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label">پین توکن سخت‌افزاری (PIN)</label>
@@ -296,7 +407,7 @@ else if (profile is not null)
                             </div>
                             <div class="text-end">
                                 <button class="btn btn-info text-white" disabled="@busy" @onclick="SavePkcs11ConfigAsync">
-                                    <i class="bi bi-usb-drive me-1"></i>ثبت تنظیمات امضای سخت‌افزاری PKCS#11
+                                    <i class="bi bi-usb-drive me-1"></i>بررسی امضای توکن و ثبت تنظیمات PKCS#11
                                 </button>
                             </div>
                         }
@@ -424,6 +535,8 @@ else if (profile is not null)
     private string? selectedKeyFileName;
     private string? selectedCertFileName;
     private string? selectedPfxFileName;
+    private string? vaultDiagnosticError;
+    private MdnPkcs11DiscoverResultDto? pkcs11Discovery;
 
     private MdnConnectionDiagnosticsDto? diagResult;
     private string lookupEconomicCode = "";
@@ -549,9 +662,69 @@ else if (profile is not null)
         catch (Exception ex) { Toast.Error(ex.Message); }
     }
 
+    private void SwitchCertTab(string tab)
+    {
+        certTab = tab;
+        vaultDiagnosticError = null;
+    }
+
+    private void SetVaultError(Exception ex)
+    {
+        var msg = ex.Message ?? "خطای نامشخص";
+        var httpSuffixIdx = msg.LastIndexOf(" (HTTP ", StringComparison.Ordinal);
+        vaultDiagnosticError = httpSuffixIdx > 0 ? msg[..httpSuffixIdx] : msg;
+        Toast.Error("خطا در بررسی گواهی امضا — جزئیات دقیق در کادر قرمز بالای فرم درج شد.");
+    }
+
+    private async Task DiscoverPkcs11Async()
+    {
+        busy = true;
+        busyAction = "pkcs11-scan";
+        vaultDiagnosticError = null;
+        try
+        {
+            pkcs11Discovery = await Mdn.DiscoverPkcs11Async(new MdnPkcs11DiscoverRequest
+            {
+                LibraryPath = string.IsNullOrWhiteSpace(certReq.Pkcs11LibraryPath) ? null : certReq.Pkcs11LibraryPath.Trim(),
+                Pin = string.IsNullOrWhiteSpace(certReq.Pkcs11Pin) ? null : certReq.Pkcs11Pin
+            });
+
+            var signingCerts = pkcs11Discovery.Certificates.Where(c => !c.IsCertificateAuthority).ToList();
+            if (signingCerts.Count == 1)
+            {
+                SelectPkcs11Certificate(signingCerts[0]);
+            }
+            else if (string.IsNullOrWhiteSpace(certReq.Pkcs11LibraryPath))
+            {
+                var activeDriver = pkcs11Discovery.Drivers.FirstOrDefault(d => d.ConnectedTokensCount > 0)
+                                   ?? pkcs11Discovery.Drivers.FirstOrDefault(d => d.LoadSucceeded);
+                if (activeDriver is not null)
+                    certReq.Pkcs11LibraryPath = activeDriver.LibraryPath;
+            }
+
+            Toast.Info(pkcs11Discovery.Summary);
+        }
+        catch (Exception ex) { SetVaultError(ex); }
+        finally { busy = false; busyAction = ""; }
+    }
+
+    private void SelectPkcs11Driver(MdnPkcs11DriverDto drv)
+    {
+        certReq.Pkcs11LibraryPath = drv.LibraryPath;
+        Toast.Info($"مسیر درایور «{drv.VendorName}» انتخاب شد.");
+    }
+
+    private void SelectPkcs11Certificate(MdnPkcs11CertificateItemDto cert)
+    {
+        certReq.Pkcs11LibraryPath = cert.LibraryPath;
+        certReq.Pkcs11CertificateAlias = cert.CertificateAlias;
+        Toast.Success($"گواهی «{cert.CommonName}» با برچسب «{cert.CertificateAlias}» انتخاب شد.");
+    }
+
     private async Task UploadPemCertAsync()
     {
         busy = true;
+        vaultDiagnosticError = null;
         try
         {
             certReq.SignatureMode = MdnSignatureMode.Pkcs8Certificate;
@@ -564,13 +737,14 @@ else if (profile is not null)
             selectedCertFileName = null;
             Toast.Success("گواهی امضای الکترونیکی X.509 و کلید خصوصی با موفقیت تأیید و رمزنگاری شدند.");
         }
-        catch (Exception ex) { Toast.Error(ex.Message); }
+        catch (Exception ex) { SetVaultError(ex); }
         finally { busy = false; }
     }
 
     private async Task UploadPfxCertAsync()
     {
         busy = true;
+        vaultDiagnosticError = null;
         try
         {
             certReq.SignatureMode = MdnSignatureMode.Pkcs8Certificate;
@@ -580,21 +754,23 @@ else if (profile is not null)
             selectedPfxFileName = null;
             Toast.Success("گواهی امضا و کلید خصوصی از فایل PFX استخراج و رمزنگاری شدند.");
         }
-        catch (Exception ex) { Toast.Error(ex.Message); }
+        catch (Exception ex) { SetVaultError(ex); }
         finally { busy = false; }
     }
 
     private async Task SavePkcs11ConfigAsync()
     {
         busy = true;
+        vaultDiagnosticError = null;
         try
         {
             certReq.SignatureMode = MdnSignatureMode.Pkcs11Token;
             profile = await Mdn.UploadCertificateAsync(certReq);
+            BindForm(profile);
             certReq.Pkcs11Pin = null;
-            Toast.Success("تنظیمات توکن سخت‌افزاری PKCS#11 ذخیره شد.");
+            Toast.Success("توکن سخت‌افزاری PKCS#11 بررسی، تست امضا و ذخیره شد.");
         }
-        catch (Exception ex) { Toast.Error(ex.Message); }
+        catch (Exception ex) { SetVaultError(ex); }
         finally { busy = false; }
     }
 
