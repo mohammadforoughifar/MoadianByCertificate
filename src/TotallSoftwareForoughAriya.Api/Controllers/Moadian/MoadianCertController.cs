@@ -242,6 +242,13 @@ public sealed class MoadianCertController : RbacControllerBase
         return Ok(await _svc.CreateDerivativeInvoiceAsync(id, req, MyUserId, MyUsername));
     }
 
+    [HttpPost("invoices/{id:int}/cancel-and-inquire")]
+    public async Task<IActionResult> CancelAndInquire(int id)
+    {
+        if (await ForbiddenUnlessAnyAsync(Module, "InvoiceSend", "InvoiceUpdate", "InvoiceCreate") is { } forbid) return forbid;
+        return Ok(await _svc.CancelInvoiceAndInquireAsync(id, MyUserId, MyUsername));
+    }
+
     [HttpGet("erp-invoices")]
     public async Task<IActionResult> GetErpInvoices()
     {

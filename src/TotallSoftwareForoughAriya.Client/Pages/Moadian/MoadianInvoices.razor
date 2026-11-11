@@ -259,6 +259,12 @@
                                                 <i class="bi bi-arrow-repeat"></i>
                                             </button>
                                         }
+                                        @if (CanCancelFromList(inv) && (Auth.Has("Moadian.InvoiceSend") || Auth.Has("Moadian.InvoiceUpdate") || Auth.Has("Moadian.InvoiceCreate")))
+                                        {
+                                            <button class="btn btn-outline-danger" disabled="@busy" @onclick="() => PromptCancelInvoice(inv)" title="ابطال مستقیم در سامانه مودیان و استعلام خودکار">
+                                                <i class="bi bi-x-octagon me-1"></i>ابطال
+                                            </button>
+                                        }
                                     }
                                 </div>
                             </td>
@@ -375,6 +381,58 @@
     </Footer>
 </Modal>
 
+<!-- مودال تأیید ابطال مستقیم و استعلام خودکار -->
+<Modal Visible="cancelTarget is not null" Title="ابطال مستقیم صورتحساب در سامانه مودیان" OnClose="CloseCancelModal">
+    <ChildContent>
+        @if (cancelTarget is not null)
+        {
+            <div class="alert alert-danger py-2 small mb-3">
+                <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                با تأیید این عملیات، صورتحساب ابطالی به‌صورت خودکار صادر، با گواهی امضا به سامانه مودیان ارسال و بلافاصله نتیجهٔ استعلام آن دریافت می‌شود.
+            </div>
+            <div class="border rounded p-3 bg-light small">
+                <div class="d-flex justify-content-between mb-1">
+                    <span class="text-muted">شماره صورتحساب:</span>
+                    <strong>@cancelTarget.InternalNumber</strong>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                    <span class="text-muted">خریدار:</span>
+                    <strong>@(cancelTarget.BuyerName ?? "مصرف‌کننده نهایی")</strong>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                    <span class="text-muted">مبلغ کل:</span>
+                    <strong class="num">@cancelTarget.TotalAmount.Money() ریال</strong>
+                </div>
+                <div class="d-flex justify-content-between">
+                    <span class="text-muted">شماره مالیاتی مرجع (TaxId):</span>
+                    <code class="font-monospace">@cancelTarget.TaxId</code>
+                </div>
+            </div>
+            @if (cancellingBusy)
+            {
+                <div class="d-flex align-items-center gap-2 text-primary small mt-3">
+                    <span class="spinner-border spinner-border-sm"></span>
+                    <span>در حال ارسال صورتحساب ابطالی به مودیان و دریافت خودکار نتیجهٔ استعلام… لطفاً چند لحظه صبر کنید.</span>
+                </div>
+            }
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" disabled="@cancellingBusy" @onclick="CloseCancelModal">انصراف</button>
+        <button class="btn btn-danger" disabled="@cancellingBusy" @onclick="ConfirmCancelAndInquireAsync">
+            @if (cancellingBusy)
+            {
+                <span class="spinner-border spinner-border-sm me-1"></span>
+            }
+            else
+            {
+                <i class="bi bi-x-octagon me-1"></i>
+            }
+            تأیید، ابطال و استعلام خودکار
+        </button>
+    </Footer>
+</Modal>
+
 @code {
     private MdnInvoiceFilterRequest filter = new() { Page = 1, PageSize = 20 };
     private MdnInvoiceListResultDto result = new();
@@ -385,6 +443,8 @@
     private string payFilterStr = "";
 
     private MdnInvoiceJsonPreviewDto? jsonPreview;
+    private MdnInvoiceSummaryDto? cancelTarget;
+    private bool cancellingBusy;
     private bool showErpModal;
     private bool erpLoading;
     private List<MdnErpFacInvoicePickDto> erpInvoices = new();
@@ -463,6 +523,54 @@
     private async Task InquirySubmissionSelectedAsync() => await RunBatchAsync(() => Mdn.InquirySubmissionsAsync(selectedIds.ToList()));
     private async Task InquiryFolderSelectedAsync() => await RunBatchAsync(() => Mdn.InquiryFolderAsync(selectedIds.ToList()));
     private async Task RefreshSingleAsync(int id) => await RunBatchAsync(() => Mdn.RefreshAllAsync(new List<int> { id }));
+
+    private static bool CanCancelFromList(MdnInvoiceSummaryDto inv) =>
+        !string.IsNullOrWhiteSpace(inv.TaxId) &&
+        inv.Subject != MdnInvoiceSubject.Cancellation &&
+        inv.FolderStatus != MdnFolderStatus.Cancelled &&
+        inv.SubmissionStatus is MdnSubmissionStatus.Success or MdnSubmissionStatus.InProgress or MdnSubmissionStatus.Sent;
+
+    private void PromptCancelInvoice(MdnInvoiceSummaryDto inv)
+    {
+        if (busy || cancellingBusy) return;
+        cancelTarget = inv;
+    }
+
+    private void CloseCancelModal()
+    {
+        if (cancellingBusy) return;
+        cancelTarget = null;
+    }
+
+    private async Task ConfirmCancelAndInquireAsync()
+    {
+        if (cancelTarget is null || cancellingBusy) return;
+        cancellingBusy = true;
+        busy = true;
+        try
+        {
+            var res = await Mdn.CancelAndInquireAsync(cancelTarget.Id);
+            cancelTarget = null;
+
+            if (res.IsConfirmedCancelled)
+                Toast.Success(res.Message);
+            else if (res.SubmissionStatus == MdnSubmissionStatus.Failed)
+                Toast.Error(res.Message);
+            else
+                Toast.Warning(res.Message);
+
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Error(ex.Message);
+        }
+        finally
+        {
+            cancellingBusy = false;
+            busy = false;
+        }
+    }
 
     private async Task RunBatchAsync(Func<Task<MdnBatchActionResultDto>> action)
     {
