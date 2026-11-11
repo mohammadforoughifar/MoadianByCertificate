@@ -687,6 +687,20 @@ public class MdnInvoiceFormLookupsDto
     public List<MdnProductPickDto> Products { get; set; } = new();
 }
 
+public class MdnDirectCancelResultDto
+{
+    public int SourceInvoiceId { get; set; }
+    public int CancelInvoiceId { get; set; }
+    public string CancelInternalNumber { get; set; } = "";
+    public string? CancelTaxId { get; set; }
+    public string? ReferenceNumber { get; set; }
+    public MdnSubmissionStatus SubmissionStatus { get; set; }
+    public MdnFolderStatus SourceFolderStatus { get; set; }
+    public bool IsConfirmedCancelled { get; set; }
+    public string Status { get; set; } = "";
+    public string Message { get; set; } = "";
+}
+
 public class MdnCreateDerivativeRequest
 {
     public MdnInvoiceSubject Subject { get; set; } = MdnInvoiceSubject.Corrective;

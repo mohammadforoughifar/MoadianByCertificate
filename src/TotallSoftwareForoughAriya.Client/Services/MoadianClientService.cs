@@ -37,6 +37,7 @@ public interface IMoadianClientService
     Task DeleteInvoiceAsync(int id);
     Task<MdnInvoiceJsonPreviewDto> PreviewJsonAsync(int id);
     Task<MdnInvoiceDetailDto> CreateDerivativeAsync(int id, MdnCreateDerivativeRequest req);
+    Task<MdnDirectCancelResultDto> CancelAndInquireAsync(int sourceInvoiceId);
 
     Task<List<MdnErpFacInvoicePickDto>> GetErpInvoicesAsync();
     Task<MdnInvoiceDetailDto> ImportErpInvoiceAsync(int facInvoiceId);
@@ -164,6 +165,9 @@ public sealed class MoadianClientService : IMoadianClientService
 
     public Task<MdnInvoiceDetailDto> CreateDerivativeAsync(int id, MdnCreateDerivativeRequest req)
         => _api.PostAsync<MdnInvoiceDetailDto>($"api/moadian/invoices/{id}/derivative", req);
+
+    public Task<MdnDirectCancelResultDto> CancelAndInquireAsync(int sourceInvoiceId)
+        => _api.PostAsync<MdnDirectCancelResultDto>($"api/moadian/invoices/{sourceInvoiceId}/cancel-and-inquire");
 
     public Task<List<MdnErpFacInvoicePickDto>> GetErpInvoicesAsync()
         => _api.GetAsync<List<MdnErpFacInvoicePickDto>>("api/moadian/erp-invoices");

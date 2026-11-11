@@ -44,6 +44,7 @@ public interface IMoadianCertService
     Task DeleteInvoiceAsync(int id);
     Task<MdnInvoiceJsonPreviewDto> PreviewInvoiceJsonAsync(int id);
     Task<MdnInvoiceDetailDto> CreateDerivativeInvoiceAsync(int sourceInvoiceId, MdnCreateDerivativeRequest req, int userId, string username);
+    Task<MdnDirectCancelResultDto> CancelInvoiceAndInquireAsync(int sourceInvoiceId, int userId, string username);
 
     // اتصال به فاکتورهای فروش سیستم
     Task<List<MdnErpFacInvoicePickDto>> GetReceivableErpInvoicesAsync();
@@ -1193,7 +1194,8 @@ public sealed class MoadianCertService : IMoadianCertService
             }
         }
 
-        if (req.InvoiceType == MdnInvoiceType.Type1 &&
+        if (req.Subject != MdnInvoiceSubject.Cancellation &&
+            req.InvoiceType == MdnInvoiceType.Type1 &&
             string.IsNullOrWhiteSpace(req.BuyerEconomicCode) &&
             string.IsNullOrWhiteSpace(req.BuyerNationalId))
         {
@@ -1707,6 +1709,25 @@ public sealed class MoadianCertService : IMoadianCertService
                 // تولید سریال یکتای بدون تداخل و هم‌تراز با ساعت رسمی ایران در هر تلاش ارسال
                 // (رفع خطای 0300101 ناشی از سریال تکراری ۱ یا استفاده مجدد از TaxId ردشدهٔ قبلی)
                 var issueOffset = MoadianSdkGateway.NormalizeIssueDateForMoadian(inv.IssueDate);
+
+                // در صورتحساب‌های ارجاعی (اصلاحی/ابطالی/برگشت)، تاریخ صدور نباید از تاریخ صورتحساب مرجع زودتر باشد
+                if (inv.ParentInvoiceId is > 0)
+                {
+                    var parentIssueDate = await _db.MdnInvoices.AsNoTracking()
+                        .Where(p => p.Id == inv.ParentInvoiceId.Value)
+                        .Select(p => (DateTime?)p.IssueDate)
+                        .FirstOrDefaultAsync();
+                    if (parentIssueDate.HasValue)
+                    {
+                        var parentOffset = MoadianSdkGateway.NormalizeIssueDateForMoadian(parentIssueDate.Value);
+                        if (issueOffset < parentOffset)
+                        {
+                            var iranNow = DateTimeOffset.UtcNow.ToOffset(new TimeSpan(3, 30, 0));
+                            issueOffset = parentOffset <= iranNow ? parentOffset : iranNow;
+                        }
+                    }
+                }
+
                 var timeSeed = (DateTimeOffset.UtcNow.ToUnixTimeSeconds() % 800_000_000L) + 100_000L;
                 var baseNext = profile.NextSerial <= 1 ? timeSeed : Math.Max(profile.NextSerial, timeSeed);
                 var serial = Math.Min(baseNext, 999_999_999L);
@@ -1714,7 +1735,7 @@ public sealed class MoadianCertService : IMoadianCertService
 
                 var cleanMemoryId = profile.MemoryId.Trim().ToUpperInvariant();
                 var candidateSerialHex = _gateway.FormatSerialHex(serial);
-                var candidateTaxId = _gateway.GenerateTaxId(cleanMemoryId, serial, issueOffset.UtcDateTime);
+                var candidateTaxId = _gateway.GenerateTaxId(cleanMemoryId, serial, issueOffset.DateTime, issueOffset);
 
                 inv.IssueDate = issueOffset.DateTime;
                 inv.SellerEconomicCode = MoadianSdkGateway.NormalizeAsciiDigits(profile.EconomicCode) ?? string.Empty;
@@ -1946,7 +1967,13 @@ public sealed class MoadianCertService : IMoadianCertService
             var rawFolder = (st.InvoiceStatus ?? string.Empty).Trim().ToUpperInvariant();
             inv.FolderStatusRaw = Truncate(rawFolder, 60);
             inv.Article6Status = Truncate(st.Article6Status, 60);
-            inv.FolderStatus = MapFolderStatus(rawFolder);
+
+            var hasSucceededCancelChild = await _db.MdnInvoices.AsNoTracking().AnyAsync(c =>
+                c.ParentInvoiceId == inv.Id &&
+                c.Subject == MdnInvoiceSubject.Cancellation &&
+                c.SubmissionStatus == MdnSubmissionStatus.Success);
+
+            inv.FolderStatus = hasSucceededCancelChild ? MdnFolderStatus.Cancelled : MapFolderStatus(rawFolder);
 
             if (!string.IsNullOrWhiteSpace(st.Error))
                 inv.LastErrorMessage = Truncate($"خطای کارپوشه: {st.Error}", 2000);
@@ -1992,6 +2019,163 @@ public sealed class MoadianCertService : IMoadianCertService
             Failed = subBatch.Failed + folderBatch.Failed,
             Message = $"به‌روزرسانی جامع انجام شد — درگاه ارسال: {subBatch.Succeeded}/{subBatch.Total} | کارپوشه: {folderBatch.Succeeded}/{folderBatch.Total}",
             Items = subBatch.Items.Concat(folderBatch.Items).ToList()
+        };
+    }
+
+    /// <summary>
+    /// ابطال یک‌مرحله‌ای صورتحساب ارسال‌شده از داخل لیست (بدون نیاز به باز کردن فرم جزئیات یا ویرایش):
+    /// ۱) بررسی وضعیت صورتحساب مرجع (و استعلام خودکار اگر هنوز در حال پردازش باشد)
+    /// ۲) ایجاد یا بازیابی صورتحساب مشتق ابطالی (ins = 3)
+    /// ۳) امضا و ارسال فوری صورتحساب ابطالی به سامانه مودیان
+    /// ۴) استعلام خودکار وضعیت درگاه (تا دریافت پاسخ نهایی) و به‌روزرسانی وضعیت کارپوشهٔ مرجع به «باطل شده».
+    /// </summary>
+    public async Task<MdnDirectCancelResultDto> CancelInvoiceAndInquireAsync(int sourceInvoiceId, int userId, string username)
+    {
+        var (profile, companyName) = await GetOrCreateProfileEntityAsync();
+        if (!MapProfileDto(profile, companyName).IsReadyForSigning)
+            throw new InvalidOperationException("پروفایل مودیان یا گواهی امضای الکترونیکی کامل نیست. ابتدا از بخش «پرونده و گواهی امضا» تنظیمات را تکمیل کنید.");
+
+        var source = await _db.MdnInvoices.AsNoTracking()
+            .FirstOrDefaultAsync(i => i.Id == sourceInvoiceId)
+            ?? throw new InvalidOperationException("صورتحساب مورد نظر یافت نشد.");
+
+        if (source.Subject == MdnInvoiceSubject.Cancellation)
+            throw new InvalidOperationException("صورتحساب ابطالی خودش قابل ابطال مجدد نیست.");
+
+        if (source.FolderStatus == MdnFolderStatus.Cancelled)
+            throw new InvalidOperationException("این صورتحساب قبلاً در سامانه ابطال شده است.");
+
+        if (string.IsNullOrWhiteSpace(source.TaxId))
+            throw new InvalidOperationException("این صورتحساب هنوز شماره مالیاتی ۲۲ کاراکتری (TaxId) ندارد و به سامانه مودیان ارسال نشده است.");
+
+        if (source.SubmissionStatus == MdnSubmissionStatus.Draft)
+            throw new InvalidOperationException("صورتحساب پیش‌نویس به سامانه مودیان ارسال نشده است؛ به‌جای ابطال می‌توانید آن را ویرایش یا حذف کنید.");
+
+        // اگر صورتحساب مرجع ارسال شده ولی هنوز استعلام نشده بود، ابتدا وضعیت پذیرش آن را استعلام می‌کنیم
+        if (source.SubmissionStatus is MdnSubmissionStatus.Sent or MdnSubmissionStatus.InProgress &&
+            !string.IsNullOrWhiteSpace(source.ReferenceNumber))
+        {
+            await InquirySubmissionsAsync(new List<int> { source.Id }, username);
+            source = await _db.MdnInvoices.AsNoTracking().FirstAsync(i => i.Id == sourceInvoiceId);
+        }
+
+        if (source.SubmissionStatus == MdnSubmissionStatus.Failed)
+            throw new InvalidOperationException("صورتحساب مرجع در درگاه مودیان رد شده است و نیازی به ارسال صورتحساب ابطالی ندارد.");
+
+        // بررسی وجود صورتحساب ابطالی قبلی برای جلوگیری از ایجاد پیش‌نویس تکراری
+        var existingCancel = await _db.MdnInvoices.AsNoTracking()
+            .Where(i => i.ParentInvoiceId == source.Id && i.Subject == MdnInvoiceSubject.Cancellation)
+            .OrderByDescending(i => i.Id)
+            .FirstOrDefaultAsync();
+
+        int cancelId;
+        if (existingCancel is not null &&
+            existingCancel.SubmissionStatus is MdnSubmissionStatus.Sent or MdnSubmissionStatus.InProgress &&
+            !string.IsNullOrWhiteSpace(existingCancel.ReferenceNumber))
+        {
+            await InquirySubmissionsAsync(new List<int> { existingCancel.Id }, username);
+            existingCancel = await _db.MdnInvoices.AsNoTracking().FirstAsync(i => i.Id == existingCancel.Id);
+        }
+
+        if (existingCancel is not null)
+        {
+            cancelId = existingCancel.Id;
+        }
+        else
+        {
+            var created = await CreateDerivativeInvoiceAsync(source.Id, new MdnCreateDerivativeRequest
+            {
+                Subject = MdnInvoiceSubject.Cancellation,
+                IssueDate = DateTime.Now,
+                Description = $"ابطال مستقیم از فهرست صورتحساب‌ها پیرو {source.InternalNumber} ({source.TaxId})"
+            }, userId, username);
+            cancelId = created.Id;
+        }
+
+        var cancelInv = await _db.MdnInvoices.AsNoTracking().FirstAsync(i => i.Id == cancelId);
+        if (cancelInv.SubmissionStatus is MdnSubmissionStatus.Draft or MdnSubmissionStatus.Failed or MdnSubmissionStatus.Timeout or MdnSubmissionStatus.NotFound)
+        {
+            var sendBatch = await SendInvoicesAsync(new List<int> { cancelId }, username);
+            if (sendBatch.Succeeded == 0)
+            {
+                var err = sendBatch.Items.FirstOrDefault()?.Message ?? sendBatch.Message;
+                throw new InvalidOperationException($"ارسال صورتحساب ابطالی ناموفق بود: {err}");
+            }
+            cancelInv = await _db.MdnInvoices.AsNoTracking().FirstAsync(i => i.Id == cancelId);
+        }
+
+        // استعلام خودکار پس از ارسال ابطالی (تلاش مرحله‌ای تا خروج از وضعیت IN_PROGRESS در صف مودیان)
+        if (cancelInv.SubmissionStatus is MdnSubmissionStatus.InProgress or MdnSubmissionStatus.Sent &&
+            !string.IsNullOrWhiteSpace(cancelInv.ReferenceNumber))
+        {
+            var waitScheduleMs = new[] { 3500, 4500, 5000 };
+            foreach (var waitMs in waitScheduleMs)
+            {
+                await Task.Delay(waitMs);
+                try
+                {
+                    await InquirySubmissionsAsync(new List<int> { cancelId }, username);
+                }
+                catch
+                {
+                    // در صورت اختلال لحظه‌ای شبکه در یکی از دورها، دور بعدی ادامه یابد
+                }
+
+                cancelInv = await _db.MdnInvoices.AsNoTracking().FirstAsync(i => i.Id == cancelId);
+                if (cancelInv.SubmissionStatus is not (MdnSubmissionStatus.InProgress or MdnSubmissionStatus.Sent))
+                    break;
+            }
+        }
+
+        if (cancelInv.SubmissionStatus == MdnSubmissionStatus.Success)
+        {
+            try
+            {
+                await InquiryFolderStatusesAsync(new List<int> { source.Id, cancelId }, username);
+            }
+            catch
+            {
+                // عدم اختلال در نتیجهٔ اصلی ابطال در صورت خطای استعلام کارپوشه
+            }
+
+            var trackedSource = await _db.MdnInvoices.FirstOrDefaultAsync(i => i.Id == source.Id);
+            if (trackedSource is not null && trackedSource.FolderStatus != MdnFolderStatus.Cancelled)
+            {
+                trackedSource.FolderStatus = MdnFolderStatus.Cancelled;
+                trackedSource.PaymentStatus = MdnPaymentStatus.NotApplicable;
+                trackedSource.UpdatedAt = DateTime.Now;
+                await _db.SaveChangesAsync();
+            }
+        }
+
+        var finalSource = await _db.MdnInvoices.AsNoTracking().FirstAsync(i => i.Id == source.Id);
+        var finalCancel = await _db.MdnInvoices.AsNoTracking().FirstAsync(i => i.Id == cancelId);
+
+        var isConfirmed = finalCancel.SubmissionStatus == MdnSubmissionStatus.Success;
+        var message = finalCancel.SubmissionStatus switch
+        {
+            MdnSubmissionStatus.Success =>
+                $"صورتحساب {finalSource.InternalNumber} با موفقیت ابطال و استعلام شد (شماره ابطالی: {finalCancel.InternalNumber} — TaxId: {finalCancel.TaxId}).",
+            MdnSubmissionStatus.InProgress or MdnSubmissionStatus.Sent =>
+                $"صورتحساب ابطالی ({finalCancel.InternalNumber}) ارسال و استعلام اولیه انجام شد؛ درگاه مودیان هنوز در حال پردازش است. چند ثانیه دیگر دکمه استعلام را بزنید.",
+            MdnSubmissionStatus.Failed =>
+                $"صورتحساب ابطالی در استعلام درگاه مودیان رد شد: {finalCancel.LastErrorMessage ?? "خطای نامشخص"}",
+            _ =>
+                $"وضعیت استعلام صورتحساب ابطالی ({finalCancel.InternalNumber}): {MdnUiLabels.SubmissionTitle(finalCancel.SubmissionStatus)}"
+        };
+
+        return new MdnDirectCancelResultDto
+        {
+            SourceInvoiceId = finalSource.Id,
+            CancelInvoiceId = finalCancel.Id,
+            CancelInternalNumber = finalCancel.InternalNumber,
+            CancelTaxId = finalCancel.TaxId,
+            ReferenceNumber = finalCancel.ReferenceNumber,
+            SubmissionStatus = finalCancel.SubmissionStatus,
+            SourceFolderStatus = finalSource.FolderStatus,
+            IsConfirmedCancelled = isConfirmed,
+            Status = finalCancel.SubmissionStatus.ToString().ToUpperInvariant(),
+            Message = message
         };
     }
 

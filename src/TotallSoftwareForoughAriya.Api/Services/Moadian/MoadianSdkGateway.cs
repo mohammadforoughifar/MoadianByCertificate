@@ -24,7 +24,7 @@ namespace Inventory.Api.Services.Moadian;
 
 public interface IMoadianSdkGateway
 {
-    string GenerateTaxId(string memoryId, long serialDecimal, DateTime issueDate);
+    string GenerateTaxId(string memoryId, long serialDecimal, DateTime issueDate, DateTimeOffset? normalizedIssueOffset = null);
     string FormatSerialHex(long serialDecimal);
     InvoiceDto BuildSdkInvoiceDto(
         MdnTaxpayerProfile profile,
@@ -122,11 +122,11 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
         return sb.Length == 0 ? null : sb.ToString();
     }
 
-    public string GenerateTaxId(string memoryId, long serialDecimal, DateTime issueDate)
+    public string GenerateTaxId(string memoryId, long serialDecimal, DateTime issueDate, DateTimeOffset? normalizedIssueOffset = null)
     {
         if (string.IsNullOrWhiteSpace(memoryId) || memoryId.Trim().Length != 6)
             throw new InvalidOperationException("شناسه یکتای حافظه مالیاتی باید دقیقاً ۶ کاراکتر باشد (مثال: A11226).");
-        var issueOffset = NormalizeIssueDateForMoadian(issueDate);
+        var issueOffset = normalizedIssueOffset ?? NormalizeIssueDateForMoadian(issueDate);
         var provider = new TaxIdProvider(new VerhoeffAlgorithm());
         return provider.GenerateTaxId(memoryId.Trim().ToUpperInvariant(), serialDecimal, issueOffset.UtcDateTime);
     }
@@ -144,6 +144,35 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
         var issueOffset = normalizedIssueOffset ?? NormalizeIssueDateForMoadian(invoice.IssueDate);
         var indatim = issueOffset.ToUnixTimeMilliseconds();
 
+        var sellerEconomic = NormalizeAsciiDigits(invoice.SellerEconomicCode)
+                             ?? NormalizeAsciiDigits(profile.EconomicCode)
+                             ?? string.Empty;
+
+        // طبق دستورالعمل RC_IITP_IS_V7.8 (موضوع ابطالی ins = 3):
+        // تنها فیلدهای شناسایی و ارجاع به مرجع (taxid, indatim, ins=3, inno, irtaxid, tins, sbc) ارسال می‌شوند
+        // و ارسال فیلدهای مبلغی سرصفحه (tprdis..tbill) یا اقلام بدنه موجب هشدارهای خارج از الگو (14022..14028) می‌گردد.
+        if (invoice.Subject == MdnInvoiceSubject.Cancellation)
+        {
+            return new InvoiceDto
+            {
+                Header = new HeaderDto
+                {
+                    taxid = effectiveTaxId,
+                    indatim = indatim,
+                    indati2m = null,
+                    ins = (int)MdnInvoiceSubject.Cancellation,
+                    inno = effectiveSerialHex,
+                    irtaxid = NullIfBlank(invoice.ReferenceTaxId),
+                    tins = sellerEconomic,
+                    sbc = NormalizeAsciiDigits(invoice.SellerBranchCode) ?? NormalizeAsciiDigits(profile.BranchCode),
+                    sg = null!
+                },
+                Body = new List<BodyItemDto>(),
+                Payments = null!,
+                Extension = null!
+            };
+        }
+
         int? cdcd = null;
         if (invoice.CustomsDeclarationDate.HasValue)
         {
@@ -153,9 +182,6 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
 
         var isType1 = invoice.InvoiceType == MdnInvoiceType.Type1;
         var isGoldPattern = invoice.Pattern == MdnInvoicePattern.GoldJewelry;
-        var sellerEconomic = NormalizeAsciiDigits(invoice.SellerEconomicCode)
-                             ?? NormalizeAsciiDigits(profile.EconomicCode)
-                             ?? string.Empty;
 
         var header = new HeaderDto
         {
