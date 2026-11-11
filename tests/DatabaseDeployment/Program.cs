@@ -195,6 +195,14 @@ UPDATE Organizations SET CompanyId = 1;";
         Check(normalizedThumb == "ABCD1234", "Windows Store thumbprint normalizer strips certmgr invisible Unicode marks and separators");
         var winStoreScan = Inventory.Api.Services.Moadian.MoadianWindowsStoreInspector.Discover();
         Check(!string.IsNullOrWhiteSpace(winStoreScan.Summary), "Windows Store discovery returns summary cleanly");
+
+        // 8. Moadian invoice builder fixes 0300101 (midnight UTC day shift), 1301401 (blank bpc), and 14003 (indati2m)
+        var midnightDate = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Unspecified);
+        var normalizedOffset = Inventory.Api.Services.Moadian.MoadianSdkGateway.NormalizeIssueDateForMoadian(midnightDate);
+        Check(normalizedOffset.UtcDateTime.Date == new DateTime(2026, 11, 1),
+            "Midnight Shamsi/date-picker date stays on same UTC & Iran calendar day (fixes 0300101)");
+        Check(Inventory.Api.Services.Moadian.MoadianSdkGateway.NormalizeAsciiDigits(" ۱۲۳۴۵۶۷۸۹۰ ") == "1234567890",
+            "Persian digits normalize cleanly to ASCII");
     }
     first.Certificate?.Dispose();
 
