@@ -105,6 +105,7 @@ BEGIN
         [EncryptedPkcs11Pin] nvarchar(max) NULL,
         [NextSerial] bigint NOT NULL CONSTRAINT [DF_MdnTaxpayerProfiles_NextSerial] DEFAULT(1),
         [DefaultVatRate] decimal(18,4) NOT NULL CONSTRAINT [DF_MdnTaxpayerProfiles_Vat] DEFAULT(10),
+        [Article9SendDeadlineDays] int NOT NULL CONSTRAINT [DF_MdnTaxpayerProfiles_Article9Deadline] DEFAULT(12),
         [IsActive] bit NOT NULL CONSTRAINT [DF_MdnTaxpayerProfiles_IsActive] DEFAULT(1),
         [LastConnectionTestAt] datetime2 NULL,
         [LastConnectionStatus] nvarchar(300) NULL,
@@ -173,6 +174,9 @@ BEGIN
         [MemoryId] nvarchar(12) NULL,
         [IssueDate] datetime2 NOT NULL,
         [CreateDate] datetime2 NOT NULL,
+        [RegistrationDate] datetime2 NULL,
+        [IsArticle9] bit NOT NULL CONSTRAINT [DF_MdnInvoices_IsArticle9] DEFAULT(0),
+        [SendRule] int NULL,
         [InvoiceType] int NOT NULL,
         [Pattern] int NOT NULL,
         [Subject] int NOT NULL,
@@ -196,6 +200,8 @@ BEGIN
         [CustomsDeclarationNumber] nvarchar(30) NULL,
         [CustomsDeclarationDate] datetime2 NULL,
         [Tax17] bigint NULL,
+        [Note1] nvarchar(30) NULL,
+        [Note2] nvarchar(30) NULL,
         [TotalBeforeDiscount] bigint NOT NULL,
         [TotalDiscount] bigint NOT NULL,
         [TotalAfterDiscount] bigint NOT NULL,
@@ -226,6 +232,7 @@ BEGIN
     CREATE INDEX [IX_MdnInvoices_ReferenceNumber] ON [dbo].[MdnInvoices] ([ReferenceNumber]);
     CREATE INDEX [IX_MdnInvoices_CompanyId_SubmissionStatus] ON [dbo].[MdnInvoices] ([CompanyId], [SubmissionStatus]);
     CREATE INDEX [IX_MdnInvoices_CompanyId_FolderStatus] ON [dbo].[MdnInvoices] ([CompanyId], [FolderStatus]);
+    CREATE INDEX [IX_MdnInvoices_CompanyId_IsArticle9] ON [dbo].[MdnInvoices] ([CompanyId], [IsArticle9]);
 END;
 
 IF OBJECT_ID(N'dbo.MdnInvoiceLines', N'U') IS NULL
@@ -316,6 +323,39 @@ BEGIN
 END;
 ";
 
+    internal const string SqlServerUpgradeArticle9Columns = @"
+IF OBJECT_ID(N'dbo.MdnTaxpayerProfiles', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.MdnTaxpayerProfiles', N'Article9SendDeadlineDays') IS NULL
+    ALTER TABLE [dbo].[MdnTaxpayerProfiles] ADD [Article9SendDeadlineDays] int NOT NULL CONSTRAINT [DF_MdnTaxpayerProfiles_Article9Deadline] DEFAULT(12);
+
+IF OBJECT_ID(N'dbo.MdnInvoices', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.MdnInvoices', N'RegistrationDate') IS NULL
+    ALTER TABLE [dbo].[MdnInvoices] ADD [RegistrationDate] datetime2 NULL;
+
+IF OBJECT_ID(N'dbo.MdnInvoices', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.MdnInvoices', N'IsArticle9') IS NULL
+    ALTER TABLE [dbo].[MdnInvoices] ADD [IsArticle9] bit NOT NULL CONSTRAINT [DF_MdnInvoices_IsArticle9] DEFAULT(0);
+
+IF OBJECT_ID(N'dbo.MdnInvoices', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.MdnInvoices', N'SendRule') IS NULL
+    ALTER TABLE [dbo].[MdnInvoices] ADD [SendRule] int NULL;
+
+IF OBJECT_ID(N'dbo.MdnInvoices', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.MdnInvoices', N'Note1') IS NULL
+    ALTER TABLE [dbo].[MdnInvoices] ADD [Note1] nvarchar(30) NULL;
+
+IF OBJECT_ID(N'dbo.MdnInvoices', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.MdnInvoices', N'Note2') IS NULL
+    ALTER TABLE [dbo].[MdnInvoices] ADD [Note2] nvarchar(30) NULL;
+";
+
+    internal const string SqlServerUpgradeArticle9Indexes = @"
+IF OBJECT_ID(N'dbo.MdnInvoices', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.MdnInvoices', N'IsArticle9') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.MdnInvoices') AND name = N'IX_MdnInvoices_CompanyId_IsArticle9')
+    CREATE INDEX [IX_MdnInvoices_CompanyId_IsArticle9] ON [dbo].[MdnInvoices] ([CompanyId], [IsArticle9]);
+";
+
     private static async Task EnsureSqlServerAsync(string connectionString)
     {
         using var conn = new SqlConnection(connectionString);
@@ -331,6 +371,18 @@ END;
         {
             createCmd.CommandText = SqlServerCreateTables;
             await createCmd.ExecuteNonQueryAsync();
+        }
+
+        using (var alterCmd = conn.CreateCommand())
+        {
+            alterCmd.CommandText = SqlServerUpgradeArticle9Columns;
+            await alterCmd.ExecuteNonQueryAsync();
+        }
+
+        using (var idxCmd = conn.CreateCommand())
+        {
+            idxCmd.CommandText = SqlServerUpgradeArticle9Indexes;
+            await idxCmd.ExecuteNonQueryAsync();
         }
     }
 
@@ -400,6 +452,7 @@ CREATE TABLE IF NOT EXISTS MdnTaxpayerProfiles (
     EncryptedPkcs11Pin TEXT NULL,
     NextSerial INTEGER NOT NULL DEFAULT 1,
     DefaultVatRate TEXT NOT NULL DEFAULT '10',
+    Article9SendDeadlineDays INTEGER NOT NULL DEFAULT 12,
     IsActive INTEGER NOT NULL DEFAULT 1,
     LastConnectionTestAt TEXT NULL,
     LastConnectionStatus TEXT NULL,
@@ -455,6 +508,9 @@ CREATE TABLE IF NOT EXISTS MdnInvoices (
     MemoryId TEXT NULL,
     IssueDate TEXT NOT NULL,
     CreateDate TEXT NOT NULL,
+    RegistrationDate TEXT NULL,
+    IsArticle9 INTEGER NOT NULL DEFAULT 0,
+    SendRule INTEGER NULL,
     InvoiceType INTEGER NOT NULL,
     Pattern INTEGER NOT NULL,
     Subject INTEGER NOT NULL,
@@ -478,6 +534,8 @@ CREATE TABLE IF NOT EXISTS MdnInvoices (
     CustomsDeclarationNumber TEXT NULL,
     CustomsDeclarationDate TEXT NULL,
     Tax17 INTEGER NULL,
+    Note1 TEXT NULL,
+    Note2 TEXT NULL,
     TotalBeforeDiscount INTEGER NOT NULL,
     TotalDiscount INTEGER NOT NULL,
     TotalAfterDiscount INTEGER NOT NULL,
@@ -573,6 +631,27 @@ CREATE TABLE IF NOT EXISTS MdnSubmissionLogs (
     CreatedByUsername TEXT NULL
 );
 ");
+
+        var sqliteUpgrades = new (string Table, string Column, string Ddl)[]
+        {
+            ("MdnTaxpayerProfiles", "Article9SendDeadlineDays", "INTEGER NOT NULL DEFAULT 12"),
+            ("MdnInvoices", "RegistrationDate", "TEXT NULL"),
+            ("MdnInvoices", "IsArticle9", "INTEGER NOT NULL DEFAULT 0"),
+            ("MdnInvoices", "SendRule", "INTEGER NULL"),
+            ("MdnInvoices", "Note1", "TEXT NULL"),
+            ("MdnInvoices", "Note2", "TEXT NULL")
+        };
+
+        foreach (var (table, column, ddl) in sqliteUpgrades)
+        {
+            using var checkCmd = conn.CreateCommand();
+            checkCmd.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='{column}';";
+            var exists = Convert.ToInt32(await checkCmd.ExecuteScalarAsync()) > 0;
+            if (!exists)
+                await ExecAsync($"ALTER TABLE {table} ADD COLUMN {column} {ddl};");
+        }
+
+        await ExecAsync("CREATE INDEX IF NOT EXISTS IX_MdnInvoices_CompanyId_IsArticle9 ON MdnInvoices (CompanyId, IsArticle9);");
     }
 
     private static async Task SeedMeasureUnitsAsync(AppDbContext db)

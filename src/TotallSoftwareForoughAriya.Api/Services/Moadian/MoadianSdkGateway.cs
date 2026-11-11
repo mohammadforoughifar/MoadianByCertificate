@@ -46,10 +46,28 @@ public interface IMoadianSdkGateway
 }
 
 /// <summary>
+/// سرآمد توسعهیافتهٔ صورتحساب الکترونیکی منطبق با دستورالعمل صدور صورتحساب الکترونیکی (RC_IITP.IS_V7.9 — تیرماه ۱۴۰۵):
+///   • insr: قاعده ارسال صورتحساب (جدول ۸۶ — مقدار ۱ برای صورتحساب موضوع ماده ۹ قانون پایانه‌های فروشگاهی)
+///   • nti1 و nti2: یادداشت‌های ۱ و ۲ سرآمد (جداول ۸۷ و ۸۸ — اختیاری، حداکثر ۳۰ کاراکتر)
+/// </summary>
+public sealed class MdnV79HeaderDto : HeaderDto
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? insr { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? nti1 { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? nti2 { get; set; }
+}
+
+/// <summary>
 /// تنها لایهٔ ارتباط مستقیم با بستهٔ رسمی TaxCollectData.Library نسخهٔ 2.0.29.
 /// شامل اصلاح باگ Path.Combine در DefaultUrlProperties روی ویندوز و پشتیبانی کامل از:
 ///   • امضای JWS با گواهی امضای X.509 در حافظه (بدون نوشتن فایل کلید روی دیسک) یا توکن PKCS#11
 ///   • رمزنگاری JWE با کلید عمومی سازمان
+///   • پشتیبانی کامل از صورتحساب‌های موضوع ماده ۹ (insr = 1 و indati2m) و فیلدهای V7.9 (nti1, nti2) در رشتهٔ امضاشده
 ///   • استعلام وضعیت پردازش بسته + استعلام وضعیت کارپوشه و ماده ۶ + ثبت پرداخت (RegisterPaymentRequestAsync)
 /// </summary>
 public sealed class MoadianSdkGateway : IMoadianSdkGateway
@@ -61,7 +79,7 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        Converters = { new JsonStringEnumConverter() },
+        Converters = { new JsonStringEnumConverter(), new MdnV79HeaderJsonConverter(omitNullsAndIndent: true) },
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         WriteIndented = true
     };
@@ -79,13 +97,43 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
     /// • از جلو زدن تاریخ نسبت به ساعت فعلی سرور (خطای 0200201) نیز جلوگیری می‌کند.
     /// </summary>
     public static DateTimeOffset NormalizeIssueDateForMoadian(DateTime issueDate)
-    {
-        var iranNowOffset = DateTimeOffset.UtcNow.ToOffset(IranStandardOffset);
-        var safeMaxIranOffset = iranNowOffset.AddSeconds(-10);
+        => MdnArticle9Rules.ToNormalizedIranIssueOffset(issueDate);
 
-        var iranWallClock = issueDate.Kind == DateTimeKind.Utc
-            ? issueDate.Add(IranStandardOffset)
-            : DateTime.SpecifyKind(issueDate, DateTimeKind.Unspecified);
+    /// <summary>
+    /// بررسی عبور فاصلهٔ زمانی تاریخ صدور (indatim) تا زمان فعلی از مهلت مجاز ارسال عادی سازمان امور مالیاتی.
+    /// </summary>
+    public static bool IsPastArticle9Deadline(
+        DateTimeOffset normalizedIssueOffset,
+        int deadlineDays = MdnArticle9Rules.DefaultSendDeadlineDays,
+        DateTimeOffset? referenceNowUtc = null)
+    {
+        var iranNow = (referenceNowUtc ?? DateTimeOffset.UtcNow).ToOffset(IranStandardOffset);
+        var normalizedDays = MdnArticle9Rules.NormalizeDeadlineDays(deadlineDays);
+        return (iranNow - normalizedIssueOffset) > TimeSpan.FromDays(normalizedDays);
+    }
+
+    /// <summary>
+    /// نرمال‌سازی تاریخ و زمان ثبت صورتحساب (indati2m) ویژهٔ صورتحساب‌های موضوع ماده ۹ طبق جدول ۵ دستورالعمل RC_IITP.IS_V7.9:
+    ///   • ردیف ۵: نباید نسبت به تاریخ صدور (indatim) تقدم زمانی داشته باشد (indati2m &gt;= indatim)
+    ///   • ردیف ۶: نباید نسبت به زمان حال تأخر زمانی داشته باشد (indati2m &lt;= now)
+    /// </summary>
+    public static DateTimeOffset NormalizeArticle9RegistrationDate(
+        DateTime? registrationDate,
+        DateTimeOffset normalizedIssueOffset,
+        DateTimeOffset? referenceNowUtc = null)
+    {
+        var iranNowOffset = (referenceNowUtc ?? DateTimeOffset.UtcNow).ToOffset(IranStandardOffset);
+        var safeMaxIranOffset = iranNowOffset.AddSeconds(-5);
+        if (safeMaxIranOffset < normalizedIssueOffset)
+            safeMaxIranOffset = normalizedIssueOffset;
+
+        if (!registrationDate.HasValue)
+            return safeMaxIranOffset;
+
+        var raw = registrationDate.Value;
+        var iranWallClock = raw.Kind == DateTimeKind.Utc
+            ? raw.Add(IranStandardOffset)
+            : DateTime.SpecifyKind(raw, DateTimeKind.Unspecified);
 
         if (iranWallClock.TimeOfDay == TimeSpan.Zero)
         {
@@ -96,6 +144,8 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
         }
 
         var candidate = new DateTimeOffset(DateTime.SpecifyKind(iranWallClock, DateTimeKind.Unspecified), IranStandardOffset);
+        if (candidate < normalizedIssueOffset)
+            candidate = normalizedIssueOffset;
         if (candidate > safeMaxIranOffset)
             candidate = safeMaxIranOffset;
 
@@ -144,27 +194,45 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
         var issueOffset = normalizedIssueOffset ?? NormalizeIssueDateForMoadian(invoice.IssueDate);
         var indatim = issueOffset.ToUnixTimeMilliseconds();
 
+        var deadlineDays = MdnArticle9Rules.NormalizeDeadlineDays(profile.Article9SendDeadlineDays);
+        var isPastDeadline = IsPastArticle9Deadline(issueOffset, deadlineDays);
+
+        // طبق بخش ۶ و جداول ۴، ۵ و ۸۶ دستورالعمل RC_IITP.IS_V7.9:
+        //   • اگر فاصلهٔ تاریخ صدور تا ارسال بیش از مهلت مجاز باشد (موضوع ماده ۹): insr = 1 و indati2m اجباری است.
+        //   • اگر فاصلهٔ زمانی کمتر یا مساوی مهلت مجاز باشد (عادی): هر دو فیلد insr و indati2m خارج از الگو هستند و باید null باشند.
+        var effectiveArticle9 = invoice.IsArticle9 && isPastDeadline;
+        long? effectiveIndati2m = effectiveArticle9
+            ? NormalizeArticle9RegistrationDate(invoice.RegistrationDate, issueOffset).ToUnixTimeMilliseconds()
+            : null;
+        int? effectiveInsr = effectiveArticle9 ? MdnArticle9Rules.Article9SendRuleCode : null;
+
+        var nti1 = TruncateMax(NullIfBlank(invoice.Note1), MdnArticle9Rules.MaxHeaderNoteLength);
+        var nti2 = TruncateMax(NullIfBlank(invoice.Note2), MdnArticle9Rules.MaxHeaderNoteLength);
+
         var sellerEconomic = NormalizeAsciiDigits(invoice.SellerEconomicCode)
                              ?? NormalizeAsciiDigits(profile.EconomicCode)
                              ?? string.Empty;
 
-        // طبق دستورالعمل RC_IITP_IS_V7.8 (موضوع ابطالی ins = 3):
-        // تنها فیلدهای شناسایی و ارجاع به مرجع (taxid, indatim, ins=3, inno, irtaxid, tins, sbc) ارسال می‌شوند
+        // طبق دستورالعمل RC_IITP.IS_V7.9 (بخش ۳-۵ و بخش ۶ — موضوع ابطالی ins = 3 در حالت عادی و موضوع ماده ۹):
+        // تنها فیلدهای شناسایی و ارجاع به مرجع (به همراه insr=1 و indati2m در حالت ماده ۹) ارسال می‌شوند
         // و ارسال فیلدهای مبلغی سرصفحه (tprdis..tbill) یا اقلام بدنه موجب هشدارهای خارج از الگو (14022..14028) می‌گردد.
         if (invoice.Subject == MdnInvoiceSubject.Cancellation)
         {
             return new InvoiceDto
             {
-                Header = new HeaderDto
+                Header = new MdnV79HeaderDto
                 {
                     taxid = effectiveTaxId,
                     indatim = indatim,
-                    indati2m = null,
+                    indati2m = effectiveIndati2m,
                     ins = (int)MdnInvoiceSubject.Cancellation,
                     inno = effectiveSerialHex,
                     irtaxid = NullIfBlank(invoice.ReferenceTaxId),
                     tins = sellerEconomic,
                     sbc = NormalizeAsciiDigits(invoice.SellerBranchCode) ?? NormalizeAsciiDigits(profile.BranchCode),
+                    insr = effectiveInsr,
+                    nti1 = nti1,
+                    nti2 = nti2,
                     sg = null!
                 },
                 Body = new List<BodyItemDto>(),
@@ -183,12 +251,12 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
         var isType1 = invoice.InvoiceType == MdnInvoiceType.Type1;
         var isGoldPattern = invoice.Pattern == MdnInvoicePattern.GoldJewelry;
 
-        var header = new HeaderDto
+        var header = new MdnV79HeaderDto
         {
             taxid = effectiveTaxId,
             indatim = indatim,
-            // در ارسال برخط عادی (خارج از ماده ۹)، ارسال indati2m موجب هشدار 14003 («خارج از الگو») می‌شود.
-            indati2m = null,
+            // در ارسال برخط عادی (خارج از ماده ۹)، ارسال indati2m و insr خارج از الگو است؛ در موضوع ماده ۹ هر دو الزامی هستند.
+            indati2m = effectiveIndati2m,
             inty = (int)invoice.InvoiceType,
             inp = (int)invoice.Pattern,
             ins = (int)invoice.Subject,
@@ -218,6 +286,9 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
             cap = invoice.SettlementMethod == MdnSettlementMethod.CashAndCredit ? invoice.CashAmount : null,
             insp = invoice.SettlementMethod == MdnSettlementMethod.CashAndCredit ? invoice.CreditAmount : null,
             tax17 = invoice.Tax17 is > 0 ? invoice.Tax17 : null,
+            insr = effectiveInsr,
+            nti1 = nti1,
+            nti2 = nti2,
             sg = null!
         };
 
@@ -648,7 +719,7 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
     {
         var baseUrl = ResolveNormalizedBaseUrl(profile);
         var taxProps = new TaxProperties(profile.MemoryId.Trim().ToUpperInvariant());
-        var serializer = new Serializer();
+        var serializer = new V79MoadianSerializer();
         var urlProps = new NormalizedMoadianUrlProperties(baseUrl);
         var requestProvider = new RequestProvider(urlProps, serializer);
         var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
@@ -678,7 +749,7 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
         {
             var taxProps = new TaxProperties(profile.MemoryId.Trim().ToUpperInvariant());
             var encryptor = new EncryptorFactory().Create(light.PublicApi);
-            var packetProvider = new PacketProviderFactory(taxProps).CreatePacketProvider(signatory, encryptor);
+            var packetProvider = new PacketProvider(taxProps, signatory, encryptor, new V79MoadianSerializer());
             var taxApi = new TaxApi(light.LowLevelApi, packetProvider);
             return new FullSdkSession(light, taxApi);
         }
@@ -722,7 +793,14 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
                 if (errDto?.Errors is { Count: > 0 })
                 {
                     var items = string.Join(" | ", errDto.Errors.Select(e => $"[{e.Code}] {e.Message}"));
-                    return $"خطای درگاه سامانه مودیان: {items}";
+                    var hasArt9Hint = errDto.Errors.Any(e => e.Code is "0200201" or "00107");
+                    var hasIndati2mHint = errDto.Errors.Any(e => e.Code is "14003");
+                    var hint = hasArt9Hint
+                        ? " (راهنما: تاریخ صدور از مهلت مجاز گذشته است؛ صورتحساب را در قالب موضوع ماده ۹ با insr=1 ارسال نمایید.)"
+                        : hasIndati2mHint
+                            ? " (راهنما: در نسخه V7.9 فیلد indati2m برای صورتحساب‌های عادی خارج از الگوست و فقط در ماده ۹ مجاز است.)"
+                            : "";
+                    return $"خطای درگاه سامانه مودیان: {items}{hint}";
                 }
             }
             catch { /* در صورت عدم تطابق JSON، پیام خام خوانده می‌شود */ }
@@ -794,6 +872,55 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
         }
 
         public void Dispose() => _http.Dispose();
+    }
+
+    private static string? TruncateMax(string? value, int maxLen)
+        => string.IsNullOrEmpty(value) || value.Length <= maxLen ? value : value[..maxLen];
+
+    /// <summary>
+    /// مبدل JSON پلی‌مورفیک بدون بازگشت برای <see cref="HeaderDto"/> تا فیلدهای جدید دستورالعمل V7.9
+    /// (<c>insr</c>, <c>nti1</c>, <c>nti2</c>) هنگام سریال‌سازی <see cref="InvoiceDto"/> در بستهٔ امضاشده JWS+JWE درج شوند.
+    /// </summary>
+    private sealed class MdnV79HeaderJsonConverter : JsonConverter<HeaderDto>
+    {
+        private static readonly JsonSerializerOptions InnerWireOptions = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            Converters = { new JsonStringEnumConverter() }
+        };
+
+        private static readonly JsonSerializerOptions InnerPreviewOptions = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            Converters = { new JsonStringEnumConverter() },
+            WriteIndented = true
+        };
+
+        private readonly bool _omitNullsAndIndent;
+
+        public MdnV79HeaderJsonConverter(bool omitNullsAndIndent) => _omitNullsAndIndent = omitNullsAndIndent;
+
+        public override HeaderDto? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+            => JsonSerializer.Deserialize<MdnV79HeaderDto>(ref reader, _omitNullsAndIndent ? InnerPreviewOptions : InnerWireOptions);
+
+        public override void Write(Utf8JsonWriter writer, HeaderDto value, JsonSerializerOptions options)
+            => JsonSerializer.Serialize(writer, (object)value, value.GetType(), _omitNullsAndIndent ? InnerPreviewOptions : InnerWireOptions);
+    }
+
+    public sealed class V79MoadianSerializer : TaxCollectData.Library.Abstraction.Providers.ISerializer
+    {
+        private static readonly JsonSerializerOptions WireOptions = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            Converters = { new JsonStringEnumConverter(), new MdnV79HeaderJsonConverter(omitNullsAndIndent: false) }
+        };
+
+        public string Serialize(object dto)
+            => Encoding.UTF8.GetString(JsonSerializer.SerializeToUtf8Bytes(dto, WireOptions));
     }
 
     private sealed class FullSdkSession : IDisposable

@@ -37,12 +37,12 @@ public interface IMoadianClientService
     Task DeleteInvoiceAsync(int id);
     Task<MdnInvoiceJsonPreviewDto> PreviewJsonAsync(int id);
     Task<MdnInvoiceDetailDto> CreateDerivativeAsync(int id, MdnCreateDerivativeRequest req);
-    Task<MdnDirectCancelResultDto> CancelAndInquireAsync(int sourceInvoiceId);
+    Task<MdnDirectCancelResultDto> CancelAndInquireAsync(int sourceInvoiceId, MdnDirectCancelRequest? req = null);
 
     Task<List<MdnErpFacInvoicePickDto>> GetErpInvoicesAsync();
     Task<MdnInvoiceDetailDto> ImportErpInvoiceAsync(int facInvoiceId);
 
-    Task<MdnBatchActionResultDto> SendInvoicesAsync(List<int> ids);
+    Task<MdnBatchActionResultDto> SendInvoicesAsync(List<int> ids, bool confirmArticle9 = false);
     Task<MdnBatchActionResultDto> InquirySubmissionsAsync(List<int> ids);
     Task<MdnBatchActionResultDto> InquiryFolderAsync(List<int> ids);
     Task<MdnBatchActionResultDto> RefreshAllAsync(List<int> ids);
@@ -143,6 +143,8 @@ public sealed class MoadianClientService : IMoadianClientService
             qs.Add($"paymentStatus={(int)f.PaymentStatus.Value}");
         if (f.Subject.HasValue)
             qs.Add($"subject={(int)f.Subject.Value}");
+        if (f.IsArticle9.HasValue)
+            qs.Add($"isArticle9={(f.IsArticle9.Value ? "true" : "false")}");
         if (f.FromDate.HasValue)
             qs.Add($"fromDate={f.FromDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}");
         if (f.ToDate.HasValue)
@@ -166,8 +168,8 @@ public sealed class MoadianClientService : IMoadianClientService
     public Task<MdnInvoiceDetailDto> CreateDerivativeAsync(int id, MdnCreateDerivativeRequest req)
         => _api.PostAsync<MdnInvoiceDetailDto>($"api/moadian/invoices/{id}/derivative", req);
 
-    public Task<MdnDirectCancelResultDto> CancelAndInquireAsync(int sourceInvoiceId)
-        => _api.PostAsync<MdnDirectCancelResultDto>($"api/moadian/invoices/{sourceInvoiceId}/cancel-and-inquire");
+    public Task<MdnDirectCancelResultDto> CancelAndInquireAsync(int sourceInvoiceId, MdnDirectCancelRequest? req = null)
+        => _api.PostAsync<MdnDirectCancelResultDto>($"api/moadian/invoices/{sourceInvoiceId}/cancel-and-inquire", req ?? new MdnDirectCancelRequest());
 
     public Task<List<MdnErpFacInvoicePickDto>> GetErpInvoicesAsync()
         => _api.GetAsync<List<MdnErpFacInvoicePickDto>>("api/moadian/erp-invoices");
@@ -175,8 +177,12 @@ public sealed class MoadianClientService : IMoadianClientService
     public Task<MdnInvoiceDetailDto> ImportErpInvoiceAsync(int facInvoiceId)
         => _api.PostAsync<MdnInvoiceDetailDto>($"api/moadian/erp-invoices/{facInvoiceId}/import");
 
-    public Task<MdnBatchActionResultDto> SendInvoicesAsync(List<int> ids)
-        => _api.PostAsync<MdnBatchActionResultDto>("api/moadian/invoices/send", new MdnBulkIdsRequest { InvoiceIds = ids });
+    public Task<MdnBatchActionResultDto> SendInvoicesAsync(List<int> ids, bool confirmArticle9 = false)
+        => _api.PostAsync<MdnBatchActionResultDto>("api/moadian/invoices/send", new MdnBulkIdsRequest
+        {
+            InvoiceIds = ids,
+            ConfirmArticle9 = confirmArticle9
+        });
 
     public Task<MdnBatchActionResultDto> InquirySubmissionsAsync(List<int> ids)
         => _api.PostAsync<MdnBatchActionResultDto>("api/moadian/invoices/inquiry-submission", new MdnBulkIdsRequest { InvoiceIds = ids });

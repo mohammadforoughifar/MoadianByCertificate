@@ -18,8 +18,9 @@ else if (inv is not null)
     <div class="page-head d-print-none">
         <div>
             <h1>صورتحساب الکترونیکی @inv.InternalNumber</h1>
-            <p class="lead">
+            <p class="lead mb-0">
                 @MdnUiLabels.SubjectTitle(inv.Subject) — @(inv.InvoiceType == MdnInvoiceType.Type1 ? "نوع اول" : "نوع دوم") — @MdnUiLabels.PatternTitle(inv.Pattern)
+                <span class="ms-2 @MdnUiLabels.SendRuleBadgeClass(inv.IsArticle9)">@MdnUiLabels.SendRuleTitle(inv.IsArticle9)</span>
             </p>
         </div>
 
@@ -134,7 +135,13 @@ else if (inv is not null)
         <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
             <div>
                 <strong>صورتحساب الکترونیکی فروش کالا و خدمات</strong>
-                <span class="ms-2 text-muted small">تاریخ صدور: <strong>@inv.IssueDate.ToFaDate()</strong></span>
+                <span class="ms-2 text-muted small">تاریخ صدور (indatim): <strong>@inv.IssueDate.ToFaDate()</strong></span>
+                @if (inv.IsArticle9)
+                {
+                    <span class="ms-2 badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                        موضوع ماده ۹ (insr=1) | تاریخ ثبت (indati2m): @(inv.RegistrationDate?.ToFaDate() ?? "—")
+                    </span>
+                }
             </div>
             <div class="d-flex flex-wrap gap-3 small">
                 <span>شماره مالیاتی ۲۲ کاراکتری (TaxId): <code class="fs-6">@(inv.TaxId ?? "—")</code></span>
@@ -214,6 +221,24 @@ else if (inv is not null)
                     </tfoot>
                 </table>
             </div>
+
+            @if (!string.IsNullOrWhiteSpace(inv.Note1) || !string.IsNullOrWhiteSpace(inv.Note2) || !string.IsNullOrWhiteSpace(inv.Description))
+            {
+                <div class="border rounded bg-light p-2 mt-2 small d-flex flex-wrap gap-3">
+                    @if (!string.IsNullOrWhiteSpace(inv.Note1))
+                    {
+                        <span><strong class="text-muted">توضیحات یک (nti1):</strong> @inv.Note1</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(inv.Note2))
+                    {
+                        <span><strong class="text-muted">توضیحات دو (nti2):</strong> @inv.Note2</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(inv.Description))
+                    {
+                        <span><strong class="text-muted">یادداشت داخلی:</strong> @inv.Description</span>
+                    }
+                </div>
+            }
 
             @if (!string.IsNullOrWhiteSpace(inv.ReferenceNumber) || !string.IsNullOrWhiteSpace(inv.Uid))
             {
@@ -462,9 +487,27 @@ else if (inv is not null)
             </select>
         </div>
         <div class="mb-3">
-            <label class="form-label">تاریخ صدور</label>
-            <DatePicker Value="derivDateNullable" ValueChanged="d => { if (d.HasValue) derivReq.IssueDate = d.Value; }" />
+            <label class="form-label">تاریخ صدور صورتحساب مشتق (indatim)</label>
+            <DatePicker Value="derivDateNullable" ValueChanged="OnDerivDateChanged" />
         </div>
+        @if (IsDerivPastDeadline)
+        {
+            <div class="alert alert-warning py-2 px-3 small mb-3">
+                <div class="form-check mb-2">
+                    <input type="checkbox" class="form-check-input" id="chkDerivArt9" @bind="derivReq.IsArticle9" />
+                    <label class="form-check-label fw-semibold" for="chkDerivArt9">
+                        ارسال در قالب صورتحساب موضوع ماده ۹ (<code>insr = 1</code>) — تاریخ صدور بیش از @deadlineDays.FaDigits() روز قبل
+                    </label>
+                </div>
+                @if (derivReq.IsArticle9)
+                {
+                    <div>
+                        <label class="form-label small mb-1">تاریخ ثبت صورتحساب (indati2m)</label>
+                        <DatePicker Value="derivRegistrationNullable" ValueChanged="d => derivReq.RegistrationDate = d ?? DateTime.Now" />
+                    </div>
+                }
+            </div>
+        }
         <div class="mb-2">
             <label class="form-label">علت / توضیح</label>
             <input class="form-control" @bind="derivReq.Description" placeholder="شرح علت اصلاح یا ابطال..." />
@@ -472,15 +515,54 @@ else if (inv is not null)
     </ChildContent>
     <Footer>
         <button class="btn btn-secondary" @onclick="() => showDerivativeModal = false">انصراف</button>
-        <button class="btn btn-warning" disabled="@busy" @onclick="SubmitDerivativeAsync">ایجاد پیش‌نویس مشتق</button>
+        <button class="btn btn-warning" disabled="@(busy || (IsDerivPastDeadline && !derivReq.IsArticle9))" @onclick="SubmitDerivativeAsync">ایجاد پیش‌نویس مشتق</button>
+    </Footer>
+</Modal>
+
+<!-- مودال تأیید ارسال صورتحساب خارج از مهلت در قالب ماده ۹ -->
+<Modal Visible="showArticle9SendConfirm" Title="تأیید ارسال صورتحساب موضوع ماده ۹ (خارج از مهلت قانونی)" OnClose="() => showArticle9SendConfirm = false">
+    <ChildContent>
+        @if (inv is not null)
+        {
+            <div class="alert alert-warning py-2 small mb-2">
+                <i class="bi bi-clock-history me-1"></i>
+                از تاریخ صدور این صورتحساب (<strong>@inv.IssueDate.ToFaDate()</strong>) بیش از مهلت مجاز ارسال عادی (<strong>@deadlineDays.FaDigits() روز</strong>) گذشته است.
+            </div>
+            <p class="small mb-0">
+                مطابق بخش ۶ و جداول ۴، ۵ و ۸۶ دستورالعمل <code>RC_IITP.IS_V7.9</code>، با تأیید این گزینه، صورتحساب با فیلد
+                <code>header.insr = 1</code> و تاریخ ثبت <code>indati2m</code> در قالب موضوع ماده ۹ امضا و به سامانه مودیان ارسال خواهد شد.
+            </p>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" disabled="@busy" @onclick="() => showArticle9SendConfirm = false">انصراف</button>
+        <button class="btn btn-warning fw-semibold" disabled="@busy" @onclick="ConfirmArticle9SendAsync">
+            <i class="bi bi-send-check me-1"></i>تأیید قاعده ماده ۹ (insr=1) و ارسال
+        </button>
     </Footer>
 </Modal>
 
 <!-- مودال JSON -->
-<Modal Visible="jsonPreview is not null" Title="پیش‌نمایش JSON رسمی (SDK 2.0.29)" Size="modal-lg" OnClose="() => jsonPreview = null">
+<Modal Visible="jsonPreview is not null" Title="پیش‌نمایش JSON رسمی (SDK 2.0.29 + V7.9)" Size="modal-lg" OnClose="() => jsonPreview = null">
     <ChildContent>
         @if (jsonPreview is not null)
         {
+            <div class="d-flex flex-wrap align-items-center gap-3 mb-2 small">
+                <span>TaxId: <code class="fs-6">@jsonPreview.PotentialTaxId</code></span>
+                <span>inno: <code>@jsonPreview.PotentialSerialHex</code></span>
+                <span class="@MdnUiLabels.SendRuleBadgeClass(jsonPreview.IsArticle9)">
+                    @MdnUiLabels.SendRuleTitle(jsonPreview.IsArticle9)
+                </span>
+            </div>
+            @if (jsonPreview.ValidationWarnings.Count > 0)
+            {
+                <div class="alert alert-warning py-2 small">
+                    @foreach (var w in jsonPreview.ValidationWarnings)
+                    {
+                        <div><i class="bi bi-exclamation-circle me-1"></i>@w</div>
+                    }
+                </div>
+            }
             <pre class="bg-dark text-light p-3 rounded small font-monospace mb-0" dir="ltr" style="max-height:430px;overflow:auto">@jsonPreview.JsonPayload</pre>
         }
     </ChildContent>
@@ -494,6 +576,8 @@ else if (inv is not null)
 
     private MdnInvoiceDetailDto? inv;
     private MdnInvoiceJsonPreviewDto? jsonPreview;
+    private int deadlineDays = MdnArticle9Rules.DefaultSendDeadlineDays;
+    private bool showArticle9SendConfirm;
 
     private bool showPaymentModal;
     private MdnRegisterPaymentRequest payReq = new();
@@ -502,11 +586,23 @@ else if (inv is not null)
     private bool showDerivativeModal;
     private MdnCreateDerivativeRequest derivReq = new();
     private DateTime? derivDateNullable => derivReq.IssueDate;
+    private DateTime? derivRegistrationNullable => derivReq.RegistrationDate ?? DateTime.Now;
+    private bool IsDerivPastDeadline => MdnArticle9Rules.IsPastSendDeadline(derivReq.IssueDate ?? DateTime.Now, deadlineDays);
 
     private bool loading = true;
     private bool busy;
 
-    protected override async Task OnParametersSetAsync() => await LoadAsync();
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            var prof = await Mdn.GetProfileAsync();
+            deadlineDays = MdnArticle9Rules.NormalizeDeadlineDays(prof.Article9SendDeadlineDays);
+        }
+        catch { }
+
+        await LoadAsync();
+    }
 
     private async Task LoadAsync()
     {
@@ -526,10 +622,26 @@ else if (inv is not null)
 
     private async Task SendAsync()
     {
+        if (inv is not null && !inv.IsArticle9 && MdnArticle9Rules.IsPastSendDeadline(inv.IssueDate, deadlineDays))
+        {
+            showArticle9SendConfirm = true;
+            return;
+        }
+        await ExecuteSendAsync(confirmArticle9: inv?.IsArticle9 == true);
+    }
+
+    private async Task ConfirmArticle9SendAsync()
+    {
+        showArticle9SendConfirm = false;
+        await ExecuteSendAsync(confirmArticle9: true);
+    }
+
+    private async Task ExecuteSendAsync(bool confirmArticle9)
+    {
         busy = true;
         try
         {
-            var res = await Mdn.SendInvoicesAsync(new List<int> { Id });
+            var res = await Mdn.SendInvoicesAsync(new List<int> { Id }, confirmArticle9: confirmArticle9);
             var item = res.Items.FirstOrDefault();
             if (item?.Success == true) Toast.Success(item.Message);
             else Toast.Warning(item?.Message ?? res.Message);
@@ -630,9 +742,26 @@ else if (inv is not null)
         derivReq = new MdnCreateDerivativeRequest
         {
             Subject = MdnInvoiceSubject.Corrective,
-            IssueDate = DateTime.Now
+            IssueDate = DateTime.Now,
+            IsArticle9 = false,
+            RegistrationDate = null
         };
         showDerivativeModal = true;
+    }
+
+    private void OnDerivDateChanged(DateTime? d)
+    {
+        if (!d.HasValue) return;
+        derivReq.IssueDate = d.Value;
+        if (MdnArticle9Rules.IsPastSendDeadline(d.Value, deadlineDays))
+        {
+            derivReq.RegistrationDate ??= DateTime.Now;
+        }
+        else
+        {
+            derivReq.IsArticle9 = false;
+            derivReq.RegistrationDate = null;
+        }
     }
 
     private async Task SubmitDerivativeAsync()

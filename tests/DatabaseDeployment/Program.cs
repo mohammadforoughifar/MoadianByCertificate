@@ -54,6 +54,28 @@ try
             "Users.OrganizationId SQL Server migration adds OrganizationId to dbo.Users");
         Check(snapshot.FindEntityType("Inventory.Api.Data.User")!.FindProperty("OrganizationId") is not null,
             "snapshot records User.OrganizationId");
+
+        const string article9Migration = "20261103120000_AddMoadianArticle9V79";
+        Check(db.Database.GetMigrations().Contains(article9Migration), "Moadian Article 9 V7.9 migration is discoverable by EF");
+        var article9Script = db.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>()
+            .GenerateScript(usersOrgMigration, article9Migration);
+        Check(article9Script.Contains("Article9SendDeadlineDays")
+            && article9Script.Contains("[IsArticle9]")
+            && article9Script.Contains("[SendRule]")
+            && article9Script.Contains("[RegistrationDate]")
+            && article9Script.Contains("[Note1]")
+            && article9Script.Contains("[Note2]")
+            && article9Script.Contains("IX_MdnInvoices_CompanyId_IsArticle9"),
+            "Moadian Article 9 V7.9 SQL Server migration adds Article 9 & V7.9 columns and index");
+        var mdnProfileSnap = snapshot.FindEntityType("Inventory.Api.Data.MdnTaxpayerProfile")!;
+        var mdnInvoiceSnap = snapshot.FindEntityType("Inventory.Api.Data.MdnInvoice")!;
+        Check(mdnProfileSnap.FindProperty("Article9SendDeadlineDays") is not null
+            && mdnInvoiceSnap.FindProperty("IsArticle9") is not null
+            && mdnInvoiceSnap.FindProperty("SendRule") is not null
+            && mdnInvoiceSnap.FindProperty("RegistrationDate") is not null
+            && mdnInvoiceSnap.FindProperty("Note1") is not null
+            && mdnInvoiceSnap.FindProperty("Note2") is not null,
+            "snapshot records MdnTaxpayerProfile.Article9SendDeadlineDays and MdnInvoice Article 9 / V7.9 properties");
     }
 
     foreach (var state in new[] { "fresh", "legacy", "partial" })
@@ -95,6 +117,12 @@ UPDATE Organizations SET CompanyId = 1;";
             new DbContextOptionsBuilder<Inventory.Api.Data.AppDbContext>().UseSqlite(sqliteConnection).Options);
         await Inventory.Api.Data.OrganizationSchemaV1.EnsureAsync(db);
         await Inventory.Api.Data.OrganizationSchemaV1.EnsureAsync(db);
+        await Inventory.Api.Data.MoadianCertSchemaV2.EnsureAsync(db);
+        await Inventory.Api.Data.MoadianCertSchemaV2.EnsureAsync(db);
+        Check(await db.MdnTaxpayerProfiles.Select(p => p.Article9SendDeadlineDays).CountAsync() == 0,
+            state + ": MdnTaxpayerProfiles.Article9SendDeadlineDays queryable after idempotent EnsureAsync");
+        Check(await db.MdnInvoices.Where(i => i.IsArticle9 && i.SendRule == 1 && i.Note1 != null && i.Note2 != null && i.RegistrationDate != null).CountAsync() == 0,
+            state + ": MdnInvoices Article 9 & V7.9 columns queryable after idempotent EnsureAsync");
         var defaultOrg = db.Organizations.FirstOrDefault(o => !o.IsDelete && o.IsActive && o.IsDefault)
             ?? db.Organizations.FirstOrDefault(o => !o.IsDelete && o.IsActive);
         Check(state == "fresh" ? defaultOrg is null : defaultOrg?.NameUniq == "MQ",
@@ -203,6 +231,140 @@ UPDATE Organizations SET CompanyId = 1;";
             "Midnight Shamsi/date-picker date stays on same UTC & Iran calendar day (fixes 0300101)");
         Check(Inventory.Api.Services.Moadian.MoadianSdkGateway.NormalizeAsciiDigits(" ۱۲۳۴۵۶۷۸۹۰ ") == "1234567890",
             "Persian digits normalize cleanly to ASCII");
+
+        // 9. Moadian V7.9 Article 9 (insr=1, indati2m, nti1, nti2) & SDK PacketProvider serialization regression checks
+        var vault = new Inventory.Api.Services.Moadian.MoadianSecretVault(cfg, env);
+        var gw = new Inventory.Api.Services.Moadian.MoadianSdkGateway(vault);
+        var testProfile = new Inventory.Api.Data.MdnTaxpayerProfile
+        {
+            CompanyId = 1,
+            MemoryId = "A11226",
+            EconomicCode = "10100000000",
+            Article9SendDeadlineDays = 12
+        };
+        var baseLine = new Inventory.Api.Data.MdnInvoiceLine
+        {
+            RowNumber = 1,
+            Sstid = "2720000000000",
+            Description = "کالای آزمون",
+            Quantity = 1,
+            UnitPrice = 1_000_000,
+            PriceBeforeDiscount = 1_000_000,
+            DiscountAmount = 0,
+            PriceAfterDiscount = 1_000_000,
+            VatRate = 10,
+            VatAmount = 100_000,
+            TotalLineAmount = 1_100_000
+        };
+
+        // 9a. Normal within-deadline invoice -> insr and indati2m MUST both be omitted (prevents 14003 & Table 86 out-of-pattern)
+        var normalInv = new Inventory.Api.Data.MdnInvoice
+        {
+            SerialDecimal = 101,
+            IssueDate = DateTime.UtcNow.AddDays(-2),
+            IsArticle9 = false,
+            InvoiceType = Inventory.Shared.Dtos.MdnInvoiceType.Type1,
+            Pattern = Inventory.Shared.Dtos.MdnInvoicePattern.Sale,
+            Subject = Inventory.Shared.Dtos.MdnInvoiceSubject.Original,
+            SettlementMethod = Inventory.Shared.Dtos.MdnSettlementMethod.Cash,
+            BuyerType = Inventory.Shared.Dtos.MdnTaxpayerType.Legal,
+            BuyerEconomicCode = "10100000001",
+            BuyerNationalId = "10100000001",
+            TotalBeforeDiscount = 1_000_000,
+            TotalAfterDiscount = 1_000_000,
+            TotalVat = 100_000,
+            TotalAmount = 1_100_000,
+            CashAmount = 1_000_000,
+            Note1 = "قرارداد ۱۴۰۵",
+            Note2 = "فاز اول",
+            Lines = new List<Inventory.Api.Data.MdnInvoiceLine> { baseLine }
+        };
+        var normalDto = gw.BuildSdkInvoiceDto(testProfile, normalInv);
+        var normalPreviewJson = gw.FormatInvoiceJson(normalDto);
+        var v79Serializer = new Inventory.Api.Services.Moadian.MoadianSdkGateway.V79MoadianSerializer();
+        var normalWireJson = v79Serializer.Serialize(normalDto);
+        using (var normalDoc = System.Text.Json.JsonDocument.Parse(normalWireJson))
+        {
+            var hdr = normalDoc.RootElement.GetProperty("header");
+            Check(!hdr.TryGetProperty("insr", out _), "Normal invoice omits insr on wire (V7.9 Table 86)");
+            Check(hdr.TryGetProperty("indati2m", out var ind2) && ind2.ValueKind == System.Text.Json.JsonValueKind.Null,
+                "Normal invoice keeps indati2m null on wire (V7.9 Table 5 / fixes 14003)");
+            Check(!normalPreviewJson.Contains("\"insr\"") && !normalPreviewJson.Contains("\"indati2m\""),
+                "Normal invoice JSON preview omits both insr and indati2m");
+            Check(hdr.GetProperty("nti1").GetString() == "قرارداد ۱۴۰۵" && hdr.GetProperty("nti2").GetString() == "فاز اول",
+                "V7.9 nti1 and nti2 serialize cleanly in header");
+        }
+
+        // 9b. Article 9 past-deadline invoice -> insr = 1 AND indati2m populated with indatim <= indati2m <= now
+        var art9Inv = new Inventory.Api.Data.MdnInvoice
+        {
+            SerialDecimal = 102,
+            IssueDate = DateTime.UtcNow.AddDays(-25),
+            RegistrationDate = DateTime.UtcNow,
+            IsArticle9 = true,
+            SendRule = 1,
+            InvoiceType = Inventory.Shared.Dtos.MdnInvoiceType.Type1,
+            Pattern = Inventory.Shared.Dtos.MdnInvoicePattern.Sale,
+            Subject = Inventory.Shared.Dtos.MdnInvoiceSubject.Original,
+            SettlementMethod = Inventory.Shared.Dtos.MdnSettlementMethod.Cash,
+            BuyerType = Inventory.Shared.Dtos.MdnTaxpayerType.Legal,
+            BuyerEconomicCode = "10100000001",
+            BuyerNationalId = "10100000001",
+            TotalBeforeDiscount = 1_000_000,
+            TotalAfterDiscount = 1_000_000,
+            TotalVat = 100_000,
+            TotalAmount = 1_100_000,
+            CashAmount = 1_000_000,
+            Lines = new List<Inventory.Api.Data.MdnInvoiceLine> { baseLine }
+        };
+        var art9Dto = gw.BuildSdkInvoiceDto(testProfile, art9Inv);
+        var art9WireJson = v79Serializer.Serialize(art9Dto);
+        using (var art9Doc = System.Text.Json.JsonDocument.Parse(art9WireJson))
+        {
+            var hdr = art9Doc.RootElement.GetProperty("header");
+            var indatimVal = hdr.GetProperty("indatim").GetInt64();
+            var indati2mVal = hdr.GetProperty("indati2m").GetInt64();
+            Check(hdr.GetProperty("insr").GetInt32() == 1, "Article 9 invoice emits header.insr = 1 on wire");
+            Check(indati2mVal >= indatimVal, "Article 9 invoice emits header.indati2m >= indatim (V7.9 Table 5)");
+        }
+
+        // 9c. Article 9 backdated Cancellation (ins=3) -> insr = 1, indati2m populated, Body empty, tprdis..tbill null
+        var art9CancelInv = new Inventory.Api.Data.MdnInvoice
+        {
+            SerialDecimal = 103,
+            IssueDate = DateTime.UtcNow.AddDays(-20),
+            RegistrationDate = DateTime.UtcNow,
+            IsArticle9 = true,
+            SendRule = 1,
+            Subject = Inventory.Shared.Dtos.MdnInvoiceSubject.Cancellation,
+            ReferenceTaxId = normalDto.Header.taxid
+        };
+        var art9CancelDto = gw.BuildSdkInvoiceDto(testProfile, art9CancelInv);
+        var art9CancelWireJson = v79Serializer.Serialize(art9CancelDto);
+        using (var cancelDoc = System.Text.Json.JsonDocument.Parse(art9CancelWireJson))
+        {
+            var hdr = cancelDoc.RootElement.GetProperty("header");
+            Check(hdr.GetProperty("ins").GetInt32() == 3 && hdr.GetProperty("insr").GetInt32() == 1,
+                "Backdated Article 9 Cancellation emits ins = 3 and insr = 1");
+            Check(hdr.GetProperty("indati2m").ValueKind == System.Text.Json.JsonValueKind.Number,
+                "Backdated Article 9 Cancellation populates indati2m");
+            Check(hdr.GetProperty("tbill").ValueKind == System.Text.Json.JsonValueKind.Null
+                && cancelDoc.RootElement.GetProperty("body").GetArrayLength() == 0,
+                "Backdated Article 9 Cancellation keeps amount totals null and body empty (prevents 14022..14028)");
+        }
+
+        // 9d. Verify SDK PacketProvider actually signs the serialized JSON containing insr=1 via V79MoadianSerializer
+        var capturedPayloads = new List<string>();
+        var packetProvider = new TaxCollectData.Library.Providers.PacketProvider(
+            new TaxCollectData.Library.Properties.TaxProperties("A11226"),
+            new CapturingSignatory(capturedPayloads),
+            new TaxCollectData.Library.Cryptography.EmptyEncryptor(),
+            v79Serializer);
+        var packet = packetProvider.CreateInvoicePacket(art9Dto);
+        Check(capturedPayloads.Count > 0 && capturedPayloads[0].Contains("\"insr\":1"),
+            "SDK PacketProvider signs payload containing header.insr=1 via V79MoadianSerializer");
+        Check(packet.Payload is string pktStr && pktStr.Contains("\"insr\":1"),
+            "SDK PacketDto preserves header.insr=1 through encryption pipeline");
     }
     first.Certificate?.Dispose();
 
@@ -239,10 +401,33 @@ static void Check(bool condition, string message)
     Console.WriteLine("PASS: " + message);
 }
 
-sealed class TestEnvironment : IHostEnvironment
+sealed class TestEnvironment : IWebHostEnvironment
 {
     public string EnvironmentName { get; set; } = "Production";
     public string ApplicationName { get; set; } = "DatabaseDeploymentTests";
     public string ContentRootPath { get; set; } = "";
     public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+    public string WebRootPath { get; set; } = "";
+    public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
 }
+
+sealed class CapturingSignatory : TaxCollectData.Library.Abstraction.Cryptography.ISignatory
+{
+    private readonly List<string> _captured;
+    public CapturingSignatory(List<string> captured) => _captured = captured;
+
+    public string Sign(string text)
+    {
+        _captured.Add(text);
+        return text;
+    }
+
+    public string Sign(object data)
+    {
+        var s = data?.ToString() ?? string.Empty;
+        _captured.Add(s);
+        return s;
+    }
+}
+
+

@@ -1644,6 +1644,7 @@ public class AppDbContext : DbContext
         mb.Entity<MdnInvoice>().HasIndex(i => i.ReferenceNumber);
         mb.Entity<MdnInvoice>().HasIndex(i => new { i.CompanyId, i.SubmissionStatus });
         mb.Entity<MdnInvoice>().HasIndex(i => new { i.CompanyId, i.FolderStatus });
+        mb.Entity<MdnInvoice>().HasIndex(i => new { i.CompanyId, i.IsArticle9 });
 
         mb.Entity<MdnInvoiceLine>()
             .HasOne(l => l.Invoice)

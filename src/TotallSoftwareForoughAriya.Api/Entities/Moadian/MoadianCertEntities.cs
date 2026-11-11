@@ -53,6 +53,10 @@ public class MdnTaxpayerProfile : ICompanyOwned
     /// <summary>شمارندهٔ سریال ده‌دهی برای تولید TaxId و inno هگزادسیمال.</summary>
     public long NextSerial { get; set; } = 1;
     public decimal DefaultVatRate { get; set; } = 10;
+
+    /// <summary>مهلت مجاز ارسال عادی صورتحساب (به روز) طبق اعلام سازمان امور مالیاتی؛ مازاد بر آن مشمول موضوع ماده ۹ (insr=1) است.</summary>
+    public int Article9SendDeadlineDays { get; set; } = MdnArticle9Rules.DefaultSendDeadlineDays;
+
     public bool IsActive { get; set; } = true;
 
     public DateTime? LastConnectionTestAt { get; set; }
@@ -135,6 +139,15 @@ public class MdnInvoice : ICompanyOwned
     public DateTime IssueDate { get; set; } = DateTime.Now;
     public DateTime CreateDate { get; set; } = DateTime.Now;
 
+    /// <summary>تاریخ و زمان ثبت صورتحساب (indati2m در دستورالعمل V7.9 — اجباری برای صورتحساب‌های موضوع ماده ۹).</summary>
+    public DateTime? RegistrationDate { get; set; }
+
+    /// <summary>آیا صورتحساب مشمول قاعدهٔ موضوع ماده ۹ قانون پایانه‌های فروشگاهی (ارسال خارج از مهلت مجاز — insr=1) است؟</summary>
+    public bool IsArticle9 { get; set; }
+
+    /// <summary>مقدار فیلد قاعده ارسال صورتحساب (header.insr در جدول ۸۶ دستورالعمل V7.9؛ ۱ برای ماده ۹، تهی برای عادی).</summary>
+    public int? SendRule { get; set; }
+
     public MdnInvoiceType InvoiceType { get; set; } = MdnInvoiceType.Type1;
     public MdnInvoicePattern Pattern { get; set; } = MdnInvoicePattern.Sale;
     public MdnInvoiceSubject Subject { get; set; } = MdnInvoiceSubject.Original;
@@ -164,6 +177,10 @@ public class MdnInvoice : ICompanyOwned
     [MaxLength(30)] public string? CustomsDeclarationNumber { get; set; }
     public DateTime? CustomsDeclarationDate { get; set; }
     public long? Tax17 { get; set; }
+
+    /// <summary>یادداشت ۱ و ۲ سرآمد (nti1 و nti2 در جداول ۸۷ و ۸۸ دستورالعمل RC_IITP.IS_V7.9 — حداکثر ۳۰ کاراکتر).</summary>
+    [MaxLength(30)] public string? Note1 { get; set; }
+    [MaxLength(30)] public string? Note2 { get; set; }
 
     // ---------- مبالغ ریالی رسمی ----------
     public long TotalBeforeDiscount { get; set; }
