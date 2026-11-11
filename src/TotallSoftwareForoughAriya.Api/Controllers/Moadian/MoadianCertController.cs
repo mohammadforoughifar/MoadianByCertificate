@@ -185,6 +185,7 @@ public sealed class MoadianCertController : RbacControllerBase
         [FromQuery] MdnFolderStatus? folderStatus = null,
         [FromQuery] MdnPaymentStatus? paymentStatus = null,
         [FromQuery] MdnInvoiceSubject? subject = null,
+        [FromQuery] bool? isArticle9 = null,
         [FromQuery] DateTime? fromDate = null,
         [FromQuery] DateTime? toDate = null,
         [FromQuery] int page = 1,
@@ -198,6 +199,7 @@ public sealed class MoadianCertController : RbacControllerBase
             FolderStatus = folderStatus,
             PaymentStatus = paymentStatus,
             Subject = subject,
+            IsArticle9 = isArticle9,
             FromDate = fromDate,
             ToDate = toDate,
             Page = page,
@@ -243,10 +245,10 @@ public sealed class MoadianCertController : RbacControllerBase
     }
 
     [HttpPost("invoices/{id:int}/cancel-and-inquire")]
-    public async Task<IActionResult> CancelAndInquire(int id)
+    public async Task<IActionResult> CancelAndInquire(int id, [FromBody] MdnDirectCancelRequest? req = null)
     {
         if (await ForbiddenUnlessAnyAsync(Module, "InvoiceSend", "InvoiceUpdate", "InvoiceCreate") is { } forbid) return forbid;
-        return Ok(await _svc.CancelInvoiceAndInquireAsync(id, MyUserId, MyUsername));
+        return Ok(await _svc.CancelInvoiceAndInquireAsync(id, MyUserId, MyUsername, req));
     }
 
     [HttpGet("erp-invoices")]
@@ -269,7 +271,7 @@ public sealed class MoadianCertController : RbacControllerBase
     public async Task<IActionResult> SendInvoices([FromBody] MdnBulkIdsRequest req)
     {
         if (await ForbiddenUnlessAsync(Module, "InvoiceSend") is { } forbid) return forbid;
-        return Ok(await _svc.SendInvoicesAsync(req.InvoiceIds, MyUsername));
+        return Ok(await _svc.SendInvoicesAsync(req.InvoiceIds, MyUsername, req.ConfirmArticle9));
     }
 
     [HttpPost("invoices/inquiry-submission")]

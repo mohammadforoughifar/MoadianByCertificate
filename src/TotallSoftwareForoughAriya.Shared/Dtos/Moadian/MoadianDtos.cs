@@ -124,6 +124,73 @@ public enum MdnPaymentSyncState
     Failed = 4
 }
 
+/// <summary>
+/// قواعد و محاسبات مشترک صورتحساب الکترونیکی موضوع ماده ۹ قانون پایانه‌های فروشگاهی و سامانه مودیان
+/// منطبق با بخش ۶ و جداول ۴، ۵ و ۸۶ دستورالعمل صدور صورتحساب الکترونیکی (RC_IITP.IS_V7.9 — تیرماه ۱۴۰۵).
+/// </summary>
+public static class MdnArticle9Rules
+{
+    /// <summary>مهلت پیش‌فرض مجاز ارسال عادی صورتحساب به روز طبق اعلام سازمان امور مالیاتی کشور (۱۲ روز).</summary>
+    public const int DefaultSendDeadlineDays = 12;
+
+    /// <summary>مقدار رسمی فیلد قاعده ارسال صورتحساب (header.insr) برای صورتحساب موضوع ماده ۹.</summary>
+    public const int Article9SendRuleCode = 1;
+
+    /// <summary>حداکثر طول مجاز فیلدهای یادداشت ۱ و ۲ سرآمد (nti1 و nti2 در جداول ۸۷ و ۸۸ دستورالعمل V7.9).</summary>
+    public const int MaxHeaderNoteLength = 30;
+
+    private static readonly TimeSpan IranStandardOffset = new(3, 30, 0);
+
+    public static int NormalizeDeadlineDays(int days)
+        => days is >= 1 and <= 365 ? days : DefaultSendDeadlineDays;
+
+    public static DateTimeOffset ToNormalizedIranIssueOffset(DateTime issueDate, DateTimeOffset? referenceNowUtc = null)
+    {
+        var iranNow = (referenceNowUtc ?? DateTimeOffset.UtcNow).ToOffset(IranStandardOffset);
+        var safeMax = iranNow.AddSeconds(-10);
+
+        var wall = issueDate.Kind == DateTimeKind.Utc
+            ? issueDate.Add(IranStandardOffset)
+            : DateTime.SpecifyKind(issueDate, DateTimeKind.Unspecified);
+
+        if (wall.TimeOfDay == TimeSpan.Zero)
+        {
+            if (wall.Date == safeMax.Date && safeMax.TimeOfDay >= new TimeSpan(3, 35, 0))
+                wall = safeMax.DateTime;
+            else
+                wall = wall.Date.AddHours(12);
+        }
+
+        var candidate = new DateTimeOffset(DateTime.SpecifyKind(wall, DateTimeKind.Unspecified), IranStandardOffset);
+        return candidate > safeMax ? safeMax : candidate;
+    }
+
+    public static TimeSpan GetElapsedSinceIssue(DateTime issueDate, DateTimeOffset? referenceNowUtc = null)
+    {
+        var nowUtc = referenceNowUtc ?? DateTimeOffset.UtcNow;
+        var iranNow = nowUtc.ToOffset(IranStandardOffset);
+        var issueOffset = ToNormalizedIranIssueOffset(issueDate, nowUtc);
+        var diff = iranNow - issueOffset;
+        return diff < TimeSpan.Zero ? TimeSpan.Zero : diff;
+    }
+
+    public static int GetElapsedWholeDays(DateTime issueDate, DateTimeOffset? referenceNowUtc = null)
+        => Math.Max(0, (int)Math.Floor(GetElapsedSinceIssue(issueDate, referenceNowUtc).TotalDays));
+
+    /// <summary>
+    /// آیا فاصلهٔ زمانی تاریخ صدور (indatim) تا زمان فعلی از مهلت مجاز اعلام‌شده بیشتر است؟
+    /// (شرط الزامی موضوع ماده ۹ طبق جدول ۴ ردیف ۶ و ۷، جدول ۵ ردیف ۳ و جدول ۸۶ ردیف ۱).
+    /// </summary>
+    public static bool IsPastSendDeadline(
+        DateTime issueDate,
+        int deadlineDays = DefaultSendDeadlineDays,
+        DateTimeOffset? referenceNowUtc = null)
+    {
+        var normalizedDays = NormalizeDeadlineDays(deadlineDays);
+        return GetElapsedSinceIssue(issueDate, referenceNowUtc) > TimeSpan.FromDays(normalizedDays);
+    }
+}
+
 // ==================== پروفایل مودی، اتصال و گواهی امضا ====================
 
 public class MdnProfileDto
@@ -162,6 +229,7 @@ public class MdnProfileDto
 
     public long NextSerial { get; set; } = 1;
     public decimal DefaultVatRate { get; set; } = 10;
+    public int Article9SendDeadlineDays { get; set; } = MdnArticle9Rules.DefaultSendDeadlineDays;
     public bool IsActive { get; set; } = true;
 
     public DateTime? LastConnectionTestAt { get; set; }
@@ -197,6 +265,7 @@ public class MdnSaveProfileRequest
 
     public long NextSerial { get; set; } = 1;
     public decimal DefaultVatRate { get; set; } = 10;
+    public int Article9SendDeadlineDays { get; set; } = MdnArticle9Rules.DefaultSendDeadlineDays;
     public bool IsActive { get; set; } = true;
 }
 
@@ -452,6 +521,7 @@ public class MdnInvoiceFilterRequest
     public MdnFolderStatus? FolderStatus { get; set; }
     public MdnPaymentStatus? PaymentStatus { get; set; }
     public MdnInvoiceSubject? Subject { get; set; }
+    public bool? IsArticle9 { get; set; }
     public DateTime? FromDate { get; set; }
     public DateTime? ToDate { get; set; }
     public int Page { get; set; } = 1;
@@ -479,6 +549,9 @@ public class MdnInvoiceSummaryDto
     public string? ReferenceNumber { get; set; }
 
     public DateTime IssueDate { get; set; }
+    public DateTime? RegistrationDate { get; set; }
+    public bool IsArticle9 { get; set; }
+    public int? SendRule { get; set; }
     public MdnInvoiceType InvoiceType { get; set; }
     public MdnInvoicePattern Pattern { get; set; }
     public MdnInvoiceSubject Subject { get; set; }
@@ -602,6 +675,8 @@ public class MdnInvoiceDetailDto : MdnInvoiceSummaryDto
     public string? SellerPostalCode { get; set; }
     public string? SellerBranchCode { get; set; }
     public string? MemoryId { get; set; }
+    public string? Note1 { get; set; }
+    public string? Note2 { get; set; }
     public string? Description { get; set; }
 
     public List<MdnInvoiceLineDto> Lines { get; set; } = new();
@@ -614,6 +689,8 @@ public class MdnSaveInvoiceRequest
 {
     public int Id { get; set; }
     public DateTime IssueDate { get; set; } = DateTime.Now;
+    public bool IsArticle9 { get; set; }
+    public DateTime? RegistrationDate { get; set; }
     public MdnInvoiceType InvoiceType { get; set; } = MdnInvoiceType.Type1;
     public MdnInvoicePattern Pattern { get; set; } = MdnInvoicePattern.Sale;
     public MdnInvoiceSubject Subject { get; set; } = MdnInvoiceSubject.Original;
@@ -641,6 +718,8 @@ public class MdnSaveInvoiceRequest
     public long? Tax17 { get; set; }
     public long? CashAmount { get; set; }
     public long? CreditAmount { get; set; }
+    public string? Note1 { get; set; }
+    public string? Note2 { get; set; }
     public string? Description { get; set; }
 
     public List<MdnInvoiceLineDto> Lines { get; set; } = new();
@@ -687,6 +766,14 @@ public class MdnInvoiceFormLookupsDto
     public List<MdnProductPickDto> Products { get; set; } = new();
 }
 
+public class MdnDirectCancelRequest
+{
+    public DateTime? IssueDate { get; set; }
+    public bool IsArticle9 { get; set; }
+    public DateTime? RegistrationDate { get; set; }
+    public string? Description { get; set; }
+}
+
 public class MdnDirectCancelResultDto
 {
     public int SourceInvoiceId { get; set; }
@@ -694,6 +781,7 @@ public class MdnDirectCancelResultDto
     public string CancelInternalNumber { get; set; } = "";
     public string? CancelTaxId { get; set; }
     public string? ReferenceNumber { get; set; }
+    public bool IsArticle9 { get; set; }
     public MdnSubmissionStatus SubmissionStatus { get; set; }
     public MdnFolderStatus SourceFolderStatus { get; set; }
     public bool IsConfirmedCancelled { get; set; }
@@ -705,6 +793,8 @@ public class MdnCreateDerivativeRequest
 {
     public MdnInvoiceSubject Subject { get; set; } = MdnInvoiceSubject.Corrective;
     public DateTime IssueDate { get; set; } = DateTime.Now;
+    public bool IsArticle9 { get; set; }
+    public DateTime? RegistrationDate { get; set; }
     public string? Description { get; set; }
 }
 
@@ -727,6 +817,8 @@ public class MdnRegisterPaymentRequest
 public class MdnBulkIdsRequest
 {
     public List<int> InvoiceIds { get; set; } = new();
+    /// <summary>تأیید صریح کاربر جهت ارسال صورتحساب‌های خارج از مهلت قانونی با قاعدهٔ موضوع ماده ۹ (insr = 1).</summary>
+    public bool ConfirmArticle9 { get; set; }
 }
 
 public class MdnTimeRangeInquiryRequest
@@ -775,6 +867,9 @@ public class MdnInvoiceJsonPreviewDto
     public int InvoiceId { get; set; }
     public string PotentialTaxId { get; set; } = "";
     public string PotentialSerialHex { get; set; } = "";
+    public bool IsArticle9 { get; set; }
+    public bool IsPastDeadline { get; set; }
+    public int DeadlineDays { get; set; } = MdnArticle9Rules.DefaultSendDeadlineDays;
     public string JsonPayload { get; set; } = "";
     public List<string> ValidationWarnings { get; set; } = new();
 }
@@ -808,6 +903,7 @@ public class MdnDashboardDto
     public int FolderPendingCount { get; set; }
     public int FolderRejectedCount { get; set; }
     public int CancelledCount { get; set; }
+    public int Article9Count { get; set; }
 
     public long ApprovedTotalAmount { get; set; }
     public long ApprovedTotalVat { get; set; }
@@ -873,6 +969,18 @@ public static class MdnUiLabels
         MdnInvoiceSubject.SalesReturn => "برگشت از فروش",
         _ => "نامشخص"
     };
+
+    public static string SendRuleTitle(bool isArticle9) => isArticle9
+        ? "موضوع ماده ۹ (خارج از مهلت — insr=1)"
+        : "عادی (در مهلت قانونی)";
+
+    public static string SendRuleShortTitle(bool isArticle9) => isArticle9
+        ? "ماده ۹ (insr=1)"
+        : "عادی";
+
+    public static string SendRuleBadgeClass(bool isArticle9) => isArticle9
+        ? "badge bg-warning-subtle text-warning-emphasis border border-warning-subtle"
+        : "badge bg-light text-secondary border";
 
     public static string SettlementTitle(MdnSettlementMethod v) => v switch
     {

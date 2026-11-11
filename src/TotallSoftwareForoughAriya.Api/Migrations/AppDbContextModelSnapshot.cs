@@ -16546,6 +16546,9 @@ namespace Inventory.Api.Migrations
                         .HasPrecision(18, 4)
                         .HasColumnType("decimal(18,4)");
 
+                    b.Property<int>("Article9SendDeadlineDays")
+                        .HasColumnType("int");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
@@ -16652,6 +16655,23 @@ namespace Inventory.Api.Migrations
                     b.Property<int>("FolderStatus")
                         .HasColumnType("int");
 
+                    b.Property<bool>("IsArticle9")
+                        .HasColumnType("bit");
+
+                    b.Property<int?>("SendRule")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("RegistrationDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Note1")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("Note2")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
                     b.Property<int>("PaymentStatus")
                         .HasColumnType("int");
 
@@ -16666,6 +16686,8 @@ namespace Inventory.Api.Migrations
                     b.HasIndex("CompanyId", "SubmissionStatus");
 
                     b.HasIndex("CompanyId", "FolderStatus");
+
+                    b.HasIndex("CompanyId", "IsArticle9");
 
                     b.ToTable("MdnInvoices");
                 });

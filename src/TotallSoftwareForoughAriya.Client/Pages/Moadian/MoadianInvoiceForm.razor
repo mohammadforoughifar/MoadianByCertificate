@@ -12,7 +12,7 @@
 <div class="page-head">
     <div>
         <h1>@(Id > 0 ? $"ویرایش صورتحساب {internalNumber}" : "صدور صورتحساب الکترونیکی مودیان")</h1>
-        <p class="lead">محاسبه خودکار مبالغ ریالی مطابق دستورالعمل سازمان امور مالیاتی (SDK 2.0.29)</p>
+        <p class="lead">محاسبه خودکار مبالغ ریالی و پشتیبانی از صورتحساب موضوع ماده ۹ مطابق دستورالعمل <code>RC_IITP.IS_V7.9</code></p>
     </div>
     <div class="ms-auto d-flex gap-2">
         <a class="btn btn-outline-secondary" href="moadian/invoices">بازگشت به فهرست</a>
@@ -27,14 +27,42 @@ else
 {
     <!-- مشخصات سربرگ صورتحساب -->
     <div class="card mb-3">
-        <div class="card-header">
-            <h6 class="mb-0"><i class="bi bi-file-earmark-text me-1"></i>۱. مشخصات الگوی صورتحساب و روش تسویه</h6>
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <h6 class="mb-0"><i class="bi bi-file-earmark-text me-1"></i>۱. مشخصات الگوی صورتحساب، قاعده ارسال و روش تسویه</h6>
+            @if (form.IsArticle9)
+            {
+                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                    <i class="bi bi-clock-history me-1"></i>صورتحساب موضوع ماده ۹ (insr = 1)
+                </span>
+            }
+            else if (IsIssuePastDeadline)
+            {
+                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                    <i class="bi bi-exclamation-triangle me-1"></i>خارج از مهلت @deadlineDays.FaDigits() روزه (نیازمند ماده ۹)
+                </span>
+            }
+            else
+            {
+                <span class="badge bg-light text-secondary border fw-normal">
+                    ارسال عادی (مهلت مجاز: @deadlineDays.FaDigits() روز)
+                </span>
+            }
         </div>
         <div class="card-body">
             <div class="row g-3">
                 <div class="col-6 col-md-2">
-                    <label class="form-label">تاریخ صدور</label>
-                    <DatePicker Value="issueDateNullable" ValueChanged="d => { if (d.HasValue) form.IssueDate = d.Value; }" />
+                    <label class="form-label">تاریخ صدور (indatim)</label>
+                    <DatePicker Value="issueDateNullable" ValueChanged="OnIssueDateChanged" />
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <label class="form-label">قاعده ارسال (insr)</label>
+                    <select class="form-select @(form.IsArticle9 ? "border-warning fw-semibold" : "")"
+                            value="@(form.IsArticle9 ? "1" : "0")"
+                            @onchange="OnSendRuleChanged">
+                        <option value="0">عادی (در مهلت قانونی)</option>
+                        <option value="1">موضوع ماده ۹ (insr = 1)</option>
+                    </select>
                 </div>
 
                 <div class="col-6 col-md-2">
@@ -45,7 +73,7 @@ else
                     </select>
                 </div>
 
-                <div class="col-6 col-md-3">
+                <div class="col-6 col-md-2">
                     <label class="form-label">الگوی صورتحساب (inp)</label>
                     <select class="form-select" @bind="form.Pattern">
                         <option value="@MdnInvoicePattern.Sale">۱ — فروش کالا و خدمات</option>
@@ -68,7 +96,7 @@ else
                     </select>
                 </div>
 
-                <div class="col-12 col-md-3">
+                <div class="col-6 col-md-2">
                     <label class="form-label">روش تسویه (setm)</label>
                     <select class="form-select" @bind="form.SettlementMethod">
                         <option value="@MdnSettlementMethod.Cash">۱ — نقدی</option>
@@ -76,6 +104,63 @@ else
                         <option value="@MdnSettlementMethod.CashAndCredit">۳ — نقدی / نسیه (ترکیبی)</option>
                     </select>
                 </div>
+
+                @if (IsIssuePastDeadline && !form.IsArticle9)
+                {
+                    <div class="col-12">
+                        <div class="alert alert-warning py-2 px-3 mb-0 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                            <div class="small">
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                از تاریخ صدور انتخاب‌شده <strong>@ElapsedWholeDays.FaDigits() روز</strong> گذشته که بیش از مهلت مجاز ارسال عادی (<strong>@deadlineDays.FaDigits() روز</strong>) است.
+                                طبق بخش ۶ و جدول ۸۶ دستورالعمل <code>RC_IITP.IS_V7.9</code>، ارسال این صورتحساب در سامانه مودیان تنها در قالب
+                                <strong>صورتحساب موضوع ماده ۹</strong> (<code>insr = 1</code> به همراه <code>indati2m</code>) مجاز است و بدون آن با خطای <code>0200201 / 00107</code> رد می‌شود.
+                            </div>
+                            <button type="button" class="btn btn-sm btn-warning fw-semibold" @onclick="EnableArticle9Mode">
+                                <i class="bi bi-check2-circle me-1"></i>فعال‌سازی قاعده موضوع ماده ۹ (insr = 1)
+                            </button>
+                        </div>
+                    </div>
+                }
+                else if (form.IsArticle9 && !IsIssuePastDeadline)
+                {
+                    <div class="col-12">
+                        <div class="alert alert-danger py-2 px-3 mb-0 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                            <div class="small">
+                                <i class="bi bi-info-circle-fill me-1"></i>
+                                طبق جداول ۴، ۵ و ۸۶ دستورالعمل <code>RC_IITP.IS_V7.9</code>، قاعدهٔ <strong>موضوع ماده ۹</strong> (<code>insr = 1</code> و <code>indati2m</code>)
+                                فقط برای معاملاتی مجاز است که بیش از <strong>@deadlineDays.FaDigits() روز</strong> از تاریخ صدور آن‌ها گذشته باشد (در مهلت عادی هر دو فیلد خارج از الگو هستند).
+                                لطفاً تاریخ صدور واقعی معاملهٔ معوق را وارد کنید یا قاعده ارسال را به «عادی» برگردانید.
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-danger" @onclick="DisableArticle9Mode">
+                                بازگشت به ارسال عادی
+                            </button>
+                        </div>
+                    </div>
+                }
+                else if (form.IsArticle9 && IsIssuePastDeadline)
+                {
+                    <div class="col-12">
+                        <div class="p-3 rounded border border-warning bg-warning bg-opacity-10">
+                            <div class="row g-3 align-items-end">
+                                <div class="col-md-4">
+                                    <label class="form-label fw-semibold mb-1">
+                                        <i class="bi bi-calendar-check me-1 text-warning-emphasis"></i>تاریخ ثبت صورتحساب (indati2m) *
+                                    </label>
+                                    <DatePicker Value="registrationDateNullable"
+                                                ValueChanged="d => form.RegistrationDate = d ?? DateTime.Now" />
+                                </div>
+                                <div class="col-md-8 small text-muted">
+                                    <div class="fw-semibold text-dark mb-1">
+                                        ارسال در قالب موضوع ماده ۹ قانون پایانه‌های فروشگاهی و سامانه مودیان فعال است (<code>header.insr = 1</code>).
+                                    </div>
+                                    <div>
+                                        مطابق جدول ۵ دستورالعمل <code>RC_IITP.IS_V7.9</code>، فیلد تاریخ و زمان ثبت صورتحساب (<code>indati2m</code>) برای این صورتحساب اجباری بوده و باید بین تاریخ صدور (<code>@form.IssueDate.ToFaDate()</code>) تا تاریخ روز جاری باشد.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
 
                 @if (form.Subject != MdnInvoiceSubject.Original)
                 {
@@ -126,6 +211,16 @@ else
                         <div class="form-text num">سهم نسیه (insp) خودکار: @Math.Max(0L, CalcTadis - cashPartInput).Money() ریال</div>
                     </div>
                 }
+
+                <div class="col-12 col-md-4">
+                    <label class="form-label">یادداشت ۱ سرآمد (nti1 — اختیاری، تا ۳۰ کاراکتر)</label>
+                    <input class="form-control" maxlength="30" @bind="form.Note1" placeholder="یادداشت ۱ در سرآمد صورتحساب (V7.9)" />
+                </div>
+
+                <div class="col-12 col-md-4">
+                    <label class="form-label">یادداشت ۲ سرآمد (nti2 — اختیاری، تا ۳۰ کاراکتر)</label>
+                    <input class="form-control" maxlength="30" @bind="form.Note2" placeholder="یادداشت ۲ در سرآمد صورتحساب (V7.9)" />
+                </div>
             </div>
         </div>
     </div>
@@ -360,13 +455,41 @@ else
     </div>
 }
 
+<!-- مودال تأیید ارسال صورتحساب خارج از مهلت با قاعدهٔ موضوع ماده ۹ -->
+<Modal Visible="showArticle9SendModal" Title="تأیید ارسال صورتحساب موضوع ماده ۹ (خارج از مهلت قانونی)" OnClose="() => showArticle9SendModal = false">
+    <ChildContent>
+        <div class="alert alert-warning py-2 small mb-3">
+            <i class="bi bi-clock-history me-1"></i>
+            از تاریخ صدور این صورتحساب (<strong>@form.IssueDate.ToFaDate()</strong>) بیش از مهلت مجاز ارسال عادی
+            (<strong>@deadlineDays.FaDigits() روز</strong>) گذشته است.
+        </div>
+        <p class="small mb-2">
+            مطابق بخش ۶ و جداول ۴، ۵ و ۸۶ دستورالعمل <code>RC_IITP.IS_V7.9</code>، ارسال این صورتحساب در سامانه مودیان
+            صرفاً با درج <code>header.insr = 1</code> و تاریخ ثبت <code>indati2m</code> (قاعدهٔ موضوع ماده ۹ قانون پایانه‌های فروشگاهی) امکان‌پذیر است.
+        </p>
+        <div class="mb-0">
+            <label class="form-label small fw-semibold mb-1">تاریخ ثبت صورتحساب در سامانه (indati2m)</label>
+            <DatePicker Value="registrationDateNullable" ValueChanged="d => form.RegistrationDate = d ?? DateTime.Now" />
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" disabled="@busy" @onclick="() => showArticle9SendModal = false">انصراف / ویرایش تاریخ صدور</button>
+        <button class="btn btn-warning fw-semibold" disabled="@busy" @onclick="ConfirmArticle9AndSendAsync">
+            <i class="bi bi-send-check me-1"></i>تأیید قاعده ماده ۹ (insr=1) و ارسال
+        </button>
+    </Footer>
+</Modal>
+
 @code {
     [Parameter] public int Id { get; set; }
+    [SupplyParameterFromQuery(Name = "article9")] public int? Article9Query { get; set; }
 
     private MdnSaveInvoiceRequest form = new();
     private string internalNumber = "";
     private decimal defaultVatRate = 10;
+    private int deadlineDays = MdnArticle9Rules.DefaultSendDeadlineDays;
     private long cashPartInput;
+    private bool showArticle9SendModal;
 
     private List<MdnBuyerPickDto> buyerPicks = new();
     private List<MdnProductPickDto> productPicks = new();
@@ -382,6 +505,9 @@ else
     private bool busy;
 
     private DateTime? issueDateNullable => form.IssueDate;
+    private DateTime? registrationDateNullable => form.RegistrationDate ?? DateTime.Now;
+    private bool IsIssuePastDeadline => MdnArticle9Rules.IsPastSendDeadline(form.IssueDate, deadlineDays);
+    private int ElapsedWholeDays => MdnArticle9Rules.GetElapsedWholeDays(form.IssueDate);
 
     protected override async Task OnParametersSetAsync()
     {
@@ -394,6 +520,7 @@ else
             await Task.WhenAll(pTask, lTask, uTask);
 
             defaultVatRate = pTask.Result.DefaultVatRate;
+            deadlineDays = MdnArticle9Rules.NormalizeDeadlineDays(pTask.Result.Article9SendDeadlineDays);
             buyerPicks = lTask.Result.Buyers;
             productPicks = lTask.Result.Products;
 
@@ -427,6 +554,8 @@ else
                 {
                     Id = d.Id,
                     IssueDate = d.IssueDate,
+                    IsArticle9 = d.IsArticle9,
+                    RegistrationDate = d.RegistrationDate ?? (d.IsArticle9 ? DateTime.Now : null),
                     InvoiceType = d.InvoiceType,
                     Pattern = d.Pattern,
                     Subject = d.Subject,
@@ -448,6 +577,8 @@ else
                     CustomsDeclarationNumber = d.CustomsDeclarationNumber,
                     CustomsDeclarationDate = d.CustomsDeclarationDate,
                     Tax17 = d.Tax17,
+                    Note1 = d.Note1,
+                    Note2 = d.Note2,
                     Description = d.Description,
                     Lines = d.Lines
                 };
@@ -455,9 +586,12 @@ else
             }
             else
             {
+                var startAsArticle9 = Article9Query == 1;
                 form = new MdnSaveInvoiceRequest
                 {
-                    IssueDate = DateTime.Now,
+                    IssueDate = startAsArticle9 ? DateTime.Now.AddDays(-(deadlineDays + 1)) : DateTime.Now,
+                    IsArticle9 = startAsArticle9,
+                    RegistrationDate = startAsArticle9 ? DateTime.Now : null,
                     InvoiceType = MdnInvoiceType.Type1,
                     Pattern = MdnInvoicePattern.Sale,
                     Subject = MdnInvoiceSubject.Original,
@@ -667,7 +801,57 @@ else
     private long CalcTvam => form.Lines.Sum(l => PreviewLine(l).Vat);
     private long CalcTbill => form.Lines.Sum(l => PreviewLine(l).Total);
 
+    private void OnIssueDateChanged(DateTime? d)
+    {
+        if (!d.HasValue) return;
+        form.IssueDate = d.Value;
+        if (!MdnArticle9Rules.IsPastSendDeadline(form.IssueDate, deadlineDays) && form.IsArticle9)
+        {
+            // اگر کاربر تاریخ صدور را به محدودهٔ مجاز عادی برگرداند، حالت ماده ۹ به‌صورت خودکار غیرفعال می‌شود تا خطای خارج از الگو رخ ندهد
+            form.IsArticle9 = false;
+            form.RegistrationDate = null;
+        }
+    }
+
+    private void OnSendRuleChanged(ChangeEventArgs e)
+    {
+        var enable = e.Value?.ToString() == "1";
+        if (enable) EnableArticle9Mode();
+        else DisableArticle9Mode();
+    }
+
+    private void EnableArticle9Mode()
+    {
+        form.IsArticle9 = true;
+        form.RegistrationDate ??= DateTime.Now;
+    }
+
+    private void DisableArticle9Mode()
+    {
+        form.IsArticle9 = false;
+        form.RegistrationDate = null;
+    }
+
+    private async Task ConfirmArticle9AndSendAsync()
+    {
+        showArticle9SendModal = false;
+        EnableArticle9Mode();
+        await ExecuteSubmitAsync(sendImmediately: true, confirmArticle9OnSend: true);
+    }
+
     private async Task SubmitAsync(bool sendImmediately)
+    {
+        if (sendImmediately && IsIssuePastDeadline && !form.IsArticle9)
+        {
+            form.RegistrationDate ??= DateTime.Now;
+            showArticle9SendModal = true;
+            return;
+        }
+
+        await ExecuteSubmitAsync(sendImmediately, confirmArticle9OnSend: form.IsArticle9);
+    }
+
+    private async Task ExecuteSubmitAsync(bool sendImmediately, bool confirmArticle9OnSend)
     {
         busy = true;
         try
@@ -681,7 +865,7 @@ else
             var saved = await Mdn.SaveInvoiceAsync(form);
             if (sendImmediately)
             {
-                var sendRes = await Mdn.SendInvoicesAsync(new List<int> { saved.Id });
+                var sendRes = await Mdn.SendInvoicesAsync(new List<int> { saved.Id }, confirmArticle9: confirmArticle9OnSend);
                 if (sendRes.Succeeded > 0) Toast.Success(sendRes.Items.FirstOrDefault()?.Message ?? sendRes.Message);
                 else Toast.Warning(sendRes.Items.FirstOrDefault()?.Message ?? sendRes.Message);
             }

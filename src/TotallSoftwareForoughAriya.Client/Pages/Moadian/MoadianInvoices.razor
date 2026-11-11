@@ -19,6 +19,9 @@
             <button class="btn btn-outline-secondary" disabled="@busy" @onclick="OpenErpImportModalAsync">
                 <i class="bi bi-box-arrow-in-down me-1"></i>تبدیل از فاکتور فروش سیستم
             </button>
+            <a class="btn btn-outline-primary" href="moadian/invoices/new?article9=1">
+                <i class="bi bi-clock-history me-1"></i>صدور صورتحساب ماده ۹
+            </a>
             <a class="btn btn-primary" href="moadian/invoices/new">
                 <i class="bi bi-plus-lg me-1"></i>صدور صورتحساب جدید
             </a>
@@ -30,8 +33,8 @@
 <div class="card mb-3 d-print-none">
     <div class="card-body py-3">
         <div class="row g-2 align-items-end">
-            <div class="col-12 col-md-3">
-                <label class="form-label small mb-1">جستجو (شماره، TaxId، خریدار، رهگیری)</label>
+            <div class="col-12 col-md-2">
+                <label class="form-label small mb-1">جستجو (شماره، TaxId، خریدار)</label>
                 <input class="form-control form-control-sm" @bind="filter.Search" @bind:event="oninput"
                        @onkeydown="OnSearchKeyDown" placeholder="نام خریدار، کد ۲۲ کاراکتری..." />
             </div>
@@ -61,12 +64,21 @@
             </div>
 
             <div class="col-6 col-md-2">
-                <label class="form-label small mb-1">وضعیت پرداخت</label>
+                <label class="form-label small mb-1">قاعده ارسال (ماده ۹)</label>
+                <select class="form-select form-select-sm" value="@art9FilterStr" @onchange="OnArt9FilterChanged">
+                    <option value="">همه صورتحساب‌ها</option>
+                    <option value="false">عادی (در مهلت قانونی)</option>
+                    <option value="true">موضوع ماده ۹ (insr=1)</option>
+                </select>
+            </div>
+
+            <div class="col-6 col-md-1">
+                <label class="form-label small mb-1">پرداخت</label>
                 <select class="form-select form-select-sm" value="@payFilterStr" @onchange="OnPayFilterChanged">
                     <option value="">همه</option>
-                    <option value="0">پرداخت نشده (نسیه)</option>
-                    <option value="1">تسویه جزئی</option>
-                    <option value="2">تسویه کامل</option>
+                    <option value="0">نسیه باز</option>
+                    <option value="1">جزئی</option>
+                    <option value="2">تسویه</option>
                 </select>
             </div>
 
@@ -175,7 +187,23 @@
                             </td>
                             <td class="small">
                                 <div>@(inv.InvoiceType == MdnInvoiceType.Type1 ? "نوع اول" : "نوع دوم") — @MdnUiLabels.PatternTitle(inv.Pattern)</div>
-                                <span class="badge @SubjectBadge(inv.Subject)">@MdnUiLabels.SubjectTitle(inv.Subject)</span>
+                                <div class="d-flex flex-wrap gap-1 mt-1">
+                                    <span class="badge @SubjectBadge(inv.Subject)">@MdnUiLabels.SubjectTitle(inv.Subject)</span>
+                                    @if (inv.IsArticle9)
+                                    {
+                                        <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle"
+                                              title="صورتحساب الکترونیکی موضوع ماده ۹ (header.insr = 1)">
+                                            ماده ۹ (insr=1)
+                                        </span>
+                                    }
+                                    else if (NeedsArticle9Confirmation(inv))
+                                    {
+                                        <span class="badge bg-danger-subtle text-danger border border-danger-subtle"
+                                              title="فاصله تاریخ صدور تا اکنون از مهلت مجاز بیشتر است؛ ارسال آن نیازمند تأیید ماده ۹ است">
+                                            خارج از مهلت
+                                        </span>
+                                    }
+                                </div>
                             </td>
                             <td>
                                 <div class="fw-semibold">@(inv.BuyerName ?? "مصرف‌کننده نهایی")</div>
@@ -289,9 +317,12 @@
     <ChildContent>
         @if (jsonPreview is not null)
         {
-            <div class="d-flex flex-wrap gap-3 mb-2 small">
+            <div class="d-flex flex-wrap align-items-center gap-3 mb-2 small">
                 <span>شماره مالیاتی ۲۲ کاراکتری (TaxId): <code class="fs-6">@jsonPreview.PotentialTaxId</code></span>
                 <span>سریال هگزادسیمال (inno): <code>@jsonPreview.PotentialSerialHex</code></span>
+                <span class="@MdnUiLabels.SendRuleBadgeClass(jsonPreview.IsArticle9)">
+                    @MdnUiLabels.SendRuleTitle(jsonPreview.IsArticle9)
+                </span>
             </div>
             @if (jsonPreview.ValidationWarnings.Count > 0)
             {
@@ -381,6 +412,35 @@
     </Footer>
 </Modal>
 
+<!-- مودال تأیید ارسال صورتحساب‌های خارج از مهلت با قاعدهٔ موضوع ماده ۹ -->
+<Modal Visible="pendingArticle9SendIds.Count > 0" Title="تأیید ارسال در قالب موضوع ماده ۹ (خارج از مهلت قانونی)" OnClose="() => pendingArticle9SendIds.Clear()">
+    <ChildContent>
+        <div class="alert alert-warning py-2 small mb-3">
+            <i class="bi bi-clock-history me-1"></i>
+            از تاریخ صدور صورتحساب(های) انتخابی بیش از مهلت مجاز ارسال عادی (<strong>@deadlineDays.FaDigits() روز</strong>) گذشته است.
+        </div>
+        <p class="small mb-2">
+            طبق بخش ۶ و جداول ۴، ۵ و ۸۶ دستورالعمل <code>RC_IITP.IS_V7.9</code>، ارسال این موارد به سامانه مودیان
+            صرفاً با درج <code>header.insr = 1</code> و تاریخ ثبت <code>indati2m</code> (قاعدهٔ موضوع ماده ۹ قانون پایانه‌های فروشگاهی) مجاز است و بدون آن با خطای <code>0200201 / 00107</code> رد می‌شود.
+        </p>
+        <div class="border rounded p-2 bg-light small">
+            @foreach (var item in result.Items.Where(x => pendingArticle9SendIds.Contains(x.Id)))
+            {
+                <div class="d-flex justify-content-between py-1 border-bottom">
+                    <span><strong>@item.InternalNumber</strong> — @(item.BuyerName ?? "مصرف‌کننده نهایی")</span>
+                    <span class="text-muted">صدور: @item.IssueDate.ToFaDate()</span>
+                </div>
+            }
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="btn btn-secondary" disabled="@busy" @onclick="() => pendingArticle9SendIds.Clear()">انصراف</button>
+        <button class="btn btn-warning fw-semibold" disabled="@busy" @onclick="ConfirmPendingArticle9SendAsync">
+            <i class="bi bi-send-check me-1"></i>تأیید قاعده ماده ۹ (insr=1) و ارسال
+        </button>
+    </Footer>
+</Modal>
+
 <!-- مودال تأیید ابطال مستقیم و استعلام خودکار -->
 <Modal Visible="cancelTarget is not null" Title="ابطال مستقیم صورتحساب در سامانه مودیان" OnClose="CloseCancelModal">
     <ChildContent>
@@ -390,7 +450,7 @@
                 <i class="bi bi-exclamation-triangle-fill me-1"></i>
                 با تأیید این عملیات، صورتحساب ابطالی به‌صورت خودکار صادر، با گواهی امضا به سامانه مودیان ارسال و بلافاصله نتیجهٔ استعلام آن دریافت می‌شود.
             </div>
-            <div class="border rounded p-3 bg-light small">
+            <div class="border rounded p-3 bg-light small mb-3">
                 <div class="d-flex justify-content-between mb-1">
                     <span class="text-muted">شماره صورتحساب:</span>
                     <strong>@cancelTarget.InternalNumber</strong>
@@ -408,6 +468,39 @@
                     <code class="font-monospace">@cancelTarget.TaxId</code>
                 </div>
             </div>
+
+            <div class="row g-2 align-items-end">
+                <div class="col-md-6">
+                    <label class="form-label small mb-1">تاریخ صدور صورتحساب ابطالی</label>
+                    <DatePicker Value="cancelReq.IssueDate" ValueChanged="OnCancelIssueDateChanged" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small mb-1">توضیح ابطال (اختیاری)</label>
+                    <input class="form-control form-control-sm" @bind="cancelReq.Description" placeholder="علت ابطال..." />
+                </div>
+
+                @if (IsCancelPastDeadline)
+                {
+                    <div class="col-12 mt-2">
+                        <div class="alert alert-warning py-2 px-3 mb-0 small">
+                            <div class="form-check mb-2">
+                                <input type="checkbox" class="form-check-input" id="chkCancelArt9" @bind="cancelReq.IsArticle9" />
+                                <label class="form-check-label fw-semibold" for="chkCancelArt9">
+                                    ارسال ابطالی در قالب موضوع ماده ۹ (<code>insr = 1</code>) — الزامی برای تاریخ صدور بیش از @deadlineDays.FaDigits() روز قبل
+                                </label>
+                            </div>
+                            @if (cancelReq.IsArticle9)
+                            {
+                                <div>
+                                    <label class="form-label small mb-1">تاریخ ثبت صورتحساب ابطالی (indati2m)</label>
+                                    <DatePicker Value="cancelRegistrationNullable" ValueChanged="d => cancelReq.RegistrationDate = d ?? DateTime.Now" />
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+
             @if (cancellingBusy)
             {
                 <div class="d-flex align-items-center gap-2 text-primary small mt-3">
@@ -419,7 +512,7 @@
     </ChildContent>
     <Footer>
         <button class="btn btn-secondary" disabled="@cancellingBusy" @onclick="CloseCancelModal">انصراف</button>
-        <button class="btn btn-danger" disabled="@cancellingBusy" @onclick="ConfirmCancelAndInquireAsync">
+        <button class="btn btn-danger" disabled="@(cancellingBusy || (IsCancelPastDeadline && !cancelReq.IsArticle9))" @onclick="ConfirmCancelAndInquireAsync">
             @if (cancellingBusy)
             {
                 <span class="spinner-border spinner-border-sm me-1"></span>
@@ -437,13 +530,19 @@
     private MdnInvoiceFilterRequest filter = new() { Page = 1, PageSize = 20 };
     private MdnInvoiceListResultDto result = new();
     private HashSet<int> selectedIds = new();
+    private List<int> pendingArticle9SendIds = new();
+    private int deadlineDays = MdnArticle9Rules.DefaultSendDeadlineDays;
 
     private string subFilterStr = "";
     private string folderFilterStr = "";
     private string payFilterStr = "";
+    private string art9FilterStr = "";
 
     private MdnInvoiceJsonPreviewDto? jsonPreview;
     private MdnInvoiceSummaryDto? cancelTarget;
+    private MdnDirectCancelRequest cancelReq = new() { IssueDate = DateTime.Now };
+    private DateTime? cancelRegistrationNullable => cancelReq.RegistrationDate ?? DateTime.Now;
+    private bool IsCancelPastDeadline => MdnArticle9Rules.IsPastSendDeadline(cancelReq.IssueDate ?? DateTime.Now, deadlineDays);
     private bool cancellingBusy;
     private bool showErpModal;
     private bool erpLoading;
@@ -455,7 +554,17 @@
     private int PageCount => Math.Max(1, (int)Math.Ceiling((double)result.TotalCount / filter.PageSize));
     private bool IsAllSelected => result.Items.Count > 0 && result.Items.All(i => selectedIds.Contains(i.Id));
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var prof = await Mdn.GetProfileAsync();
+            deadlineDays = MdnArticle9Rules.NormalizeDeadlineDays(prof.Article9SendDeadlineDays);
+        }
+        catch { /* در صورت عدم دسترسی به پروفایل، مقدار پیش‌فرض ۱۲ روز لحاظ می‌شود */ }
+
+        await LoadAsync();
+    }
 
     private async Task LoadAsync()
     {
@@ -501,6 +610,18 @@
         await ApplyFilterAsync(1);
     }
 
+    private async Task OnArt9FilterChanged(ChangeEventArgs e)
+    {
+        art9FilterStr = e.Value?.ToString() ?? "";
+        filter.IsArticle9 = art9FilterStr switch
+        {
+            "true" => true,
+            "false" => false,
+            _ => null
+        };
+        await ApplyFilterAsync(1);
+    }
+
     private async Task OnFromChanged(DateTime? d) { filter.FromDate = d; await ApplyFilterAsync(1); }
     private async Task OnToChanged(DateTime? d) { filter.ToDate = d; await ApplyFilterAsync(1); }
 
@@ -518,8 +639,41 @@
         else selectedIds.Remove(id);
     }
 
-    private async Task SendSingleAsync(int id) => await RunBatchAsync(() => Mdn.SendInvoicesAsync(new List<int> { id }));
-    private async Task SendSelectedAsync() => await RunBatchAsync(() => Mdn.SendInvoicesAsync(selectedIds.ToList()));
+    private bool NeedsArticle9Confirmation(MdnInvoiceSummaryDto inv) =>
+        !inv.IsArticle9 &&
+        inv.SubmissionStatus is MdnSubmissionStatus.Draft or MdnSubmissionStatus.Failed or MdnSubmissionStatus.Timeout or MdnSubmissionStatus.NotFound &&
+        MdnArticle9Rules.IsPastSendDeadline(inv.IssueDate, deadlineDays);
+
+    private async Task SendSingleAsync(int id)
+    {
+        var inv = result.Items.FirstOrDefault(x => x.Id == id);
+        if (inv is not null && NeedsArticle9Confirmation(inv))
+        {
+            pendingArticle9SendIds = new List<int> { id };
+            return;
+        }
+        await RunBatchAsync(() => Mdn.SendInvoicesAsync(new List<int> { id }));
+    }
+
+    private async Task SendSelectedAsync()
+    {
+        var ids = selectedIds.ToList();
+        if (result.Items.Any(x => ids.Contains(x.Id) && NeedsArticle9Confirmation(x)))
+        {
+            pendingArticle9SendIds = ids;
+            return;
+        }
+        await RunBatchAsync(() => Mdn.SendInvoicesAsync(ids));
+    }
+
+    private async Task ConfirmPendingArticle9SendAsync()
+    {
+        var ids = pendingArticle9SendIds.ToList();
+        pendingArticle9SendIds.Clear();
+        if (ids.Count == 0) return;
+        await RunBatchAsync(() => Mdn.SendInvoicesAsync(ids, confirmArticle9: true));
+    }
+
     private async Task InquirySubmissionSelectedAsync() => await RunBatchAsync(() => Mdn.InquirySubmissionsAsync(selectedIds.ToList()));
     private async Task InquiryFolderSelectedAsync() => await RunBatchAsync(() => Mdn.InquiryFolderAsync(selectedIds.ToList()));
     private async Task RefreshSingleAsync(int id) => await RunBatchAsync(() => Mdn.RefreshAllAsync(new List<int> { id }));
@@ -534,6 +688,27 @@
     {
         if (busy || cancellingBusy) return;
         cancelTarget = inv;
+        cancelReq = new MdnDirectCancelRequest
+        {
+            IssueDate = DateTime.Now,
+            IsArticle9 = false,
+            RegistrationDate = null
+        };
+    }
+
+    private void OnCancelIssueDateChanged(DateTime? d)
+    {
+        if (!d.HasValue) return;
+        cancelReq.IssueDate = d.Value;
+        if (MdnArticle9Rules.IsPastSendDeadline(d.Value, deadlineDays))
+        {
+            cancelReq.RegistrationDate ??= DateTime.Now;
+        }
+        else
+        {
+            cancelReq.IsArticle9 = false;
+            cancelReq.RegistrationDate = null;
+        }
     }
 
     private void CloseCancelModal()
@@ -549,7 +724,7 @@
         busy = true;
         try
         {
-            var res = await Mdn.CancelAndInquireAsync(cancelTarget.Id);
+            var res = await Mdn.CancelAndInquireAsync(cancelTarget.Id, cancelReq);
             cancelTarget = null;
 
             if (res.IsConfirmedCancelled)
