@@ -6,10 +6,6 @@ using Net.Pkcs11Interop.X509Store;
 
 namespace Inventory.Api.Services.Moadian;
 
-/// <summary>
-/// شناسایی خودکار کتابخانه‌های درایور PKCS#11 روی سیستم، اسکن درگاه‌های توکن USB متصل،
-/// استخراج دقیق گواهی‌های X.509 داخل توکن و اعتبارسنجی پین و کلید خصوصی با پیام‌های تشخیصی دقیق.
-/// </summary>
 public static class MoadianPkcs11Inspector
 {
     private static readonly (string FileName, string VendorName)[] KnownWindowsLibraries =
@@ -305,7 +301,7 @@ public static class MoadianPkcs11Inspector
         }
     }
 
-    // ==================== ابزارهای داخلی اسکن و تشخیص خطا ====================
+    // ابزارهای داخلی اسکن و تشخیص خطا
 
     private static List<(string Path, string Vendor)> ScanInstalledLibraries()
     {

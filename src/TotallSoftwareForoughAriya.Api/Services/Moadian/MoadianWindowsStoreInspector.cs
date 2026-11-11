@@ -5,14 +5,6 @@ using Inventory.Shared.Dtos;
 
 namespace Inventory.Api.Services.Moadian;
 
-/// <summary>
-/// کاوشگر و امضاکنندهٔ مستقیم مخزن گواهی ویندوز (Windows Certificate Store — certmgr.msc / certlm.msc):
-///   • خواندن تمام گواهی‌های نصب‌شده در Personal (CurrentUser\My و LocalMachine\My) بدون نیاز به خروجی .pfx.
-///   • پشتیبانی کامل از کلیدهای خصوصی غیرقابل‌خروجی (Non-Exportable CNG / CAPI — حالتی که گزینهٔ
-///     «Yes, export the private key» در ویزارد Export ویندوز خاکستری/غیرفعال است).
-///   • پشتیبانی از گواهی‌های توکن سخت‌افزاری / کارت هوشمند ثبت‌شده در Windows SmartCard CSP/KSP.
-///   • تشخیص دقیق گواهی‌های فاقد کلید خصوصی (صرفاً فایل .crt نصب‌شده بدون کلید) و خطاهای عدم اتصال توکن.
-/// </summary>
 public static class MoadianWindowsStoreInspector
 {
     public sealed record ValidatedWindowsStoreCertificate(
@@ -254,7 +246,7 @@ public static class MoadianWindowsStoreInspector
         }
     }
 
-    // ==================== ابزارهای داخلی جستجو و ترجمه خطا ====================
+    // ابزارهای داخلی جستجو و ترجمه خطا
 
     private static (X509Certificate2 Certificate, string StoreLocationCode) FindCertificateByThumbprint(
         string normalizedThumbprint,

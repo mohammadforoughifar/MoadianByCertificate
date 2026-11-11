@@ -4,12 +4,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Inventory.Api.Data;
 
-/// <summary>
-/// ارتقا و خودتعمیر اسکیمای ماژول سامانه مودیان مبتنی بر گواهی امضا (SDK 2.0.29):
-/// ۱) حذف ایمن و idempotent جداول قدیمی مودیان (نسخه‌های منسوخ 0.0.27 و 0.0.34).
-/// ۲) ساخت جداول جدید Mdn* در هر دو موتور SQL Server و SQLite.
-/// ۳) بذرکاری واحدهای سنجش رسمی سازمان امور مالیاتی در MdnMeasureUnits.
-/// </summary>
 public static class MoadianCertSchemaV2
 {
     public static async Task EnsureAsync(AppDbContext db)

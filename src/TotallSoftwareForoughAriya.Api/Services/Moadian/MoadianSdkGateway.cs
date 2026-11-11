@@ -45,11 +45,7 @@ public interface IMoadianSdkGateway
     Task<RegisterPaymentResultModel> RegisterPaymentAsync(MdnTaxpayerProfile profile, string taxId, MdnInvoicePayment payment);
 }
 
-/// <summary>
-/// سرآمد توسعهیافتهٔ صورتحساب الکترونیکی منطبق با دستورالعمل صدور صورتحساب الکترونیکی (RC_IITP.IS_V7.9 — تیرماه ۱۴۰۵):
-///   • insr: قاعده ارسال صورتحساب (جدول ۸۶ — مقدار ۱ برای صورتحساب موضوع ماده ۹ قانون پایانه‌های فروشگاهی)
-///   • nti1 و nti2: یادداشت‌های ۱ و ۲ سرآمد (جداول ۸۷ و ۸۸ — اختیاری، حداکثر ۳۰ کاراکتر)
-/// </summary>
+// سرآمد صورتحساب الکترونیکی با فیلدهای ماده ۹ و توضیحات (insr, nti1, nti2)
 public sealed class MdnV79HeaderDto : HeaderDto
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -62,14 +58,6 @@ public sealed class MdnV79HeaderDto : HeaderDto
     public string? nti2 { get; set; }
 }
 
-/// <summary>
-/// تنها لایهٔ ارتباط مستقیم با بستهٔ رسمی TaxCollectData.Library نسخهٔ 2.0.29.
-/// شامل اصلاح باگ Path.Combine در DefaultUrlProperties روی ویندوز و پشتیبانی کامل از:
-///   • امضای JWS با گواهی امضای X.509 در حافظه (بدون نوشتن فایل کلید روی دیسک) یا توکن PKCS#11
-///   • رمزنگاری JWE با کلید عمومی سازمان
-///   • پشتیبانی کامل از صورتحساب‌های موضوع ماده ۹ (insr = 1 و indati2m) و فیلدهای V7.9 (nti1, nti2) در رشتهٔ امضاشده
-///   • استعلام وضعیت پردازش بسته + استعلام وضعیت کارپوشه و ماده ۶ + ثبت پرداخت (RegisterPaymentRequestAsync)
-/// </summary>
 public sealed class MoadianSdkGateway : IMoadianSdkGateway
 {
     private const string OfficialProductionUrl = "https://tp.tax.gov.ir/requestsmanager";
@@ -90,18 +78,10 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
 
     public MoadianSdkGateway(MoadianSecretVault vault) => _vault = vault;
 
-    /// <summary>
-    /// نرمال‌سازی تاریخ صدور صورتحساب بر پایهٔ افست رسمی ایران (UTC+03:30):
-    /// • اگر تاریخ بدون ساعت (00:00:00 — خروجی تقویم شمسی یا تبدیل فاکتور فروش) باشد، روی ساعت ۱۲:۰۰ ظهر
-    ///   (یا ساعت جاری امروز) تنظیم می‌شود تا تبدیل به UTC روز را به ۲۰:۳۰ روز قبل نبرد و خطای 0300101 رخ ندهد.
-    /// • از جلو زدن تاریخ نسبت به ساعت فعلی سرور (خطای 0200201) نیز جلوگیری می‌کند.
-    /// </summary>
+    // نرمال‌سازی تاریخ صدور بر اساس ساعت ایران (UTC+03:30)
     public static DateTimeOffset NormalizeIssueDateForMoadian(DateTime issueDate)
         => MdnArticle9Rules.ToNormalizedIranIssueOffset(issueDate);
 
-    /// <summary>
-    /// بررسی عبور فاصلهٔ زمانی تاریخ صدور (indatim) تا زمان فعلی از مهلت مجاز ارسال عادی سازمان امور مالیاتی.
-    /// </summary>
     public static bool IsPastArticle9Deadline(
         DateTimeOffset normalizedIssueOffset,
         int deadlineDays = MdnArticle9Rules.DefaultSendDeadlineDays,
@@ -112,11 +92,7 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
         return (iranNow - normalizedIssueOffset) > TimeSpan.FromDays(normalizedDays);
     }
 
-    /// <summary>
-    /// نرمال‌سازی تاریخ و زمان ثبت صورتحساب (indati2m) ویژهٔ صورتحساب‌های موضوع ماده ۹ طبق جدول ۵ دستورالعمل RC_IITP.IS_V7.9:
-    ///   • ردیف ۵: نباید نسبت به تاریخ صدور (indatim) تقدم زمانی داشته باشد (indati2m &gt;= indatim)
-    ///   • ردیف ۶: نباید نسبت به زمان حال تأخر زمانی داشته باشد (indati2m &lt;= now)
-    /// </summary>
+    // نرمال‌سازی تاریخ ثبت برای صورتحساب‌های موضوع ماده ۹ (بین تاریخ صدور و زمان جاری)
     public static DateTimeOffset NormalizeArticle9RegistrationDate(
         DateTime? registrationDate,
         DateTimeOffset normalizedIssueOffset,
@@ -197,9 +173,7 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
         var deadlineDays = MdnArticle9Rules.NormalizeDeadlineDays(profile.Article9SendDeadlineDays);
         var isPastDeadline = IsPastArticle9Deadline(issueOffset, deadlineDays);
 
-        // طبق بخش ۶ و جداول ۴، ۵ و ۸۶ دستورالعمل RC_IITP.IS_V7.9:
-        //   • اگر فاصلهٔ تاریخ صدور تا ارسال بیش از مهلت مجاز باشد (موضوع ماده ۹): insr = 1 و indati2m اجباری است.
-        //   • اگر فاصلهٔ زمانی کمتر یا مساوی مهلت مجاز باشد (عادی): هر دو فیلد insr و indati2m خارج از الگو هستند و باید null باشند.
+        // در حالت موضوع ماده ۹، فیلدهای insr=1 و indati2m ارسال می‌شوند و در ارسال عادی هر دو null هستند
         var effectiveArticle9 = invoice.IsArticle9 && isPastDeadline;
         long? effectiveIndati2m = effectiveArticle9
             ? NormalizeArticle9RegistrationDate(invoice.RegistrationDate, issueOffset).ToUnixTimeMilliseconds()
@@ -213,9 +187,7 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
                              ?? NormalizeAsciiDigits(profile.EconomicCode)
                              ?? string.Empty;
 
-        // طبق دستورالعمل RC_IITP.IS_V7.9 (بخش ۳-۵ و بخش ۶ — موضوع ابطالی ins = 3 در حالت عادی و موضوع ماده ۹):
-        // تنها فیلدهای شناسایی و ارجاع به مرجع (به همراه insr=1 و indati2m در حالت ماده ۹) ارسال می‌شوند
-        // و ارسال فیلدهای مبلغی سرصفحه (tprdis..tbill) یا اقلام بدنه موجب هشدارهای خارج از الگو (14022..14028) می‌گردد.
+        // در صورتحساب ابطالی فقط فیلدهای شناسایی سرآمد و مرجع ارسال می‌شوند
         if (invoice.Subject == MdnInvoiceSubject.Cancellation)
         {
             return new InvoiceDto
@@ -366,13 +338,13 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
             using var signerScope = CreateSignatory(profile);
             result.Steps.Add(new MdnDiagnosticStepDto
             {
-                Title = "بارگذاری کلید خصوصی و گواهی امضای الکترونیکی در حافظه",
+                Title = "بررسی گواهی امضا",
                 Passed = true,
                 Detail = profile.SignatureMode switch
                 {
-                    MdnSignatureMode.Pkcs8Certificate => $"گواهی X.509 آماده است (انقضا: {profile.CertificateNotAfter?.ToLocalTime():yyyy/MM/dd}).",
-                    MdnSignatureMode.WindowsStore => $"گواهی مخزن ویندوز (Thumbprint: {profile.CertificateThumbprint}) آمادهٔ امضای مستقیم است.",
-                    _ => $"توکن سخت‌افزاری PKCS#11 آماده است ({profile.Pkcs11CertificateAlias})."
+                    MdnSignatureMode.Pkcs8Certificate => $"گواهی آماده است (انقضا: {profile.CertificateNotAfter?.ToLocalTime():yyyy/MM/dd}).",
+                    MdnSignatureMode.WindowsStore => $"گواهی ویندوز آماده است ({profile.CertificateThumbprint}).",
+                    _ => $"توکن سخت‌افزاری آماده است ({profile.Pkcs11CertificateAlias})."
                 }
             });
 
@@ -388,9 +360,9 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
             result.ServerPublicKeyId = keyId;
             result.Steps.Add(new MdnDiagnosticStepDto
             {
-                Title = "دریافت زمان سرور و کلید عمومی رمزنگاری سازمان (GetServerInformation)",
+                Title = "ارتباط با سرور مالیاتی",
                 Passed = !string.IsNullOrWhiteSpace(keyId),
-                Detail = $"کلید عمومی سرور دریافت شد (kid={keyId ?? "—"}، اختلاف ساعت سرور: {result.ClockDriftSeconds} ثانیه)."
+                Detail = $"کلید سرور دریافت شد (اختلاف ساعت: {result.ClockDriftSeconds} ثانیه)."
             });
 
             var fiscal = await session.LowLevelApi.GetFiscalInformationAsync(profile.MemoryId.Trim()).ConfigureAwait(false);
@@ -401,9 +373,9 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
             result.FiscalSaleThreshold = fiscal?.SaleThreshold;
             result.Steps.Add(new MdnDiagnosticStepDto
             {
-                Title = $"استعلام وضعیت حافظه مالیاتی ({profile.MemoryId}) با توکن امضاشده JWS",
+                Title = $"استعلام حافظه مالیاتی ({profile.MemoryId})",
                 Passed = !string.IsNullOrWhiteSpace(fiscal?.FiscalStatus),
-                Detail = $"وضعیت حافظه: {fiscal?.FiscalStatus ?? "نامشخص"} | نام تجاری: {fiscal?.NameTrade ?? "—"} | کد اقتصادی ثبت‌شده: {fiscal?.EconomicCode ?? "—"}"
+                Detail = $"وضعیت: {fiscal?.FiscalStatus ?? "نامشخص"} | نام تجاری: {fiscal?.NameTrade ?? "-"} | کد اقتصادی: {fiscal?.EconomicCode ?? "-"}"
             });
 
             if (!string.IsNullOrWhiteSpace(profile.EconomicCode))
@@ -413,14 +385,14 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
                 result.TaxpayerType = tp?.TaxpayerType;
                 result.Steps.Add(new MdnDiagnosticStepDto
                 {
-                    Title = $"استعلام پرونده مالیاتی مودی ({profile.EconomicCode})",
+                    Title = $"استعلام پرونده مالیاتی ({profile.EconomicCode})",
                     Passed = !string.IsNullOrWhiteSpace(tp?.TaxpayerStatus),
-                    Detail = $"وضعیت پرونده: {tp?.TaxpayerStatus ?? "—"} | نوع مودی: {tp?.TaxpayerType ?? "—"} | نام: {tp?.NameTrade ?? "—"}"
+                    Detail = $"وضعیت: {tp?.TaxpayerStatus ?? "-"} | نوع مودی: {tp?.TaxpayerType ?? "-"} | نام: {tp?.NameTrade ?? "-"}"
                 });
             }
 
             result.Success = true;
-            result.Summary = $"اتصال و احراز هویت گواهی امضای الکترونیکی با موفقیت تأیید شد (حافظه مالیاتی: {result.FiscalStatus}).";
+            result.Summary = $"اتصال برقرار است (حافظه: {result.FiscalStatus}).";
             return result;
         }
         catch (Exception ex)
@@ -619,7 +591,7 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
         }
     }
 
-    // ==================== ساخت نشست و امضاکننده در حافظه ====================
+    // ساخت نشست و امضاکننده در حافظه
 
     private SignatoryScope CreateSignatory(MdnTaxpayerProfile profile)
     {
@@ -796,11 +768,11 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
                     var hasArt9Hint = errDto.Errors.Any(e => e.Code is "0200201" or "00107");
                     var hasIndati2mHint = errDto.Errors.Any(e => e.Code is "14003");
                     var hint = hasArt9Hint
-                        ? " (راهنما: تاریخ صدور از مهلت مجاز گذشته است؛ صورتحساب را در قالب موضوع ماده ۹ با insr=1 ارسال نمایید.)"
+                        ? " (مهلت ارسال عادی گذشته است؛ با گزینه ماده ۹ ارسال کنید.)"
                         : hasIndati2mHint
-                            ? " (راهنما: در نسخه V7.9 فیلد indati2m برای صورتحساب‌های عادی خارج از الگوست و فقط در ماده ۹ مجاز است.)"
+                            ? " (تاریخ ثبت برای صورتحساب عادی مجاز نیست.)"
                             : "";
-                    return $"خطای درگاه سامانه مودیان: {items}{hint}";
+                    return $"خطای سامانه مودیان: {items}{hint}";
                 }
             }
             catch { /* در صورت عدم تطابق JSON، پیام خام خوانده می‌شود */ }
@@ -877,10 +849,7 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
     private static string? TruncateMax(string? value, int maxLen)
         => string.IsNullOrEmpty(value) || value.Length <= maxLen ? value : value[..maxLen];
 
-    /// <summary>
-    /// مبدل JSON پلی‌مورفیک بدون بازگشت برای <see cref="HeaderDto"/> تا فیلدهای جدید دستورالعمل V7.9
-    /// (<c>insr</c>, <c>nti1</c>, <c>nti2</c>) هنگام سریال‌سازی <see cref="InvoiceDto"/> در بستهٔ امضاشده JWS+JWE درج شوند.
-    /// </summary>
+    // مبدل JSON سرآمد صورتحساب برای درج فیلدهای insr، nti1 و nti2 در بسته ارسالی
     private sealed class MdnV79HeaderJsonConverter : JsonConverter<HeaderDto>
     {
         private static readonly JsonSerializerOptions InnerWireOptions = new()

@@ -1,14 +1,6 @@
 namespace Inventory.Shared.Dtos;
 
-// =====================================================================
-// قراردادها و مدل‌های مشترک ماژول سامانه مودیان (نسخهٔ گواهی امضا — SDK 2.0.29)
-// منطبق با TaxCollectData.Library 2.0.29:
-//   • امضای دیجیتال با گواهی امضای الکترونیکی (PKCS#8 + X.509 / PFX / توکن PKCS#11)
-//   • ارسال صورتحساب (اصلی، اصلاحی، ابطالی، برگشت از فروش — الگوهای ۱ تا ۷)
-//   • استعلام وضعیت پردازش ارسال (ReferenceNumber / UID / بازهٔ زمانی)
-//   • استعلام وضعیت به‌روز کارپوشه و ماده ۶ (InquiryInvoiceStatus)
-//   • ثبت و پیگیری پرداخت صورتحساب در سامانه مودیان (RegisterPaymentRequest)
-// =====================================================================
+// مدل‌های مشترک ماژول سامانه مودیان
 
 public enum MdnEnvironment
 {
@@ -101,7 +93,6 @@ public enum MdnPaymentStatus
     NotApplicable = 3
 }
 
-/// <summary>روش پرداخت هم‌تراز با PaymentMethod در SDK 2.0.29 و کد pmt سامانه مودیان.</summary>
 public enum MdnPaymentMethod
 {
     Cheque = 1,
@@ -114,7 +105,6 @@ public enum MdnPaymentMethod
     Other = 8
 }
 
-/// <summary>وضعیت ثبت پرداخت در سامانه مودیان (RegisterPaymentRequest).</summary>
 public enum MdnPaymentSyncState
 {
     IncludedInInvoice = 0,
@@ -124,10 +114,7 @@ public enum MdnPaymentSyncState
     Failed = 4
 }
 
-/// <summary>
-/// قواعد و محاسبات مشترک صورتحساب الکترونیکی موضوع ماده ۹ قانون پایانه‌های فروشگاهی و سامانه مودیان
-/// منطبق با بخش ۶ و جداول ۴، ۵ و ۸۶ دستورالعمل صدور صورتحساب الکترونیکی (RC_IITP.IS_V7.9 — تیرماه ۱۴۰۵).
-/// </summary>
+// قواعد محاسبه مهلت ارسال عادی و صورتحساب‌های موضوع ماده ۹
 public static class MdnArticle9Rules
 {
     /// <summary>مهلت پیش‌فرض مجاز ارسال عادی صورتحساب به روز طبق اعلام سازمان امور مالیاتی کشور (۱۲ روز).</summary>
@@ -191,7 +178,7 @@ public static class MdnArticle9Rules
     }
 }
 
-// ==================== پروفایل مودی، اتصال و گواهی امضا ====================
+// پروفایل مودی، اتصال و گواهی امضا
 
 public class MdnProfileDto
 {
@@ -423,7 +410,7 @@ public class MdnArticle6CheckResultDto
     public string Message { get; set; } = "";
 }
 
-// ==================== اطلاعات پایه (خریدار، کالا/خدمت، واحد سنجش) ====================
+// اطلاعات پایه (خریدار، کالا/خدمت، واحد سنجش)
 
 public class MdnBuyerDto
 {
@@ -512,7 +499,7 @@ public class MdnSyncResultDto
     public string Message { get; set; } = "";
 }
 
-// ==================== صورتحساب الکترونیکی، اقلام، پرداخت‌ها و لاگ‌ها ====================
+// صورتحساب الکترونیکی، اقلام، پرداخت‌ها و لاگ‌ها
 
 public class MdnInvoiceFilterRequest
 {
@@ -887,7 +874,7 @@ public class MdnErpFacInvoicePickDto
     public bool AlreadyImported { get; set; }
 }
 
-// ==================== داشبورد مدیریتی مودیان ====================
+// داشبورد مدیریتی مودیان
 
 public class MdnDashboardDto
 {
@@ -914,7 +901,7 @@ public class MdnDashboardDto
     public List<MdnSubmissionLogDto> RecentLogs { get; set; } = new();
 }
 
-// ==================== برچسب‌ها و رنگ‌های نمایشی فارسی ====================
+// برچسب‌ها و رنگ‌های نمایشی فارسی
 
 public static class MdnUiLabels
 {
@@ -944,20 +931,20 @@ public static class MdnUiLabels
 
     public static string InvoiceTypeTitle(MdnInvoiceType v) => v switch
     {
-        MdnInvoiceType.Type1 => "نوع اول (با اطلاعات خریدار)",
-        MdnInvoiceType.Type2 => "نوع دوم (مصرف‌کننده نهایی)",
+        MdnInvoiceType.Type1 => "نوع اول",
+        MdnInvoiceType.Type2 => "نوع دوم",
         _ => "نامشخص"
     };
 
     public static string PatternTitle(MdnInvoicePattern v) => v switch
     {
-        MdnInvoicePattern.Sale => "الگوی ۱ — فروش",
-        MdnInvoicePattern.CurrencySale => "الگوی ۲ — فروش ارزی",
-        MdnInvoicePattern.GoldJewelry => "الگوی ۳ — طلا، جواهر و پلاتین",
-        MdnInvoicePattern.Contracting => "الگوی ۴ — پیمانکاری",
-        MdnInvoicePattern.UtilityBill => "الگوی ۵ — قبوض خدماتی",
-        MdnInvoicePattern.AirTicket => "الگوی ۶ — بلیط هواپیما",
-        MdnInvoicePattern.Export => "الگوی ۷ — صادرات",
+        MdnInvoicePattern.Sale => "فروش",
+        MdnInvoicePattern.CurrencySale => "فروش ارزی",
+        MdnInvoicePattern.GoldJewelry => "طلا و جواهر",
+        MdnInvoicePattern.Contracting => "پیمانکاری",
+        MdnInvoicePattern.UtilityBill => "قبوض خدماتی",
+        MdnInvoicePattern.AirTicket => "بلیط هواپیما",
+        MdnInvoicePattern.Export => "صادرات",
         _ => "سایر"
     };
 
@@ -971,11 +958,11 @@ public static class MdnUiLabels
     };
 
     public static string SendRuleTitle(bool isArticle9) => isArticle9
-        ? "موضوع ماده ۹ (خارج از مهلت — insr=1)"
-        : "عادی (در مهلت قانونی)";
+        ? "موضوع ماده ۹"
+        : "عادی";
 
     public static string SendRuleShortTitle(bool isArticle9) => isArticle9
-        ? "ماده ۹ (insr=1)"
+        ? "ماده ۹"
         : "عادی";
 
     public static string SendRuleBadgeClass(bool isArticle9) => isArticle9
@@ -994,11 +981,11 @@ public static class MdnUiLabels
     {
         MdnSubmissionStatus.Draft => "پیش‌نویس",
         MdnSubmissionStatus.Sent => "ارسال‌شده",
-        MdnSubmissionStatus.InProgress => "در حال بررسی (IN_PROGRESS)",
-        MdnSubmissionStatus.Success => "ثبت موفق در درگاه",
-        MdnSubmissionStatus.Failed => "رد شده (دارای خطا)",
-        MdnSubmissionStatus.Timeout => "منقضی (TIMEOUT)",
-        MdnSubmissionStatus.NotFound => "یافت نشد (NOT_FOUND)",
+        MdnSubmissionStatus.InProgress => "در حال بررسی",
+        MdnSubmissionStatus.Success => "ثبت موفق",
+        MdnSubmissionStatus.Failed => "رد شده",
+        MdnSubmissionStatus.Timeout => "عدم پاسخ",
+        MdnSubmissionStatus.NotFound => "یافت نشد",
         _ => "نامشخص"
     };
 
@@ -1014,12 +1001,12 @@ public static class MdnUiLabels
     public static string FolderTitle(MdnFolderStatus v) => v switch
     {
         MdnFolderStatus.Unknown => "استعلام‌نشده",
-        MdnFolderStatus.Pending => "در انتظار واکنش خریدار",
-        MdnFolderStatus.Approved => "تأیید شده در کارپوشه",
-        MdnFolderStatus.SystemApproved => "تأیید سیستمی کارپوشه",
-        MdnFolderStatus.Rejected => "رد شده در کارپوشه",
-        MdnFolderStatus.Cancelled => "ابطال شده",
-        MdnFolderStatus.NotFound => "ناموجود در کارپوشه",
+        MdnFolderStatus.Pending => "در انتظار تأیید",
+        MdnFolderStatus.Approved => "تأیید شده",
+        MdnFolderStatus.SystemApproved => "تأیید سیستمی",
+        MdnFolderStatus.Rejected => "رد شده",
+        MdnFolderStatus.Cancelled => "باطل شده",
+        MdnFolderStatus.NotFound => "ناموجود",
         _ => "نامشخص"
     };
 
@@ -1051,24 +1038,24 @@ public static class MdnUiLabels
 
     public static string PaymentMethodTitle(MdnPaymentMethod v) => v switch
     {
-        MdnPaymentMethod.Cheque => "چک (CHEQUE)",
-        MdnPaymentMethod.Barter => "تهاتر (BARTER)",
-        MdnPaymentMethod.Cash => "وجه نقد (CASH)",
-        MdnPaymentMethod.Pos => "دستگاه کارتخوان (POS)",
-        MdnPaymentMethod.Internet => "درگاه اینترنتی (INTERNET)",
-        MdnPaymentMethod.CardToCard => "کارت به کارت (CARD)",
-        MdnPaymentMethod.BankTransfer => "انتقال بانکی (TRANSFER)",
-        MdnPaymentMethod.Other => "سایر (OTHER)",
+        MdnPaymentMethod.Cheque => "چک",
+        MdnPaymentMethod.Barter => "تهاتر",
+        MdnPaymentMethod.Cash => "وجه نقد",
+        MdnPaymentMethod.Pos => "کارتخوان",
+        MdnPaymentMethod.Internet => "درگاه اینترنتی",
+        MdnPaymentMethod.CardToCard => "کارت به کارت",
+        MdnPaymentMethod.BankTransfer => "انتقال بانکی",
+        MdnPaymentMethod.Other => "سایر",
         _ => "سایر"
     };
 
     public static string PaymentSyncTitle(MdnPaymentSyncState v) => v switch
     {
-        MdnPaymentSyncState.IncludedInInvoice => "ارسال‌شده در متن صورتحساب",
-        MdnPaymentSyncState.LocalDraft => "ثبت محلی (آماده ارسال)",
-        MdnPaymentSyncState.Registered => "ثبت‌شده در سامانه مودیان",
-        MdnPaymentSyncState.InProgress => "در حال بررسی در سامانه",
-        MdnPaymentSyncState.Failed => "خطا در ثبت سامانه مودیان",
+        MdnPaymentSyncState.IncludedInInvoice => "همراه صورتحساب",
+        MdnPaymentSyncState.LocalDraft => "ثبت محلی",
+        MdnPaymentSyncState.Registered => "ثبت‌شده",
+        MdnPaymentSyncState.InProgress => "در حال بررسی",
+        MdnPaymentSyncState.Failed => "خطا در ثبت",
         _ => "نامشخص"
     };
 

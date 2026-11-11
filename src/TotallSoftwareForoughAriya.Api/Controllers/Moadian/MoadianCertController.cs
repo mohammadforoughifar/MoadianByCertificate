@@ -5,14 +5,6 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Inventory.Api.Controllers.Moadian;
 
-/// <summary>
-/// کنترلر یکپارچه سامانه مودیان مبتنی بر گواهی امضای الکترونیکی (SDK 2.0.29):
-///   • مدیریت پرونده مالیاتی و گاوصندوق گواهی امضا (PKCS#8 + X.509 / PFX / توکن PKCS#11)
-///   • تست اتصال، استعلام آنلاین کد اقتصادی و وضعیت ماده ۶
-///   • مدیریت اطلاعات پایه (خریداران، کالاها/خدمات SSTID، واحدهای سنجش) و همگام‌سازی با ERP
-///   • صدور صورتحساب (اصلی، اصلاحی، ابطالی، برگشت از فروش) و تبدیل از فاکتور فروش سیستم
-///   • ارسال امضاشده JWS+JWE، استعلام وضعیت درگاه، استعلام به‌روز کارپوشه و ثبت پرداخت (RegisterPaymentRequest)
-/// </summary>
 [Route("api/moadian")]
 public sealed class MoadianCertController : RbacControllerBase
 {
@@ -21,7 +13,7 @@ public sealed class MoadianCertController : RbacControllerBase
 
     public MoadianCertController(AppDbContext db, IMoadianCertService svc) : base(db) => _svc = svc;
 
-    // ==================== داشبورد ====================
+    // داشبورد
 
     [HttpGet("dashboard")]
     public async Task<IActionResult> GetDashboard()
@@ -30,7 +22,7 @@ public sealed class MoadianCertController : RbacControllerBase
         return Ok(await _svc.GetDashboardAsync());
     }
 
-    // ==================== پروفایل مودی، گواهی امضا و تشخیص ====================
+    // پروفایل مودی، گواهی امضا و تشخیص
 
     [HttpGet("profile")]
     public async Task<IActionResult> GetProfile()
@@ -95,7 +87,7 @@ public sealed class MoadianCertController : RbacControllerBase
         return Ok(await _svc.CheckArticle6StatusAsync(req));
     }
 
-    // ==================== اطلاعات پایه و همگام‌سازی ERP ====================
+    // اطلاعات پایه و همگام‌سازی ERP
 
     [HttpGet("invoice-lookups")]
     public async Task<IActionResult> GetInvoiceFormLookups()
@@ -176,7 +168,7 @@ public sealed class MoadianCertController : RbacControllerBase
         return Ok(await _svc.SaveMeasureUnitAsync(req));
     }
 
-    // ==================== صورتحساب‌ها، پیش‌نمایش و تبدیل از ERP ====================
+    // صورتحساب‌ها، پیش‌نمایش و تبدیل از ERP
 
     [HttpGet("invoices")]
     public async Task<IActionResult> GetInvoices(
@@ -265,7 +257,7 @@ public sealed class MoadianCertController : RbacControllerBase
         return Ok(await _svc.ImportFromErpInvoiceAsync(facInvoiceId, MyUserId, MyUsername));
     }
 
-    // ==================== ارسال، استعلام وضعیت، استعلام کارپوشه و ثبت پرداخت ====================
+    // ارسال، استعلام وضعیت، استعلام کارپوشه و ثبت پرداخت
 
     [HttpPost("invoices/send")]
     public async Task<IActionResult> SendInvoices([FromBody] MdnBulkIdsRequest req)
