@@ -29,6 +29,7 @@ public interface IMoadianClientService
 
     Task<List<MdnMeasureUnitDto>> GetUnitsAsync();
     Task<MdnMeasureUnitDto> SaveUnitAsync(MdnSaveMeasureUnitRequest req);
+    Task<MdnInvoiceFormLookupsDto> GetInvoiceLookupsAsync();
 
     Task<MdnInvoiceListResultDto> GetInvoicesAsync(MdnInvoiceFilterRequest filter);
     Task<MdnInvoiceDetailDto> GetInvoiceDetailAsync(int id);
@@ -120,6 +121,9 @@ public sealed class MoadianClientService : IMoadianClientService
 
     public Task<MdnMeasureUnitDto> SaveUnitAsync(MdnSaveMeasureUnitRequest req)
         => _api.PostAsync<MdnMeasureUnitDto>("api/moadian/units", req);
+
+    public Task<MdnInvoiceFormLookupsDto> GetInvoiceLookupsAsync()
+        => _api.GetAsync<MdnInvoiceFormLookupsDto>("api/moadian/invoice-lookups");
 
     public Task<MdnInvoiceListResultDto> GetInvoicesAsync(MdnInvoiceFilterRequest f)
     {

@@ -34,6 +34,7 @@ public interface IMoadianCertService
 
     Task<List<MdnMeasureUnitDto>> GetMeasureUnitsAsync();
     Task<MdnMeasureUnitDto> SaveMeasureUnitAsync(MdnSaveMeasureUnitRequest req);
+    Task<MdnInvoiceFormLookupsDto> GetInvoiceFormLookupsAsync();
 
     // داشبورد و صورتحساب‌ها
     Task<MdnDashboardDto> GetDashboardAsync();
@@ -660,6 +661,251 @@ public sealed class MoadianCertService : IMoadianCertService
             }).ToListAsync();
     }
 
+    /// <summary>
+    /// دریافت یکپارچهٔ فهرست خریداران (ادغام زنده از طرف‌حساب‌ها/مشتریان سیستم Parties + خریداران مودیان)
+    /// و فهرست کالاها/خدمات (ادغام زنده از بخش کالاهای سیستم Products + کاتالوگ مودیان) برای کمبوباکس فرم صدور فاکتور.
+    /// </summary>
+    public async Task<MdnInvoiceFormLookupsDto> GetInvoiceFormLookupsAsync()
+    {
+        var (profile, _) = await GetOrCreateProfileEntityAsync();
+        var defaultVat = profile.DefaultVatRate;
+
+        var units = await _db.MdnMeasureUnits.AsNoTracking()
+            .ToDictionaryAsync(u => u.Code, u => u.Name, StringComparer.OrdinalIgnoreCase);
+
+        // ۱. ادغام مشتریان / طرف‌حساب‌های سیستم (Parties) با خریداران مودیان (MdnBuyers)
+        var parties = await _db.Parties.AsNoTracking()
+            .Where(p => p.IsActive)
+            .OrderBy(p => p.Type == Inventory.Shared.PartyType.Customer ? 0 : 1)
+            .ThenBy(p => p.Name)
+            .ToListAsync();
+
+        var mdnBuyers = await _db.MdnBuyers.AsNoTracking()
+            .Where(b => b.IsActive)
+            .OrderBy(b => b.Name)
+            .ToListAsync();
+
+        var mdnBuyerByParty = mdnBuyers
+            .Where(b => b.PartyId != null)
+            .GroupBy(b => b.PartyId!.Value)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var buyerItems = new List<MdnBuyerPickDto>(parties.Count + mdnBuyers.Count);
+        var seenBuyerIds = new HashSet<int>();
+        var bKey = 1;
+
+        foreach (var p in parties)
+        {
+            mdnBuyerByParty.TryGetValue(p.Id, out var linked);
+            if (linked is not null) seenBuyerIds.Add(linked.Id);
+
+            var rawTaxId = MoadianSdkGateway.NormalizeAsciiDigits(p.TaxId);
+            var isNaturalTaxId = rawTaxId is { Length: 10 };
+
+            var buyerType = linked?.BuyerType
+                ?? (isNaturalTaxId ? MdnTaxpayerType.Natural : MdnTaxpayerType.Legal);
+            var economicCode = MoadianSdkGateway.NormalizeAsciiDigits(linked?.EconomicCode)
+                ?? (!isNaturalTaxId ? rawTaxId : null);
+            var nationalId = MoadianSdkGateway.NormalizeAsciiDigits(linked?.NationalId)
+                ?? (isNaturalTaxId ? rawTaxId : null);
+            var postalCode = MoadianSdkGateway.NormalizeAsciiDigits(linked?.PostalCode ?? p.PostalCode);
+            var phone = NullIfBlank(linked?.Phone) ?? NullIfBlank(p.Mobile) ?? NullIfBlank(p.Phone);
+            var roleTitle = p.Type == Inventory.Shared.PartyType.Customer ? "مشتری" : "طرف‌حساب";
+
+            var infoParts = new List<string> { roleTitle };
+            if (!string.IsNullOrWhiteSpace(economicCode)) infoParts.Add($"کد اقتصادی: {economicCode}");
+            if (!string.IsNullOrWhiteSpace(nationalId)) infoParts.Add($"کد/شناسه ملی: {nationalId}");
+            if (!string.IsNullOrWhiteSpace(phone)) infoParts.Add($"تلفن: {phone}");
+
+            buyerItems.Add(new MdnBuyerPickDto
+            {
+                Key = bKey++,
+                BuyerId = linked?.Id,
+                PartyId = p.Id,
+                Name = p.Name,
+                BuyerType = buyerType,
+                EconomicCode = economicCode,
+                NationalId = nationalId,
+                PostalCode = postalCode,
+                BranchCode = MoadianSdkGateway.NormalizeAsciiDigits(linked?.BranchCode),
+                PassportNumber = NullIfBlank(linked?.PassportNumber),
+                Phone = phone,
+                Address = NullIfBlank(linked?.Address) ?? NullIfBlank(p.Address),
+                InfoText = string.Join(" · ", infoParts)
+            });
+        }
+
+        foreach (var b in mdnBuyers)
+        {
+            if (seenBuyerIds.Contains(b.Id)) continue;
+            var econ = MoadianSdkGateway.NormalizeAsciiDigits(b.EconomicCode);
+            var nat = MoadianSdkGateway.NormalizeAsciiDigits(b.NationalId);
+            var infoParts = new List<string> { MdnUiLabels.TaxpayerTypeTitle(b.BuyerType) };
+            if (!string.IsNullOrWhiteSpace(econ)) infoParts.Add($"کد اقتصادی: {econ}");
+            if (!string.IsNullOrWhiteSpace(nat)) infoParts.Add($"کد/شناسه ملی: {nat}");
+            if (!string.IsNullOrWhiteSpace(b.Phone)) infoParts.Add($"تلفن: {b.Phone}");
+
+            buyerItems.Add(new MdnBuyerPickDto
+            {
+                Key = bKey++,
+                BuyerId = b.Id,
+                PartyId = b.PartyId,
+                Name = b.Name,
+                BuyerType = b.BuyerType,
+                EconomicCode = econ,
+                NationalId = nat,
+                PostalCode = MoadianSdkGateway.NormalizeAsciiDigits(b.PostalCode),
+                BranchCode = MoadianSdkGateway.NormalizeAsciiDigits(b.BranchCode),
+                PassportNumber = NullIfBlank(b.PassportNumber),
+                Phone = NullIfBlank(b.Phone),
+                Address = NullIfBlank(b.Address),
+                InfoText = string.Join(" · ", infoParts)
+            });
+        }
+
+        // ۲. ادغام بخش کالاها و خدمات سیستم (Products) با کاتالوگ مودیان (MdnCatalogItems)
+        var products = await _db.Products.AsNoTracking()
+            .Where(p => p.IsActive)
+            .OrderBy(p => p.Name)
+            .ToListAsync();
+
+        var mdnCatalog = await _db.MdnCatalogItems.AsNoTracking()
+            .Where(c => c.IsActive)
+            .OrderBy(c => c.Name)
+            .ToListAsync();
+
+        var mdnByProduct = mdnCatalog
+            .Where(c => c.ProductId != null)
+            .GroupBy(c => c.ProductId!.Value)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var productItems = new List<MdnProductPickDto>(products.Count + mdnCatalog.Count);
+        var seenCatalogIds = new HashSet<int>();
+        var pKey = 1;
+
+        foreach (var p in products)
+        {
+            mdnByProduct.TryGetValue(p.Id, out var cat);
+            if (cat is not null) seenCatalogIds.Add(cat.Id);
+
+            var sstid = MoadianSdkGateway.NormalizeAsciiDigits(cat?.Sstid ?? p.TaxCode) ?? "";
+            var unitCode = ResolveTaxUnitCode(cat?.UnitCode ?? p.TaxUnitCode, p.Unit, p.IsService);
+            var unitName = units.TryGetValue(unitCode, out var un) ? un : (NullIfBlank(p.Unit) ?? unitCode);
+            var unitPrice = p.SalePrice > 0
+                ? ToWholeRial(p.SalePrice)
+                : (cat?.DefaultUnitPrice ?? 0L);
+            var vatRate = cat is not null
+                ? cat.VatRate
+                : (p.VatRate > 0 ? p.VatRate : defaultVat);
+
+            var infoParts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(p.Code)) infoParts.Add($"کد: {p.Code}");
+            if (!string.IsNullOrWhiteSpace(sstid)) infoParts.Add($"شناسه ۱۳ رقمی: {sstid}");
+            else infoParts.Add("بدون شناسه مالیاتی در تعریف کالا");
+            if (unitPrice > 0) infoParts.Add($"فی: {unitPrice:N0} ریال");
+
+            productItems.Add(new MdnProductPickDto
+            {
+                Key = pKey++,
+                CatalogItemId = cat?.Id,
+                ProductId = p.Id,
+                Code = NullIfBlank(p.Code),
+                Name = p.Name,
+                Sstid = sstid,
+                UnitCode = unitCode,
+                UnitName = unitName,
+                UnitPrice = unitPrice,
+                VatRate = vatRate,
+                HsCode = NullIfBlank(cat?.HsCode) ?? NullIfBlank(p.CustomsCode),
+                IsService = p.IsService,
+                InfoText = string.Join(" · ", infoParts)
+            });
+        }
+
+        foreach (var c in mdnCatalog)
+        {
+            if (seenCatalogIds.Contains(c.Id)) continue;
+            var sstid = MoadianSdkGateway.NormalizeAsciiDigits(c.Sstid) ?? c.Sstid;
+            var unitName = units.TryGetValue(c.UnitCode, out var un) ? un : c.UnitCode;
+            var infoParts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(c.InternalCode)) infoParts.Add($"کد: {c.InternalCode}");
+            if (!string.IsNullOrWhiteSpace(sstid)) infoParts.Add($"شناسه ۱۳ رقمی: {sstid}");
+            if (c.DefaultUnitPrice > 0) infoParts.Add($"فی: {c.DefaultUnitPrice:N0} ریال");
+
+            productItems.Add(new MdnProductPickDto
+            {
+                Key = pKey++,
+                CatalogItemId = c.Id,
+                ProductId = c.ProductId,
+                Code = NullIfBlank(c.InternalCode),
+                Name = c.Name,
+                Sstid = sstid,
+                UnitCode = c.UnitCode,
+                UnitName = unitName,
+                UnitPrice = c.DefaultUnitPrice,
+                VatRate = c.VatRate,
+                HsCode = NullIfBlank(c.HsCode),
+                IsService = c.IsService,
+                InfoText = string.Join(" · ", infoParts)
+            });
+        }
+
+        return new MdnInvoiceFormLookupsDto
+        {
+            Buyers = buyerItems,
+            Products = productItems
+        };
+    }
+
+    private static string ResolveTaxUnitCode(string? explicitTaxUnitCode, string? persianUnit, bool isService)
+    {
+        var cleanExplicit = MoadianSdkGateway.NormalizeAsciiDigits(explicitTaxUnitCode);
+        if (!string.IsNullOrWhiteSpace(cleanExplicit) && cleanExplicit.All(char.IsAsciiDigit))
+            return cleanExplicit;
+
+        var u = (persianUnit ?? "").Trim();
+        if (u.Contains("کیلو", StringComparison.Ordinal) || string.Equals(u, "kg", StringComparison.OrdinalIgnoreCase))
+            return "1644";
+        if (u.Contains("گرم", StringComparison.Ordinal) || string.Equals(u, "g", StringComparison.OrdinalIgnoreCase))
+            return "1624";
+        if (u.Contains("تن", StringComparison.Ordinal))
+            return "1615";
+        if (u.Contains("متر مربع", StringComparison.Ordinal) || u.Contains("مترمربع", StringComparison.Ordinal))
+            return "1628";
+        if (u.Contains("متر مکعب", StringComparison.Ordinal) || u.Contains("مترمکعب", StringComparison.Ordinal))
+            return "1647";
+        if (u.Contains("متر", StringComparison.Ordinal) || string.Equals(u, "m", StringComparison.OrdinalIgnoreCase))
+            return "1627";
+        if (u.Contains("لیتر", StringComparison.Ordinal) || string.Equals(u, "l", StringComparison.OrdinalIgnoreCase))
+            return "1618";
+        if (u.Contains("بسته", StringComparison.Ordinal) || u.Contains("پک", StringComparison.Ordinal))
+            return "165";
+        if (u.Contains("کارتن", StringComparison.Ordinal) || u.Contains("جعبه", StringComparison.Ordinal))
+            return "169";
+        if (u.Contains("دستگاه", StringComparison.Ordinal))
+            return "168";
+        if (u.Contains("نفر", StringComparison.Ordinal) && u.Contains("ساعت", StringComparison.Ordinal))
+            return "1654";
+        if (u.Contains("ساعت", StringComparison.Ordinal))
+            return "161";
+        if (u.Contains("روز", StringComparison.Ordinal))
+            return "1645";
+        if (u.Contains("ماه", StringComparison.Ordinal))
+            return "1653";
+        if (u.Contains("جفت", StringComparison.Ordinal))
+            return "1635";
+        if (u.Contains("حلقه", StringComparison.Ordinal) || u.Contains("رول", StringComparison.Ordinal))
+            return "1611";
+        if (u.Contains("برگ", StringComparison.Ordinal))
+            return "1639";
+        if (u.Contains("جلد", StringComparison.Ordinal))
+            return "1620";
+        if (isService || u.Contains("خدمت", StringComparison.Ordinal) || u.Contains("سرویس", StringComparison.Ordinal))
+            return "1676";
+
+        return "164";
+    }
+
     public async Task<MdnMeasureUnitDto> SaveMeasureUnitAsync(MdnSaveMeasureUnitRequest req)
     {
         if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.Name))
@@ -874,19 +1120,76 @@ public sealed class MoadianCertService : IMoadianCertService
             _db.MdnInvoices.Add(invoice);
         }
 
-        // پر کردن اطلاعات خریدار در صورت انتخاب از لیست
+        // پر کردن و همگام‌سازی خودکار خریدار در صورت انتخاب از لیست خریداران مودیان یا طرف‌حساب‌های سیستم (Parties)
         if (req.BuyerId is > 0)
         {
-            var buyer = await _db.MdnBuyers.AsNoTracking().FirstOrDefaultAsync(b => b.Id == req.BuyerId.Value);
+            var buyer = await _db.MdnBuyers.FirstOrDefaultAsync(b => b.Id == req.BuyerId.Value);
             if (buyer is not null)
             {
                 req.BuyerName = string.IsNullOrWhiteSpace(req.BuyerName) ? buyer.Name : req.BuyerName;
-                req.BuyerType = buyer.BuyerType;
                 req.BuyerEconomicCode ??= buyer.EconomicCode;
                 req.BuyerNationalId ??= buyer.NationalId;
                 req.BuyerPostalCode ??= buyer.PostalCode;
                 req.BuyerBranchCode ??= buyer.BranchCode;
                 req.BuyerPassportNumber ??= buyer.PassportNumber;
+
+                // ذخیرهٔ کد اقتصادی/ملی جدید روی خریدار در صورت تکمیل در فرم فاکتور
+                if (string.IsNullOrWhiteSpace(buyer.EconomicCode) && !string.IsNullOrWhiteSpace(req.BuyerEconomicCode))
+                    buyer.EconomicCode = MoadianSdkGateway.NormalizeAsciiDigits(req.BuyerEconomicCode);
+                if (string.IsNullOrWhiteSpace(buyer.NationalId) && !string.IsNullOrWhiteSpace(req.BuyerNationalId))
+                    buyer.NationalId = MoadianSdkGateway.NormalizeAsciiDigits(req.BuyerNationalId);
+                if (string.IsNullOrWhiteSpace(buyer.PostalCode) && !string.IsNullOrWhiteSpace(req.BuyerPostalCode))
+                    buyer.PostalCode = MoadianSdkGateway.NormalizeAsciiDigits(req.BuyerPostalCode);
+            }
+        }
+        else if (req.InvoiceType == MdnInvoiceType.Type1 && req.BuyerPartyId is > 0)
+        {
+            var party = await _db.Parties.FirstOrDefaultAsync(p => p.Id == req.BuyerPartyId.Value);
+            if (party is not null)
+            {
+                req.BuyerName = string.IsNullOrWhiteSpace(req.BuyerName) ? party.Name : req.BuyerName;
+                req.BuyerPostalCode ??= party.PostalCode;
+
+                var cleanEcon = MoadianSdkGateway.NormalizeAsciiDigits(req.BuyerEconomicCode);
+                var cleanNat = MoadianSdkGateway.NormalizeAsciiDigits(req.BuyerNationalId);
+                var cleanPostal = MoadianSdkGateway.NormalizeAsciiDigits(req.BuyerPostalCode);
+
+                if (string.IsNullOrWhiteSpace(party.TaxId) && !string.IsNullOrWhiteSpace(cleanEcon ?? cleanNat))
+                    party.TaxId = cleanEcon ?? cleanNat;
+                if (string.IsNullOrWhiteSpace(party.PostalCode) && !string.IsNullOrWhiteSpace(cleanPostal))
+                    party.PostalCode = cleanPostal;
+
+                var linkedBuyer = await _db.MdnBuyers.FirstOrDefaultAsync(b => b.PartyId == party.Id);
+                if (linkedBuyer is null)
+                {
+                    linkedBuyer = new MdnBuyer
+                    {
+                        CompanyId = companyId,
+                        PartyId = party.Id,
+                        Name = req.BuyerName!.Trim(),
+                        BuyerType = req.BuyerType,
+                        EconomicCode = cleanEcon,
+                        NationalId = cleanNat,
+                        PostalCode = cleanPostal,
+                        BranchCode = MoadianSdkGateway.NormalizeAsciiDigits(req.BuyerBranchCode),
+                        PassportNumber = NullIfBlank(req.BuyerPassportNumber),
+                        Phone = NullIfBlank(party.Mobile) ?? NullIfBlank(party.Phone),
+                        Address = NullIfBlank(party.Address),
+                        IsActive = true,
+                        CreatedAt = DateTime.Now
+                    };
+                    _db.MdnBuyers.Add(linkedBuyer);
+                    await _db.SaveChangesAsync();
+                }
+                else
+                {
+                    linkedBuyer.BuyerType = req.BuyerType;
+                    linkedBuyer.EconomicCode ??= cleanEcon;
+                    linkedBuyer.NationalId ??= cleanNat;
+                    linkedBuyer.PostalCode ??= cleanPostal;
+                }
+
+                req.BuyerId = linkedBuyer.Id;
             }
         }
 
@@ -950,6 +1253,46 @@ public sealed class MoadianCertService : IMoadianCertService
             if (l.UnitPrice < 0)
                 throw new InvalidOperationException($"ردیف {rowNum}: مبلغ واحد نمی‌تواند منفی باشد.");
 
+            // اگر ردیف از بخش کالاهای سیستم (Products) انتخاب شده باشد و شناسه ۱۳ رقمی نداشت، آن را در تعریف کالا هم ذخیره می‌کنیم
+            var resolvedCatalogId = l.CatalogItemId;
+            if (l.ProductId is > 0)
+            {
+                var prod = await _db.Products.FirstOrDefaultAsync(p => p.Id == l.ProductId.Value);
+                if (prod is not null)
+                {
+                    if (string.IsNullOrWhiteSpace(prod.TaxCode))
+                        prod.TaxCode = sstid;
+                    if (string.IsNullOrWhiteSpace(prod.TaxUnitCode) && !string.IsNullOrWhiteSpace(l.UnitCode))
+                        prod.TaxUnitCode = l.UnitCode.Trim();
+
+                    if (resolvedCatalogId is null or <= 0)
+                    {
+                        var linkedCat = await _db.MdnCatalogItems.FirstOrDefaultAsync(c => c.ProductId == prod.Id);
+                        if (linkedCat is null)
+                        {
+                            linkedCat = new MdnCatalogItem
+                            {
+                                CompanyId = companyId,
+                                ProductId = prod.Id,
+                                InternalCode = NullIfBlank(prod.Code),
+                                Name = prod.Name,
+                                Sstid = sstid,
+                                UnitCode = NullIfBlank(l.UnitCode) ?? "164",
+                                VatRate = l.VatRate,
+                                DefaultUnitPrice = ToWholeRial(l.UnitPrice),
+                                HsCode = NullIfBlank(l.HsCode) ?? NullIfBlank(prod.CustomsCode),
+                                IsService = prod.IsService,
+                                IsActive = true,
+                                CreatedAt = DateTime.Now
+                            };
+                            _db.MdnCatalogItems.Add(linkedCat);
+                            await _db.SaveChangesAsync();
+                        }
+                        resolvedCatalogId = linkedCat.Id;
+                    }
+                }
+            }
+
             var prdis = ToWholeRial(checked(l.Quantity * l.UnitPrice));
             var dis = Math.Max(0L, l.DiscountAmount);
             if (dis > prdis)
@@ -974,7 +1317,7 @@ public sealed class MoadianCertService : IMoadianCertService
             {
                 CompanyId = companyId,
                 RowNumber = rowNum,
-                CatalogItemId = l.CatalogItemId,
+                CatalogItemId = resolvedCatalogId,
                 Sstid = sstid,
                 Description = l.Description.Trim(),
                 UnitCode = NullIfBlank(l.UnitCode) ?? "164",
