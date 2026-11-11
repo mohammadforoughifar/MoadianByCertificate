@@ -16,6 +16,7 @@ public interface IMoadianCertService
     Task<MdnProfileDto> UploadCertificateAsync(MdnUploadCertificateRequest req, string username);
     Task<MdnProfileDto> ClearCertificateAsync(string username);
     Task<MdnPkcs11DiscoverResultDto> DiscoverPkcs11Async(MdnPkcs11DiscoverRequest req);
+    Task<MdnWindowsStoreDiscoverResultDto> DiscoverWindowsStoreAsync();
     Task<MdnConnectionDiagnosticsDto> TestConnectionAsync(string username);
     Task<MdnTaxpayerLookupDto> LookupTaxpayerAsync(string economicCode);
     Task<MdnArticle6CheckResultDto> CheckArticle6StatusAsync(MdnArticle6CheckRequest req);
@@ -243,6 +244,24 @@ public sealed class MoadianCertService : IMoadianCertService
                 $"توکن سخت‌افزاری PKCS#11 با موفقیت بررسی، تست امضا و ثبت شد (Label: {profile.Pkcs11CertificateAlias}، اعتبار تا {validated.NotAfterUtc.ToLocalTime():yyyy/MM/dd}).",
                 null, username);
         }
+        else if (req.SignatureMode == MdnSignatureMode.WindowsStore)
+        {
+            var validated = MoadianWindowsStoreInspector.ValidateAndInspectSelection(
+                !string.IsNullOrWhiteSpace(req.WindowsStoreThumbprint) ? req.WindowsStoreThumbprint : profile.CertificateThumbprint,
+                req.WindowsStoreLocation);
+
+            profile.CertificateSubject = Truncate(validated.Subject, 400);
+            profile.CertificateIssuer = Truncate(validated.Issuer, 400);
+            profile.CertificateSerial = Truncate(validated.SerialNumber, 120);
+            profile.CertificateThumbprint = Truncate(validated.Thumbprint, 120);
+            profile.CertificateNotBefore = validated.NotBeforeUtc;
+            profile.CertificateNotAfter = validated.NotAfterUtc;
+            profile.UpdatedAt = DateTime.Now;
+
+            AddLog(null, "WINDOWS_STORE_CONFIG", true, "STORE_CERT_VERIFIED", null, null, null,
+                $"گواهی امضای الکترونیکی از مخزن ویندوز ({validated.StoreLocation}) با موفقیت بررسی، تست امضا و ثبت شد (Thumbprint: {validated.Thumbprint}، اعتبار تا {validated.NotAfterUtc.ToLocalTime():yyyy/MM/dd}).",
+                null, username);
+        }
 
         await _db.SaveChangesAsync();
         return MapProfileDto(profile, companyName);
@@ -250,6 +269,9 @@ public sealed class MoadianCertService : IMoadianCertService
 
     public Task<MdnPkcs11DiscoverResultDto> DiscoverPkcs11Async(MdnPkcs11DiscoverRequest req)
         => Task.FromResult(MoadianPkcs11Inspector.Discover(req.LibraryPath, req.Pin));
+
+    public Task<MdnWindowsStoreDiscoverResultDto> DiscoverWindowsStoreAsync()
+        => Task.FromResult(MoadianWindowsStoreInspector.Discover());
 
     public async Task<MdnProfileDto> ClearCertificateAsync(string username)
     {

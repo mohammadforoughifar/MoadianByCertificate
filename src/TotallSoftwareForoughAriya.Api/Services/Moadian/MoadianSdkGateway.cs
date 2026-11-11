@@ -205,9 +205,12 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
             {
                 Title = "بارگذاری کلید خصوصی و گواهی امضای الکترونیکی در حافظه",
                 Passed = true,
-                Detail = profile.SignatureMode == MdnSignatureMode.Pkcs8Certificate
-                    ? $"گواهی X.509 آماده است (انقضا: {profile.CertificateNotAfter?.ToLocalTime():yyyy/MM/dd})."
-                    : $"توکن سخت‌افزاری PKCS#11 آماده است ({profile.Pkcs11CertificateAlias})."
+                Detail = profile.SignatureMode switch
+                {
+                    MdnSignatureMode.Pkcs8Certificate => $"گواهی X.509 آماده است (انقضا: {profile.CertificateNotAfter?.ToLocalTime():yyyy/MM/dd}).",
+                    MdnSignatureMode.WindowsStore => $"گواهی مخزن ویندوز (Thumbprint: {profile.CertificateThumbprint}) آمادهٔ امضای مستقیم است.",
+                    _ => $"توکن سخت‌افزاری PKCS#11 آماده است ({profile.Pkcs11CertificateAlias})."
+                }
             });
 
             using var session = CreateLightSession(profile, signerScope.Signatory);
@@ -521,6 +524,28 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
             finally
             {
                 CryptographicOperations.ZeroMemory(pinBytes);
+            }
+        }
+
+        if (profile.SignatureMode == MdnSignatureMode.WindowsStore)
+        {
+            if (string.IsNullOrWhiteSpace(profile.CertificateThumbprint))
+                throw new InvalidOperationException("هیچ گواهی‌ای از مخزن گواهی ویندوز (certmgr) برای این شرکت انتخاب نشده است.");
+
+            if (profile.CertificateNotAfter.HasValue && profile.CertificateNotAfter.Value < DateTime.UtcNow)
+                throw new InvalidOperationException($"مهلت اعتبار گواهی امضای الکترونیکی انتخاب‌شده در تاریخ {profile.CertificateNotAfter.Value.ToLocalTime():yyyy/MM/dd} به پایان رسیده است.");
+
+            var (cert, rsa) = MoadianWindowsStoreInspector.OpenSigningMaterial(profile.CertificateThumbprint);
+            try
+            {
+                var signatory = new SignatoryFactory(new CurrentDateProvider()).Create(rsa, cert);
+                return new SignatoryScope(signatory, rsa, cert);
+            }
+            catch
+            {
+                rsa.Dispose();
+                cert.Dispose();
+                throw;
             }
         }
 
