@@ -521,6 +521,7 @@ public class MdnInvoiceLineDto
     public int Id { get; set; }
     public int RowNumber { get; set; }
     public int? CatalogItemId { get; set; }
+    public int? ProductId { get; set; }
     public string Sstid { get; set; } = "";
     public string Description { get; set; } = "";
     public string UnitCode { get; set; } = "164";
@@ -622,6 +623,7 @@ public class MdnSaveInvoiceRequest
     public string? ReferenceTaxId { get; set; }
 
     public int? BuyerId { get; set; }
+    public int? BuyerPartyId { get; set; }
     public string? BuyerName { get; set; }
     public MdnTaxpayerType BuyerType { get; set; } = MdnTaxpayerType.Legal;
     public string? BuyerEconomicCode { get; set; }
@@ -643,6 +645,46 @@ public class MdnSaveInvoiceRequest
 
     public List<MdnInvoiceLineDto> Lines { get; set; } = new();
     public List<MdnInvoicePaymentDto> InitialPayments { get; set; } = new();
+}
+
+public class MdnBuyerPickDto
+{
+    public int Key { get; set; }
+    public int? BuyerId { get; set; }
+    public int? PartyId { get; set; }
+    public string Name { get; set; } = "";
+    public MdnTaxpayerType BuyerType { get; set; } = MdnTaxpayerType.Legal;
+    public string? EconomicCode { get; set; }
+    public string? NationalId { get; set; }
+    public string? PostalCode { get; set; }
+    public string? BranchCode { get; set; }
+    public string? PassportNumber { get; set; }
+    public string? Phone { get; set; }
+    public string? Address { get; set; }
+    public string InfoText { get; set; } = "";
+}
+
+public class MdnProductPickDto
+{
+    public int Key { get; set; }
+    public int? CatalogItemId { get; set; }
+    public int? ProductId { get; set; }
+    public string? Code { get; set; }
+    public string Name { get; set; } = "";
+    public string Sstid { get; set; } = "";
+    public string UnitCode { get; set; } = "164";
+    public string UnitName { get; set; } = "";
+    public long UnitPrice { get; set; }
+    public decimal VatRate { get; set; } = 10;
+    public string? HsCode { get; set; }
+    public bool IsService { get; set; }
+    public string InfoText { get; set; } = "";
+}
+
+public class MdnInvoiceFormLookupsDto
+{
+    public List<MdnBuyerPickDto> Buyers { get; set; } = new();
+    public List<MdnProductPickDto> Products { get; set; } = new();
 }
 
 public class MdnCreateDerivativeRequest

@@ -97,6 +97,13 @@ public sealed class MoadianCertController : RbacControllerBase
 
     // ==================== اطلاعات پایه و همگام‌سازی ERP ====================
 
+    [HttpGet("invoice-lookups")]
+    public async Task<IActionResult> GetInvoiceFormLookups()
+    {
+        if (await ForbiddenUnlessAnyAsync(Module, "View", "MasterData", "InvoiceCreate", "InvoiceUpdate") is { } forbid) return forbid;
+        return Ok(await _svc.GetInvoiceFormLookupsAsync());
+    }
+
     [HttpGet("buyers")]
     public async Task<IActionResult> GetBuyers([FromQuery] string? search = null)
     {
