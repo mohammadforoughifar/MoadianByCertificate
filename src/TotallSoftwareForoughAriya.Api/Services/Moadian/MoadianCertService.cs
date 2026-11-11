@@ -142,16 +142,16 @@ public sealed class MoadianCertService : IMoadianCertService
         if (!string.IsNullOrEmpty(memoryId) && memoryId.Length != 6)
             throw new InvalidOperationException("شناسه یکتای حافظه مالیاتی باید دقیقاً ۶ کاراکتر انگلیسی/عددی باشد (مثال: A11226).");
 
-        var economicCode = (req.EconomicCode ?? string.Empty).Trim();
-        if (!string.IsNullOrEmpty(economicCode) && (economicCode.Length < 10 || !economicCode.All(char.IsDigit)))
+        var economicCode = MoadianSdkGateway.NormalizeAsciiDigits(req.EconomicCode) ?? string.Empty;
+        if (!string.IsNullOrEmpty(economicCode) && (economicCode.Length < 10 || !economicCode.All(char.IsAsciiDigit)))
             throw new InvalidOperationException("شماره اقتصادی / کد ملی مودی باید فقط شامل ارقام (۱۰ تا ۱۴ رقم) باشد.");
 
         profile.TradeName = string.IsNullOrWhiteSpace(req.TradeName) ? companyName : req.TradeName.Trim();
         profile.TaxpayerType = req.TaxpayerType;
         profile.EconomicCode = economicCode;
-        profile.NationalId = NullIfBlank(req.NationalId);
-        profile.PostalCode = NullIfBlank(req.PostalCode);
-        profile.BranchCode = NullIfBlank(req.BranchCode);
+        profile.NationalId = MoadianSdkGateway.NormalizeAsciiDigits(req.NationalId);
+        profile.PostalCode = MoadianSdkGateway.NormalizeAsciiDigits(req.PostalCode);
+        profile.BranchCode = MoadianSdkGateway.NormalizeAsciiDigits(req.BranchCode);
         profile.Address = NullIfBlank(req.Address);
         profile.MemoryId = memoryId;
         profile.Environment = req.Environment;
@@ -940,8 +940,8 @@ public sealed class MoadianCertService : IMoadianCertService
         foreach (var l in req.Lines)
         {
             rowNum++;
-            var sstid = (l.Sstid ?? string.Empty).Trim();
-            if (sstid.Length != 13 || !sstid.All(char.IsDigit))
+            var sstid = MoadianSdkGateway.NormalizeAsciiDigits(l.Sstid) ?? string.Empty;
+            if (sstid.Length != 13 || !sstid.All(char.IsAsciiDigit))
                 throw new InvalidOperationException($"ردیف {rowNum}: شناسه کالا/خدمت (SSTID) باید ۱۳ رقم عددی باشد.");
             if (string.IsNullOrWhiteSpace(l.Description))
                 throw new InvalidOperationException($"ردیف {rowNum}: شرح کالا/خدمت الزامی است.");
@@ -1361,26 +1361,33 @@ public sealed class MoadianCertService : IMoadianCertService
 
             try
             {
-                if (inv.SerialDecimal <= 0 || string.IsNullOrWhiteSpace(inv.TaxId))
-                {
-                    var serial = Math.Max(1L, profile.NextSerial);
-                    profile.NextSerial = serial + 1;
-                    inv.SerialDecimal = serial;
-                    inv.SerialHex = _gateway.FormatSerialHex(serial);
-                    inv.MemoryId = profile.MemoryId.Trim().ToUpperInvariant();
-                    inv.TaxId = _gateway.GenerateTaxId(inv.MemoryId, serial, inv.IssueDate);
-                    inv.SellerEconomicCode = profile.EconomicCode.Trim();
-                    inv.SellerTradeName = profile.TradeName.Trim();
-                    inv.SellerPostalCode = profile.PostalCode;
-                    inv.SellerBranchCode = profile.BranchCode;
-                }
+                // تولید سریال یکتای بدون تداخل و هم‌تراز با ساعت رسمی ایران در هر تلاش ارسال
+                // (رفع خطای 0300101 ناشی از سریال تکراری ۱ یا استفاده مجدد از TaxId ردشدهٔ قبلی)
+                var issueOffset = MoadianSdkGateway.NormalizeIssueDateForMoadian(inv.IssueDate);
+                var timeSeed = (DateTimeOffset.UtcNow.ToUnixTimeSeconds() % 800_000_000L) + 100_000L;
+                var baseNext = profile.NextSerial <= 1 ? timeSeed : Math.Max(profile.NextSerial, timeSeed);
+                var serial = Math.Min(baseNext, 999_999_999L);
+                profile.NextSerial = serial < 999_999_999L ? serial + 1 : 100_000L;
 
-                var dto = _gateway.BuildSdkInvoiceDto(profile, inv, inv.TaxId!, inv.SerialHex!);
+                var cleanMemoryId = profile.MemoryId.Trim().ToUpperInvariant();
+                var candidateSerialHex = _gateway.FormatSerialHex(serial);
+                var candidateTaxId = _gateway.GenerateTaxId(cleanMemoryId, serial, issueOffset.UtcDateTime);
+
+                inv.IssueDate = issueOffset.DateTime;
+                inv.SellerEconomicCode = MoadianSdkGateway.NormalizeAsciiDigits(profile.EconomicCode) ?? string.Empty;
+                inv.SellerTradeName = profile.TradeName.Trim();
+                inv.SellerPostalCode = MoadianSdkGateway.NormalizeAsciiDigits(profile.PostalCode);
+                inv.SellerBranchCode = MoadianSdkGateway.NormalizeAsciiDigits(profile.BranchCode);
+
+                var dto = _gateway.BuildSdkInvoiceDto(profile, inv, candidateTaxId, candidateSerialHex, issueOffset);
                 var (uid, refNum, returnedTaxId) = await _gateway.SendInvoiceAsync(profile, dto);
 
+                inv.SerialDecimal = serial;
+                inv.SerialHex = candidateSerialHex;
+                inv.MemoryId = cleanMemoryId;
+                inv.TaxId = !string.IsNullOrWhiteSpace(returnedTaxId) ? returnedTaxId : candidateTaxId;
                 inv.Uid = uid;
                 inv.ReferenceNumber = refNum;
-                if (!string.IsNullOrWhiteSpace(returnedTaxId)) inv.TaxId = returnedTaxId;
                 inv.SubmissionStatus = MdnSubmissionStatus.InProgress;
                 inv.SentAt = DateTime.Now;
                 inv.LastErrorCode = null;

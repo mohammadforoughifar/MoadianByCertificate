@@ -26,7 +26,12 @@ public interface IMoadianSdkGateway
 {
     string GenerateTaxId(string memoryId, long serialDecimal, DateTime issueDate);
     string FormatSerialHex(long serialDecimal);
-    InvoiceDto BuildSdkInvoiceDto(MdnTaxpayerProfile profile, MdnInvoice invoice, string effectiveTaxId, string effectiveSerialHex);
+    InvoiceDto BuildSdkInvoiceDto(
+        MdnTaxpayerProfile profile,
+        MdnInvoice invoice,
+        string effectiveTaxId,
+        string effectiveSerialHex,
+        DateTimeOffset? normalizedIssueOffset = null);
     string SerializeInvoiceJson(InvoiceDto dto);
 
     Task<MdnConnectionDiagnosticsDto> TestConnectionAsync(MdnTaxpayerProfile profile);
@@ -61,16 +66,69 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
         WriteIndented = true
     };
 
+    private static readonly TimeSpan IranStandardOffset = new(3, 30, 0);
+
     private readonly MoadianSecretVault _vault;
 
     public MoadianSdkGateway(MoadianSecretVault vault) => _vault = vault;
+
+    /// <summary>
+    /// نرمال‌سازی تاریخ صدور صورتحساب بر پایهٔ افست رسمی ایران (UTC+03:30):
+    /// • اگر تاریخ بدون ساعت (00:00:00 — خروجی تقویم شمسی یا تبدیل فاکتور فروش) باشد، روی ساعت ۱۲:۰۰ ظهر
+    ///   (یا ساعت جاری امروز) تنظیم می‌شود تا تبدیل به UTC روز را به ۲۰:۳۰ روز قبل نبرد و خطای 0300101 رخ ندهد.
+    /// • از جلو زدن تاریخ نسبت به ساعت فعلی سرور (خطای 0200201) نیز جلوگیری می‌کند.
+    /// </summary>
+    public static DateTimeOffset NormalizeIssueDateForMoadian(DateTime issueDate)
+    {
+        var iranNowOffset = DateTimeOffset.UtcNow.ToOffset(IranStandardOffset);
+        var safeMaxIranOffset = iranNowOffset.AddSeconds(-10);
+
+        var iranWallClock = issueDate.Kind == DateTimeKind.Utc
+            ? issueDate.Add(IranStandardOffset)
+            : DateTime.SpecifyKind(issueDate, DateTimeKind.Unspecified);
+
+        if (iranWallClock.TimeOfDay == TimeSpan.Zero)
+        {
+            if (iranWallClock.Date == safeMaxIranOffset.Date && safeMaxIranOffset.TimeOfDay >= new TimeSpan(3, 35, 0))
+                iranWallClock = safeMaxIranOffset.DateTime;
+            else
+                iranWallClock = iranWallClock.Date.AddHours(12);
+        }
+
+        var candidate = new DateTimeOffset(DateTime.SpecifyKind(iranWallClock, DateTimeKind.Unspecified), IranStandardOffset);
+        if (candidate > safeMaxIranOffset)
+            candidate = safeMaxIranOffset;
+
+        return candidate;
+    }
+
+    /// <summary>تبدیل ارقام فارسی/عربی به انگلیسی و حذف فاصله‌ها از کدهای عددی مالیاتی و پستی.</summary>
+    public static string? NormalizeAsciiDigits(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return null;
+
+        var sb = new StringBuilder(input.Length);
+        foreach (var ch in input.Trim())
+        {
+            if (ch is >= '۰' and <= '۹')
+                sb.Append((char)('0' + (ch - '۰')));
+            else if (ch is >= '٠' and <= '٩')
+                sb.Append((char)('0' + (ch - '٠')));
+            else if (!char.IsWhiteSpace(ch) && ch is not ('\u200C' or '\u200E' or '\u200F' or '-'))
+                sb.Append(ch);
+        }
+
+        return sb.Length == 0 ? null : sb.ToString();
+    }
 
     public string GenerateTaxId(string memoryId, long serialDecimal, DateTime issueDate)
     {
         if (string.IsNullOrWhiteSpace(memoryId) || memoryId.Trim().Length != 6)
             throw new InvalidOperationException("شناسه یکتای حافظه مالیاتی باید دقیقاً ۶ کاراکتر باشد (مثال: A11226).");
+        var issueOffset = NormalizeIssueDateForMoadian(issueDate);
         var provider = new TaxIdProvider(new VerhoeffAlgorithm());
-        return provider.GenerateTaxId(memoryId.Trim().ToUpperInvariant(), serialDecimal, issueDate);
+        return provider.GenerateTaxId(memoryId.Trim().ToUpperInvariant(), serialDecimal, issueOffset.UtcDateTime);
     }
 
     public string FormatSerialHex(long serialDecimal)
@@ -80,40 +138,48 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
         MdnTaxpayerProfile profile,
         MdnInvoice invoice,
         string effectiveTaxId,
-        string effectiveSerialHex)
+        string effectiveSerialHex,
+        DateTimeOffset? normalizedIssueOffset = null)
     {
-        var indatim = new DateTimeOffset(DateTime.SpecifyKind(invoice.IssueDate, DateTimeKind.Local)).ToUnixTimeMilliseconds();
-        var indati2m = new DateTimeOffset(DateTime.SpecifyKind(invoice.CreateDate, DateTimeKind.Local)).ToUnixTimeMilliseconds();
+        var issueOffset = normalizedIssueOffset ?? NormalizeIssueDateForMoadian(invoice.IssueDate);
+        var indatim = issueOffset.ToUnixTimeMilliseconds();
 
         int? cdcd = null;
         if (invoice.CustomsDeclarationDate.HasValue)
-            cdcd = (int)(new DateTimeOffset(invoice.CustomsDeclarationDate.Value).ToUnixTimeSeconds() / 86400);
+        {
+            var cdOffset = NormalizeIssueDateForMoadian(invoice.CustomsDeclarationDate.Value);
+            cdcd = (int)(cdOffset.ToUnixTimeSeconds() / 86400);
+        }
 
         var isType1 = invoice.InvoiceType == MdnInvoiceType.Type1;
-        var sellerEconomic = NullIfBlank(invoice.SellerEconomicCode) ?? profile.EconomicCode.Trim();
+        var isGoldPattern = invoice.Pattern == MdnInvoicePattern.GoldJewelry;
+        var sellerEconomic = NormalizeAsciiDigits(invoice.SellerEconomicCode)
+                             ?? NormalizeAsciiDigits(profile.EconomicCode)
+                             ?? string.Empty;
 
         var header = new HeaderDto
         {
             taxid = effectiveTaxId,
             indatim = indatim,
-            indati2m = indati2m,
+            // در ارسال برخط عادی (خارج از ماده ۹)، ارسال indati2m موجب هشدار 14003 («خارج از الگو») می‌شود.
+            indati2m = null,
             inty = (int)invoice.InvoiceType,
             inp = (int)invoice.Pattern,
             ins = (int)invoice.Subject,
             inno = effectiveSerialHex,
             irtaxid = invoice.Subject == MdnInvoiceSubject.Original ? null : NullIfBlank(invoice.ReferenceTaxId),
             tins = sellerEconomic,
-            sbc = NullIfBlank(invoice.SellerBranchCode) ?? NullIfBlank(profile.BranchCode),
+            sbc = NormalizeAsciiDigits(invoice.SellerBranchCode) ?? NormalizeAsciiDigits(profile.BranchCode),
             tob = isType1 ? (int)invoice.BuyerType : null,
-            tinb = isType1 ? NullIfBlank(invoice.BuyerEconomicCode) : null,
-            bid = isType1 ? NullIfBlank(invoice.BuyerNationalId) : null,
-            bpc = isType1 ? (NullIfBlank(invoice.BuyerPostalCode) ?? string.Empty) : null!,
-            bbc = isType1 ? NullIfBlank(invoice.BuyerBranchCode) : null,
+            tinb = isType1 ? NormalizeAsciiDigits(invoice.BuyerEconomicCode) : null,
+            bid = isType1 ? NormalizeAsciiDigits(invoice.BuyerNationalId) : null,
+            bpc = isType1 ? NormalizeAsciiDigits(invoice.BuyerPostalCode)! : null!,
+            bbc = isType1 ? NormalizeAsciiDigits(invoice.BuyerBranchCode) : null,
             bpn = isType1 ? NullIfBlank(invoice.BuyerPassportNumber) : null,
             crn = NullIfBlank(invoice.ContractRegistrationNumber),
-            billid = NullIfBlank(invoice.BillId),
+            billid = NormalizeAsciiDigits(invoice.BillId),
             scln = NullIfBlank(invoice.CustomsLicenseNumber),
-            scc = NullIfBlank(invoice.CustomsCode),
+            scc = NormalizeAsciiDigits(invoice.CustomsCode),
             cdcn = NullIfBlank(invoice.CustomsDeclarationNumber),
             cdcd = cdcd,
             setm = (int)invoice.SettlementMethod,
@@ -134,9 +200,9 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
             .ThenBy(l => l.Id)
             .Select(line => new BodyItemDto
             {
-                sstid = line.Sstid.Trim(),
+                sstid = NormalizeAsciiDigits(line.Sstid) ?? line.Sstid.Trim(),
                 sstt = line.Description.Trim(),
-                mu = line.UnitCode.Trim(),
+                mu = NormalizeAsciiDigits(line.UnitCode) ?? line.UnitCode.Trim(),
                 am = line.Quantity,
                 fee = line.UnitPrice,
                 cut = NullIfBlank(line.CurrencyCode)!,
@@ -152,9 +218,9 @@ public sealed class MoadianSdkGateway : IMoadianSdkGateway
                 olt = NullIfBlank(line.OtherLegalFeeSubject)!,
                 olr = line.OtherLegalFeeRate,
                 olam = line.OtherLegalFeeAmount > 0 ? line.OtherLegalFeeAmount : null,
-                consfee = line.ConstructionFee,
-                spro = line.SellerProfit,
-                bros = line.BrokerFee,
+                consfee = isGoldPattern ? line.ConstructionFee : null,
+                spro = isGoldPattern ? line.SellerProfit : null,
+                bros = isGoldPattern ? line.BrokerFee : null,
                 bsrn = NullIfBlank(line.ContractRegistrationNumber)!,
                 nw = line.NetWeight,
                 hs = NullIfBlank(line.HsCode)!,
