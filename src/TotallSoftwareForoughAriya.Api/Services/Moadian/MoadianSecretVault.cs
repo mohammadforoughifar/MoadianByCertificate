@@ -7,13 +7,7 @@ using System.Text.RegularExpressions;
 
 namespace Inventory.Api.Services.Moadian;
 
-/// <summary>
-/// گاوصندوق اختصاصی کلید خصوصی، گواهی امضای الکترونیکی و پین توکن سامانه مودیان.
-/// • رمزنگاری احرازشده AES-256-GCM با کلید مشتق‌شده HKDF-SHA256 و Salt یکتا برای هر رکورد.
-/// • کلید اصلی ۲۵۶ بیتی خارج از دیتابیس نگهداری می‌شود (MoadianVault:MasterKey یا فایل کلید امن سرور).
-/// • شناسه شرکت (CompanyId) به عنوان AAD قفل می‌شود تا کپی متن رمز بین شرکت‌ها غیرممکن باشد.
-/// • هیچ کلید خصوصی یا گواهی هرگز به صورت فایل متنی خام روی دیسک نوشته نمی‌شود.
-/// </summary>
+// نگهداری رمزنگاری‌شده کلید خصوصی، گواهی امضا و پین توکن مودیان
 public sealed class MoadianSecretVault
 {
     private const string Prefix = "mdn.v2.";
@@ -225,7 +219,7 @@ public sealed class MoadianSecretVault
         }
     }
 
-    // ==================== استخراج PFX / PKCS#12 ====================
+    // استخراج PFX / PKCS#12
 
     private static ParsedCertificateMaterial ExtractFromPkcs12Bytes(byte[] pfxBytes, string? password)
     {
@@ -322,7 +316,7 @@ public sealed class MoadianSecretVault
         return false;
     }
 
-    // ==================== پارس هوشمند کلید خصوصی RSA ====================
+    // پارس هوشمند کلید خصوصی RSA
 
     private static RSA ImportRsaPrivateKeyFromInput(string rawInput, string? password)
     {
@@ -450,7 +444,7 @@ public sealed class MoadianSecretVault
         }
     }
 
-    // ==================== پارس هوشمند گواهی امضای X.509 ====================
+    // پارس هوشمند گواهی امضای X.509
 
     private static List<X509Certificate2> LoadCandidateCertificates(string rawInput, int depth = 0)
     {
@@ -584,7 +578,7 @@ public sealed class MoadianSecretVault
 
             if (sawPublicKey)
                 throw new InvalidOperationException(
-                    "فایل بارگذاری‌شده فقط «کلید عمومی خام (Public Key)» است، نه گواهی امضای الکترونیکی X.509! در نسخهٔ جدید سامانه مودیان (SDK 2.0.29) به جای فایل کلید عمومی، باید فایل گواهی امضای صادرشده (.crt یا .cer حاوی CERTIFICATE) را بارگذاری کنید.");
+                    "فایل انتخاب‌شده کلید عمومی (Public Key) است، نه گواهی امضا. فایل گواهی صادرشده (.crt یا .cer) را انتخاب کنید.");
 
             if (sawPrivateKey)
                 throw new InvalidOperationException(
@@ -659,7 +653,7 @@ public sealed class MoadianSecretVault
         }
     }
 
-    // ==================== تشخیص و نرمال‌سازی متن و Base64 ====================
+    // تشخیص و نرمال‌سازی متن و Base64
 
     private static List<(string Label, string FullPem, string Body)> ExtractPemBlocks(string text)
     {
@@ -918,7 +912,7 @@ public sealed class MoadianSecretVault
             text.Contains("BEGIN RSA PUBLIC KEY", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                "فایل بارگذاری‌شده فقط «کلید عمومی خام (Public Key)» است، نه گواهی امضای الکترونیکی X.509! در نسخهٔ جدید سامانه مودیان (SDK 2.0.29) به جای کلید عمومی، باید فایل گواهی امضای صادرشده (.crt یا .cer حاوی CERTIFICATE) را بارگذاری کنید.");
+                "فایل انتخاب‌شده کلید عمومی (Public Key) است، نه گواهی امضا. فایل گواهی صادرشده (.crt یا .cer) را انتخاب کنید.");
         }
 
         if (text.Contains("BEGIN PRIVATE KEY", StringComparison.OrdinalIgnoreCase) ||

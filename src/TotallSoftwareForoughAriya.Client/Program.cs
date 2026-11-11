@@ -32,7 +32,7 @@ builder.Services.AddScoped<IAuthApi, AuthApi>();
 // ---------- ثبت سرویس‌ها با اینترفیس (اصل وارونگی وابستگی — DIP) ----------
 builder.Services.AddScoped<IApiClient, ApiClient>();
 builder.Services.AddScoped<BonHrApi>();
-builder.Services.AddScoped<IMoadianClientService, MoadianClientService>(); // سامانه مودیان مبتنی بر گواهی امضا (SDK 2.0.29)
+builder.Services.AddScoped<IMoadianClientService, MoadianClientService>(); // سامانه مودیان
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 builder.Services.AddScoped<ICompanyProfileService, CompanyProfileService>(); // تعریف شرکت/فروشگاه و تنظیمات چاپ فاکتور
 builder.Services.AddScoped<IDashboardClient, DashboardClient>(); // داشبورد شخصی کاربر

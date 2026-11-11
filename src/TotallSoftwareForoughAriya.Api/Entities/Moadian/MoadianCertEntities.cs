@@ -3,15 +3,6 @@ using Inventory.Shared.Dtos;
 
 namespace Inventory.Api.Data;
 
-// =====================================================================
-// موجودیت‌های ماژول جدید سامانه مودیان مبتنی بر گواهی امضای الکترونیکی
-// نسخهٔ SDK: TaxCollectData.Library 2.0.29
-// =====================================================================
-
-/// <summary>
-/// پروفایل مودی، تنظیمات حافظهٔ مالیاتی و گواهی امضای الکترونیکی به تفکیک هر شرکت سیستم.
-/// کلید خصوصی، گواهی و رمز توکن فقط به صورت رمزنگاری‌شدهٔ AES-256-GCM (با کلید اصلی خارج از دیتابیس) ذخیره می‌شوند.
-/// </summary>
 public class MdnTaxpayerProfile : ICompanyOwned
 {
     public int Id { get; set; }
@@ -33,7 +24,7 @@ public class MdnTaxpayerProfile : ICompanyOwned
     [MaxLength(300)] public string SandboxBaseUrl { get; set; } = "https://rc.tax.gov.ir/requestsmanager";
     public MdnSignatureMode SignatureMode { get; set; } = MdnSignatureMode.Pkcs8Certificate;
 
-    // ---------- مواد رمزنگاری‌شده امضا (AES-256-GCM با AAD شرکت) ----------
+    // اطلاعات رمزنگاری‌شده امضا
     public string? EncryptedPrivateKeyPem { get; set; }
     public string? EncryptedCertificateBase64 { get; set; }
 
@@ -115,7 +106,6 @@ public class MdnCatalogItem : ICompanyOwned
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 }
 
-/// <summary>صورتحساب الکترونیکی سامانه مودیان (پشتیبانی کامل از چرخهٔ ارسال، کارپوشه و پرداخت SDK 2.0.29).</summary>
 public class MdnInvoice : ICompanyOwned
 {
     public int Id { get; set; }
@@ -178,7 +168,6 @@ public class MdnInvoice : ICompanyOwned
     public DateTime? CustomsDeclarationDate { get; set; }
     public long? Tax17 { get; set; }
 
-    /// <summary>یادداشت ۱ و ۲ سرآمد (nti1 و nti2 در جداول ۸۷ و ۸۸ دستورالعمل RC_IITP.IS_V7.9 — حداکثر ۳۰ کاراکتر).</summary>
     [MaxLength(30)] public string? Note1 { get; set; }
     [MaxLength(30)] public string? Note2 { get; set; }
 

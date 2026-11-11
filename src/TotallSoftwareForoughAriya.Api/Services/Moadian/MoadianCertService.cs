@@ -50,7 +50,7 @@ public interface IMoadianCertService
     Task<List<MdnErpFacInvoicePickDto>> GetReceivableErpInvoicesAsync();
     Task<MdnInvoiceDetailDto> ImportFromErpInvoiceAsync(int facInvoiceId, int userId, string username);
 
-    // ارسال، استعلام وضعیت پردازش، استعلام کارپوشه و ثبت پرداخت (SDK 2.0.29)
+    // ارسال، استعلام وضعیت، کارپوشه و پرداخت
     Task<MdnBatchActionResultDto> SendInvoicesAsync(List<int> invoiceIds, string username, bool confirmArticle9 = false);
     Task<MdnBatchActionResultDto> InquirySubmissionsAsync(List<int> invoiceIds, string username);
     Task<MdnBatchActionResultDto> InquiryFolderStatusesAsync(List<int> invoiceIds, string username);
@@ -81,7 +81,7 @@ public sealed class MoadianCertService : IMoadianCertService
         _gateway = gateway;
     }
 
-    // ==================== تعیین شرکت فعال ====================
+    // تعیین شرکت فعال
 
     private async Task<(int CompanyId, string CompanyName)> RequireActiveCompanyAsync()
     {
@@ -129,7 +129,7 @@ public sealed class MoadianCertService : IMoadianCertService
         return (profile, companyName);
     }
 
-    // ==================== پروفایل و گواهی امضا ====================
+    // پروفایل و گواهی امضا
 
     public async Task<MdnProfileDto> GetProfileAsync()
     {
@@ -292,7 +292,7 @@ public sealed class MoadianCertService : IMoadianCertService
         profile.UpdatedAt = DateTime.Now;
 
         AddLog(null, "CERTIFICATE_CLEAR", true, "CLEARED", null, null, null,
-            "کلید خصوصی و گواهی امضای الکترونیکی از گاوصندوق این شرکت پاک شد.", null, username);
+            "گواهی امضای این شرکت حذف شد.", null, username);
 
         await _db.SaveChangesAsync();
         return MapProfileDto(profile, companyName);
@@ -338,7 +338,7 @@ public sealed class MoadianCertService : IMoadianCertService
         return await _gateway.CheckArticle6StatusAsync(profile, req);
     }
 
-    // ==================== خریداران، کالاها/خدمات و واحدهای سنجش ====================
+    // خریداران، کالاها/خدمات و واحدهای سنجش
 
     public async Task<List<MdnBuyerDto>> GetBuyersAsync(string? search = null)
     {
@@ -937,7 +937,7 @@ public sealed class MoadianCertService : IMoadianCertService
         return new MdnMeasureUnitDto { Id = entity.Id, Code = entity.Code, Name = entity.Name, IsActive = entity.IsActive };
     }
 
-    // ==================== داشبورد و فهرست صورتحساب‌ها ====================
+    // داشبورد و فهرست صورتحساب‌ها
 
     public async Task<MdnDashboardDto> GetDashboardAsync()
     {
@@ -1087,7 +1087,7 @@ public sealed class MoadianCertService : IMoadianCertService
         return MapInvoiceDetailDto(inv, related);
     }
 
-    // ==================== ثبت، ویرایش، محاسبه ریالی و مشتق‌سازی صورتحساب ====================
+    // ثبت، ویرایش، محاسبه ریالی و مشتق‌سازی صورتحساب
 
     public async Task<MdnInvoiceDetailDto> SaveInvoiceAsync(MdnSaveInvoiceRequest req, int userId, string username)
     {
@@ -1098,14 +1098,14 @@ public sealed class MoadianCertService : IMoadianCertService
             throw new InvalidOperationException("صورتحساب باید حداقل یک قلم کالا یا خدمت داشته باشد.");
 
         if (req.Subject != MdnInvoiceSubject.Original && string.IsNullOrWhiteSpace(req.ReferenceTaxId))
-            throw new InvalidOperationException("برای صورتحساب اصلاحی، ابطالی یا برگشت از فروش، «شماره مالیاتی مرجع ۲۲ کاراکتری» الزامی است.");
+            throw new InvalidOperationException("شماره مالیاتی مرجع را وارد کنید.");
 
         var cleanNote1 = NullIfBlank(req.Note1);
         var cleanNote2 = NullIfBlank(req.Note2);
         if (cleanNote1 is { Length: > MdnArticle9Rules.MaxHeaderNoteLength })
-            throw new InvalidOperationException($"طول «یادداشت ۱ (nti1)» طبق جدول ۸۷ دستورالعمل V7.9 حداکثر {MdnArticle9Rules.MaxHeaderNoteLength} کاراکتر است.");
+            throw new InvalidOperationException($"طول توضیحات ۱ حداکثر {MdnArticle9Rules.MaxHeaderNoteLength} کاراکتر است.");
         if (cleanNote2 is { Length: > MdnArticle9Rules.MaxHeaderNoteLength })
-            throw new InvalidOperationException($"طول «یادداشت ۲ (nti2)» طبق جدول ۸۸ دستورالعمل V7.9 حداکثر {MdnArticle9Rules.MaxHeaderNoteLength} کاراکتر است.");
+            throw new InvalidOperationException($"طول توضیحات ۲ حداکثر {MdnArticle9Rules.MaxHeaderNoteLength} کاراکتر است.");
 
         var deadlineDays = MdnArticle9Rules.NormalizeDeadlineDays(profile.Article9SendDeadlineDays);
         var normalizedIssueOffset = MoadianSdkGateway.NormalizeIssueDateForMoadian(req.IssueDate);
@@ -1116,16 +1116,16 @@ public sealed class MoadianCertService : IMoadianCertService
             if (!isPastDeadline)
             {
                 throw new InvalidOperationException(
-                    $"طبق بخش ۶ و جداول ۴، ۵ و ۸۶ دستورالعمل RC_IITP.IS_V7.9، قاعدهٔ موضوع ماده ۹ (insr = 1) صرفاً برای صورتحساب‌هایی مجاز است که فاصلهٔ تاریخ صدور تا زمان ارسال آن‌ها بیش از مهلت مجاز ({deadlineDays} روز) باشد. در مهلت عادی، فیلدهای insr و indati2m خارج از الگو هستند؛ تیک موضوع ماده ۹ را بردارید یا تاریخ صدور واقعی معاملهٔ معوق را وارد کنید.");
+                    $"صورتحساب موضوع ماده ۹ فقط برای مواردی است که بیش از {deadlineDays} روز از تاریخ صدورشان گذشته باشد.");
             }
 
             if (req.RegistrationDate.HasValue)
             {
                 var iranToday = DateTimeOffset.UtcNow.ToOffset(new TimeSpan(3, 30, 0)).Date;
                 if (req.RegistrationDate.Value.Date < normalizedIssueOffset.Date)
-                    throw new InvalidOperationException("طبق ردیف ۵ جدول ۵ دستورالعمل RC_IITP.IS_V7.9، تاریخ ثبت صورتحساب (indati2m) نمی‌تواند قبل از تاریخ صدور صورتحساب (indatim) باشد.");
+                    throw new InvalidOperationException("تاریخ ثبت نمی‌تواند قبل از تاریخ صدور باشد.");
                 if (req.RegistrationDate.Value.Date > iranToday)
-                    throw new InvalidOperationException("طبق ردیف ۶ جدول ۵ دستورالعمل RC_IITP.IS_V7.9، تاریخ ثبت صورتحساب (indati2m) نمی‌تواند مؤخر نسبت به تاریخ روز جاری باشد.");
+                    throw new InvalidOperationException("تاریخ ثبت نمی‌تواند بعد از تاریخ امروز باشد.");
             }
         }
 
@@ -1515,11 +1515,11 @@ public sealed class MoadianCertService : IMoadianCertService
 
         if (isPastDeadline && !inv.IsArticle9)
         {
-            warnings.Add($"از تاریخ صدور این صورتحساب بیش از مهلت مجاز ({deadlineDays} روز) گذشته است؛ ارسال عادی آن در درگاه با خطای 0200201 و 00107 رد می‌شود. پیش از ارسال، حالت «صورتحساب موضوع ماده ۹ (insr=1)» را فعال یا هنگام ارسال تأیید نمایید.");
+            warnings.Add($"از تاریخ صدور بیش از {deadlineDays} روز گذشته است؛ پیش از ارسال حالت ماده ۹ را فعال کنید.");
         }
         else if (inv.IsArticle9 && !isPastDeadline)
         {
-            warnings.Add($"فاصلهٔ تاریخ صدور تا زمان حال کمتر یا مساوی مهلت مجاز ({deadlineDays} روز) است؛ طبق جداول ۵ و ۸۶ دستورالعمل V7.9 فیلدهای insr و indati2m خارج از الگو بوده و در خروجی حذف شده‌اند.");
+            warnings.Add($"تاریخ صدور در مهلت {deadlineDays} روزه است و نیازی به ماده ۹ ندارد.");
         }
 
         var serial = inv.SerialDecimal > 0 ? inv.SerialDecimal : Math.Max(1L, profile.NextSerial);
@@ -1632,7 +1632,7 @@ public sealed class MoadianCertService : IMoadianCertService
         return await GetInvoiceDetailAsync(created.Id);
     }
 
-    // ==================== تبدیل فاکتور فروش سیستم (FacInvoices) به صورتحساب مودیان ====================
+    // تبدیل فاکتور فروش سیستم (FacInvoices) به صورتحساب مودیان
 
     public async Task<List<MdnErpFacInvoicePickDto>> GetReceivableErpInvoicesAsync()
     {
@@ -1732,7 +1732,7 @@ public sealed class MoadianCertService : IMoadianCertService
         return await GetInvoiceDetailAsync(detail.Id);
     }
 
-    // ==================== ارسال، استعلام وضعیت، استعلام کارپوشه و ثبت پرداخت (SDK 2.0.29) ====================
+    // ارسال، استعلام وضعیت، کارپوشه و پرداخت
 
     public async Task<MdnBatchActionResultDto> SendInvoicesAsync(List<int> invoiceIds, string username, bool confirmArticle9 = false)
     {
@@ -1792,14 +1792,13 @@ public sealed class MoadianCertService : IMoadianCertService
                     }
                 }
 
-                // بررسی دقیق مهلت قانونی و قاعدهٔ موضوع ماده ۹ (بخش ۶ و جداول ۴، ۵ و ۸۶ دستورالعمل RC_IITP.IS_V7.9)
                 var isPastDeadline = MoadianSdkGateway.IsPastArticle9Deadline(issueOffset, deadlineDays);
                 if (isPastDeadline)
                 {
                     if (!inv.IsArticle9 && !confirmArticle9)
                     {
                         var art9Msg =
-                            $"از تاریخ صدور این صورتحساب بیش از مهلت مجاز ({deadlineDays} روز) گذشته است؛ طبق دستورالعمل RC_IITP.IS_V7.9 ارسال عادی آن در درگاه با خطای 0200201 و 00107 رد می‌شود. جهت ارسال، گزینهٔ «صورتحساب موضوع ماده ۹ (insr=1)» را تأیید کنید یا تاریخ صدور را اصلاح نمایید.";
+                            $"از تاریخ صدور این صورتحساب بیش از {deadlineDays} روز گذشته است. برای ارسال، گزینه «موضوع ماده ۹» را تأیید کنید یا تاریخ صدور را تغییر دهید.";
                         inv.LastErrorCode = "ARTICLE9_REQUIRED";
                         inv.LastErrorMessage = art9Msg;
                         inv.UpdatedAt = DateTime.Now;
@@ -1824,7 +1823,6 @@ public sealed class MoadianCertService : IMoadianCertService
                 }
                 else
                 {
-                    // طبق جداول ۵ (ردیف ۴) و ۸۶ (ردیف ۲) در مهلت عادی، insr و indati2m خارج از الگو هستند
                     inv.IsArticle9 = false;
                     inv.SendRule = null;
                     inv.RegistrationDate = null;
@@ -1860,9 +1858,9 @@ public sealed class MoadianCertService : IMoadianCertService
                 inv.LastErrorMessage = null;
                 inv.UpdatedAt = DateTime.Now;
 
-                var ruleTag = inv.IsArticle9 ? " در قالب موضوع ماده ۹ (insr=1)" : "";
+                var ruleTag = inv.IsArticle9 ? " (ماده ۹)" : "";
                 AddLog(inv.Id, inv.IsArticle9 ? "INVOICE_SEND_ART9" : "INVOICE_SEND", true, "IN_PROGRESS", uid, refNum, inv.TaxId,
-                    $"صورتحساب{ruleTag} با گواهی امضا به درگاه مودیان ارسال شد (کد رهگیری: {refNum}). حداقل ۱۰ ثانیه بعد استعلام بگیرید.",
+                    $"صورتحساب{ruleTag} ارسال شد (کد رهگیری: {refNum}).",
                     null, username);
 
                 await _db.SaveChangesAsync();
@@ -2169,7 +2167,7 @@ public sealed class MoadianCertService : IMoadianCertService
         if (cancelPastDeadline && !(req?.IsArticle9 == true))
         {
             throw new InvalidOperationException(
-                $"از تاریخ صدور انتخاب‌شده برای صورتحساب ابطالی بیش از مهلت مجاز ({deadlineDays} روز) گذشته است؛ جهت ارسال ابطالی در قالب موضوع ماده ۹، گزینهٔ «تأیید قاعدهٔ موضوع ماده ۹ (insr=1)» را فعال کنید یا تاریخ روز جاری را انتخاب نمایید.");
+                $"از تاریخ صدور ابطالی بیش از {deadlineDays} روز گذشته است؛ گزینه ماده ۹ را فعال کنید یا تاریخ امروز را انتخاب کنید.");
         }
         var effectiveCancelArt9 = cancelPastDeadline && (req?.IsArticle9 == true);
 
@@ -2290,17 +2288,17 @@ public sealed class MoadianCertService : IMoadianCertService
         var finalCancel = await _db.MdnInvoices.AsNoTracking().FirstAsync(i => i.Id == cancelId);
 
         var isConfirmed = finalCancel.SubmissionStatus == MdnSubmissionStatus.Success;
-        var art9CancelTag = finalCancel.IsArticle9 ? " (موضوع ماده ۹ — insr=1)" : "";
+        var art9CancelTag = finalCancel.IsArticle9 ? " (ماده ۹)" : "";
         var message = finalCancel.SubmissionStatus switch
         {
             MdnSubmissionStatus.Success =>
-                $"صورتحساب {finalSource.InternalNumber} با موفقیت ابطال و استعلام شد{art9CancelTag} (شماره ابطالی: {finalCancel.InternalNumber} — TaxId: {finalCancel.TaxId}).",
+                $"صورتحساب {finalSource.InternalNumber} ابطال شد{art9CancelTag} (شماره ابطالی: {finalCancel.InternalNumber}).",
             MdnSubmissionStatus.InProgress or MdnSubmissionStatus.Sent =>
-                $"صورتحساب ابطالی ({finalCancel.InternalNumber}){art9CancelTag} ارسال و استعلام اولیه انجام شد؛ درگاه مودیان هنوز در حال پردازش است. چند ثانیه دیگر دکمه استعلام را بزنید.",
+                $"صورتحساب ابطالی ({finalCancel.InternalNumber}){art9CancelTag} ارسال شد و در حال بررسی است.",
             MdnSubmissionStatus.Failed =>
-                $"صورتحساب ابطالی در استعلام درگاه مودیان رد شد: {finalCancel.LastErrorMessage ?? "خطای نامشخص"}",
+                $"ابطال رد شد: {finalCancel.LastErrorMessage ?? "خطای نامشخص"}",
             _ =>
-                $"وضعیت استعلام صورتحساب ابطالی ({finalCancel.InternalNumber}): {MdnUiLabels.SubmissionTitle(finalCancel.SubmissionStatus)}"
+                $"وضعیت ابطالی ({finalCancel.InternalNumber}): {MdnUiLabels.SubmissionTitle(finalCancel.SubmissionStatus)}"
         };
 
         return new MdnDirectCancelResultDto
@@ -2351,7 +2349,7 @@ public sealed class MoadianCertService : IMoadianCertService
         }).ToList();
     }
 
-    // ==================== ثبت پرداخت در سامانه مودیان (RegisterPaymentRequestAsync) ====================
+    // ثبت پرداخت در سامانه مودیان (RegisterPaymentRequestAsync)
 
     public async Task<MdnInvoicePaymentDto> RegisterPaymentAsync(
         int invoiceId,
@@ -2494,7 +2492,7 @@ public sealed class MoadianCertService : IMoadianCertService
         await _db.SaveChangesAsync();
     }
 
-    // ==================== توابع کمکی محاسبه و نگاشت ====================
+    // توابع کمکی محاسبه و نگاشت
 
     private static void RecalculatePaymentSummary(MdnInvoice inv)
     {

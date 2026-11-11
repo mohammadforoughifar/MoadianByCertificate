@@ -76,14 +76,14 @@ public sealed class TabService
     /// <summary>نگاشتِ مسیر به (عنوان، آیکون) — برگرفته از آیتم‌های منوی برنامه</summary>
     private static readonly (string Prefix, string Title, string Icon)[] Known =
     {
-        // سامانه مودیان (SDK 2.0.29) — ترتیب مهم است: خاص قبل از عمومی
-        ("moadian/status-payments",     "سامانه مودیان — کارپوشه و پرداخت", "bi-credit-card-2-front"),
-        ("moadian/profile",             "سامانه مودیان — پرونده و گواهی امضا", "bi-patch-check"),
-        ("moadian/basic-info",          "سامانه مودیان — اطلاعات پایه", "bi-archive"),
-        ("moadian/invoices/new",        "سامانه مودیان — صدور صورتحساب", "bi-journal-plus"),
-        ("moadian/invoices",            "سامانه مودیان — صورتحساب‌ها",   "bi-journal-text"),
-        ("moadian/guide",               "سامانه مودیان — راهنما",        "bi-journal-check"),
-        ("moadian",                     "سامانه مودیان — نمای کلی",     "bi-speedometer2"),
+        // سامانه مودیان
+        ("moadian/status-payments",     "کارپوشه و پرداخت",      "bi-credit-card-2-front"),
+        ("moadian/profile",             "پرونده و گواهی امضا",   "bi-patch-check"),
+        ("moadian/basic-info",          "اطلاعات پایه مودیان",   "bi-archive"),
+        ("moadian/invoices/new",        "صدور صورتحساب",         "bi-journal-plus"),
+        ("moadian/invoices",            "صورتحساب‌های مودیان",   "bi-journal-text"),
+        ("moadian/guide",               "راهنمای مودیان",        "bi-journal-check"),
+        ("moadian",                     "سامانه مودیان",         "bi-speedometer2"),
         ("reports/kardex",              "کاردکس کالا",          "bi-bar-chart-line"),
         ("reports/reorder",             "نقطه سفارش",           "bi-exclamation-triangle"),
         ("outgoing-letters/dabirkhane", "دبیرخانه نامه صادره",  "bi-mailbox"),
