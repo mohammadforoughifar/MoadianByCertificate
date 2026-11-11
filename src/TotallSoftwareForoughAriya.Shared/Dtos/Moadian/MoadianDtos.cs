@@ -19,7 +19,8 @@ public enum MdnEnvironment
 public enum MdnSignatureMode
 {
     Pkcs8Certificate = 1,
-    Pkcs11Token = 2
+    Pkcs11Token = 2,
+    WindowsStore = 3
 }
 
 /// <summary>نوع شخص مودی / خریدار طبق فیلد رسمی tob در سامانه مودیان.</summary>
@@ -169,9 +170,13 @@ public class MdnProfileDto
     public bool IsReadyForSigning =>
         !string.IsNullOrWhiteSpace(MemoryId) &&
         !string.IsNullOrWhiteSpace(EconomicCode) &&
-        (SignatureMode == MdnSignatureMode.Pkcs8Certificate
-            ? HasPrivateKey && HasCertificate && !IsCertificateExpired
-            : !string.IsNullOrWhiteSpace(Pkcs11LibraryPath) && !string.IsNullOrWhiteSpace(Pkcs11CertificateAlias) && HasPkcs11Pin);
+        SignatureMode switch
+        {
+            MdnSignatureMode.Pkcs8Certificate => HasPrivateKey && HasCertificate && !IsCertificateExpired,
+            MdnSignatureMode.Pkcs11Token => !string.IsNullOrWhiteSpace(Pkcs11LibraryPath) && !string.IsNullOrWhiteSpace(Pkcs11CertificateAlias) && HasPkcs11Pin,
+            MdnSignatureMode.WindowsStore => !string.IsNullOrWhiteSpace(CertificateThumbprint) && !IsCertificateExpired,
+            _ => false
+        };
 }
 
 public class MdnSaveProfileRequest
@@ -216,6 +221,35 @@ public class MdnUploadCertificateRequest
     public string? Pkcs11LibraryPath { get; set; }
     public string? Pkcs11CertificateAlias { get; set; }
     public string? Pkcs11Pin { get; set; }
+
+    /// <summary>تنظیمات امضای مستقیم از مخزن گواهی ویندوز (certmgr.msc / certlm.msc — حتی در صورت غیرفعال بودن خروجی کلید خصوصی).</summary>
+    public string? WindowsStoreThumbprint { get; set; }
+    public string? WindowsStoreLocation { get; set; }
+}
+
+public class MdnWindowsStoreCertificateItemDto
+{
+    /// <summary>CurrentUser یا LocalMachine</summary>
+    public string StoreLocation { get; set; } = "CurrentUser";
+    public string StoreDisplayName { get; set; } = "";
+    public string Thumbprint { get; set; } = "";
+    public string CommonName { get; set; } = "";
+    public string Subject { get; set; } = "";
+    public string Issuer { get; set; } = "";
+    public string SerialNumber { get; set; } = "";
+    public string KeyAlgorithm { get; set; } = "";
+    public DateTime NotBefore { get; set; }
+    public DateTime NotAfter { get; set; }
+    public bool IsExpired { get; set; }
+    public bool IsCertificateAuthority { get; set; }
+    public bool HasPrivateKey { get; set; }
+}
+
+public class MdnWindowsStoreDiscoverResultDto
+{
+    public bool IsWindowsOs { get; set; }
+    public string Summary { get; set; } = "";
+    public List<MdnWindowsStoreCertificateItemDto> Certificates { get; set; } = new();
 }
 
 public class MdnPkcs11DiscoverRequest
@@ -743,6 +777,7 @@ public static class MdnUiLabels
     {
         MdnSignatureMode.Pkcs8Certificate => "کلید خصوصی + گواهی امضای الکترونیکی (PKCS#8 / X.509)",
         MdnSignatureMode.Pkcs11Token => "توکن سخت‌افزاری امضای الکترونیکی (PKCS#11)",
+        MdnSignatureMode.WindowsStore => "مخزن گواهی ویندوز (Windows Certificate Store — certmgr)",
         _ => "نامشخص"
     };
 

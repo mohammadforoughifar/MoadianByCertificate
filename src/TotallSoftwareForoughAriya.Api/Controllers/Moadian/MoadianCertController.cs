@@ -67,6 +67,13 @@ public sealed class MoadianCertController : RbacControllerBase
         return Ok(await _svc.DiscoverPkcs11Async(req ?? new MdnPkcs11DiscoverRequest()));
     }
 
+    [HttpGet("windows-store/certificates")]
+    public async Task<IActionResult> DiscoverWindowsStore()
+    {
+        if (await ForbiddenUnlessAnyAsync(Module, "Certificate", "Diagnose") is { } forbid) return forbid;
+        return Ok(await _svc.DiscoverWindowsStoreAsync());
+    }
+
     [HttpPost("diagnostics/connection")]
     public async Task<IActionResult> TestConnection()
     {

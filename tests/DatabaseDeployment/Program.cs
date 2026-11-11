@@ -189,6 +189,12 @@ UPDATE Organizations SET CompanyId = 1;";
         // 6. PKCS#11 auto-discovery safely scans without throwing when no hardware token is attached
         var pkcs11Scan = Inventory.Api.Services.Moadian.MoadianPkcs11Inspector.Discover(null, null);
         Check(!string.IsNullOrWhiteSpace(pkcs11Scan.Summary), "PKCS#11 auto-discovery returns summary cleanly");
+
+        // 7. Windows Certificate Store inspector normalizes invisible Unicode LTR marks & scans cleanly
+        var normalizedThumb = Inventory.Api.Services.Moadian.MoadianWindowsStoreInspector.NormalizeThumbprint("\u200E ab:cd 12-34 \u200F");
+        Check(normalizedThumb == "ABCD1234", "Windows Store thumbprint normalizer strips certmgr invisible Unicode marks and separators");
+        var winStoreScan = Inventory.Api.Services.Moadian.MoadianWindowsStoreInspector.Discover();
+        Check(!string.IsNullOrWhiteSpace(winStoreScan.Summary), "Windows Store discovery returns summary cleanly");
     }
     first.Certificate?.Dispose();
 
